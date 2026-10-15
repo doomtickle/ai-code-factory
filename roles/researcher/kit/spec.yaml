@@ -1,0 +1,17 @@
+schemaVersion: "2"
+kind: mixin
+name: factory-researcher-kit
+displayName: Factory Researcher
+description: "Investigates on the web and reports (read-only)"
+version: "5.0.0"
+requires:
+  agent: claude
+
+# Instructions live in ../instructions.md: the dispatch bridge passes them to
+# every task (a mixin's agentInstructions aren't reliably loaded).
+permissions:
+  network:
+    # Model provider only. Any other network access goes through the broker's
+    # MCP tools, limited to BROKER_TOOLS in ../role.conf.
+    allow:
+      - api.anthropic.com

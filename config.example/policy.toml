@@ -1,0 +1,30 @@
+# Example local broker policy. Copy this folder to ~/.config/ai-code-factory/
+# ($XDG_CONFIG_HOME/ai-code-factory/ if you set it), keep only what you need,
+# and fill in your own values. Then rebuild and recreate the broker:
+#   factory setup && sbx rm --force factory-broker && factory start
+#
+# This file overrides broker/policy.toml table by table: a key set here
+# replaces the repo's value, keys you leave out keep it. It is baked into the
+# broker image at build time, so agents can't read or change it. Everything
+# here is inert for projects that don't use it: npm_fetch only contacts the
+# private registry for lockfile entries that point at it.
+
+[packages]
+# A private npm registry: URL prefix ending in "/". Its token goes in the host
+# keychain (service "factory-npm-registry"), never here. Its host must also be
+# in broker-kit/spec.yaml.
+npm_private_registry = "https://example.jfrog.io/example/api/npm/npm-local/"
+# Hosts the registry may redirect downloads to (JFrog Cloud: its signed S3
+# storage host). npm_fetch names the host to add when it refuses a redirect.
+npm_redirect_hosts = ["jfrog-prod-use1-shared-example.s3.amazonaws.com"]
+
+[jira]
+# Your Jira Cloud site and its cloudId (from https://<site>/_edge/tenant_info).
+# The token goes in the host keychain (service "factory-jira"), never here.
+site = "example.atlassian.net"
+cloud_id = "00000000-0000-0000-0000-000000000000"
+
+[git]
+# GitHub repos (owner/name) agents may fetch from, push to and open PRs on.
+# Keep this on a single line: bin/factory's onboarding check depends on it.
+repos = []

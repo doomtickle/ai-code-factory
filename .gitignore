@@ -1,0 +1,17 @@
+# Template image exports (00-build-templates.sh uses a temp dir, but just in case)
+*.tar
+
+# Local secrets / env files: credentials belong in `sbx secret`, never in the repo
+.env
+.env.*
+
+.DS_Store
+
+# Python bytecode cache (dispatch/test_server.py is run with the system Python)
+__pycache__/
+
+# Old in-repo runtime state. State now lives in ~/.local/state/ai-code-factory/
+# (FACTORY_STATE in scripts/lib/common.sh); `factory start` moves these out.
+.broker/
+.dispatch/
+.roles/

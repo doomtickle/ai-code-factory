@@ -1,0 +1,7 @@
+# Only the files the templates COPY are needed in the build context.
+*
+!broker/server.py
+!broker/agentbroker/**/*.py
+!broker/policy.toml
+!broker/run.sh
+!templates/agent/factory-test

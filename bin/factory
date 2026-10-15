@@ -1,0 +1,475 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# factory: one command for the AI code factory. Run `factory help`.
+
+# Resolve the repo root through symlinks (factory setup links this into ~/.local/bin).
+src="$0"
+while [ -L "$src" ]; do
+  dir="$(cd -P "$(dirname "$src")" && pwd)"
+  src="$(readlink "$src")"
+  case "$src" in /*) ;; *) src="$dir/$src" ;; esac
+done
+ROOT="$(cd -P "$(dirname "$src")/.." && pwd)"
+SCRIPTS="$ROOT/scripts"
+
+# shellcheck source=../scripts/lib/common.sh
+. "$SCRIPTS/lib/common.sh"
+# shellcheck source=../scripts/lib/roles.sh
+. "$SCRIPTS/lib/roles.sh"
+# shellcheck source=../scripts/lib/preflight.sh
+. "$SCRIPTS/lib/preflight.sh"
+
+readonly HERDR_SESSION_NAME="factory"
+
+if [ -t 1 ]; then B=$'\033[1m' D=$'\033[2m' G=$'\033[32m' Y=$'\033[33m' R=$'\033[31m' N=$'\033[0m'
+else B="" D="" G="" Y="" R="" N=""; fi
+
+say() { printf '%s\n' "$*"; }
+step() { printf '\n%s==> %s%s\n' "$B" "$*" "$N"; }
+ok() { printf '  %s✓%s %s\n' "$G" "$N" "$*"; }
+warn() { printf '  %s!%s %s\n' "$Y" "$N" "$*"; }
+bad() { printf '  %s✗%s %s\n' "$R" "$N" "$*"; }
+
+confirm() { # confirm QUESTION -> success on y/yes
+  local answer
+  [ -t 0 ] || return 1
+  printf '%s [y/N] ' "$1"
+  read -r answer
+  case "$answer" in y|Y|yes|YES) return 0 ;; *) return 1 ;; esac
+}
+
+bound_project() { cat "$FACTORY_BROKER_STATE/project" 2>/dev/null || true; }
+
+usage() {
+  cat <<EOF
+${B}factory${N}: run a team of sandboxed Claude agents on a project.
+
+${B}Usage${N}
+  factory doctor             Check this machine is ready, and say how to fix what isn't
+  factory setup              One-time setup: install tools, sign in, build images,
+                             apply the security baseline, put 'factory' on your PATH
+  factory start [dir]        Start the factory for a project (default: this folder)
+                             and open it in Herdr
+  factory status             What is running, and for which project
+  factory stop               Stop the agents, broker and dispatch bridge
+  factory logs [name]        Follow a role's work (e.g. developer), or broker / dispatch
+  factory roles              List roles and what they may do
+  factory role new <name> [like]
+                             Add a role, copied from an existing one (default: reviewer)
+  factory analytics          Cost, token and performance report from the audit logs
+                             (--json for scripting; --html opens it in a browser, or
+                             prints the page if stdout isn't a terminal)
+  factory reset              Remove the agent sandboxes to switch projects
+                             (your Claude login is kept)
+
+${B}Examples${N}
+  cd ~/code/my-app && factory start
+  factory logs researcher
+  factory role new designer researcher
+  factory analytics --json | jq '.roles'
+EOF
+}
+
+# --- setup -------------------------------------------------------------------------
+cmd_setup() {
+  cmd_doctor || die "fix the problems above, then run 'factory setup' again"
+
+  step "Installing pinned tools (sbx $SBX_VERSION, herdr $HERDR_VERSION)"
+  "$SCRIPTS/install-prereqs.sh"
+  export PATH="$HOME/.local/bin:$PATH"
+
+  step "Building sandbox images"
+  local log
+  log="$(mktemp)"
+  if ! "$SCRIPTS/00-build-templates.sh" 2>&1 | tee "$log" | grep -E '^Building' | sed 's/^/  /'; then
+    if grep -q "Not authenticated" "$log"; then
+      say "Sign in to Docker to continue (a browser window opens):"
+      sbx login
+      "$SCRIPTS/00-build-templates.sh" 2>&1 | grep -E '^Building|rror' | sed 's/^/  /'
+    else
+      tail -20 "$log"
+      rm -f "$log"
+      die "image build failed"
+    fi
+  fi
+  rm -f "$log"
+
+  step "Applying the security baseline"
+  "$SCRIPTS/01-init-security.sh" >/dev/null
+  ok "outbound network blocked by default; Anthropic API allowed; local MCP gateway on"
+
+  step "Adding 'factory' to your PATH"
+  mkdir -p "$HOME/.local/bin"
+  ln -sf "$ROOT/bin/factory" "$HOME/.local/bin/factory"
+  ok "linked ~/.local/bin/factory"
+  case ":$PATH:" in
+    *":$HOME/.local/bin:"*) ;;
+    *) warn "add this to your shell profile: export PATH=\"\$HOME/.local/bin:\$PATH\"" ;;
+  esac
+
+  onboarding_hints
+
+  say ""
+  say "${G}Setup complete.${N} Next: cd into a project and run ${B}factory start${N}"
+}
+
+setup_done() {
+  [ "$(sbx settings get mcp.forceLocalGateway 2>/dev/null)" = "true" ] || return 1
+  local templates
+  templates="$(sbx template ls -q 2>/dev/null)"
+  for image in developer reviewer broker; do
+    printf '%s' "$templates" | grep -q "factory-$image" || return 1
+  done
+}
+
+# --- doctor ------------------------------------------------------------------------
+# cmd_doctor -> checks everything setup and start need, printing the fix for
+# each problem. Fails if anything blocks setup. Changes nothing itself.
+cmd_doctor() {
+  local problems=0 missing_pkgs="" os linux="" t pkg out
+  os="$(uname -s)"
+  [ "$os" = Linux ] && linux=1
+  # fail SUMMARY [FIX-TEXT...] -> a problem, with its fix indented beneath (multi-line args allowed)
+  fail() {
+    bad "$1"; shift
+    local l
+    for l in "$@"; do [ -z "$l" ] || printf '%s\n' "$l" | sed 's/^/      /'; done
+    problems=$((problems + 1))
+  }
+
+  step "Platform"
+  case "$os:$(uname -m)" in
+    Darwin:arm64)
+      if [ "$(sw_vers -productVersion | cut -d. -f1)" -ge 14 ]; then ok "macOS $(sw_vers -productVersion), Apple silicon"
+      else fail "macOS 14 (Sonoma) or later required"; fi ;;
+    Linux:x86_64)
+      if out="$(sbx_deb_pin 2>&1)"; then ok "$(os_release_field PRETTY_NAME)$(is_wsl && printf ' (WSL2)')"
+      else fail "$(printf '%s' "$out" | head -n1)" "$(printf '%s' "$out" | sed -n '2,$p')"; fi
+      if out="$(kvm_check 2>&1)"; then ok "KVM available (/dev/kvm)"
+      else fail "$(printf '%s' "$out" | head -n1)" "$(printf '%s' "$out" | sed -n '2,$p')"; fi ;;
+    *) fail "unsupported platform $os/$(uname -m): macOS on Apple silicon or Ubuntu 24.04+ x86_64 (including WSL2) only" ;;
+  esac
+
+  step "Tools"
+  for t in curl:curl jq:jq openssl:openssl git:git column:bsdextrautils; do
+    if command -v "${t%%:*}" >/dev/null 2>&1; then ok "${t%%:*}"
+    else bad "${t%%:*} not found"; missing_pkgs="$missing_pkgs ${t#*:}"; problems=$((problems + 1)); fi
+  done
+  if out="$(resolve_python 2>&1)"; then ok "python3 ($out)"
+  else bad "${out#error: }"; [ -n "$linux" ] && missing_pkgs="$missing_pkgs python3"; problems=$((problems + 1)); fi
+  if [ -n "$missing_pkgs" ]; then
+    if [ -n "$linux" ]; then say "      Install them: sudo apt-get update && sudo apt-get install -y$missing_pkgs"
+    else say "      Install them with Homebrew: brew install${missing_pkgs/bsdextrautils/}"; fi
+  fi
+
+  step "Docker (builds the sandbox images)"
+  if ! command -v docker >/dev/null 2>&1; then
+    if [ -n "$linux" ]; then
+      fail "docker not found" "Install Docker Engine in this Linux system (docs/setup-wsl.md, step 4):" \
+        "  curl -fsSL https://get.docker.com | sudo sh && sudo usermod -aG docker \$USER" \
+        "then restart the shell (under WSL: 'wsl --shutdown' in PowerShell, reopen the terminal)."
+    else
+      fail "docker not found" "Install Docker Desktop: https://docs.docker.com/desktop/setup/install/mac-install/"
+    fi
+  elif ! out="$(docker info 2>&1 >/dev/null)"; then
+    case "$out" in
+      *"permission denied"*)
+        fail "docker is installed but $(id -un) can't use it" "  sudo usermod -aG docker \$USER" \
+          "then restart the shell$(is_wsl && printf " (under WSL: 'wsl --shutdown' in PowerShell)")." ;;
+      *)
+        if is_wsl && [ "$(ps -p 1 -o comm= 2>/dev/null)" != systemd ]; then
+          fail "the Docker daemon isn't running, and WSL started without systemd" \
+            "Add to /etc/wsl.conf (sudo nano /etc/wsl.conf):" "  [boot]" "  systemd=true" \
+            "then run 'wsl --shutdown' in PowerShell and reopen the terminal."
+        elif [ -n "$linux" ]; then
+          fail "the Docker daemon isn't running" "  sudo systemctl enable --now docker"
+        else
+          fail "the Docker daemon isn't running" "Start Docker Desktop."
+        fi ;;
+    esac
+  else
+    ok "docker $(docker version --format '{{.Server.Version}}' 2>/dev/null)"
+    if docker buildx version >/dev/null 2>&1; then ok "docker buildx"
+    else fail "docker buildx not found (the broker image build needs it)" \
+      "$([ -n "$linux" ] && echo "  sudo apt-get install -y docker-buildx-plugin" || echo "Update Docker Desktop.")"; fi
+  fi
+
+  step "Factory tools"
+  if command -v sbx >/dev/null 2>&1 && [ "$(sbx_installed_version)" = "$SBX_VERSION" ]; then ok "sbx $SBX_VERSION"
+  else warn "sbx $SBX_VERSION not installed yet ('factory setup' installs it)"; fi
+  if command -v herdr >/dev/null 2>&1 && [ "$(herdr_installed_version)" = "$HERDR_VERSION" ]; then ok "herdr $HERDR_VERSION"
+  else warn "herdr $HERDR_VERSION not installed yet ('factory setup' installs it)"; fi
+  if command -v sbx >/dev/null 2>&1 && [ "$(sbx_installed_version)" = "$SBX_VERSION" ]; then
+    if setup_done; then ok "setup done (security baseline applied, images loaded)"
+    else warn "setup not finished: run 'factory setup'"; fi
+    if claude_login_stored; then ok "Claude login stored"
+    else warn "no Claude login yet: 'factory start' walks you through it"; fi
+  fi
+  if is_wsl; then
+    say "  ${D}Keep projects in the Linux filesystem (e.g. ~/code), not under /mnt/c: sandboxes mount${N}"
+    say "  ${D}the project folder, and Windows drives are slow and lose file permissions there.${N}"
+  fi
+
+  say ""
+  if [ "$problems" -eq 0 ]; then
+    say "${G}No problems found.${N}"
+  else
+    say "${R}$problems problem(s) found.${N} Fix them, then run ${B}factory doctor${N} again."
+    return 1
+  fi
+}
+
+# --- start -------------------------------------------------------------------------
+cmd_start() {
+  [ $# -le 1 ] || die "usage: factory start [dir]"
+  local target="${1:-.}" project current
+  [ -d "$target" ] || die "no such directory: $target"
+  project="$(cd "$target" && pwd -P)"
+  require_sbx
+  require_herdr
+  setup_done || die "the factory is not set up yet: run 'factory setup' first"
+  case "$project" in
+    /mnt/[a-z]/*) is_wsl && warn "$project is on a Windows drive: sandboxes will be slow and file permissions unreliable. Clone it into the Linux filesystem (e.g. ~/code) instead." ;;
+  esac
+
+  current="$(bound_project)"
+  if [ -n "$current" ] && [ "$current" != "$project" ] && sbx ls -q | grep -q '^factory-'; then
+    say "The factory is currently set up for ${B}$current${N}."
+    if confirm "Switch to $project? This removes the agent sandboxes (your Claude login is kept)."; then
+      cmd_reset --yes
+    else
+      die "not switching. Run 'factory start $current' to open the current project."
+    fi
+  fi
+
+  if [ "${HERDR_ENV:-}" = "1" ]; then
+    "$SCRIPTS/02-launch-factory.sh" "$project"
+    onboarding_hints
+    say ""
+    say "Open the ${B}code-factory${N} workspace in Herdr and talk to the Coordinator."
+  else
+    FACTORY_HERDR_SESSION="$HERDR_SESSION_NAME" "$SCRIPTS/02-launch-factory.sh" "$project"
+    onboarding_hints
+    if [ "${FACTORY_NO_ATTACH:-}" = "1" ]; then
+      say "Factory running. Open it with: herdr session attach $HERDR_SESSION_NAME"
+      return
+    fi
+    say "Opening Herdr. To leave it running in the background press ${B}Ctrl+B${N} then ${B}Q${N}; reopen with ${B}factory start${N}."
+    sleep 2
+    exec herdr session attach "$HERDR_SESSION_NAME"
+  fi
+}
+
+# policy_value SECTION KEY -> the raw value of KEY = ... in [SECTION], from this
+# machine's overlay ($FACTORY_CONFIG/policy.toml) if it sets KEY, else from
+# broker/policy.toml - the same precedence as the broker's load_policy().
+# Best-effort awk, not a TOML parser: good enough for the one-line values these
+# checks read.
+policy_value() {
+  local f v
+  for f in "$FACTORY_CONFIG/policy.toml" "$ROOT/broker/policy.toml"; do
+    [ -f "$f" ] || continue
+    if v="$(awk -v s="[$1]" -v k="$2" '
+        index($0, s) == 1 { f = 1; next }
+        /^\[/ { f = 0 }
+        f && $0 ~ "^[[:space:]]*"k"[[:space:]]*=" { sub(/^[^=]*=[[:space:]]*/, ""); print; found = 1; exit }
+        END { exit !found }' "$f")"; then
+      printf '%s\n' "$v"
+      return 0
+    fi
+  done
+}
+
+# policy_string SECTION KEY -> the string value of KEY = "..." in [SECTION]
+policy_string() {
+  policy_value "$1" "$2" | awk -F'"' '{ print $2 }'
+}
+
+git_push_enabled() {
+  policy_value git repos | grep -qE '\[.*[^][:space:]].*\]'
+}
+
+# keychain_has SERVICE -> success if a credential is stored for SERVICE
+keychain_has() {
+  case "$(uname -s)" in
+    Darwin) security find-generic-password -s "$1" >/dev/null 2>&1 ;;
+    *) command -v secret-tool >/dev/null 2>&1 && secret-tool lookup service "$1" >/dev/null 2>&1 ;;
+  esac
+}
+
+# any_jira_tool_granted -> success if the Coordinator or any role is granted a
+# jira_* broker tool (jira_my_issues, jira_get_issue). Other broker tools
+# (web_fetch, npm_fetch, ...) don't need a Jira token, so warning on any
+# BROKER_TOOLS grant would be a false positive for roles/setups that never
+# touch Jira.
+any_jira_tool_granted() {
+  local r
+  case " $(coordinator_broker_tools) " in *" jira_"*) return 0 ;; esac
+  for r in $(list_roles); do
+    case " $(role_get "$r" BROKER_TOOLS) " in *" jira_"*) return 0 ;; esac
+  done
+  return 1
+}
+
+# npm_private_registry_needs_token -> success if a role is granted npm_fetch and
+# the policy names a private npm registry (which needs the keychain credential).
+npm_private_registry_needs_token() {
+  local r granted=""
+  for r in $(list_roles); do
+    case " $(role_get "$r" BROKER_TOOLS) " in *" npm_fetch "*) granted=1 ;; esac
+  done
+  [ -n "$granted" ] || return 1
+  [ -n "$(policy_string packages npm_private_registry)" ]
+}
+
+onboarding_hints() {
+  if ! claude_login_stored; then
+    warn "first time: type /login in the Coordinator pane to sign in with your Claude subscription, then run 'factory start' again (e.g. in the Host shell pane) to create the role sandboxes"
+  fi
+  if git_push_enabled && ! sbx secret ls 2>/dev/null | grep -q " github "; then
+    warn "git push/PR is enabled but no GitHub token is stored: run 'sbx secret set github --sandbox $BROKER_SANDBOX' (see README: Enabling git push and pull requests)"
+  fi
+  if any_jira_tool_granted; then
+    keychain_has factory-jira || warn "Jira tools are granted but no token is stored in the keychain (see README: Enabling Jira)"
+    [ -n "$(policy_string jira cloud_id)" ] || warn "Jira tools are granted but [jira].cloud_id is not set; set it in $FACTORY_CONFIG/policy.toml (see README: Enabling Jira)"
+  fi
+  if npm_private_registry_needs_token && ! keychain_has factory-npm-registry; then
+    warn "npm_fetch can't download private npm packages until a token is stored in the keychain (see README: Enabling a private npm registry)"
+  fi
+}
+
+# --- status ------------------------------------------------------------------------
+cmd_status() {
+  require_sbx
+  local project code pid
+  project="$(bound_project)"
+  say "${B}Project${N}   ${project:-${D}none yet (run factory start)${N}}"
+  if [ -f "$FACTORY_CONFIG/policy.toml" ] || [ -d "$FACTORY_CONFIG/broker-kit" ]; then
+    say "${B}Local settings${N} $FACTORY_CONFIG"
+  else
+    say "${B}Local settings${N} ${D}none (see config.example/)${N}"
+  fi
+  if [ -d "$ROOT/.broker" ] || [ -d "$ROOT/.dispatch" ] || [ -d "$ROOT/.roles" ]; then
+    warn "state is still inside the repo; factory start moves it to $FACTORY_STATE"
+  fi
+
+  code="$(curl -s -o /dev/null -w '%{http_code}' -m 2 -X POST -d '{}' "http://127.0.0.1:$BROKER_PORT/mcp" || true)"
+  if [ "$code" = "401" ]; then ok "broker running (127.0.0.1:$BROKER_PORT)"; else bad "broker not running"; fi
+  pid="$(cat "$FACTORY_DISPATCH_STATE/pid" 2>/dev/null || true)"
+  if [ -n "$pid" ] && ps -p "$pid" -o command= 2>/dev/null | grep -qF "$ROOT/dispatch/server.py"; then
+    ok "dispatch bridge running (pid $pid)"
+  else
+    bad "dispatch bridge not running"
+  fi
+  if claude_login_stored; then ok "Claude login stored"
+  else warn "no Claude login yet: type /login in the Coordinator pane, then run 'factory start' again"; fi
+
+  local coord_tools
+  coord_tools="$(coordinator_broker_tools)"
+  say "${B}Coordinator broker tools${N} ${coord_tools:-none}"
+  if any_jira_tool_granted; then
+    keychain_has factory-jira || warn "Jira keychain entry (\"factory-jira\") not found"
+    [ -n "$(policy_string jira cloud_id)" ] || warn "[jira].cloud_id is not set (see README: Enabling Jira)"
+  fi
+  if npm_private_registry_needs_token && ! keychain_has factory-npm-registry; then
+    warn "private npm registry keychain entry (\"factory-npm-registry\") not found"
+  fi
+
+  say ""
+  say "${B}Sandboxes${N}"
+  sbx ls --json | jq -r '.sandboxes[] | select(.name | startswith("factory-")) | "  \(.name)\t\(.status)"' \
+    | column -t -s "$(printf '\t')" | sed "s/running/${G}running${N}/; s/stopped/${D}stopped${N}/"
+  say ""
+  say "${D}Follow a role: factory logs <role>   Roles: factory roles${N}"
+}
+
+# --- stop / reset ------------------------------------------------------------------
+cmd_stop() {
+  "$SCRIPTS/03-stop-factory.sh"
+}
+
+cmd_reset() {
+  local sandboxes
+  require_sbx
+  sandboxes="$(sbx ls -q | grep '^factory-' || true)"
+  if [ "${1:-}" != "--yes" ]; then
+    say "This removes these sandboxes: $(printf '%s ' $sandboxes)"
+    say "Your Claude login, roles and settings are kept."
+    confirm "Continue?" || die "cancelled"
+  fi
+  "$SCRIPTS/03-stop-factory.sh" >/dev/null
+  if [ -n "$sandboxes" ]; then
+    # shellcheck disable=SC2086 # one argument per sandbox
+    sbx rm --force $sandboxes >/dev/null
+    ok "removed $(printf '%s ' $sandboxes)"
+  fi
+  rm -f "$FACTORY_BROKER_STATE/project" "$FACTORY_DISPATCH_STATE/project"
+  rm -f "$FACTORY_DISPATCH_STATE"/sessions/* 2>/dev/null || true
+  ok "factory is no longer bound to a project"
+}
+
+# --- logs / roles ------------------------------------------------------------------
+cmd_logs() {
+  local name="${1:-}"
+  case "$name" in
+    "")
+      say "Usage: factory logs <name>   where <name> is one of:"
+      say "  $(list_roles | tr '\n' ' ')broker dispatch"
+      ;;
+    broker|dispatch)
+      local file="$FACTORY_STATE/$name/audit.jsonl"
+      [ -f "$file" ] || die "no $name log yet"
+      tail -n 30 -F "$file" | jq -r --unbuffered \
+        '[.ts[11:19], (.role // ""), (.tool // .event // ""), (.decision // .status // ""), (.reason // "")] | map(select(. != "")) | join("  ")'
+      ;;
+    *)
+      [ -f "$ROOT/roles/$name/role.conf" ] || die "unknown role '$name' (see: factory roles)"
+      mkdir -p "$FACTORY_DISPATCH_STATE/logs"
+      touch "$FACTORY_DISPATCH_STATE/logs/$name.log"
+      tail -n 100 -F "$FACTORY_DISPATCH_STATE/logs/$name.log"
+      ;;
+  esac
+}
+
+cmd_roles() {
+  local r
+  for r in $(list_roles); do
+    printf '%s%-18s%s %-9s %s\n' "$B" "$r" "$N" \
+      "$( [ "$(role_get "$r" WORKSPACE)" = rw ] && echo "edits" || echo "read-only")" \
+      "$(role_get "$r" DESCRIPTION)"
+    printf '  %snetwork tools: %s%s\n' "$D" "$(role_get "$r" BROKER_TOOLS | sed 's/ /, /g; s/^$/none/')" "$N"
+  done
+}
+
+cmd_role() {
+  case "${1:-}" in
+    new) shift; "$SCRIPTS/new-role.sh" "$@" ;;
+    *) die "usage: factory role new <name> [like]" ;;
+  esac
+}
+
+# --- analytics ---------------------------------------------------------------------
+cmd_analytics() {
+  local python
+  python="$(resolve_python)"
+  "$python" "$SCRIPTS/analytics.py" --state "$FACTORY_STATE" "$@"
+}
+
+# --- main ----------------------------------------------------------------------------
+command="${1:-help}"
+[ $# -eq 0 ] || shift
+case "$command" in
+  doctor) cmd_doctor "$@" ;;
+  setup) cmd_setup "$@" ;;
+  start|up) cmd_start "$@" ;;
+  status) cmd_status "$@" ;;
+  stop|down) cmd_stop "$@" ;;
+  reset) cmd_reset "$@" ;;
+  logs|log) cmd_logs "$@" ;;
+  roles) cmd_roles "$@" ;;
+  role) cmd_role "$@" ;;
+  analytics) cmd_analytics "$@" ;;
+  help|-h|--help) usage ;;
+  *) usage; die "unknown command: $command" ;;
+esac

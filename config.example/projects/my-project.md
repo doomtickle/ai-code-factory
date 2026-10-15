@@ -1,0 +1,2 @@
+- Tests: `factory-test -- npx vitest run` (`npm test` starts watch mode).
+- Type check: `factory-test -- npx tsc --noEmit`.

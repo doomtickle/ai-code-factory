@@ -1,0 +1,41 @@
+schemaVersion: "2"
+kind: mixin
+name: factory-broker-kit
+displayName: Factory Broker
+description: "Network broker: the only sandbox with egress for agent tool traffic, exposed to agents as MCP tools"
+version: "1.0.0"
+requires:
+  agent: shell
+
+permissions:
+  network:
+    # Network-level backstop for broker/policy.toml. Keep [web].allow_hosts in
+    # sync with the documentation hosts below. Hosts only your organization
+    # needs (a private npm registry) go in your local broker-kit instead
+    # (config.example/broker-kit/, README, Local settings).
+    allow:
+      # GitHub (git over HTTPS + REST API); token injected by the sbx proxy
+      - github.com
+      - api.github.com
+      - codeload.github.com
+      # Package registries
+      - registry.npmjs.org
+      - pypi.org
+      - files.pythonhosted.org
+      # web_fetch documentation hosts
+      - docs.python.org
+      - developer.mozilla.org
+      - nodejs.org
+      - docs.github.com
+      - www.npmjs.com
+      # gemini_flash_query; the API key is delivered as a file inside the
+      # broker sandbox (/etc/factory-broker/secrets/gemini), not this policy
+      - generativelanguage.googleapis.com
+      # jira_my_issues / jira_get_issue; Jira Cloud scoped-token gateway
+      # (broker/policy.toml [jira]); the credential is also a file
+      # (/etc/factory-broker/secrets/jira), not this policy
+      - api.atlassian.com
+
+# No setup.startup: in sbx 0.45.1 startup commands run only when a sandbox is
+# created, not when it restarts. scripts/start-broker.sh launches
+# /opt/factory-broker/run.sh whenever the server is not running.

@@ -1,0 +1,21 @@
+# Example local broker kit: extra egress hosts for the broker sandbox only
+# (agent sandboxes still reach only Anthropic). Copy to
+# ~/.config/ai-code-factory/broker-kit/spec.yaml alongside policy.toml. It is
+# applied when the broker sandbox is created, so after changing it run
+#   sbx rm --force factory-broker && factory start
+schemaVersion: "2"
+kind: mixin
+name: factory-broker-local-kit
+displayName: Factory Broker (local settings)
+description: "This machine's extra broker egress hosts"
+version: "1.0.0"
+requires:
+  agent: shell
+
+permissions:
+  network:
+    allow:
+      # The host of [packages].npm_private_registry in your local policy.toml
+      - example.jfrog.io
+      # Each host in [packages].npm_redirect_hosts
+      - jfrog-prod-use1-shared-example.s3.amazonaws.com

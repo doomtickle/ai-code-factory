@@ -1,0 +1,262 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Usage: factory-test [-C <project-dir>] [-m auto|clean|host] [-q] [--] [<command> [args...]]
+#
+# Runs <command> (e.g. `npx vitest run`, `yarn test`) in a copy of the project
+# on this sandbox's own disk, never in the project itself. With no command it
+# only prepares the copy and prints its path. CI=true is set (unless already
+# set) so test runners don't start in watch mode.
+#
+# -q: save the command's full output to a log and print only its last 40 lines
+#     (where test runners put the summary) and the log's path, to grep for more.
+#     Use it for full-suite runs; drop it to see everything from a narrow run.
+#
+# Modes (-m, or FACTORY_TEST_MODE; default auto):
+#   clean  Install dependencies exactly as the lockfile pins them, offline,
+#          from .factory/npm-mirror/ (the broker's npm_fetch tool fills it).
+#   host   Use a copy of the project's own node_modules, installed on the host.
+#          Packages built for the host's platform (e.g. @esbuild/darwin-arm64)
+#          get their Linux counterparts, at the same version, from the mirror.
+#          Results then reflect the host's installed versions, not the lockfile.
+#   auto   clean; if that install fails and the project has a node_modules,
+#          fall back to host.
+#
+# Why a copy: the project folder is shared with the host, whose node_modules
+# holds the host platform's native binaries, and read-only roles can't write
+# to it at all. Files the command writes (snapshots, coverage) stay in the copy.
+#
+# Baked into the developer and reviewer images (templates/*/Dockerfile).
+
+die() { echo "factory-test: $*" >&2; exit 1; }
+say() { echo "factory-test: $*" >&2; }
+
+src="$PWD"
+mode="${FACTORY_TEST_MODE:-auto}"
+quiet=""
+while getopts "C:m:qh" opt; do
+  case "$opt" in
+    C) src="$OPTARG" ;;
+    m) mode="$OPTARG" ;;
+    q) quiet=1 ;;
+    h) sed -n '4,27p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) die "usage: factory-test [-C <project-dir>] [-m auto|clean|host] [-q] [--] [<command> [args...]]" ;;
+  esac
+done
+shift $((OPTIND - 1))
+case "$mode" in auto|clean|host) ;; *) die "unknown mode '$mode' (auto, clean or host)" ;; esac
+
+src="$(cd "$src" && pwd -P)" || die "no such directory: $src"
+root="${FACTORY_TEST_ROOT:-$HOME/.cache/factory-test}"
+base="$root/$(basename "$src")-$(printf '%s' "$src" | sha256sum | cut -c1-12)"
+# npm_fetch writes the mirror at the workspace root, which is above <project-dir>
+# when the lockfile is in a subdirectory.
+mirror="$src/.factory/npm-mirror"
+dir="$src"
+while [ ! -d "$dir/.factory/npm-mirror" ] && [ "$dir" != / ]; do dir="$(dirname "$dir")"; done
+[ ! -d "$dir/.factory/npm-mirror" ] || mirror="$dir/.factory/npm-mirror"
+
+if [ -f "$src/yarn.lock" ]; then lock=yarn.lock
+elif [ -f "$src/package-lock.json" ]; then lock=package-lock.json
+else lock=""
+fi
+
+# clean_install: sync into $base (keeping its own node_modules) and install from
+# the lockfile if it changed since the last install. Fails if the install does.
+clean_install() {
+  mkdir -p "$base"
+  # Excluded paths are also left alone on the copy's side (rsync --delete skips
+  # them), so dependencies installed there survive between runs.
+  rsync -a --delete --exclude=node_modules --exclude=/.git --exclude=/.factory "$src/" "$base/"
+  [ -n "$lock" ] || return 0
+  local want
+  want="$lock $(cat "$base/package.json" "$base/$lock" | sha256sum | cut -d' ' -f1)"
+  [ "$(cat "$base/node_modules/.factory-test-stamp" 2>/dev/null || true)" != "$want" ] || return 0
+  if [ ! -d "$mirror" ]; then
+    say "no package mirror at $mirror: call the broker's npm_fetch tool first"
+    return 1
+  fi
+  say "installing dependencies offline from $mirror (install scripts disabled; log: $root/install.log)..."
+  rm -rf "$base/node_modules"
+  if [ "$lock" = yarn.lock ]; then
+    # Only this rc file: the mirror is the sole package source.
+    printf 'yarn-offline-mirror "%s"\nyarn-offline-mirror-pruning false\n' "$mirror" > "$root/yarnrc"
+    (cd "$base" && yarn install --no-default-rc --use-yarnrc "$root/yarnrc" --offline --frozen-lockfile \
+      --ignore-scripts --non-interactive --cache-folder "$root/yarn-cache" > "$root/install.log" 2>&1) || {
+      grep -E '^error' "$root/install.log" >&2 || tail -n 20 "$root/install.log" >&2
+      say "yarn install failed (full log: $root/install.log); if a package is missing from the mirror, call npm_fetch again"
+      return 1
+    }
+  else
+    find "$mirror" -maxdepth 1 -name '*.tgz' -print0 \
+      | xargs -0 -r npm cache add --cache "$root/npm-cache" >/dev/null
+    (cd "$base" && npm ci --offline --ignore-scripts --no-audit --no-fund --cache "$root/npm-cache" \
+      > "$root/install.log" 2>&1) || {
+      grep -E '^npm (ERR|error)' "$root/install.log" | head -n 20 >&2 || tail -n 20 "$root/install.log" >&2
+      say "npm ci failed (full log: $root/install.log); if a package is missing from the mirror, call npm_fetch again"
+      return 1
+    }
+  fi
+  printf '%s\n' "$want" > "$base/node_modules/.factory-test-stamp"
+}
+
+# host_modules: sync the project, node_modules included, into $base-host and add
+# this platform's counterparts of the host's native packages from the mirror.
+host_modules() {
+  [ -d "$src/node_modules" ] || die "host mode needs the project's node_modules, and $src has none"
+  mkdir -p "$base-host"
+  rsync -a --delete --exclude=/.git --exclude=/.factory "$src/" "$base-host/"
+  node - "$base-host" "$mirror" <<'NODE'
+// For every package with optionalDependencies (esbuild, rollup, swc, ...): if
+// the installed one is for another platform and none fits this one, unpack the
+// one that fits from the mirror next to it, at the installed one's version.
+const fs = require("fs"), path = require("path"), { execFileSync } = require("child_process");
+const [root, mirror] = process.argv.slice(2);
+const report = process.report && process.report.getReport();
+const here = { os: process.platform, cpu: process.arch,
+               libc: report && report.header && report.header.glibcVersionRuntime ? "glibc" : "musl" };
+const allowed = (list, v) => {  // npm's os/cpu/libc semantics, including "!x" negations
+  if (list == null) return true;
+  list = [].concat(list);
+  if (list.includes("!" + v)) return false;
+  const pos = list.filter((x) => !x.startsWith("!"));
+  return pos.length === 0 || pos.includes(v);
+};
+const fits = (p) => allowed(p.os, here.os) && allowed(p.cpu, here.cpu) && (p.libc == null || allowed(p.libc, here.libc));
+const platformSpecific = (p) => p.os != null || p.cpu != null || p.libc != null;
+const readJson = (f) => { try { return JSON.parse(fs.readFileSync(f, "utf8")); } catch { return null; } };
+const mirrorFile = (name, version) => path.join(mirror, name.replace("/", "-") + "-" + version + ".tgz");
+const tar = (...args) => execFileSync("tar", args, { stdio: ["ignore", "pipe", "ignore"], maxBuffer: 1 << 26 });
+const tarballManifest = (f) => {  // the top-level package.json; npm packs it as package/package.json
+  try { return JSON.parse(tar("-xzOf", f, "package/package.json")); } catch {}
+  try {
+    const entry = tar("-tzf", f).toString().split("\n").find((e) => /^[^/]+\/package\.json$/.test(e));
+    return entry ? JSON.parse(tar("-xzOf", f, entry)) : null;
+  } catch { return null; }
+};
+
+const packages = [];  // every installed package directory, nested ones included
+(function walk(nm) {
+  let entries;
+  try { entries = fs.readdirSync(nm, { withFileTypes: true }); } catch { return; }
+  for (const e of entries) {
+    if (!e.isDirectory() || e.name.startsWith(".")) continue;
+    const dirs = e.name.startsWith("@")
+      ? fs.readdirSync(path.join(nm, e.name), { withFileTypes: true })
+          .filter((s) => s.isDirectory()).map((s) => path.join(nm, e.name, s.name))
+      : [path.join(nm, e.name)];
+    for (const d of dirs) { packages.push(d); walk(path.join(d, "node_modules")); }
+  }
+})(path.join(root, "node_modules"));
+
+const installedFrom = (pkgDir, name) => {  // Node's resolution: nearest node_modules upward
+  for (let d = pkgDir; d.startsWith(root); d = path.dirname(d)) {
+    if (path.basename(d) === "node_modules") continue;
+    const cand = path.join(d, "node_modules", name);
+    if (fs.existsSync(path.join(cand, "package.json"))) return cand;
+  }
+  return null;
+};
+
+const missing = [];
+let added = 0;
+for (const dir of packages) {
+  const pkg = readJson(path.join(dir, "package.json"));
+  if (!pkg || !pkg.optionalDependencies) continue;
+  const opt = pkg.optionalDependencies;
+  const installed = Object.keys(opt).map((n) => ({ n, d: installedFrom(dir, n) })).filter((x) => x.d)
+    .map((x) => ({ ...x, p: readJson(path.join(x.d, "package.json")) || {} }));
+  const rel = path.relative(root, dir);
+  for (const host of installed.filter((x) => platformSpecific(x.p) && !fits(x.p))) {
+    // Platform builds of one binary are optional deps pinned at the same spec
+    // (rollup's @rollup/rollup-* all at "4.44.2"). A host package with no such
+    // siblings, like fsevents, is a host-only extra that a clean install here
+    // would skip too.
+    const siblings = Object.keys(opt).filter((n) => n !== host.n && opt[n] === opt[host.n]);
+    if (siblings.length === 0) continue;
+    const version = host.p.version;
+    const nm = host.d.slice(0, host.d.length - host.n.length - 1);
+    // Already there? Only a counterpart beside the host package, at its version,
+    // counts: one found further up the tree (another copy of the parent at
+    // another version) would be loaded instead and fail its version check.
+    if (installed.some((x) => siblings.includes(x.n) && x.d === path.join(nm, x.n) &&
+                              x.p.version === version && fits(x.p))) continue;
+    // Likeliest names first, so usually only one tarball is opened.
+    const score = (n) => (n.includes(here.os) ? 2 : 0) + (n.includes(here.cpu) ? 1 : 0);
+    let chosen = null;
+    for (const n of siblings.slice().sort((a, b) => score(b) - score(a))) {
+      const f = mirrorFile(n, version);
+      if (!fs.existsSync(f)) continue;
+      const m = tarballManifest(f);
+      if (m && platformSpecific(m) && fits(m)) { chosen = { n, f }; break; }
+    }
+    if (!chosen) {
+      const likely = siblings.filter((n) => score(n) === 3).map((n) => `${n}@${version}`);
+      missing.push(`${pkg.name}@${pkg.version} (${rel}) has ${host.n}@${version} for another platform, and no ` +
+                   `package for ${here.os}/${here.cpu}/${here.libc} at ${version} is in the mirror` +
+                   (likely.length ? ` (expected ${likely.join(" or ")})` : ""));
+      continue;
+    }
+    const target = path.join(nm, chosen.n);
+    fs.mkdirSync(target, { recursive: true });
+    execFileSync("tar", ["-xzf", chosen.f, "-C", target, "--strip-components=1"]);
+    installed.push({ n: chosen.n, d: target, p: readJson(path.join(target, "package.json")) || {} });
+    added++;
+    console.error(`factory-test: added ${chosen.n}@${version} next to ${host.n} (${path.relative(root, nm)})`);
+  }
+}
+if (missing.length) {
+  console.error("factory-test: host node_modules can't run here: missing platform packages:\n  " +
+                missing.join("\n  ") + "\nfactory-test: call the broker's npm_fetch tool, then try again.");
+  process.exit(1);
+}
+if (!added) console.error("factory-test: no host-platform native packages needed replacing");
+NODE
+}
+
+if [ -z "$lock" ] && [ "$mode" != host ]; then
+  clean_install
+  copy="$base"
+  label="project files only (no yarn.lock or package-lock.json)"
+elif [ "$mode" = host ]; then
+  host_modules
+  copy="$base-host"
+  label="host node_modules fallback (requested)"
+elif clean_install; then
+  copy="$base"
+  label="clean install ($lock, offline from .factory/npm-mirror)"
+elif [ "$mode" = auto ] && [ -d "$src/node_modules" ]; then
+  say "the clean install failed (above); falling back to a copy of the project's own node_modules"
+  host_modules
+  copy="$base-host"
+  label="host node_modules fallback (the clean install failed)"
+else
+  die "the clean install failed (above)${mode:+ in mode $mode}"
+fi
+case "$label" in host*) label="$label - results reflect the host's installed package versions (including private packages), not a clean $lock install" ;; esac
+
+if [ $# -eq 0 ]; then
+  say "mode: $label"
+  echo "$copy"
+  exit 0
+fi
+say "mode: $label"
+say "running in $copy (a copy of $src)"
+export CI="${CI:-true}"
+cd "$copy"
+set +e
+if [ -n "$quiet" ]; then
+  log="$root/last-run.log"
+  "$@" > "$log" 2>&1
+  rc=$?
+  # Without terminal colours, so the tail and any grep of the log stay plain text.
+  sed 's/\x1b\[[0-9;]*[A-Za-z]//g' "$log" > "$log.tmp" && mv "$log.tmp" "$log"
+  say "last 40 of $(wc -l < "$log" | tr -d ' ') lines (full output: $log):"
+  tail -n 40 "$log"
+else
+  "$@"
+  rc=$?
+fi
+set -e
+say "mode was: $label (exit $rc)"
+exit "$rc"
