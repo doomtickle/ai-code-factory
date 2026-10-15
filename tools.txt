@@ -1,0 +1,13 @@
+# Broker tool names, one per line, in tools/list order. Read by
+# scripts/lib/roles.sh to validate BROKER_TOOLS grants: host scripts run on
+# the system Python, too old to import the broker. tests/test_registry.py
+# fails if this drifts from what agentbroker/tools/ registers.
+web_fetch
+git_fetch
+git_push
+github_create_pr
+gemini_flash_query
+jira_my_issues
+jira_get_issue
+npm_fetch
+pip_download
