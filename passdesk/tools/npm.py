@@ -7,12 +7,10 @@ import hashlib
 import json
 import os
 import re
-import secrets
 import urllib.error
 import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
-from pathlib import Path
 
 from ..core import config
 from ..core.errors import Denied
@@ -20,7 +18,8 @@ from ..core.filters import sanitize
 from ..core.net import NO_REDIRECT_OPENER, read_secret_file
 from ..core.policy import check_package, host_allowed
 from ..core.registry import register
-from ..core.workspace import factory_dir, tool_lock, workspace_path
+from ..core.workspace import (atomic_write, factory_dir, file_in_dir, open_workspace_dir, read_in_dir, tool_lock,
+                              workspace_path)
 
 # --------------------------------------------------------------------------
 # npm_fetch: the tarballs a lockfile pins, downloaded into an offline mirror in
@@ -45,17 +44,22 @@ _NPM_MAX_TARBALL_BYTES = 300_000_000
 _NPM_DOWNLOAD_WORKERS = 8
 _NPM_MAX_REDIRECTS = 5
 _REDIRECT_CODES = (301, 302, 303, 307, 308)
+_NPM_MAX_LOCKFILE_BYTES = 50_000_000
 
 
 class NpmFetchError(Exception):
     """A tarball that couldn't be mirrored for a reason other than policy; str() is the report."""
 
 
-def npm_lock_entries(proj: Path) -> tuple[str, list[tuple[str, str | None, str | None]]]:
-    """(lockfile name, [(label, resolved, integrity)]) from yarn.lock v1 or package-lock.json v2+."""
-    yarn_lock, npm_lock = proj / "yarn.lock", proj / "package-lock.json"
-    if yarn_lock.is_file():
-        text = yarn_lock.read_text()
+def npm_lock_entries(proj: str) -> tuple[str, list[tuple[str, str | None, str | None]]]:
+    """(lockfile name, [(label, resolved, integrity)]) from yarn.lock v1 or package-lock.json v2+
+    in workspace directory proj. Each lockfile is read once, as a regular file."""
+    with open_workspace_dir(proj) as d:
+        yarn_lock = read_in_dir(d, "yarn.lock", "yarn.lock", _NPM_MAX_LOCKFILE_BYTES)
+        npm_lock = None if yarn_lock is not None else read_in_dir(
+            d, "package-lock.json", "package-lock.json", _NPM_MAX_LOCKFILE_BYTES)
+    if yarn_lock is not None:
+        text = yarn_lock.decode("utf-8", "replace")
         if "# yarn lockfile v1" not in text[:1000]:
             raise Denied("only yarn v1 lockfiles are supported (this yarn.lock is from yarn 2 or later)")
         entries: list[list] = []
@@ -71,8 +75,8 @@ def npm_lock_entries(proj: Path) -> tuple[str, list[tuple[str, str | None, str |
                 elif key == "integrity":
                     entries[-1][2] = val.strip().strip('"')
         return "yarn.lock", [tuple(e) for e in entries]
-    if npm_lock.is_file():
-        lock = json.loads(npm_lock.read_text())
+    if npm_lock is not None:
+        lock = json.loads(npm_lock)
         if "packages" not in lock:
             raise Denied("package-lock.json lockfileVersion 1 is not supported; regenerate it with npm 7 or later")
         out = []
@@ -143,9 +147,14 @@ def npm_registry_auth() -> str | None:
     return "Bearer " + value
 
 
-def file_digest(path: Path, algo: str) -> str:
+def mirror_digest(dest: int, name: str, algo: str) -> str | None:
+    """Digest of regular file name in the mirror directory fd, or None if it is
+    missing or anything else (then it is downloaded again, replacing it)."""
+    fd = file_in_dir(dest, name)
+    if fd is None:
+        return None
     h = hashlib.new(algo)
-    with open(path, "rb") as f:
+    with os.fdopen(fd, "rb") as f:
         for chunk in iter(lambda: f.read(1 << 20), b""):
             h.update(chunk)
     return h.hexdigest()
@@ -210,41 +219,36 @@ def npm_open(item: dict, auth: str | None, policy: dict):
     raise NpmFetchError(f"more than {_NPM_MAX_REDIRECTS} redirects, the last to {redact_url(url)}")
 
 
-def npm_download(item: dict, dest: Path, auth: str | None, policy: dict) -> int:
-    """Download one tarball into dest, verified against its lockfile hash. Returns bytes written."""
-    tmp = dest / f".{item['file']}.{secrets.token_hex(4)}.part"
+def npm_download(item: dict, dest: int, auth: str | None, policy: dict) -> int:
+    """Download one tarball into the mirror directory fd, verified against its
+    lockfile hash. Returns bytes written."""
     h, size = hashlib.new(item["algo"]), 0
-    try:
-        resp, url, _ = npm_open(item, auth, policy)
-        with resp, open(tmp, "wb") as f:
-            for chunk in iter(lambda: resp.read(1 << 20), b""):
-                size += len(chunk)
-                if size > _NPM_MAX_TARBALL_BYTES:
-                    raise NpmFetchError(f"larger than {_NPM_MAX_TARBALL_BYTES} bytes ({redact_url(url)})")
-                h.update(chunk)
-                f.write(chunk)
+    resp, url, _ = npm_open(item, auth, policy)
+    with resp, atomic_write(dest, item["file"]) as f:
+        for chunk in iter(lambda: resp.read(1 << 20), b""):
+            size += len(chunk)
+            if size > _NPM_MAX_TARBALL_BYTES:
+                raise NpmFetchError(f"larger than {_NPM_MAX_TARBALL_BYTES} bytes ({redact_url(url)})")
+            h.update(chunk)
+            f.write(chunk)
         if h.hexdigest() != item["digest"]:
             raise NpmFetchError(f"the download from {redact_url(url)} does not match the lockfile's "
                                 f"{item['algo']} hash")
-        os.replace(tmp, dest / item["file"])
-        return size
-    finally:
-        tmp.unlink(missing_ok=True)
+    return size
 
 
 def tool_npm_fetch(args: dict, policy: dict) -> str:
-    proj = workspace_path(args.get("path", "."))
-    lock_name, entries = npm_lock_entries(proj)
+    proj_rel = args.get("path", ".")
+    proj = workspace_path(proj_rel)
+    lock_name, entries = npm_lock_entries(proj_rel)
     items: dict[str, dict] = {}
     for label, resolved, integrity in entries:
         item = npm_tarball(label, resolved, integrity, policy)
         other = items.setdefault(item["file"], item)
         if (other["url"], other["digest"]) != (item["url"], item["digest"]):
             raise Denied(f"{other['label']} and {label} would share the mirror file {item['file']}")
-    with tool_lock:
-        dest = factory_dir("npm-mirror")
-        missing = [i for i in items.values()
-                   if not (dest / i["file"]).is_file() or file_digest(dest / i["file"], i["algo"]) != i["digest"]]
+    with tool_lock, factory_dir("npm-mirror") as dest:
+        missing = [i for i in items.values() if mirror_digest(dest, i["file"], i["algo"]) != i["digest"]]
         failures, total = [], 0
         auth = npm_registry_auth()
         if not auth:

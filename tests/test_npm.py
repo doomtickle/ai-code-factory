@@ -5,6 +5,7 @@ import email
 import hashlib
 import io
 import json
+import os
 import unittest
 import urllib.error
 from pathlib import Path
@@ -112,6 +113,36 @@ class NpmFetchTests(Base):
         self.assertEqual((config.WORKSPACE / ".factory/.gitignore").read_text(), "*\n")
         # registry.yarnpkg.com is fetched from registry.npmjs.org
         self.assertTrue(all("yarnpkg" not in url for url, _ in self.sent))
+
+    def test_symlinked_lockfile_is_refused(self):
+        self.standard_lock()
+        (config.WORKSPACE / "yarn.lock").rename(config.WORKSPACE / "real.lock")
+        os.symlink("real.lock", config.WORKSPACE / "yarn.lock")
+        with self.assertRaisesRegex(Denied, "yarn.lock is a symlink"):
+            self.fetch()
+        self.assertEqual(self.sent, [])
+
+    def test_symlinked_mirror_dir_is_refused(self):
+        self.standard_lock()
+        outside = Path(self.tmp.name) / "outside"
+        outside.mkdir()
+        (config.WORKSPACE / ".factory").mkdir()
+        os.symlink(outside, self.mirror())
+        with self.assertRaisesRegex(Denied, "symlink"):
+            self.fetch()
+        self.assertEqual(list(outside.iterdir()), [])
+
+    def test_symlinked_mirror_file_is_replaced_not_trusted(self):
+        self.yarn_lock(self.entry('left-pad@^1.3.0', "https://registry.npmjs.org/left-pad/-/left-pad-1.3.0.tgz",
+                                  sri(self.PUB)))
+        victim = Path(self.tmp.name) / "victim.tgz"
+        victim.write_bytes(self.PUB)  # matches the hash, but lives outside the workspace
+        self.mirror().mkdir(parents=True)
+        os.symlink(victim, self.mirror() / "left-pad-1.3.0.tgz")
+        out = self.fetch(policy=POLICY)
+        self.assertIn("1 downloaded", out)
+        self.assertFalse((self.mirror() / "left-pad-1.3.0.tgz").is_symlink())
+        self.assertEqual(victim.read_bytes(), self.PUB)
 
     def test_credential_only_sent_to_the_private_registry(self):
         self.standard_lock()

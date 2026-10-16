@@ -59,8 +59,17 @@ npm_private_registry = ""
 npm_redirect_hosts = []
 
 [filters]
+# git_push limits. Every commit in a push is secret-scanned on its own (its
+# patch, message, and author/committer names and emails), so a secret added
+# in one commit and deleted in a later one is still refused; binary files are
+# scanned and counted as text.
 max_commits = 200
+# Total size of every pushed commit's patch (not just the net diff), binary
+# files included. The commit messages are capped at the same size.
 max_diff_bytes = 2_000_000
+# Largest bundle file git_push accepts from .factory/outgoing/, checked while
+# the broker copies it into private space, before git reads it.
+max_bundle_bytes = 100_000_000
 
 [gemini]
 # gemini_flash_query. The API key comes from the broker sandbox's own

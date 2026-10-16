@@ -20,6 +20,27 @@ interpreters from the workspace. Code crosses the boundary as git bundles or
 plain files; dependencies cross it as lockfile-pinned, hash-verified tarballs
 (`npm_fetch`) or wheels (`pip_download`) that the caller installs offline.
 
+Everything in the workspace is treated as hostile and liable to change
+between two reads:
+
+- Passdesk never follows a symlink under the workspace: a symlinked
+  `.factory/`, `.factory/<dir>`, requirements file, lockfile or bundle is
+  refused, even if it points inside the workspace. Writes go to a temp file
+  that is renamed into place, so a planted symlink or hard link is replaced,
+  never written through.
+- Agent-supplied files are read once, as regular files with a size cap.
+  `git_push` copies the bundle (at most `[filters].max_bundle_bytes`) into
+  broker-private space and runs every git step on that copy; `pip_download`
+  hands pip a requirements file it wrote itself from the parsed pins, never
+  the caller's file.
+- `pip_download` accepts only `name==version --hash=sha256:<hex>` lines
+  (extras and environment markers allowed) and refuses every option line
+  (`-r`, `--no-binary`, `--find-links`, ...). Generate such a file with
+  `uv pip compile --generate-hashes` or `pip-compile --generate-hashes`.
+- `git_push` secret-scans every pushed commit on its own (patch, message,
+  author and committer), not just the net diff, and scans and counts binary
+  files as text.
+
 The package is `passdesk/`:
 - `passdesk/core/`: protocol, auth/grants, policy, content filters, audit,
   workspace file exchange, registry. Knows no tool.
