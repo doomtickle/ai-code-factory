@@ -21,6 +21,10 @@ if [ ! -f "$ROOT/broker/Dockerfile" ]; then
 fi
 [ -f "$ROOT/broker/Dockerfile" ] \
   || die "missing $ROOT/broker/Dockerfile - run 'git submodule update --init' in $ROOT"
+# An edit or an unreviewed local commit in broker/ (an agent working on this
+# repo can write there like any other file) must never get baked into the
+# broker image unreviewed.
+require_broker_at_pin "$ROOT"
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT

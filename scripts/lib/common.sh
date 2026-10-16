@@ -171,3 +171,47 @@ resolve_python() {
     || die "$python 3.9+ is required ($hint)"
   printf '%s' "$python"
 }
+
+# --- broker/ submodule safety -------------------------------------------------------
+# broker/ (the passdesk-broker submodule) is where the Broker's code lives.
+# An agent working on the factory's own repo can write into it like any other
+# file, so both the pull in bin/factory's pull_factory and the image build in
+# 00-build-templates.sh need to notice an edit or an unreviewed local commit
+# there instead of silently pulling it forward or baking it into the broker
+# image. These three are the shared primitives; callers combine them because
+# the two sites allow different things (pull_factory allows broker/ to be
+# behind the pin -- that's what "git submodule update --init" fixes -- a
+# build does not).
+
+# broker_dirty ROOT -> "git status --porcelain" output for ROOT/broker if it
+# has uncommitted changes, tracked or untracked (empty if clean, or if
+# ROOT/broker isn't a submodule checkout at all, e.g. a plain tarball with no
+# .git).
+broker_dirty() {
+  [ -e "$1/broker/.git" ] || return 0
+  git -C "$1/broker" status --porcelain --untracked-files=all
+}
+
+# broker_pin ROOT -> the commit ROOT's superproject HEAD pins broker/ to.
+broker_pin() {
+  git -C "$1" rev-parse HEAD:broker
+}
+
+# broker_head ROOT -> broker/'s actually checked-out commit.
+broker_head() {
+  git -C "$1/broker" rev-parse HEAD
+}
+
+# require_broker_at_pin ROOT -> die unless ROOT/broker is clean (no
+# uncommitted or untracked changes) and checked out exactly at the
+# superproject's pin. Used right before anything bakes broker/ into an image.
+require_broker_at_pin() {
+  local root="$1" dirty pin head
+  dirty="$(broker_dirty "$root")"
+  [ -z "$dirty" ] || die "$root/broker has uncommitted changes (including untracked files); refusing to build from it:
+$dirty"
+  pin="$(broker_pin "$root")"
+  head="$(broker_head "$root")"
+  [ "$head" = "$pin" ] \
+    || die "$root/broker is checked out at $head, not the pinned commit $pin; run 'git -C $root submodule update --init' (or investigate why it moved) before building"
+}

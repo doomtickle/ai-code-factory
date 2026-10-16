@@ -4,14 +4,20 @@ set -euo pipefail
 # factory: one command for the AI code factory. Run `factory help`.
 
 # Resolve the repo root through symlinks (factory setup links this into ~/.local/bin).
-src="$0"
+# Use BASH_SOURCE, not $0: $0 is this script's path when it is run directly,
+# but the caller's when a test sources it to call a function like
+# pull_factory without running main (see the guard at the bottom of this file).
+src="${BASH_SOURCE[0]}"
 while [ -L "$src" ]; do
   dir="$(cd -P "$(dirname "$src")" && pwd)"
   src="$(readlink "$src")"
   case "$src" in /*) ;; *) src="$dir/$src" ;; esac
 done
-ROOT="$(cd -P "$(dirname "$src")/.." && pwd)"
-SCRIPTS="$ROOT/scripts"
+SCRIPTS="$(cd -P "$(dirname "$src")/.." && pwd)/scripts"
+# ROOT is normally this same repo root; a test may pre-set it to point
+# pull_factory's git commands at a disposable fixture checkout instead, while
+# still sourcing the real scripts/lib/*.sh above from SCRIPTS.
+: "${ROOT:="$(dirname "$SCRIPTS")"}"
 
 # shellcheck source=../scripts/lib/common.sh
 . "$SCRIPTS/lib/common.sh"
@@ -468,7 +474,7 @@ cmd_analytics() {
 # new commits, re-runs `factory update` from the new code (the script on disk
 # may have changed under this process).
 pull_factory() {
-  local before
+  local before broker_change broker_pin_commit broker_head_commit
   step "Updating the factory code"
   if ! git -C "$ROOT" rev-parse --abbrev-ref '@{u}' >/dev/null 2>&1; then
     warn "this checkout has no upstream branch; skipping git pull"
@@ -485,6 +491,28 @@ pull_factory() {
   if [ -n "$(git -C "$ROOT" status --porcelain --ignore-submodules=all)" ]; then
     warn "$ROOT has uncommitted changes; skipping git pull (commit or stash them to pull)"
     return 0
+  fi
+  # broker/ is ignored above, so an edit or an unreviewed local commit there
+  # (an agent working on this repo can write into broker/ like any other
+  # file) would otherwise go unseen: "git submodule update --init" below
+  # would silently detach a local commit, and 00-build-templates.sh would
+  # bake an uncommitted edit into the broker image nobody reviewed. Being
+  # behind the pin is fine -- that's exactly what "submodule update --init"
+  # below fixes -- so only refuse when broker/ is dirty, or has moved away
+  # from the pin's history rather than just lagging behind it.
+  broker_change="$(broker_dirty "$ROOT")"
+  if [ -n "$broker_change" ]; then
+    warn "$ROOT/broker has uncommitted changes (including untracked files); skipping git pull (commit or stash them, then run 'factory update' again)"
+    return 0
+  fi
+  if [ -e "$ROOT/broker/.git" ]; then
+    broker_pin_commit="$(broker_pin "$ROOT")"
+    broker_head_commit="$(broker_head "$ROOT")"
+    if [ "$broker_head_commit" != "$broker_pin_commit" ] \
+      && ! git -C "$ROOT/broker" merge-base --is-ancestor "$broker_head_commit" "$broker_pin_commit" 2>/dev/null; then
+      warn "$ROOT/broker has a local commit ($broker_head_commit) that isn't part of the pinned history ($broker_pin_commit); skipping git pull (it would otherwise be silently detached - investigate it, then run 'factory update' again)"
+      return 0
+    fi
   fi
   before="$(git -C "$ROOT" rev-parse HEAD)"
   git -C "$ROOT" pull --ff-only --recurse-submodules --quiet \
@@ -561,20 +589,24 @@ cmd_update() {
 }
 
 # --- main ----------------------------------------------------------------------------
-command="${1:-help}"
-[ $# -eq 0 ] || shift
-case "$command" in
-  doctor) cmd_doctor "$@" ;;
-  setup) cmd_setup "$@" ;;
-  update|upgrade) cmd_update "$@" ;;
-  start|up) cmd_start "$@" ;;
-  status) cmd_status "$@" ;;
-  stop|down) cmd_stop "$@" ;;
-  reset) cmd_reset "$@" ;;
-  logs|log) cmd_logs "$@" ;;
-  roles) cmd_roles "$@" ;;
-  role) cmd_role "$@" ;;
-  analytics) cmd_analytics "$@" ;;
-  help|-h|--help) usage ;;
-  *) usage; die "unknown command: $command" ;;
-esac
+# Guarded so a test can source this file (to call e.g. pull_factory directly)
+# without running main: BASH_SOURCE[0] equals $0 only when run directly.
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+  command="${1:-help}"
+  [ $# -eq 0 ] || shift
+  case "$command" in
+    doctor) cmd_doctor "$@" ;;
+    setup) cmd_setup "$@" ;;
+    update|upgrade) cmd_update "$@" ;;
+    start|up) cmd_start "$@" ;;
+    status) cmd_status "$@" ;;
+    stop|down) cmd_stop "$@" ;;
+    reset) cmd_reset "$@" ;;
+    logs|log) cmd_logs "$@" ;;
+    roles) cmd_roles "$@" ;;
+    role) cmd_role "$@" ;;
+    analytics) cmd_analytics "$@" ;;
+    help|-h|--help) usage ;;
+    *) usage; die "unknown command: $command" ;;
+  esac
+fi
