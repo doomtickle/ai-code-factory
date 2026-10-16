@@ -106,6 +106,30 @@ Dated entries, for the user to review. Newest first.
     disposable local fixture repos, rather than invoking `bin/factory`
     itself or adding a new test framework.
 
+- **`ai-code-factory`: `factory update`'s dirty check ignoring `broker/`
+  entirely (`--ignore-submodules=all`) also hid a real edit inside `broker/`
+  itself, not just the pin-only mismatch it was meant to hide.** An agent
+  working on `ai-code-factory`'s own repo can write into `broker/` like any
+  other file; an uncommitted change or untracked file there survived
+  `git pull --recurse-submodules` plus `git submodule update`, and
+  `scripts/00-build-templates.sh` (context `$ROOT/broker`) would then bake
+  unreviewed broker code into the image, while a local commit in `broker/`
+  that outran the pin got silently detached. `pull_factory` (`bin/factory`)
+  now keeps `--ignore-submodules=all` for the superproject check, but adds a
+  separate guard that refuses the pull when `broker/` has uncommitted or
+  untracked changes, or when its checked-out commit is not the pin and not
+  an ancestor of it (being behind the pin is still fine - that's what
+  `git submodule update --init` fixes). `scripts/00-build-templates.sh`
+  refuses the build outright on the same dirty check, plus an exact-pin
+  check with no "behind is fine" leniency, via a shared
+  `require_broker_at_pin` helper in `scripts/lib/common.sh` so `factory
+  setup` cannot bake in working-tree edits either. `bin/factory` itself was
+  refactored slightly (resolving its own path from `BASH_SOURCE`, not `$0`,
+  and guarding its command dispatch so it only runs when executed directly)
+  so `scripts/test_factory_update.sh` can source it and call the real
+  `pull_factory` against disposable fixture repos instead of replaying its
+  git commands by hand, as it did before this fix.
+
 - **Website copy (accuracy pass on the passdesk marketing site).** Judgement
   calls:
   - **FAQ "Can an agent go around Passdesk?" answer was replaced outright**
