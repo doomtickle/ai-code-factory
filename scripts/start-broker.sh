@@ -94,6 +94,12 @@ else
     echo "Including local broker kit from $FACTORY_CONFIG/broker-kit"
     set -- "$@" --kit "$FACTORY_CONFIG/broker-kit"
   fi
+  # Plugins baked into the image (00-build-templates.sh) load only when named
+  # here; the directory names under the local plugins folder are the modules.
+  if [ -n "$(broker_plugins)" ]; then
+    echo "Enabling broker plugins: $(broker_plugins)"
+    set -- "$@" -e "PASSDESK_PLUGINS=$(broker_plugins)"
+  fi
   sbx run -d --name "$BROKER_SANDBOX" --pull never -t "factory-broker:$TEMPLATE_TAG" \
     -p "127.0.0.1:$BROKER_PORT:8765" \
     -e "BROKER_WORKSPACE=$PROJECT" -e "BROKER_STATE=$STATE" \
@@ -206,6 +212,10 @@ deliver_secret() {  # deliver_secret NAME SERVICE
 deliver_secret jira factory-jira
 deliver_secret gemini factory-gemini
 deliver_secret npm-registry factory-npm-registry
+# Passdesk Pro (if its plugin is installed): the license key, and the
+# approvals webhook URL, which is a credential too (it grants posting).
+deliver_secret passdesk-license factory-passdesk-license
+deliver_secret approvals-webhook factory-approvals-webhook
 
 [ "$revocation_failed" = 0 ] \
   || die "a credential revocation failed above; it may still be active in the broker sandbox - see the error(s) above"

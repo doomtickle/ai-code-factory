@@ -360,6 +360,29 @@ Like every broker credential, the token is never visible to the Coordinator or a
 role: the broker reads it from a file inside its own sandbox and returns only the
 issue data the tools ask for.
 
+### Enabling approvals (Passdesk Pro)
+
+With the Passdesk Pro plugin installed, every `git_push` and
+`github_create_pr` waits for a person: the broker records a card (what,
+who, how many commits and files, the secret-scan result) and the agent's
+call proceeds once you approve it, or hears your reason if you decline. A
+call that waits longer than `[approvals].hold_seconds` (45 by default)
+returns to the agent with the approval id and asks it to retry the same
+call later; the decision is picked up by the retry.
+
+1. Put the `passdesk_pro` package in `~/.config/ai-code-factory/plugins/`
+   (Local settings) and store the license key in the host keychain under
+   service `factory-passdesk-license`, as for Gemini above. Optionally store
+   a Slack, Discord or ntfy webhook URL under `factory-approvals-webhook` to
+   be told when something is waiting.
+2. Run `factory update`: it bakes the plugin into the broker image, names it
+   in `PASSDESK_PLUGINS` when it creates the broker sandbox, and delivers
+   the two credentials. `factory doctor` then reports the license.
+3. Decide with `factory approvals` (list), `factory approvals approve <id>`
+   or `factory approvals decline <id> --reason "..."`; `factory approvals
+   watch` prints cards as they arrive. Decisions are plain files in the
+   broker state folder, so nothing new listens on the network.
+
 ## Roles
 
 Three roles, split by what each is allowed to do rather than by job title:

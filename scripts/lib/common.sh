@@ -154,6 +154,22 @@ claude_login_stored() {
   sbx secret ls 2>/dev/null | grep -q " anthropic "
 }
 
+# broker_plugins -> comma-separated module names of the broker plugins in
+# the local config folder (FACTORY_CONFIG/plugins/<module>/), e.g.
+# "passdesk_pro"; empty when there are none. 00-build-templates.sh bakes the
+# directory into the broker image and start-broker.sh passes this list as
+# PASSDESK_PLUGINS when it creates the broker sandbox.
+broker_plugins() {
+  local d names=""
+  for d in "$FACTORY_CONFIG"/plugins/*/; do
+    [ -d "$d" ] || continue
+    d="${d%/}"; d="${d##*/}"
+    case "$d" in __pycache__|.*) continue ;; esac
+    names="$names${names:+,}$d"
+  done
+  printf '%s' "$names"
+}
+
 # resolve_python -> path to a Python 3.9+ interpreter (printed to stdout).
 # On macOS this is always the system Python (Xcode Command Line Tools), the
 # pinned runtime for the dispatch bridge and other host-side Python tools.

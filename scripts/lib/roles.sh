@@ -120,8 +120,10 @@ sandbox_fingerprint() {
   local name="$1" role
   case "$name" in
     "$BROKER_SANDBOX")
-      printf 'image=%s\nkit=%s\nlocal-kit=%s\n' "$(image_build_id broker)" \
-        "$(dir_hash "$ROOT/kits/broker")" "$(dir_hash "$FACTORY_CONFIG/broker-kit")" ;;
+      # plugins: the PASSDESK_PLUGINS value fixed at creation (the plugin
+      # code itself is in the image, so the image id covers its contents).
+      printf 'image=%s\nkit=%s\nlocal-kit=%s\nplugins=%s\n' "$(image_build_id broker)" \
+        "$(dir_hash "$ROOT/kits/broker")" "$(dir_hash "$FACTORY_CONFIG/broker-kit")" "$(broker_plugins)" ;;
     "$COORDINATOR_SANDBOX")
       printf 'image=%s\nkit=%s\nbroker=%s\n' "$(image_build_id developer)" \
         "$(dir_hash "$ROOT/kits/coordinator")" "$(yes_no "$(coordinator_broker_tools)")" ;;

@@ -60,6 +60,16 @@ if [ -f "$FACTORY_CONFIG/policy.toml" ]; then
 else
   : > "$tmp/config/policy.toml"
 fi
-build broker "$tmp/broker/Dockerfile" "$tmp/broker" --build-context "factory-config=$tmp/config"
+# Optional plugin packages (e.g. Passdesk Pro) from the local config folder,
+# as their own build context too: an empty directory when there are none.
+# A plugin loads only when start-broker.sh names it in PASSDESK_PLUGINS.
+mkdir "$tmp/plugins"
+if [ -d "$FACTORY_CONFIG/plugins" ] && [ -n "$(ls -A "$FACTORY_CONFIG/plugins" 2>/dev/null)" ]; then
+  echo "Including broker plugins from $FACTORY_CONFIG/plugins: $(ls "$FACTORY_CONFIG/plugins" | tr '\n' ' ')"
+  cp -R "$FACTORY_CONFIG/plugins/." "$tmp/plugins/"
+  find "$tmp/plugins" -name '__pycache__' -type d -prune -exec rm -rf {} +
+fi
+build broker "$tmp/broker/Dockerfile" "$tmp/broker" --build-context "factory-config=$tmp/config" \
+  --build-context "plugins=$tmp/plugins"
 
 sbx template ls
