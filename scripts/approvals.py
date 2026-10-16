@@ -84,7 +84,7 @@ def cmd_show(state, args):
     if not card:
         print("no pending approval matches {}".format(args.id), file=sys.stderr)
         return 1
-    skip = {"created", "expires"}
+    skip = {"created", "expires", "nonce"}
     print("approval {}  ({} min left)".format(card["id"], minutes_left(card)))
     for key in sorted(card):
         if key in skip or key == "id":
@@ -111,8 +111,10 @@ def decide(state, args, verdict):
         print("give the agent a reason: --reason \"...\"", file=sys.stderr)
         return 1
     approver = args.as_name or os.environ.get("USER") or getpass.getuser()
-    decision = {"id": card["id"], "decision": verdict, "approver": approver, "reason": args.reason or "",
-                "ts": time.time()}
+    # The nonce ties the decision to this card: a later card with the same id
+    # (the same push, re-requested after this one expired) needs a new decision.
+    decision = {"id": card["id"], "nonce": card.get("nonce"), "decision": verdict, "approver": approver,
+                "reason": args.reason or "", "ts": time.time()}
     path = state / "approvals" / "decisions" / "{}.json".format(card["id"])
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")

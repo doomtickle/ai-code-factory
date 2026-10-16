@@ -18,7 +18,7 @@ import approvals  # noqa: E402
 
 
 def card(cid="abcdef0123456789", tool="git_push", **over):
-    base = {"id": cid, "tool": tool, "principal": "developer", "repo": "acme/widgets", "branch": "factory/x",
+    base = {"id": cid, "nonce": "n0nce", "tool": tool, "principal": "developer", "repo": "acme/widgets", "branch": "factory/x",
             "base": "main", "commits": 2, "file_count": 3, "files": ["a", "b", "c"], "shortstat": "3 files changed",
             "created": time.time(), "expires": time.time() + 600}
     base.update(over)
@@ -58,6 +58,7 @@ class ConsoleTests(unittest.TestCase):
         code, out, _ = self.run_cli("show", "abcdef")  # prefix match
         self.assertEqual(code, 0)
         self.assertIn("shortstat      3 files changed", out)
+        self.assertNotIn("nonce", out)  # bookkeeping, not something to read
         self.assertIn("    a\n    b\n    c", out)
         code, _, err = self.run_cli("show", "nope")
         self.assertEqual(code, 1)
@@ -71,6 +72,7 @@ class ConsoleTests(unittest.TestCase):
         path = self.state / "approvals" / "decisions" / "abcdef0123456789.json"
         decision = json.loads(path.read_text())
         self.assertEqual((decision["decision"], decision["approver"], decision["reason"]), ("approve", "daron", ""))
+        self.assertEqual(decision["nonce"], "n0nce")
         self.assertAlmostEqual(decision["ts"], time.time(), delta=5)
         self.assertFalse(path.with_name(path.name + ".tmp").exists())
 
