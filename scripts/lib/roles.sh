@@ -4,8 +4,12 @@
 
 # Broker tool names, from the manifest the broker's tests keep in sync with its
 # registry (host scripts run on a Python too old to import the broker).
-# broker/ is a git submodule (passdesk-broker); an uninitialized checkout has
-# an empty directory here.
+# broker/ is a git submodule (passdesk-broker); a plain "git clone" (without
+# --recurse-submodules) leaves it an empty directory, so every command sourcing
+# this file (not just setup/update) tries once to initialize it before giving up.
+if [ ! -f "$ROOT/broker/tools.txt" ]; then
+  git -C "$ROOT" submodule update --init --quiet -- broker >/dev/null 2>&1 || true
+fi
 [ -f "$ROOT/broker/tools.txt" ] \
   || die "missing $ROOT/broker/tools.txt - run 'git submodule update --init' in $ROOT"
 KNOWN_BROKER_TOOLS="$(sed -e '/^#/d' -e '/^[[:space:]]*$/d' "$ROOT/broker/tools.txt" | tr '\n' ' ')"

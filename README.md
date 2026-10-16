@@ -115,8 +115,10 @@ The broker and the dispatch bridge are Python standard library only.
 ## Quick start
 
 `broker/` is the `passdesk-broker` repository as a git submodule; a plain
-`git clone` leaves it empty. Either clone with `--recurse-submodules` or run
-`git submodule update --init` once afterwards.
+`git clone` leaves it empty. `factory setup` (and any other `factory`
+command) initializes it automatically on first run, so this is optional, but
+you can also clone with `--recurse-submodules` or run
+`git submodule update --init` yourself first.
 
 ```sh
 # Check the machine first; it says how to fix anything missing:
@@ -572,8 +574,10 @@ hasn't dispatched any jobs yet just shows an empty report.
   and `broker-kit/` (Local settings) for your own. Then run `factory update`. The
   policy is built into the image, so agents can't change it.
 - **Upgrading:** run `factory update`. It pulls this checkout (fast-forward only,
-  and only when it has no local changes), runs `factory setup` to rebuild the
-  images, then recreates exactly the sandboxes whose inputs changed and restarts
+  with its submodules, and only when it has no local changes - a `broker/` pin
+  bump by itself never counts as a local change, since `factory update` moves
+  `broker/` to the new pin as part of the same pull), runs `factory setup` to
+  rebuild the images, then recreates exactly the sandboxes whose inputs changed and restarts
   the factory, dispatch bridge included. A sandbox keeps the image, kit,
   project access and broker access it was created with, so `factory start`
   alone never picks those up. It only says which sandboxes are out of date.

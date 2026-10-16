@@ -474,13 +474,23 @@ pull_factory() {
     warn "this checkout has no upstream branch; skipping git pull"
     return 0
   fi
-  if [ -n "$(git -C "$ROOT" status --porcelain)" ]; then
+  # --ignore-submodules=all: broker/ only ever moves because pull_factory's own
+  # "submodule update --init" below moves it to match the superproject's pin;
+  # that pin-only difference must never look like an uncommitted change and
+  # block every future pull (confirmed empirically: --ignore-submodules=dirty
+  # does NOT hide it, since git still reports a submodule commit mismatch as
+  # "modified" even with =dirty -- only "=all" does). A real uncommitted
+  # change to a tracked file or an untracked file in $ROOT still shows and
+  # still blocks.
+  if [ -n "$(git -C "$ROOT" status --porcelain --ignore-submodules=all)" ]; then
     warn "$ROOT has uncommitted changes; skipping git pull (commit or stash them to pull)"
     return 0
   fi
   before="$(git -C "$ROOT" rev-parse HEAD)"
-  git -C "$ROOT" pull --ff-only --quiet \
+  git -C "$ROOT" pull --ff-only --recurse-submodules --quiet \
     || die "git pull failed; sort it out in $ROOT, then run 'factory update' again"
+  git -C "$ROOT" submodule update --init --quiet \
+    || die "git submodule update --init failed; sort it out in $ROOT, then run 'factory update' again"
   if [ "$(git -C "$ROOT" rev-parse HEAD)" = "$before" ]; then
     ok "already up to date"
     return 0

@@ -169,6 +169,19 @@ class LoadingTests(Base):
         self.assertEqual(len(calls), 1)
         self.assertEqual(calls[0]["tool"], "npm_ci")
 
+    def test_load_broker_calls_does_not_double_count_intent_records(self):
+        # protocol.py writes an {"event": "intent", "role":..., "tool":...}
+        # record before git_push/github_create_pr run, then the normal
+        # allow/deny/error record once the call finishes. Both have "role"
+        # and "tool", so the intent record must not also be counted as a call.
+        path = self.write_jsonl("broker/audit.jsonl", [
+            {"ts": ts(datetime.now(timezone.utc)), "role": "developer", "tool": "git_push", "event": "intent"},
+            broker_call("developer", "git_push"),
+            broker_call("developer", "npm_ci"),
+        ])
+        calls, _ = a.load_broker_calls(path)
+        self.assertEqual(sorted(c["tool"] for c in calls), ["git_push", "npm_ci"])
+
     def test_load_sessions_skips_malformed_and_non_json_files(self):
         (self.root / "dispatch" / "sessions" / "developer.json").write_text(
             json.dumps({"session_id": "s", "total_cost_usd": 2.0, "context_tokens": 500}))

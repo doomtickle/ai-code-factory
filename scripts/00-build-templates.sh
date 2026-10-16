@@ -12,8 +12,13 @@ require_sbx
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
-# broker/ is a git submodule (passdesk-broker); an uninitialized checkout has
-# an empty directory and no Dockerfile here.
+# broker/ is a git submodule (passdesk-broker); a plain "git clone" (without
+# --recurse-submodules) leaves it an empty directory, so try once to
+# initialize it before giving up (bin/factory's roles.sh does the same, but
+# this script can also run standalone).
+if [ ! -f "$ROOT/broker/Dockerfile" ]; then
+  git -C "$ROOT" submodule update --init --quiet -- broker >/dev/null 2>&1 || true
+fi
 [ -f "$ROOT/broker/Dockerfile" ] \
   || die "missing $ROOT/broker/Dockerfile - run 'git submodule update --init' in $ROOT"
 
