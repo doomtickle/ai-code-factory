@@ -275,6 +275,18 @@ class GitFlowTests(Base):
             git.tool_git_fetch({"repo": "acme/widgets", "branch": "main"}, POLICY)
         self.assertEqual(list(outside.iterdir()), [])
 
+    # --- untrusted-content wrapping for git's own stderr -----------------
+
+    def test_git_helper_wraps_failure_stderr_as_untrusted(self):
+        with self.assertRaises(RuntimeError) as cm:
+            git.git("not-a-real-subcommand", cwd=self.ws)
+        self.assertIn("UNTRUSTED CONTENT", str(cm.exception))
+
+    def test_git_capped_helper_wraps_failure_stderr_as_untrusted(self):
+        with self.assertRaises(RuntimeError) as cm:
+            git.git_capped("not-a-real-subcommand", cwd=self.ws, limit=10_000)
+        self.assertIn("UNTRUSTED CONTENT", str(cm.exception))
+
     def test_fetch_replaces_a_symlinked_bundle_instead_of_writing_through_it(self):
         target = Path(self.tmp.name) / "victim"
         target.write_text("precious\n")
@@ -283,6 +295,25 @@ class GitFlowTests(Base):
         git.tool_git_fetch({"repo": "acme/widgets", "branch": "main"}, POLICY)
         self.assertEqual(target.read_text(), "precious\n")
         self.assertFalse((self.ws / ".factory/incoming/acme__widgets__main.bundle").is_symlink())
+
+
+class CheckCommitPatchesTests(Base):
+    """check_commit_patches must split only on '\\n': str.splitlines() also
+    breaks on '\\r', '\\x0c', '\\x1c', U+0085 and U+2028, which would cut an
+    added line like "+ok\\r-ghp_<token>" into a piece starting with '-' and
+    skip it as a removed line, letting the secret through."""
+
+    SHA = "a" * 40
+
+    def test_detects_secret_after_every_splitlines_only_separator(self):
+        for sep in ("\r", "\x0c", "\x1c", "\u0085", " "):
+            patches = f"commit {self.SHA}\n+ok{sep}-{FAKE_GH}\n"
+            with self.assertRaisesRegex(Denied, "github-token", msg=repr(sep)):
+                git.check_commit_patches(patches, "main")
+
+    def test_still_skips_a_genuinely_removed_line(self):
+        patches = f"commit {self.SHA}\n-{FAKE_GH}\n+fine\n"
+        git.check_commit_patches(patches, "main")  # no Denied: the secret is on a removed line
 
 
 if __name__ == "__main__":

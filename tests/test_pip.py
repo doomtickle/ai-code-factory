@@ -21,10 +21,29 @@ class RequirementsTests(Base):
         pins = pip.parse_requirements(
             f"# comment\nrequests==2.32.3 \\\n    --hash=sha256:{H1} \\\n    --hash=sha256:{H2}\n"
             f"idna[x]==3.7 --hash=sha256:{H1}  # trailing\n"
-            f"tomli==2.0.1 --hash=sha256:{H2} ; python_version < \"3.11\"\n")
+            f"tomli==2.0.1 ; python_version < \"3.11\" \\\n    --hash=sha256:{H2}\n")
         self.assertEqual(pins, [pip.Pin("requests", "2.32.3", (H1, H2), ""),
                                 pip.Pin("idna", "3.7", (H1,), ""),
                                 pip.Pin("tomli", "2.0.1", (H2,), 'python_version < "3.11"')])
+
+    def test_pip_compile_generate_hashes_output(self):
+        # Real `pip-compile --generate-hashes` output: the marker (when
+        # present) sits before the hashes, each hash on its own "\"-continued
+        # line, followed by an un-continued "# via ..." comment line.
+        pins = pip.parse_requirements(
+            f"anyio==4.3.0 \\\n    --hash=sha256:{H1} \\\n    --hash=sha256:{H2}\n"
+            f"    # via httpx\n"
+            f"idna==3.7 ; python_version >= \"3.7\" \\\n    --hash=sha256:{H1}\n"
+            f"    # via anyio\n")
+        self.assertEqual(pins, [pip.Pin("anyio", "4.3.0", (H1, H2), ""),
+                                pip.Pin("idna", "3.7", (H1,), 'python_version >= "3.7"')])
+
+    def test_uv_pip_compile_generate_hashes_output(self):
+        # `uv pip compile --generate-hashes` also puts the marker before the
+        # hashes, but uses single quotes around the marker's value.
+        pins = pip.parse_requirements(
+            f"idna==3.7 ; python_version >= '3.7' \\\n    --hash=sha256:{H1}\n")
+        self.assertEqual(pins, [pip.Pin("idna", "3.7", (H1,), "python_version >= '3.7'")])
 
     def test_rejects_unpinned_and_options(self):
         for bad in ["requests>=2", "requests", f"--index-url https://evil/simple\nx==1 --hash=sha256:{H1}",
@@ -47,7 +66,7 @@ class RequirementsTests(Base):
             pip.parse_requirements(f"--no-binary :all:\nx==1 --hash=sha256:{H1}")
 
     def test_render_has_only_the_parsed_pins(self):
-        pins = pip.parse_requirements(f"Foo[bar]==1.0 --hash=sha256:{H1} --hash=sha256:{H2} ; sys_platform == 'linux'")
+        pins = pip.parse_requirements(f"Foo[bar]==1.0 ; sys_platform == 'linux' --hash=sha256:{H1} --hash=sha256:{H2}")
         self.assertEqual(pip.render_requirements(pins),
                          f"Foo==1.0; sys_platform == 'linux' --hash=sha256:{H1} --hash=sha256:{H2}\n")
 
@@ -107,6 +126,15 @@ class PipDownloadTests(Base):
         os.mkfifo(config.WORKSPACE / "fifo.txt")
         with self.assertRaisesRegex(Denied, "not a regular file"):
             self.download(requirements="fifo.txt")
+
+    def test_pip_failure_output_is_wrapped_untrusted(self):
+        def failing_run(cmd, cwd=None, timeout=None, extra_env=None):
+            return subprocess.CompletedProcess(cmd, 1, "", "ERROR: could not find a version\n")
+        with mock.patch.object(pip, "run", side_effect=failing_run):
+            out = pip.tool_pip_download({}, POLICY)
+        self.assertIn("pip download failed (exit 1)", out)
+        self.assertIn("UNTRUSTED CONTENT", out)
+        self.assertIn("could not find a version", out)
 
     def test_symlinked_wheels_dir_is_refused(self):
         outside = Path(self.tmp.name) / "outside"

@@ -26,7 +26,7 @@ from ..core.registry import register
 # and an operator cannot add any of them back by editing that list.
 _CREDENTIALED_HOSTS = {
     "github.com": "git_fetch, git_push or github_create_pr",
-    "api.github.com": "git_fetch, git_push or github_create_pr",
+    "*.github.com": "git_fetch, git_push or github_create_pr",
     "*.githubusercontent.com": "git_fetch, git_push or github_create_pr",
     "api.atlassian.com": "jira_my_issues or jira_get_issue",
     "*.atlassian.net": "jira_my_issues or jira_get_issue",

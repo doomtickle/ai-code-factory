@@ -72,6 +72,16 @@ class ProtocolTests(Base):
         self.assertEqual([e["decision"] for e in entries], ["deny", "deny", "deny"])
         self.assertEqual([e["role"] for e in entries], ["developer", "developer", "researcher"])
 
+    def test_non_object_params_return_invalid_params_error_instead_of_crashing(self):
+        # "params" that isn't a JSON object used to blow up on params.get(...)
+        # outside the audited try/except in call_tool, before a Denied or any
+        # audit record could be produced.
+        for bad_params in [["tools/call"], "oops", 5, True]:
+            res = protocol.handle_rpc({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": bad_params},
+                                      "developer")
+            self.assertEqual(res["error"]["code"], -32602)
+            self.assertNotIn("result", res)
+
     def test_malformed_arguments_are_denied_and_audited_instead_of_crashing(self):
         # "arguments" that isn't a JSON object used to blow up building the
         # audit record itself, before the try/finally that writes it.

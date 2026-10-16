@@ -7,18 +7,23 @@ from typing import NamedTuple
 
 from ..core import config
 from ..core.errors import Denied
-from ..core.filters import sanitize
+from ..core.filters import sanitize, untrusted
 from ..core.policy import check_package
 from ..core.registry import register
 from ..core.workspace import (factory_dir, install_file, private_tempdir, read_workspace_file, run, tool_lock,
                               workspace_path)
 
 _MAX_REQUIREMENTS_BYTES = 1_000_000
-# name==version, optional extras, one or more sha256 hashes, optional marker.
+# name==version, optional extras, optional marker, one or more sha256 hashes.
+# pip-compile --generate-hashes and uv pip compile --generate-hashes both
+# write the marker before the --hash options (the marker sits on the same
+# logical line as the pin, with the hashes as "\"-continued lines after it);
+# the marker must come first for a real lockfile to match.
 # The marker charset has no "-", so nothing in it can read as a pip option.
 _REQ_RE = re.compile(
     r"^(?P<name>[A-Za-z0-9][A-Za-z0-9._-]*)(?:\[[A-Za-z0-9,._ -]+\])?==(?P<ver>[0-9][A-Za-z0-9.+!_-]*)"
-    r"(?P<hashes>(?:\s+--hash=sha256:[0-9a-f]{64})*)\s*(?:;(?P<marker>[A-Za-z0-9_.<>=!~'\" ()]*))?$")
+    r"\s*(?:;\s*(?P<marker>[A-Za-z0-9_.<>=!~'\" ()]*))?"
+    r"(?P<hashes>(?:\s+--hash=sha256:[0-9a-f]{64})*)\s*$")
 _REQ_FORMAT = ("'name==version --hash=sha256:<64 hex>' (generate one with "
                "`uv pip compile --generate-hashes` or `pip-compile --generate-hashes`)")
 
@@ -85,7 +90,7 @@ def tool_pip_download(args: dict, policy: dict) -> str:
                   "-d", str(wheels), "-r", str(req)], cwd=tmp, timeout=900)
         out = sanitize((cp.stdout + cp.stderr).strip(), 4000)
         if cp.returncode != 0:
-            return f"pip download failed (exit {cp.returncode}):\n{out}"
+            return f"pip download failed (exit {cp.returncode}):\n" + untrusted("pip download", out)
         with factory_dir("wheels") as dest:
             for whl in sorted(wheels.iterdir()):
                 if whl.is_file() and not whl.is_symlink() and whl.name.endswith(".whl"):

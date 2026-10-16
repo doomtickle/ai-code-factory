@@ -55,6 +55,18 @@ class ToolGuardTests(Base):
             with self.assertRaisesRegex(Denied, "attaches credentials", msg=url):
                 web.tool_web_fetch({"url": url}, policy)
 
+    def test_web_fetch_blocks_github_subdomains_not_just_the_two_hardcoded_hosts(self):
+        # api.github.com was special-cased before; codeload, uploads and gist
+        # are also github.com subdomains the proxy/broker credential the same
+        # way and must be covered by *.github.com, not just the apex domain.
+        policy = {**POLICY, "web": {"allow_hosts": [
+            "github.com", "codeload.github.com", "uploads.github.com", "gist.github.com"], "max_bytes": 1000}}
+        for url in ["https://codeload.github.com/acme/widgets/zip/main",
+                    "https://uploads.github.com/repos/acme/widgets/releases/1/assets",
+                    "https://gist.github.com/acme/abc123"]:
+            with self.assertRaisesRegex(Denied, "attaches credentials", msg=url):
+                web.tool_web_fetch({"url": url}, policy)
+
     def test_web_fetch_blocks_configured_private_npm_registry_host(self):
         policy = {**POLICY, "web": {"allow_hosts": ["registry.example.com"], "max_bytes": 1000},
                   "packages": {"npm_private_registry": "https://registry.example.com/"}}

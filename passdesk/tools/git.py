@@ -55,7 +55,8 @@ _GIT_HARDENING = ("-c", "core.hooksPath=/dev/null", "-c", "protocol.ext.allow=ne
 def git(*args: str, cwd: Path, timeout: int = 300, check: bool = True) -> subprocess.CompletedProcess:
     cp = run(["git", *_GIT_HARDENING, *args], cwd=cwd, timeout=timeout)
     if check and cp.returncode != 0:
-        raise RuntimeError(f"git {args[0]} failed: {sanitize(cp.stderr.strip(), 2000)}")
+        raise RuntimeError(f"git {args[0]} failed:\n" +
+                           untrusted(f"git {args[0]}", sanitize(cp.stderr.strip(), 2000)))
     return cp
 
 
@@ -65,7 +66,8 @@ def git_capped(*args: str, cwd: Path, limit: int) -> str | None:
     if out is None:
         return None
     if code != 0:
-        raise RuntimeError(f"git {args[0]} failed: {sanitize(err.strip(), 2000)}")
+        raise RuntimeError(f"git {args[0]} failed:\n" +
+                           untrusted(f"git {args[0]}", sanitize(err.strip(), 2000)))
     # Binary content is scanned too; the secret patterns are ASCII.
     return out.decode("utf-8", "replace")
 
@@ -102,7 +104,13 @@ def check_commit_patches(patches: str, base: str) -> None:
     """Refuse if any commit's added lines, file names or binary content look like secrets."""
     commits: dict[str, list[str]] = {}
     lines: list[str] = []
-    for line in patches.splitlines():
+    # str.splitlines() also breaks on \r, \x0b, \x0c, \x1c-\x1e, U+0085 and
+    # U+2028, not just "\n". git's own patch output only ever uses "\n", so
+    # an added line that *contains* one of those characters (e.g. "ok\r-ghp_...")
+    # must stay one line here -- splitlines() would cut it into a piece
+    # starting with "-", which is then skipped as a removed line, hiding a
+    # secret from the scan below.
+    for line in patches.split("\n"):
         if line.startswith("commit ") and len(line) >= 47:
             lines = commits.setdefault(line[7:].strip(), [])
         elif not line.startswith("-"):  # removed lines are already upstream or in an earlier commit
@@ -170,7 +178,7 @@ def tool_git_push(args: dict, policy: dict) -> str:
         sha = git("rev-parse", incoming, cwd=mirror).stdout.strip()
     if push.returncode != 0:
         body = sanitize(push.stderr + push.stdout, 3000)
-        return f"Push rejected by GitHub:\n" + untrusted(f"git push {repo}:{branch}", body)
+        return "Push rejected by GitHub:\n" + untrusted(f"git push {repo}:{branch}", body)
     return f"Pushed {count} commit(s) to {repo}:{branch} ({sha}).\n{sanitize(push.stdout, 2000)}"
 
 

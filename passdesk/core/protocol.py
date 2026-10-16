@@ -86,7 +86,12 @@ def handle_rpc(msg: dict, principal: str) -> dict | None:
     method, mid = msg.get("method"), msg.get("id")
     if mid is None:
         return None  # notification
-    params = msg.get("params") or {}
+    params = msg.get("params")
+    if params is None:
+        params = {}
+    elif not isinstance(params, dict):
+        return {"jsonrpc": "2.0", "id": mid,
+                "error": {"code": -32602, "message": "params must be an object"}}
     if method == "initialize":
         result = {"protocolVersion": params.get("protocolVersion", "2025-06-18"),
                   "capabilities": {"tools": {}},
