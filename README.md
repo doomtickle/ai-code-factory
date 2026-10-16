@@ -35,8 +35,10 @@ Claude Code running in its own Docker Sandboxes (`sbx`) microVM, laid out in
   Roles remember earlier tasks (each keeps a Claude session). You can watch every
   role work live in its Herdr tab. Job results show the job's cost, the
   session's running total and its context size. A session over the role's
-  `MAX_SESSION_TOKENS` (150k by default) isn't resumed: the next task starts
+  `MAX_SESSION_TOKENS` (100k by default) isn't resumed: the next task starts
   fresh, because every turn of a resumed session re-reads its whole history.
+  Roles run with Claude's auto memory off (`CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`):
+  their sessions and the Coordinator's tasks carry the context they need.
   `delegate` can wait for the job (`wait_seconds`), so a typical job costs the
   Coordinator one call.
 - **Broker:** the only VM with egress for tool traffic (GitHub, npm, PyPI, docs
@@ -370,6 +372,25 @@ model of that tier):
 If you hit your subscription's usage limits, move the Coordinator to `sonnet`
 first.
 
+**Per-task model and effort.** `MODEL` is each role's default. The Coordinator
+can run a single task on another model from the role's `MODELS` list, and set
+claude's reasoning `--effort` (`low`, `medium`, `high`, `xhigh`; `EFFORT` in
+`role.conf` sets a role's default). It picks the cheapest setting that will do
+the task, e.g. haiku at low effort for a rename or a doc update, and steps up
+(opus, or higher effort) for hard problems or after a cheaper run fell short.
+The bridge accepts only models listed for the role, and each job's result shows
+the model and effort it ran with:
+
+| Role | Default | Coordinator may also pick |
+|---|---|---|
+| developer | `sonnet` | `haiku`, `opus` |
+| reviewer | `opus` | `sonnet` (small, low-risk diffs) |
+| researcher | `sonnet` | `opus` (no `haiku`: this role reads untrusted web pages) |
+
+A resumed session keeps the model it was saved with, and each model has its own
+prompt cache, so a task on a different model from the role's saved session
+starts a fresh session.
+
 The split follows the capabilities that matter:
 
 - **Only the developer can change the project.**
@@ -399,6 +420,9 @@ project. Instead:
 2. The role runs `factory-test -- <command>`, e.g. `factory-test -- npx vitest run`.
    With `-q` it saves the full output to a log and prints only the last 40
    lines (where test runners put the summary and failures) and the log's path.
+   If the run fails, it first lists the failure lines from above those 40
+   (vitest/jest `FAIL`, pytest `FAILED`, `tsc` and eslint errors, ...), so the
+   role rarely has to search the log.
    For one mid-size frontend suite that is 3.7 KB instead of 122 KB in the role's context.
    Roles use it for full-suite runs.
    `factory-test` (baked into the developer and reviewer images) works in a
@@ -433,7 +457,7 @@ The images also include yarn 1.22.22, so `yarn` scripts and git hooks that
 call `yarn` work. Python projects still use `pip_download` and `uv` directly.
 
 Each role is `roles/<name>/role.conf` (description, image, `WORKSPACE=rw|ro`,
-`BROKER_TOOLS`, `MODEL`, `MAX_SESSION_TOKENS`), `roles/<name>/instructions.md` (passed to every task
+`BROKER_TOOLS`, `MODEL`, `MODELS`, `EFFORT`, `MAX_SESSION_TOKENS`), `roles/<name>/instructions.md` (passed to every task
 as part of the system prompt) and `roles/<name>/kit/spec.yaml` (its network policy). Read-only roles
 get a writable scratch directory in `~/.local/state/ai-code-factory/roles/<name>/` and the project mounted `:ro`.
 
@@ -445,7 +469,7 @@ factory role new docs-writer developer   # or copy any existing role
 Edit its `role.conf` and instructions, then run `factory start` again. It creates
 the sandbox and a tab, and the Coordinator sees the new role in `list_roles`.
 
-**Change a role:** edit instructions, `BROKER_TOOLS`, `MODEL` or `MAX_SESSION_TOKENS` and run `factory start`
+**Change a role:** edit instructions, `BROKER_TOOLS`, `MODEL`, `MODELS`, `EFFORT` or `MAX_SESSION_TOKENS` and run `factory start`
 again. All of these take effect from the next task:
 `factory start` copies the instructions into the state folder and the bridge
 reads that copy, so a role editing this repo can't change prompts on its own. Kit, image, project access and

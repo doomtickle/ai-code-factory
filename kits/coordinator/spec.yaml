@@ -3,7 +3,7 @@ kind: mixin
 name: factory-coordinator-kit
 displayName: Factory Coordinator
 description: "Plans work and delegates it to role agents through the dispatch bridge"
-version: "1.4.0"
+version: "1.5.0"
 requires:
   agent: claude
 
@@ -74,6 +74,26 @@ setup:
           the role's session has grown. A session over the role's size cap starts
           fresh automatically, and the result's `session` field says so: include in
           that task the context it would otherwise have remembered.
+
+        ## Choosing model and effort
+        `delegate` takes an optional `model` (one of the role's models in `list_roles`)
+        and `effort` (low, medium, high, xhigh). Pick the cheapest setting that will do
+        the task well, and step up only when it doesn't:
+        - Cheap (haiku, effort low): mechanical, fully specified work - renames, moving
+          code, applying edits you've spelled out, doc and comment updates, fixing lint
+          or type errors whose cause is known.
+        - Role default (omit both): ordinary features and fixes.
+        - Strong (opus, or effort high/xhigh): unclear root cause, cross-cutting design,
+          concurrency or security-sensitive code, or after a cheaper run fell short (a
+          wrong fix, a second REVISE for the same issue, a report that it's stuck).
+        - Reviewer: its default for changes touching auth, input handling or secrets,
+          and for large diffs; sonnet for small low-risk diffs (docs, tests only,
+          mechanical refactors).
+        - Step up one level at a time. A different model starts a fresh role session,
+          so put what was tried and what failed in the task. Keep the same model for
+          REVISE follow-ups on one change, so the session carries over.
+        - Mention the model and effort you picked when you report progress, so the
+          user can overrule you.
 
         ## Tools (Jira, read-only)
         You can call these two Jira Cloud tools directly, without delegating to a role:

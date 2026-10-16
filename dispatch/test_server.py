@@ -23,7 +23,7 @@ FAKE_SBX = textwrap.dedent(r'''
     with open(log, "a") as f:
         f.write(json.dumps(args) + "\n")
     if args[:2] == ["ls", "-q"]:
-        print("factory-developer\nfactory-reviewer\nfactory-opuser")
+        print("factory-developer\nfactory-reviewer\nfactory-opuser\nfactory-tiered")
         sys.exit(0)
     if args[0] == "exec" and "claude" in args:
         task = args[args.index("-p") + 1]
@@ -69,9 +69,9 @@ FAKE_SBX = textwrap.dedent(r'''
 ''').lstrip()
 
 
-def conf(desc, workspace, tools, model=""):
+def conf(desc, workspace, tools, model="", models=""):
     return (f'DESCRIPTION="{desc}"\nTEMPLATE="developer"\nWORKSPACE="{workspace}"\n'
-            f'BROKER_TOOLS="{tools}"\nMODEL="{model}"\n')
+            f'BROKER_TOOLS="{tools}"\nMODEL="{model}"\nMODELS="{models}"\n')
 
 
 class Base(unittest.TestCase):
@@ -82,12 +82,14 @@ class Base(unittest.TestCase):
         for p in (d.ROOT / "roles", d.PROJECT, d.STATE / "logs", d.STATE / "sessions",
                   d.STATE / "instructions"):
             p.mkdir(parents=True)
-        for name in ("developer", "reviewer", "tester", "opuser"):
+        for name in ("developer", "reviewer", "tester", "opuser", "tiered"):
             (d.STATE / "instructions" / f"{name}.md").write_text(f"# {name}\nDo {name} work.\n")
         for name, text in {"developer": conf("Builds things", "rw", "web_fetch npm_ci"),
                            "reviewer": conf("Reviews things", "ro", ""),
                            "tester": conf("Tests things", "rw", ""),
                            "opuser": conf("Uses a pinned model", "rw", "", model="opus"),
+                           "tiered": conf("Picks a model per task", "rw", "", model="sonnet",
+                                          models="haiku opus bad;name"),
                            "Bad_Name": conf("x", "rw", ""),
                            "coordinator": conf("Reserved name", "rw", "")}.items():
             (d.ROOT / "roles" / name).mkdir()
@@ -99,6 +101,7 @@ class Base(unittest.TestCase):
         self.sbx_log = root / "sbx-calls.jsonl"
         os.environ["FAKE_SBX_LOG"] = str(self.sbx_log)
         d._jobs.clear()
+        d._seen_sandboxes.clear()
 
     def tearDown(self):
         for job in list(d._jobs.values()):
@@ -125,7 +128,7 @@ class SanitizeTests(unittest.TestCase):
 class RoleTests(Base):
     def test_load_roles_parses_and_skips_invalid_names(self):
         roles = d.load_roles()
-        self.assertEqual(sorted(roles), ["developer", "opuser", "reviewer", "tester"])
+        self.assertEqual(sorted(roles), ["developer", "opuser", "reviewer", "tester", "tiered"])
         self.assertEqual(roles["developer"]["broker_tools"], ["web_fetch", "npm_ci"])
         self.assertEqual(roles["reviewer"]["workspace"], "ro")
         self.assertEqual(roles["developer"]["model"], "")
@@ -165,7 +168,8 @@ class DelegateTests(Base):
         self.assertEqual(report["status"], "done")
         self.assertEqual(report["report"], "REPORT: did add a feature")
         exec_call = [c for c in self.sbx_calls() if c[0] == "exec"][0]
-        self.assertEqual(exec_call[:5], ["exec", "-w", str(d.PROJECT), "factory-developer", "claude"])
+        self.assertEqual(exec_call[:7], ["exec", "-w", str(d.PROJECT), "-e", "CLAUDE_CODE_DISABLE_AUTO_MEMORY=1",
+                                         "factory-developer", "claude"])
         self.assertEqual(exec_call[exec_call.index("-p") + 1], "add a feature")
         self.assertNotIn("--resume", exec_call)
         self.assertNotIn("--model", exec_call)  # developer leaves MODEL unset
@@ -177,6 +181,24 @@ class DelegateTests(Base):
         self.assertIn("🔧 Bash", log)
         self.assertIn("Working on it now", log)  # ANSI stripped
         self.assertNotIn("\x1b", log)
+
+    def ls_calls(self):
+        return [c for c in self.sbx_calls() if c[:1] == ["ls"]]
+
+    def test_sandbox_listing_is_cached_between_tasks(self):
+        d.tool_wait_for_job({"job_id": self.delegate("developer", "one"), "timeout_seconds": 30})
+        d.tool_wait_for_job({"job_id": self.delegate("developer", "two"), "timeout_seconds": 30})
+        self.assertEqual(len(self.ls_calls()), 1)
+        d._seen_sandboxes["factory-developer"] -= d.SANDBOX_CACHE_SECONDS  # expire it
+        d.tool_wait_for_job({"job_id": self.delegate("developer", "three"), "timeout_seconds": 30})
+        self.assertEqual(len(self.ls_calls()), 2)
+
+    def test_missing_sandbox_is_rechecked_every_time(self):
+        for _ in range(2):
+            out, is_error = d.call_tool("delegate", {"role": "tester", "task": "x"})
+            self.assertTrue(is_error)
+            self.assertIn("has not been created", out)
+        self.assertEqual(len(self.ls_calls()), 2)
 
     def test_model_used_is_logged_and_reported(self):
         job_id = self.delegate("developer", "add a feature")
@@ -212,6 +234,72 @@ class DelegateTests(Base):
         d.tool_wait_for_job({"job_id": job_id, "timeout_seconds": 30})
         exec_call = [c for c in self.sbx_calls() if c[0] == "exec"][0]
         self.assertEqual(exec_call[exec_call.index("--model") + 1], "opus")
+
+    def exec_models(self):
+        return [c[c.index("--model") + 1] if "--model" in c else None
+                for c in self.sbx_calls() if c[0] == "exec"]
+
+    def test_allowed_models_include_the_default_and_skip_bad_names(self):
+        self.assertEqual(d.load_roles()["tiered"]["models"], ["sonnet", "haiku", "opus"])
+        self.assertEqual(d.load_roles()["developer"]["models"], [])
+        self.assertIn("model: sonnet; can also run on: haiku, opus", d.tool_list_roles({}))
+
+    def test_delegate_can_pick_an_allowed_model(self):
+        out = json.loads(d.tool_delegate({"role": "tiered", "task": "rename", "model": "haiku",
+                                          "wait_seconds": 30}))
+        self.assertEqual(out["status"], "done")
+        self.assertEqual(self.exec_models(), ["haiku"])
+        meta = json.loads((d.STATE / "sessions" / "tiered.json").read_text())
+        self.assertEqual(meta["model"], "haiku")
+
+    def test_delegate_refuses_a_model_the_role_does_not_allow(self):
+        for role, model in (("tiered", "bad;name"), ("tiered", "claude-x"), ("developer", "opus")):
+            out, is_error = d.call_tool("delegate", {"role": role, "task": "x", "model": model})
+            self.assertTrue(is_error)
+            self.assertIn("can't run on model", out)
+        self.assertFalse(self.sbx_log.exists())  # refused before any sbx call
+
+    def test_switching_model_starts_a_fresh_session(self):
+        d.tool_wait_for_job({"job_id": self.delegate("tiered", "one"), "timeout_seconds": 30})
+        same = json.loads(d.tool_delegate({"role": "tiered", "task": "two", "wait_seconds": 30}))
+        self.assertEqual(same["session"], "continuing its previous session")
+        switched = json.loads(d.tool_delegate({"role": "tiered", "task": "three", "model": "opus",
+                                               "wait_seconds": 30}))
+        self.assertIn("previous one ran on sonnet, this task on opus", switched["session"])
+        execs = [c for c in self.sbx_calls() if c[0] == "exec"]
+        self.assertIn("--resume", execs[1])
+        self.assertNotIn("--resume", execs[2])
+        self.assertEqual(self.exec_models(), ["sonnet", "sonnet", "opus"])
+
+    def test_session_saved_without_a_model_still_resumes(self):
+        d.tool_wait_for_job({"job_id": self.delegate("tiered", "one"), "timeout_seconds": 30})
+        meta_path = d.STATE / "sessions" / "tiered.json"
+        meta = json.loads(meta_path.read_text())
+        del meta["model"]  # saved by a bridge from before per-task models
+        meta_path.write_text(json.dumps(meta))
+        out = json.loads(d.tool_delegate({"role": "tiered", "task": "two", "model": "opus",
+                                          "wait_seconds": 30}))
+        self.assertEqual(out["session"], "continuing its previous session")
+
+    def test_effort_is_passed_and_reported(self):
+        out = json.loads(d.tool_delegate({"role": "developer", "task": "x", "effort": "low",
+                                          "wait_seconds": 30}))
+        self.assertEqual(out["effort"], "low")
+        exec_call = [c for c in self.sbx_calls() if c[0] == "exec"][0]
+        self.assertEqual(exec_call[exec_call.index("--effort") + 1], "low")
+        d.tool_wait_for_job({"job_id": self.delegate("developer", "y"), "timeout_seconds": 30})
+        self.assertNotIn("--effort", [c for c in self.sbx_calls() if c[0] == "exec"][1])
+
+    def test_role_default_effort_and_bad_effort(self):
+        conf_path = d.ROOT / "roles" / "opuser" / "role.conf"
+        conf_path.write_text(conf_path.read_text() + 'EFFORT="high"\n')
+        d.tool_wait_for_job({"job_id": self.delegate("opuser", "x"), "timeout_seconds": 30})
+        exec_call = [c for c in self.sbx_calls() if c[0] == "exec"][0]
+        self.assertEqual(exec_call[exec_call.index("--effort") + 1], "high")
+        for bad in ("max", "high --model opus", ""):
+            out, is_error = d.call_tool("delegate", {"role": "opuser", "task": "x", "effort": bad})
+            self.assertTrue(is_error)
+            self.assertIn("effort must be one of", out)
 
     def test_second_task_resumes_session_unless_fresh(self):
         first = self.delegate("developer", "one")
@@ -325,7 +413,8 @@ class CostTests(Base):
         self.assertEqual(report["session_cost_usd"], 0.25)
         meta = json.loads((d.STATE / "sessions" / "developer.json").read_text())
         sid = (d.STATE / "sessions" / "developer").read_text().strip()
-        self.assertEqual(meta, {"session_id": sid, "total_cost_usd": 0.25, "context_tokens": 85010})
+        self.assertEqual(meta, {"session_id": sid, "total_cost_usd": 0.25, "context_tokens": 85010,
+                                "model": ""})
 
     def test_context_tokens_from_last_main_assistant_event(self):
         report = self.wait(self.delegate("developer", "one"))

@@ -35,7 +35,7 @@ sbx kit validate "$ROOT/roles/$name/kit" >/dev/null
 
 cat <<MSG
 Created roles/$name (copied from $from). Next:
-  1. Edit roles/$name/role.conf: DESCRIPTION, WORKSPACE (rw/ro), BROKER_TOOLS, MODEL (optional).
+  1. Edit roles/$name/role.conf: DESCRIPTION, WORKSPACE (rw/ro), BROKER_TOOLS, MODEL and MODELS (optional).
   2. Edit its instructions in roles/$name/instructions.md.
   3. Re-run ./scripts/02-launch-factory.sh <project-dir>.
 MSG

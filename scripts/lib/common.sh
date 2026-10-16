@@ -30,7 +30,7 @@ readonly HERDR_LINUX_X86_64_SHA256="2a02fed16beb651ef006e1d43f048f652ca4dc58ad05
 readonly BROKER_SANDBOX="factory-broker"
 readonly COORDINATOR_SANDBOX="factory-coordinator"
 readonly DISPATCH_MCP="factory-dispatch"
-readonly TEMPLATE_TAG="v2"
+readonly TEMPLATE_TAG="v3"
 # Host loopback ports (127.0.0.1 only): the broker VM's published port, and the
 # dispatch bridge that runs on the host.
 readonly BROKER_PORT="18765"

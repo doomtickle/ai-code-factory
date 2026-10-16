@@ -65,6 +65,13 @@ validate_role() {
   m="$(role_get "$r" MODEL)"
   [ -z "$m" ] || printf '%s' "$m" | grep -Eq '^[A-Za-z0-9._-]+$' \
     || die "role $r: MODEL must contain only letters, digits, dots, dashes, underscores"
+  for m in $(role_get "$r" MODELS); do
+    printf '%s' "$m" | grep -Eq '^[A-Za-z0-9._-]+$' \
+      || die "role $r: MODELS entries must contain only letters, digits, dots, dashes, underscores"
+  done
+  m="$(role_get "$r" EFFORT)"
+  [ -z "$m" ] || in_list "$m" "low medium high xhigh" \
+    || die "role $r: EFFORT must be low, medium, high or xhigh (or empty)"
   m="$(role_get "$r" MAX_SESSION_TOKENS)"
   [ -z "$m" ] || printf '%s' "$m" | grep -Eq '^[0-9]+$' \
     || die "role $r: MAX_SESSION_TOKENS must be a whole number of tokens (or empty)"

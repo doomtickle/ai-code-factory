@@ -10,6 +10,7 @@ set -euo pipefail
 #
 # -q: save the command's full output to a log and print only its last 40 lines
 #     (where test runners put the summary) and the log's path, to grep for more.
+#     If the command fails, it first lists the failure lines from above the tail.
 #     Use it for full-suite runs; drop it to see everything from a narrow run.
 #
 # Modes (-m, or FACTORY_TEST_MODE; default auto):
@@ -28,6 +29,8 @@ set -euo pipefail
 #
 # Baked into the developer and reviewer images (templates/*/Dockerfile).
 
+FAILURE_RE='^[[:space:]]*(FAIL|FAILED|ERROR)([[:space:]:]|$)|^[[:space:]]*(×|✗|✕|●)[[:space:]]|^--- FAIL:|error TS[0-9]+|^[[:space:]]+[0-9]+:[0-9]+[[:space:]]+error[[:space:]]'
+
 die() { echo "factory-test: $*" >&2; exit 1; }
 say() { echo "factory-test: $*" >&2; }
 
@@ -39,7 +42,7 @@ while getopts "C:m:qh" opt; do
     C) src="$OPTARG" ;;
     m) mode="$OPTARG" ;;
     q) quiet=1 ;;
-    h) sed -n '4,27p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    h) sed -n '4,28p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) die "usage: factory-test [-C <project-dir>] [-m auto|clean|host] [-q] [--] [<command> [args...]]" ;;
   esac
 done
@@ -251,7 +254,20 @@ if [ -n "$quiet" ]; then
   rc=$?
   # Without terminal colours, so the tail and any grep of the log stay plain text.
   sed 's/\x1b\[[0-9;]*[A-Za-z]//g' "$log" > "$log.tmp" && mv "$log.tmp" "$log"
-  say "last 40 of $(wc -l < "$log" | tr -d ' ') lines (full output: $log):"
+  lines="$(wc -l < "$log" | tr -d ' ')"
+  # A failed run's failures can sit above the tail (e.g. vitest prints them
+  # before a long list of passing files): list the lines naming them, so a role
+  # rarely needs to grep the log. Patterns: vitest/jest FAIL, ×, ●; pytest
+  # FAILED/ERROR; go --- FAIL; tsc error TSnnnn; eslint "l:c  error".
+  if [ "$rc" -ne 0 ] && [ "$lines" -gt 40 ]; then
+    failures="$(head -n "$((lines - 40))" "$log" \
+      | grep -E "$FAILURE_RE" | awk '!seen[$0]++' || true)"
+    if [ -n "$failures" ]; then
+      say "failure lines above the tail ($(printf '%s\n' "$failures" | wc -l | tr -d ' '), first 30):"
+      printf '%s\n' "$failures" | head -n 30
+    fi
+  fi
+  say "last 40 of $lines lines (full output: $log):"
   tail -n 40 "$log"
 else
   "$@"

@@ -44,8 +44,16 @@ MAX_WAIT_SECONDS = 600
 # task starts fresh (role.conf MAX_SESSION_TOKENS overrides it; "0" = no cap).
 # Every turn of a resumed session re-reads its whole history, so a large one
 # makes even a one-line task expensive.
-DEFAULT_MAX_SESSION_TOKENS = 150_000
+DEFAULT_MAX_SESSION_TOKENS = 100_000
 MAX_INSTRUCTIONS_CHARS = 20_000
+# Fixed environment for every role's claude. Roles keep their context in their
+# saved sessions and in the Coordinator's tasks; auto memory would only add
+# notes to every prompt that no one reviews.
+ROLE_ENV = ("CLAUDE_CODE_DISABLE_AUTO_MEMORY=1",)
+# How long a sandbox seen by `sbx ls` is assumed to still exist, so delegate
+# doesn't wait for `sbx ls` on every task. A missing one is re-checked each time,
+# and a sandbox removed in the meantime makes the job itself fail with sbx's error.
+SANDBOX_CACHE_SECONDS = 300
 
 ROLE_PREAMBLE = (
     "You are the {role} in a multi-agent software factory. You received this task "
@@ -86,6 +94,10 @@ def role_system_prompt(role: str, instructions: str) -> str:
 
 _ROLE_NAME = re.compile(r"^[a-z][a-z0-9-]{1,30}$")
 _CONF_LINE = re.compile(r'^([A-Z_]+)="(.*)"\s*$')
+_MODEL_NAME = re.compile(r"^[A-Za-z0-9._-]{1,80}$")
+# claude's --effort levels the Coordinator may pick ("max" is left out: it has no
+# cap on thinking, and not every model supports it).
+EFFORTS = ("low", "medium", "high", "xhigh")
 # Keep in sync with RESERVED_ROLE_NAMES in scripts/lib/roles.sh (valid_role_name).
 _RESERVED_ROLE_NAMES = {"broker", "coordinator", "dispatch"}
 
@@ -107,9 +119,20 @@ def load_roles() -> dict:
             "workspace": values.get("WORKSPACE", "rw"),
             "broker_tools": values.get("BROKER_TOOLS", "").split(),
             "model": values.get("MODEL", "").strip(),
+            "models": parse_models(values.get("MODEL", ""), values.get("MODELS", "")),
+            "effort": values.get("EFFORT", "").strip() if values.get("EFFORT", "").strip() in EFFORTS else "",
             "max_session_tokens": parse_session_cap(values.get("MAX_SESSION_TOKENS", "")),
         }
     return roles
+
+
+def parse_models(default: str, allowed: str) -> list:
+    """Models the Coordinator may pick per task: MODELS, plus the default MODEL."""
+    models = [m for m in allowed.split() if _MODEL_NAME.match(m)]
+    default = default.strip()
+    if default and _MODEL_NAME.match(default) and default not in models:
+        models.insert(0, default)
+    return models
 
 
 def parse_session_cap(value: str) -> int:
@@ -121,9 +144,26 @@ def sandbox_name(role: str) -> str:
     return f"factory-{role}"
 
 
+_seen_sandboxes: dict = {}  # sandbox name -> time.monotonic() when `sbx ls` last listed it
+_seen_lock = threading.Lock()
+
+
 def existing_sandboxes() -> set:
     cp = subprocess.run([SBX, "ls", "-q"], capture_output=True, text=True, timeout=60)
-    return set(cp.stdout.split()) if cp.returncode == 0 else set()
+    names = set(cp.stdout.split()) if cp.returncode == 0 else set()
+    now = time.monotonic()
+    with _seen_lock:
+        _seen_sandboxes.clear()
+        _seen_sandboxes.update(dict.fromkeys(names, now))
+    return names
+
+
+def sandbox_exists(name: str) -> bool:
+    with _seen_lock:
+        seen = _seen_sandboxes.get(name)
+    if seen is not None and time.monotonic() - seen < SANDBOX_CACHE_SECONDS:
+        return True
+    return name in existing_sandboxes()
 
 
 # --------------------------------------------------------------------------
@@ -163,12 +203,13 @@ def audit(record: dict) -> None:
 
 class Job:
     def __init__(self, role: str, task: str, resume: str | None, model: str = "",
-                 start_cost_usd: float | None = 0.0, instructions: str = ""):
+                 start_cost_usd: float | None = 0.0, instructions: str = "", effort: str = ""):
         self.id = time.strftime("%Y%m%d-%H%M%S-") + secrets.token_hex(3)
         self.role = role
         self.task = task
         self.resume = resume
         self.model = model
+        self.effort = effort
         self.instructions = instructions
         self.status = "running"  # running | done | failed | cancelled
         self.started = time.time()
@@ -191,6 +232,8 @@ class Job:
                "elapsed_seconds": round(end - self.started), "task": one_line(self.task, 200)}
         if self.model_used:
             out["model"] = self.model_used
+        if self.effort:
+            out["effort"] = self.effort
         if self.session_cost_usd is not None:
             if self.start_cost_usd is not None and self.session_cost_usd >= self.start_cost_usd:
                 out["cost_usd"] = round(self.session_cost_usd - self.start_cost_usd, 4)
@@ -253,7 +296,7 @@ def save_session(job: Job) -> None:
         session_meta_file(job.role).unlink(missing_ok=True)
         return
     meta = {"session_id": job.session_id, "total_cost_usd": job.session_cost_usd,
-            "context_tokens": job.context_tokens or 0}
+            "context_tokens": job.context_tokens or 0, "model": job.model}
     session_meta_file(job.role).write_text(json.dumps(meta) + "\n")
 
 
@@ -321,13 +364,18 @@ def run_job(job: Job) -> None:
         session_meta_file(job.role).unlink(missing_ok=True)
         attempt_resume = job.resume
         while True:
-            argv = [SBX, "exec", "-w", str(PROJECT), sandbox_name(job.role),
-                    "claude", "-p", job.task,
-                    "--output-format", "stream-json", "--verbose",
-                    "--permission-mode", "bypassPermissions",
-                    "--append-system-prompt", role_system_prompt(job.role, job.instructions)]
+            argv = [SBX, "exec", "-w", str(PROJECT)]
+            for env in ROLE_ENV:
+                argv += ["-e", env]
+            argv += [sandbox_name(job.role),
+                     "claude", "-p", job.task,
+                     "--output-format", "stream-json", "--verbose",
+                     "--permission-mode", "bypassPermissions",
+                     "--append-system-prompt", role_system_prompt(job.role, job.instructions)]
             if job.model:
                 argv += ["--model", job.model]
+            if job.effort:
+                argv += ["--effort", job.effort]
             if attempt_resume:
                 argv += ["--resume", attempt_resume]
             stderr_lines: list = []
@@ -391,6 +439,11 @@ def tool_list_roles(args: dict) -> str:
         access = "edits the project" if info["workspace"] == "rw" else "read-only"
         net = ", ".join(info["broker_tools"]) or "none"
         model = info["model"] or "default"
+        others = [m for m in info["models"] if m != info["model"]]
+        if others:
+            model += f"; can also run on: {', '.join(others)}"
+        if info["effort"]:
+            model += f"; effort: {info['effort']}"
         line = (f"- {name} [{state}]: {info['description']} "
                 f"({access}; network tools: {net}; model: {model})")
         _, meta = saved_session(name)
@@ -415,8 +468,19 @@ def tool_delegate(args: dict) -> str:
     wait = args.get("wait_seconds", 0)
     if not isinstance(wait, int) or isinstance(wait, bool) or wait < 0:
         raise Denied("wait_seconds must be a non-negative integer")
+    model = roles[role]["model"]
+    if "model" in args:
+        model = args["model"].strip()
+        if model not in roles[role]["models"]:
+            allowed = ", ".join(roles[role]["models"]) or "none (only its default)"
+            raise Denied(f"{role} can't run on model {model!r}; allowed: {allowed}")
+    effort = roles[role]["effort"]
+    if "effort" in args:
+        effort = args["effort"].strip()
+        if effort not in EFFORTS:
+            raise Denied(f"effort must be one of: {', '.join(EFFORTS)}")
     instructions = role_instructions(role)
-    if sandbox_name(role) not in existing_sandboxes():
+    if not sandbox_exists(sandbox_name(role)):
         raise Denied(f"the {role} sandbox has not been created; ask the user to run 'factory start' "
                      "again (role sandboxes are created once a Claude login is stored)")
     with _jobs_lock:
@@ -427,16 +491,23 @@ def tool_delegate(args: dict) -> str:
         if not args.get("fresh_session"):
             resume, meta = saved_session(role)
             cap, size = roles[role]["max_session_tokens"], (meta or {}).get("context_tokens") or 0
+            previous = (meta or {}).get("model")
             if resume and cap and isinstance(size, int) and size > cap:
                 resume = None
                 mode = (f"fresh session (automatic: the previous one carried ~{round(size / 1000)}k tokens, "
                         f"over the {round(cap / 1000)}k cap; it starts without that history)")
+            elif resume and isinstance(previous, str) and previous != model:
+                # A resumed session keeps the model it was saved with, and each model has
+                # its own prompt cache: a model switch starts over rather than resume.
+                resume = None
+                mode = (f"fresh session (automatic: the previous one ran on {previous or 'the default model'}, "
+                        f"this task on {model or 'the default model'}; it starts without that history)")
             elif resume:
                 start_cost = meta.get("total_cost_usd")  # None if unknown
                 mode = "continuing its previous session"
             else:
                 mode = "fresh session"
-        job = Job(role, task, resume, roles[role]["model"], start_cost, instructions)
+        job = Job(role, task, resume, model, start_cost, instructions, effort)
         _jobs[job.id] = job
     threading.Thread(target=run_job, args=(job,), daemon=True).start()
     if wait:
@@ -498,9 +569,14 @@ TOOLS = {
                  "covers a whole job; without it, it returns the job id at once (use that to run roles in "
                  "parallel). The role continues its previous session unless fresh_session is true or the "
                  "session is over the role's size cap. Write a self-contained task: roles cannot see your "
-                 "conversation.",
+                 "conversation. model (optional) runs this task on another of the role's allowed models "
+                 "(list_roles shows them): a cheaper one for mechanical work, a stronger one for hard "
+                 "problems or after a weaker one fell short. A model other than the one the role's saved "
+                 "session ran on starts a fresh session. effort (optional: low, medium, high or xhigh) "
+                 "sets how much the model thinks; omit it for the role's default.",
                  {"role": {"type": "string"}, "task": {"type": "string"},
-                  "fresh_session": {"type": "boolean"}, "wait_seconds": {"type": "integer"}},
+                  "fresh_session": {"type": "boolean"}, "wait_seconds": {"type": "integer"},
+                  "model": {"type": "string"}, "effort": {"type": "string"}},
                  ["role", "task"]),
     "wait_for_job": (tool_wait_for_job, "Wait up to timeout_seconds (default and max 600) for a job; "
                      "returns its status and, when finished, the role's report. model is the job "
@@ -586,8 +662,9 @@ def server_instructions() -> str:
         "Delegate self-contained tasks (goal, files, known facts, constraints, what done "
         "looks like), passing wait_seconds=600 so one call returns the report. Typical "
         "flow: researcher (only if outside information is needed) -> developer -> "
-        "reviewer, sending REVISE feedback back to the developer. Ask the user before "
-        "anything irreversible.",
+        "reviewer, sending REVISE feedback back to the developer. Pick each task's model and "
+        "effort (delegate's optional model and effort) as the cheapest that will do it well, "
+        "stepping up after a weaker run falls short. Ask the user before anything irreversible.",
     ]
     return "\n".join(lines)
 
