@@ -149,7 +149,8 @@ Herdr; run `factory start` again to reopen it.
 | Command | What it does |
 |---|---|
 | `factory doctor` | Check the machine is ready; prints the fix for each problem (setup runs it first) |
-| `factory setup` | One-time setup (safe to re-run, e.g. after pulling changes to images or policy) |
+| `factory setup` | One-time setup (safe to re-run) |
+| `factory update [--yes]` | After pulling changes or editing kits, images or policy: pulls the latest factory, rebuilds, recreates only the sandboxes the changes affect (it lists them and what each loses, then asks), and restarts |
 | `factory start [dir]` | Start the factory for a project (default: current folder) and open Herdr |
 | `factory status` | Project, broker, dispatch bridge, login, and sandbox status |
 | `factory logs <role>` | Follow a role's transcript; `factory logs broker` / `dispatch` for audit logs |
@@ -178,7 +179,7 @@ it). Start from the example:
 ```sh
 mkdir -p ~/.config/ai-code-factory
 cp -R config.example/. ~/.config/ai-code-factory/   # then edit, keeping only what you need
-factory setup && sbx rm --force factory-broker && factory start
+factory update
 ```
 
 - `policy.toml` overrides `broker/policy.toml` table by table: a key it sets
@@ -188,7 +189,7 @@ factory setup && sbx rm --force factory-broker && factory start
 - `broker-kit/spec.yaml` is a kit adding broker egress hosts that your
   `policy.toml` needs, such as your private registry's host. It applies to the
   broker sandbox only (agent sandboxes still reach only Anthropic), and only
-  when that sandbox is created, hence the `sbx rm` above.
+  when that sandbox is created; `factory update` recreates it when the kit changes.
 - `projects/<project-folder-name>.md` holds optional notes for one project,
   such as its test command, added to every role's instructions on `factory start`
   (Roles, "Per-project notes"). These need no rebuild.
@@ -324,7 +325,7 @@ credential the broker can't use yet.
 1. In your local `policy.toml` (Local settings), set `[jira].site` (e.g.
    `"acme.atlassian.net"`) and `[jira].cloud_id`, the `cloudId` that
    `https://<site>/_edge/tenant_info` returns (public tenant info, not a
-   secret). Then `factory setup`, `sbx rm --force factory-broker`.
+   secret). Then run `factory update`.
 2. Create a **scoped** API token at id.atlassian.com → Security → API tokens →
    Create API token with scopes, granting only `read:jira-work` and `read:jira-user`.
 3. Store it in the host keychain, service `factory-jira`, as `you@example.com:TOKEN`:
@@ -474,7 +475,7 @@ again. All of these take effect from the next task:
 `factory start` copies the instructions into the state folder and the bridge
 reads that copy, so a role editing this repo can't change prompts on its own. Kit, image, project access and
 whether the role has broker access at all are fixed when the sandbox is created,
-so for those run `sbx rm --force factory-<role>` first. Each role's tab shows the
+so for those run `factory update`, which recreates that role's sandbox. Each role's tab shows the
 job session's main model once the job reports it (subagents it spawns may use others).
 
 **Change the Coordinator's model:** unlike a role's `MODEL` (read fresh on every
@@ -483,9 +484,8 @@ dispatch), the Coordinator's model is baked into its kit's managed settings
 written at setup) and only applied when its sandbox is created. It defaults to
 `opus` (see the models table above); `/model` in the Coordinator pane can still
 switch models for that session. To change the default,
-edit that `"model"` value, then run `sbx rm --force factory-coordinator` followed by
-`factory start` to recreate it with the new setting; recreating the sandbox discards
-its conversation history.
+edit that `"model"` value, then run `factory update` to recreate the Coordinator
+with the new setting; recreating it discards its conversation history.
 
 **Remove a role:** delete `roles/<role>/` and run `factory start`. It closes the role's
 tab and removes its broker access, and it prints the `sbx rm` command for the role's
@@ -565,37 +565,30 @@ hasn't dispatched any jobs yet just shows an empty report.
   broker policy change what the sandboxes may do.
 - **Changing broker policy:** edit `broker/policy.toml` (and `kits/broker/spec.yaml` if
   you add a web host) for changes everyone should get, or your local `policy.toml`
-  and `broker-kit/` (Local settings) for your own. Then run `factory setup`,
-  `sbx rm --force factory-broker` and `factory start`. The policy is built into the
-  image, so agents can't change it.
-- **Upgrading** (e.g. pulling in the Jira tools, or any other change to
-  the broker code in `broker/`, `templates/broker/Dockerfile`, or `kits/coordinator/broker.conf`):
-  a `factory-broker` or `factory-coordinator` sandbox that already existed keeps
-  whatever image and `--static-mcp` registrations it was created with - `factory start`
-  does not recreate an existing sandbox, so it won't pick up a new broker image layer
-  or a new tool grant for the Coordinator on its own. Rebuild and recreate both:
-  ```sh
-  factory setup                                    # rebuilds the sandbox images
-  sbx rm --force factory-broker factory-coordinator
-  factory start
-  ```
-  Role sandboxes work the same way: after a `TEMPLATE_TAG` bump (e.g. `v1` →
-  `v2`, which added yarn and `factory-test`), or when a role that had no broker
-  tools gets some (the reviewer's `npm_fetch`), recreate them too. This
-  discards the roles' saved sessions:
-  ```sh
-  factory setup
-  sbx rm --force factory-broker factory-developer factory-reviewer
-  factory start
-  ```
+  and `broker-kit/` (Local settings) for your own. Then run `factory update`. The
+  policy is built into the image, so agents can't change it.
+- **Upgrading:** run `factory update`. It pulls this checkout (fast-forward only,
+  and only when it has no local changes), runs `factory setup` to rebuild the
+  images, then recreates exactly the sandboxes whose inputs changed and restarts
+  the factory, dispatch bridge included. A sandbox keeps the image, kit,
+  project access and broker access it was created with, so `factory start`
+  alone never picks those up. It only says which sandboxes are out of date.
+  `factory update` records a fingerprint of those inputs for each sandbox it
+  creates. Before it removes anything, it lists each out-of-date sandbox and
+  what recreating it discards, then asks (`--yes` skips the question):
+  - **Coordinator:** its conversation history.
+  - **A role:** its saved session; the next task starts fresh.
+  - **Broker:** a GitHub token stored with `--sandbox factory-broker`, because
+    `sbx rm` deletes secrets scoped to the removed sandbox. Re-add it
+    afterwards; `factory start` reminds you.
+
+  Sandboxes created before fingerprints existed count as out of date once.
 - **Coordinator briefing:** the Coordinator learns what the factory is from
   `/etc/claude-code/CLAUDE.md`, written from `kits/coordinator/spec.yaml` when its
   sandbox is created (a mixin kit's `agentInstructions` aren't loaded reliably), and
   from the dispatch bridge's MCP instructions, built from `roles/` on every new
-  Coordinator session. After editing the kit's briefing, run
-  `sbx rm --force factory-coordinator` and `factory start` (this discards the
-  Coordinator's conversation history). After changing `dispatch/server.py`, run
-  `scripts/03-stop-factory.sh` and `factory start` so the bridge restarts.
+  Coordinator session. After editing the kit's briefing, or `dispatch/server.py`,
+  run `factory update`.
 - **After a reboot:** `factory start`.
 - **One checkout at a time:** every copy of this repo uses the same ports, sandbox
   names and sbx secrets. If `factory start` says port 18766 is already in use,

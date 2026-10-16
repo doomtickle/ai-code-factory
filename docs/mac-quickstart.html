@@ -236,6 +236,7 @@ factory start</pre><button class="copy" type="button">Copy</button></div>
       <table>
         <thead><tr><th>Command</th><th>What it does</th></tr></thead>
         <tbody>
+          <tr><td><code>factory update</code></td><td>Pull, rebuild and recreate whatever changed, then restart</td></tr>
           <tr><td><code>factory status</code></td><td>Project, broker, bridge, login and sandbox status</td></tr>
           <tr><td><code>factory logs developer</code></td><td>Follow a role's transcript (<code>broker</code> or <code>dispatch</code> for audit logs)</td></tr>
           <tr><td><code>factory analytics</code></td><td>Cost, tokens and model use per role (<code>--html</code> for a report)</td></tr>
@@ -256,10 +257,9 @@ cat &gt; ~/.config/ai-code-factory/projects/my-project.md &lt;&lt;'EOF'
 EOF</pre><button class="copy" type="button">Copy</button></div>
     <p><strong>Let agents push branches and open PRs.</strong> Add the repos to <code>[git].repos</code> in <code>~/.config/ai-code-factory/policy.toml</code> and run <code>factory setup</code>. Then store a fine-grained GitHub token for the broker sandbox only. Agents can push only <code>factory/*</code> branches.</p>
     <div class="cmd"><pre>sbx secret set github --sandbox factory-broker</pre><button class="copy" type="button">Copy</button></div>
-    <p><strong>Updating the factory later:</strong> <code>git pull</code>, then <code>factory setup</code>. If the update changed the images or the Coordinator kit, recreate the sandboxes. That clears the roles' saved sessions but keeps your login.</p>
-    <div class="cmd"><pre>factory stop
-sbx rm --force factory-coordinator factory-developer factory-reviewer factory-researcher
-factory start</pre><button class="copy" type="button">Copy</button></div>
+    <p><strong>Updating the factory later</strong> takes one command. It pulls the latest code and rebuilds the images. Then it recreates only the sandboxes the changes affect, after listing them and what each one loses, and restarts the factory. Your Claude login is always kept.</p>
+    <div class="cmd"><pre>factory update</pre><button class="copy" type="button">Copy</button></div>
+    <p class="note"><strong>GitHub token:</strong> if the broker gets recreated, sbx deletes the token you stored for it. Re-add it with <code>sbx secret set github --sandbox factory-broker</code>. <code>factory update</code> warns you before this happens, and <code>factory start</code> reminds you afterwards.</p>
   </section>
 
   <hr>

@@ -108,6 +108,7 @@ create_sandbox() {
     mkdir -p "$scratch"
     sbx create "$@" claude "$scratch" "${PROJECT}:ro" >/dev/null
   fi
+  record_sandbox_fingerprint "$name"
 }
 
 # The Coordinator's main workspace is the project so Claude opens there; its kit

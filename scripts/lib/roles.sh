@@ -76,3 +76,67 @@ validate_role() {
   [ -z "$m" ] || printf '%s' "$m" | grep -Eq '^[0-9]+$' \
     || die "role $r: MAX_SESSION_TOKENS must be a whole number of tokens (or empty)"
 }
+
+# --- Sandbox fingerprints ------------------------------------------------------------
+# A sandbox keeps what it was created from: its image, kit, project access and
+# whether it has broker access. A digest of those inputs is recorded when the
+# sandbox is created; when they change (a rebuilt image, an edited kit),
+# `factory start` reports the sandbox as out of date and `factory update`
+# recreates it. Grants in broker.conf are left out: the broker re-reads them on
+# every call, so only gaining or losing broker access at all needs a new sandbox.
+
+sandbox_fingerprint_file() { printf '%s/sandboxes/%s' "$FACTORY_STATE" "$1"; }
+
+# image_build_id IMAGE -> id of the last build of factory-IMAGE:TEMPLATE_TAG
+# (recorded by 00-build-templates.sh), or the tag if none was recorded.
+image_build_id() {
+  cat "$FACTORY_STATE/images/factory-$1-$TEMPLATE_TAG.id" 2>/dev/null \
+    || printf 'factory-%s:%s' "$1" "$TEMPLATE_TAG"
+}
+
+# dir_hash DIR -> digest of the file names and contents under DIR ("none" if absent)
+dir_hash() {
+  local dir="$1" f
+  [ -d "$dir" ] || { printf 'none'; return 0; }
+  find "$dir" -type f ! -name broker.conf | LC_ALL=C sort | while IFS= read -r f; do
+    printf '%s %s\n' "${f#"$dir"/}" "$(sha256_hash "$f")"
+  done | sha256_hash
+}
+
+yes_no() { if [ -n "$1" ]; then echo yes; else echo no; fi; }
+
+# sandbox_fingerprint NAME -> digest of the inputs NAME is created from
+sandbox_fingerprint() {
+  local name="$1" role
+  case "$name" in
+    "$BROKER_SANDBOX")
+      printf 'image=%s\nkit=%s\nlocal-kit=%s\n' "$(image_build_id broker)" \
+        "$(dir_hash "$ROOT/kits/broker")" "$(dir_hash "$FACTORY_CONFIG/broker-kit")" ;;
+    "$COORDINATOR_SANDBOX")
+      printf 'image=%s\nkit=%s\nbroker=%s\n' "$(image_build_id developer)" \
+        "$(dir_hash "$ROOT/kits/coordinator")" "$(yes_no "$(coordinator_broker_tools)")" ;;
+    *)
+      role="${name#factory-}"
+      printf 'image=%s\nkit=%s\nworkspace=%s\nbroker=%s\n' "$(image_build_id "$(role_get "$role" TEMPLATE)")" \
+        "$(dir_hash "$ROOT/roles/$role/kit")" "$(role_get "$role" WORKSPACE)" \
+        "$(yes_no "$(role_get "$role" BROKER_TOOLS)")" ;;
+  esac | sha256_hash
+}
+
+record_sandbox_fingerprint() {
+  mkdir -p "$FACTORY_STATE/sandboxes"
+  sandbox_fingerprint "$1" > "$(sandbox_fingerprint_file "$1")"
+}
+
+# stale_sandboxes -> existing broker, Coordinator and role sandboxes whose
+# inputs changed since they were created (or that predate fingerprints), one per line
+stale_sandboxes() {
+  local existing sb r
+  existing="$(sbx ls -q 2>/dev/null || true)"
+  for sb in "$BROKER_SANDBOX" "$COORDINATOR_SANDBOX" $(for r in $(list_roles); do role_sandbox "$r"; echo; done); do
+    printf '%s\n' "$existing" | grep -qx "$sb" || continue
+    [ "$(cat "$(sandbox_fingerprint_file "$sb")" 2>/dev/null || true)" = "$(sandbox_fingerprint "$sb")" ] \
+      || printf '%s\n' "$sb"
+  done
+  return 0
+}

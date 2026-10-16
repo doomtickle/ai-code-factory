@@ -98,6 +98,7 @@ else
     -p "127.0.0.1:$BROKER_PORT:8765" \
     -e "BROKER_WORKSPACE=$PROJECT" -e "BROKER_STATE=$STATE" \
     shell "$@" "$PROJECT" "$STATE" >/dev/null 2>&1 || die "could not create the broker sandbox"
+  record_sandbox_fingerprint "$BROKER_SANDBOX"
 fi
 
 # Start the server if it is not running (kit startup commands do not re-run on restart).

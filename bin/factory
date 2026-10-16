@@ -49,6 +49,8 @@ ${B}Usage${N}
   factory doctor             Check this machine is ready, and say how to fix what isn't
   factory setup              One-time setup: install tools, sign in, build images,
                              apply the security baseline, put 'factory' on your PATH
+  factory update [--yes]     Pull the latest factory, rebuild, recreate whatever
+                             sandboxes the changes need, and restart
   factory start [dir]        Start the factory for a project (default: this folder)
                              and open it in Herdr
   factory status             What is running, and for which project
@@ -324,6 +326,11 @@ npm_private_registry_needs_token() {
 }
 
 onboarding_hints() {
+  local stale
+  if [ -z "${FACTORY_UPDATING:-}" ]; then
+    stale="$(stale_sandboxes | tr '\n' ' ')"
+    [ -z "$stale" ] || warn "out of date (made from an older image or kit): ${stale% }; run 'factory update' to recreate them"
+  fi
   if ! claude_login_stored; then
     warn "first time: type /login in the Coordinator pane to sign in with your Claude subscription, then run 'factory start' again (e.g. in the Host shell pane) to create the role sandboxes"
   fi
@@ -456,12 +463,100 @@ cmd_analytics() {
   "$python" "$SCRIPTS/analytics.py" --state "$FACTORY_STATE" "$@"
 }
 
+# --- update --------------------------------------------------------------------------
+# pull_factory -> fast-forward this checkout to its upstream. When that brings
+# new commits, re-runs `factory update` from the new code (the script on disk
+# may have changed under this process).
+pull_factory() {
+  local before
+  step "Updating the factory code"
+  if ! git -C "$ROOT" rev-parse --abbrev-ref '@{u}' >/dev/null 2>&1; then
+    warn "this checkout has no upstream branch; skipping git pull"
+    return 0
+  fi
+  if [ -n "$(git -C "$ROOT" status --porcelain)" ]; then
+    warn "$ROOT has uncommitted changes; skipping git pull (commit or stash them to pull)"
+    return 0
+  fi
+  before="$(git -C "$ROOT" rev-parse HEAD)"
+  git -C "$ROOT" pull --ff-only --quiet \
+    || die "git pull failed; sort it out in $ROOT, then run 'factory update' again"
+  if [ "$(git -C "$ROOT" rev-parse HEAD)" = "$before" ]; then
+    ok "already up to date"
+    return 0
+  fi
+  ok "pulled:"
+  git -C "$ROOT" log --oneline "$before..HEAD" | sed 's/^/      /'
+  exec "$ROOT/bin/factory" update --pulled "$@"
+}
+
+# describe_loss SANDBOX -> what recreating it discards
+describe_loss() {
+  case "$1" in
+    "$BROKER_SANDBOX")
+      if sbx secret ls --sandbox "$BROKER_SANDBOX" 2>/dev/null | grep -qE '[[:space:]]github[[:space:]]'; then
+        echo "its GitHub token (sbx deletes secrets scoped to a removed sandbox; re-add it afterwards with: sbx secret set github --sandbox $BROKER_SANDBOX)"
+      else
+        echo "nothing (it keeps no history)"
+      fi ;;
+    "$COORDINATOR_SANDBOX") echo "the Coordinator's conversation history" ;;
+    *) echo "the role's saved session (its next task starts fresh)" ;;
+  esac
+}
+
+cmd_update() {
+  local yes="" pulled="" arg stale sb project
+  for arg in "$@"; do
+    case "$arg" in
+      --yes|-y) yes=1 ;;
+      --pulled) pulled=1 ;;
+      *) die "usage: factory update [--yes]" ;;
+    esac
+  done
+  [ -n "$pulled" ] || pull_factory ${yes:+--yes}
+
+  FACTORY_UPDATING=1 cmd_setup
+
+  step "Checking which sandboxes the changes affect"
+  stale="$(stale_sandboxes | tr '\n' ' ')"
+  stale="${stale% }"
+  if [ -z "$stale" ]; then
+    ok "every sandbox is up to date"
+  else
+    say "  These were made from an older image or kit and will be recreated:"
+    for sb in $stale; do say "    $B$sb$N: loses $(describe_loss "$sb")"; done
+    say "  Your Claude login, settings, logs and the project itself are kept."
+    [ -n "$yes" ] || confirm "Recreate them now?" \
+      || die "cancelled; nothing was removed. Run 'factory update' again when you're ready."
+  fi
+
+  step "Restarting the factory"
+  "$SCRIPTS/03-stop-factory.sh" >/dev/null
+  ok "stopped the agents, broker and dispatch bridge"
+  if [ -n "$stale" ]; then
+    # shellcheck disable=SC2086 # one argument per sandbox
+    sbx rm --force $stale >/dev/null
+    for sb in $stale; do
+      rm -f "$FACTORY_DISPATCH_STATE/sessions/${sb#factory-}" "$FACTORY_DISPATCH_STATE/sessions/${sb#factory-}.json"
+    done
+    ok "removed $stale"
+  fi
+  project="$(bound_project)"
+  if [ -n "$project" ] && [ -d "$project" ]; then
+    cmd_start "$project"
+  else
+    say ""
+    say "${G}Updated.${N} Next: cd into a project and run ${B}factory start${N}"
+  fi
+}
+
 # --- main ----------------------------------------------------------------------------
 command="${1:-help}"
 [ $# -eq 0 ] || shift
 case "$command" in
   doctor) cmd_doctor "$@" ;;
   setup) cmd_setup "$@" ;;
+  update|upgrade) cmd_update "$@" ;;
   start|up) cmd_start "$@" ;;
   status) cmd_status "$@" ;;
   stop|down) cmd_stop "$@" ;;

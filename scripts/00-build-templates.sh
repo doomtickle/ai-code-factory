@@ -24,6 +24,10 @@ build() {
   echo "Loading $tag into sbx..."
   docker image save "$tag" -o "$tmp/$image.tar"
   sbx template load "$tmp/$image.tar"
+  # The image id tells sandbox fingerprints (lib/roles.sh) whether a rebuild
+  # changed anything: an unchanged, cached build keeps its id.
+  mkdir -p "$FACTORY_STATE/images"
+  docker image inspect --format '{{.Id}}' "$tag" > "$FACTORY_STATE/images/factory-$image-$TEMPLATE_TAG.id"
 }
 
 # All three use the repo root as the context for shared files; .dockerignore
