@@ -106,7 +106,7 @@ Everything is pinned for repeatable setups:
 | Sandbox base images (digests) | `templates/*/Dockerfile` |
 | ruff 0.16.8 | `templates/reviewer/Dockerfile` |
 | yarn 1.22.22 (+ SHA-256) and `factory-test` | `templates/developer/Dockerfile`, `templates/reviewer/Dockerfile` |
-| Broker code + policy | baked into `factory-broker:v2` at build time |
+| Broker code + policy | baked into `factory-broker:v3` at build time |
 | Dispatch bridge runtime | macOS system Python (`/usr/bin/python3`); `python3` on PATH on Linux |
 
 Every script checks the exact `sbx`/`herdr` versions and refuses to run on a mismatch.
@@ -605,7 +605,7 @@ hasn't dispatched any jobs yet just shows an empty report.
   (or `dispatch/token.sha256`) in the state folder, run `factory start`, run `sbx daemon restart`, then
   `factory start` again.
 - **Tests:**
-  - broker: `docker run --rm --network none -v "$PWD/broker:/b:ro" -w /b factory-broker:v2 python3 -m unittest -v`
+  - broker: `docker run --rm --network none -v "$PWD/broker:/b:ro" -w /b factory-broker:v3 python3 -m unittest -v`
   - dispatch: `/usr/bin/python3 -m unittest discover -s dispatch -v` (macOS) or
     `python3 -m unittest discover -s dispatch -v` (Linux)
 - **Under the hood:** `factory` wraps the scripts in `scripts/`:
