@@ -12,6 +12,12 @@ COPY passdesk /opt/factory-broker/passdesk
 # A consumer's local policy overlay (empty if none; passed as the
 # factory-config build context, see ai-code-factory's scripts/00-build-templates.sh).
 COPY --from=factory-config policy.toml /opt/factory-broker/policy.local.toml
+# Optional plugin packages (e.g. a deployment's commercial add-on), passed as
+# the "plugins" build context: an empty directory when there are none. They
+# sit on PYTHONPATH but load only when PASSDESK_PLUGINS names them
+# (passdesk/core/plugins.py).
+COPY --from=plugins / /opt/factory-broker/plugins/
+ENV PYTHONPATH=/opt/factory-broker/plugins
 # Read-only for everyone; the server runs with PYTHONDONTWRITEBYTECODE (run.sh)
 # since it can't write __pycache__ here anyway. The check imports every tool
 # and parses the baked-in policy.

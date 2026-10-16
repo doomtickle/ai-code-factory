@@ -8,7 +8,7 @@ import sys
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import config, policy
+from . import approvals, config, plugins, policy
 from .audit import audit, summarize_args
 from .auth import authenticate, principal_tools
 from .errors import Denied
@@ -68,6 +68,7 @@ def call_tool(name: str, args: object, principal: str) -> tuple[str, bool]:
                 audit({**record, "event": "intent"})
             except OSError as e:
                 raise Denied(f"could not write the audit log; refusing to run {name}: {e}") from e
+        approvals.PRINCIPAL.set(principal)
         text = fn(args, policy.load_policy())
         record.update(decision="allow", result=sanitize(text, 500))
         return text, False
@@ -164,5 +165,7 @@ def main() -> None:
             sys.exit(f"{what} must be an existing directory (got {p})")
     policy.load_policy()  # fail fast on a broken policy file
     config.MIRRORS.mkdir(parents=True, exist_ok=True)
-    audit({"event": "start", "version": config.SERVER_VERSION, "workspace": str(config.WORKSPACE)})
+    plugins.load()  # a named plugin that fails to import stops the server
+    audit({"event": "start", "version": config.SERVER_VERSION, "workspace": str(config.WORKSPACE),
+           "approvals": approvals.hook_installed()})
     ThreadingHTTPServer(("0.0.0.0", config.PORT), Handler).serve_forever()

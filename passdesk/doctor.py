@@ -17,6 +17,7 @@ This one covers the gateway.
 from __future__ import annotations
 
 import argparse
+import importlib
 import json
 import os
 import re
@@ -542,6 +543,45 @@ def check_secrets(report: Report, pol: dict | None, granted: set[str]) -> None:
         report.ok(f"{name} credential present{extra}")
 
 
+# --- plugins ------------------------------------------------------------------------
+
+def check_plugins(report: Report) -> None:
+    """What PASSDESK_PLUGINS names, whether it imports, and (for Passdesk
+    Pro) whether its license is usable. Importing a plugin here has no side
+    effects: plugins register only through activate(), which the server
+    calls and the doctor does not."""
+    report.section("Plugins")
+    names = [n.strip() for n in config.PLUGINS.split(",") if n.strip()]
+    if not names:
+        report.info("no plugins named in PASSDESK_PLUGINS (approvals are off; the free core is running)")
+        return
+    for name in names:
+        try:
+            module = importlib.import_module(name)
+        except ImportError as e:
+            report.fail(f"plugin {name} cannot be imported: {e}",
+                        "is it under the image's plugins directory (the deployment's plugins folder at build time)?")
+            continue
+        version = getattr(module, "VERSION", "?")
+        lic = getattr(module, "license", None)
+        if lic is None or not hasattr(lic, "load"):
+            report.ok(f"plugin {name} {version} imports")
+            continue
+        try:
+            claims = lic.load()
+        except Exception as e:  # noqa: BLE001 - the plugin's own error type; its message is the finding
+            report.fail(f"plugin {name} {version} is installed but inactive: {e}",
+                        "deliver a valid license key (README of the plugin); the gateway runs as the free core until then")
+            continue
+        left = claims.days_left()
+        text = (f"plugin {name} {version}: licensed to {claims.sub}, {claims.tier}, "
+                f"{claims.approvers} approver(s), {left} day(s) left")
+        if left <= 14:
+            report.warn(text + "; renew soon: when it expires, held writes are refused, not released")
+        else:
+            report.ok(text)
+
+
 # --- live ---------------------------------------------------------------------------
 
 def _http(url: str, headers: dict | None = None, data: bytes | None = None, timeout: float = 10) -> tuple[int, bytes]:
@@ -617,6 +657,7 @@ def run(policy_path: Path | None = None, kits: list[Path] | None = None, live: b
     granted = check_state(report)
     check_workspace(report)
     check_secrets(report, pol, granted)
+    check_plugins(report)
     if live:
         check_live(report, pol, url or f"http://127.0.0.1:{config.PORT}/mcp", http)
     return report

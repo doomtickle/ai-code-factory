@@ -53,7 +53,13 @@ between two reads:
 
 The package is `passdesk/`:
 - `passdesk/core/`: protocol, auth/grants, policy, content filters, audit,
-  workspace file exchange, registry. Knows no tool.
+  workspace file exchange, registry, the approval point every external
+  write passes through (`approvals.py`) and plugin loading (`plugins.py`;
+  `PASSDESK_PLUGINS` names modules, the image's `plugins` build context
+  holds them). Knows no tool. A deployment may install an approval hook
+  that holds pushes and pull requests for a person; the design is in
+  `docs/pro-approvals.md` and the hook ships in the commercial
+  `passdesk-pro` package.
 - `passdesk/tools/`: one module per tool (`web`, `git`, `gemini`, `jira`,
   `npm`, `pip`), each registering its tools with `core.registry`.
 

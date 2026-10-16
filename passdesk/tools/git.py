@@ -4,6 +4,7 @@ broker's private mirrors; code crosses into the workspace as git bundles."""
 from __future__ import annotations
 
 import fnmatch
+import hashlib
 import json
 import re
 import subprocess
@@ -12,6 +13,7 @@ import urllib.request
 from pathlib import Path
 
 from ..core import config
+from ..core.approvals import require as require_approval
 from ..core.errors import Denied
 from ..core.filters import block_outbound_secrets, find_secrets, sanitize, untrusted
 from ..core.registry import register
@@ -173,9 +175,23 @@ def tool_git_push(args: dict, policy: dict) -> str:
         if meta is None:
             raise Denied(f"the commit messages exceed [filters].max_diff_bytes ({max_diff} bytes)")
         block_outbound_secrets("commit messages or author/committer names and emails", meta)
-
-        push = git("push", "--porcelain", "origin", f"{incoming}:refs/heads/{branch}", cwd=mirror, check=False)
         sha = git("rev-parse", incoming, cwd=mirror).stdout.strip()
+        # What a person sees if the deployment holds pushes for approval:
+        # only what was verified above, never the content itself.
+        shortstat = git("diff", "--shortstat", rng, cwd=mirror).stdout.strip()
+        names = git_capped("diff", "--name-only", rng, cwd=mirror, limit=max_diff) or ""
+        files = [f for f in names.split("\n") if f]
+        with open(bundle, "rb") as fh:
+            bundle_digest = hashlib.file_digest(fh, "sha256").hexdigest()
+    # Outside the tool lock: a pending approval must not block other git calls.
+    require_approval({"tool": "git_push", "repo": repo, "branch": branch, "base": base, "head": sha,
+                      "commits": count, "shortstat": shortstat, "file_count": len(files), "files": files[:50],
+                      "bundle_sha256": bundle_digest, "secret_scan": "clean"})
+    with tool_lock:
+        mirror = ensure_mirror(repo)
+        if git("rev-parse", incoming, cwd=mirror).stdout.strip() != sha:
+            raise Denied(f"{branch} changed in the broker's mirror while awaiting approval; retry the push")
+        push = git("push", "--porcelain", "origin", f"{incoming}:refs/heads/{branch}", cwd=mirror, check=False)
     if push.returncode != 0:
         body = sanitize(push.stderr + push.stdout, 3000)
         return "Push rejected by GitHub:\n" + untrusted(f"git push {repo}:{branch}", body)
@@ -189,8 +205,10 @@ def tool_github_create_pr(args: dict, policy: dict) -> str:
     title, body = args["title"], args.get("body", "")
     block_outbound_secrets("PR title", title)
     block_outbound_secrets("PR body", body)
-    payload = json.dumps({"title": title, "body": body, "head": head, "base": base,
-                          "draft": bool(args.get("draft", True))}).encode()
+    draft = bool(args.get("draft", True))
+    require_approval({"tool": "github_create_pr", "repo": repo, "head": head, "base": base,
+                      "title": title, "body": body[:2000], "draft": draft})
+    payload = json.dumps({"title": title, "body": body, "head": head, "base": base, "draft": draft}).encode()
     req = urllib.request.Request(
         f"https://api.github.com/repos/{repo}/pulls", data=payload, method="POST",
         headers={"Accept": "application/vnd.github+json", "Content-Type": "application/json",

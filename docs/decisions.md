@@ -4,6 +4,44 @@ Dated entries, for the user to review. Newest first.
 
 ## 2026-10-16
 
+- **The approval point and plugins (`core/approvals.py`, `core/plugins.py`;
+  design in `docs/pro-approvals.md`).** Core gains a hook that external
+  writes pass through, and a way to load named plugin modules at start-up;
+  the hold itself ships in the commercial `passdesk-pro` package. Judgement
+  calls:
+  - **The card is built after every check, and `git_push` waits outside
+    the tool lock.** A pending approval must not block other roles' git
+    calls; after the hold the push re-takes the lock and refuses if the
+    mirror ref it validated has moved. The card holds only what the broker
+    verified (counts, names, a diff stat, the bundle's digest), never
+    content from the network and never a credential.
+  - **Plugins activate through `activate()`, not on import**, so importing
+    one (the doctor does) has no side effects, and a plugin whose license is
+    invalid installs nothing and says why; the gateway then runs as the
+    free core. A plugin that fails to *import* stops the server: a
+    deployment that named it should not run without it unnoticed.
+  - **The image takes a `plugins` build context on `PYTHONPATH`** and a
+    `PASSDESK_PLUGINS` name list; both empty by default, so the image and
+    the server are unchanged for everyone who does not opt in.
+  - **A held call is a denial, not an open call.** MCP clients cut long
+    tool calls (60 seconds in some), so the hook waits `hold_seconds`
+    (45) and then denies with the approval id and "retry this exact call";
+    a retry with the same bundle has the same id and picks up the decision.
+    The agent-facing text says "Nothing was sent" because nothing was.
+  - **Decisions are files in the state directory**, written by the
+    deployment's console on the host. No new listener or token: whoever
+    can write there is the approver. The retry design also means a crash
+    or restart of the gateway loses nothing a person decided.
+  - **An expired or invalid license at call time refuses the held write**
+    rather than letting it through: an operator who paid for the gate
+    would rather have it stay closed than silently open. At start-up an
+    invalid license just leaves the hook uninstalled (free behaviour),
+    which the audit log and the doctor both report.
+  - **License tokens are RSA-2048 PKCS#1 v1.5 over SHA-256**, verified
+    with one modular exponentiation in pure standard library (the core's
+    rule), signed offline with `openssl`. Ed25519 would be smaller but has
+    no standard-library verifier.
+
 - **`passdesk doctor` (`passdesk/doctor.py`, `python3 -m passdesk.doctor`)
   and `docs/quickstart.md`.** The doctor checks a deployment's gateway
   configuration and prints a fix per problem; `ai-code-factory`'s

@@ -29,5 +29,8 @@ GEMINI_SECRET_PATH = Path(os.environ.get("BROKER_GEMINI_SECRET", "/etc/factory-b
 NPM_REGISTRY_SECRET_PATH = Path(os.environ.get("BROKER_NPM_REGISTRY_SECRET",
                                                "/etc/factory-broker/secrets/npm-registry"))
 
+# Plugin modules to import at start-up (comma-separated; see core/plugins.py).
+PLUGINS = os.environ.get("PASSDESK_PLUGINS", "")
+
 MAX_REQUEST_BYTES = 1_000_000
 MAX_OUTPUT_CHARS = 20_000
