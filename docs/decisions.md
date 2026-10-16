@@ -4,6 +4,64 @@ Dated entries, for the user to review. Newest first.
 
 ## 2026-10-16
 
+- **`ai-code-factory`: the broker image is now built from a `git archive`
+  export of the pinned commit, and nothing trusts `broker/.git`.** A review
+  of the previous fix (below) found that its checks ran `git -C broker`,
+  which follows `broker/.git` - a file an agent can rewrite. Pointed at a
+  fake repository whose HEAD is the pin, it made the guard pass while edited
+  files sat in the build context; a fake repository whose config sets
+  `core.fsmonitor` ran that command on the host during `git status`. The
+  dirty check also missed git-ignored files, so a planted
+  `passdesk/__pycache__/*.pyc` reached the image and was loaded in place of
+  the reviewed `.py`. Judgement calls:
+  - **Build context.** `scripts/00-build-templates.sh` exports the pin
+    (`git rev-parse HEAD:broker` in the superproject) with `git archive`
+    from the module's git directory into a temp dir, and uses that as the
+    Docker context and Dockerfile source. The working tree is never read,
+    so edited, untracked and ignored files can't reach the image. The build
+    still refuses while `broker/` has uncommitted or untracked work or is
+    off the pin; it is not what gets copied, but building over unreviewed
+    work there is almost certainly a mistake.
+  - **Git directory.** Resolved from the superproject
+    (`git rev-parse --git-path modules/broker`), never from `broker/.git`.
+    Every git command against the submodule passes an explicit
+    `--git-dir`/`--work-tree` plus `-c core.fsmonitor=false
+    -c core.hooksPath=/dev/null`. `broker/.git` must be a regular file
+    holding exactly `gitdir: ../.git/modules/broker` (as git writes it), or
+    the build and `factory update` refuse. A linked-worktree layout, where
+    that path would be absolute, is refused rather than supported.
+  - **Ignored files.** The dirty check now includes `--ignored`, but
+    ignored files (e.g. a `__pycache__/` from running the tests) don't block
+    the build or the pull: the export never includes them, and a pull or
+    checkout leaves them alone.
+  - **`factory update`.** The pull is now `git pull --no-recurse-submodules`.
+    An initialized `broker/` is then fetched and checked out at the new pin
+    through the same explicit `--git-dir`, not with `git submodule update`,
+    which follows `broker/.git` and so could be redirected between the check
+    and the update. Only a never-initialized submodule (a plain clone) goes
+    through `git submodule update --init`. The superproject's `git status`,
+    `pull` and `submodule update` also get `core.fsmonitor=false` and
+    `core.hooksPath=/dev/null`, and git passes both on to the git processes
+    it runs for submodules.
+  - **Uninitialized submodule.** The build refuses it outright, with a clear
+    message (it used to look "clean" and fail later by accident).
+    `factory update` still initializes it, since there is nothing in it to
+    lose.
+  - **`ROOT`.** `bin/factory` sets `ROOT` unconditionally again; an
+    exported `ROOT` used to redirect a real run, including its final
+    `exec "$ROOT/bin/factory"`. Tests set `ROOT` after sourcing it.
+  - **Open risk (not fixed here): the superproject's own `.git` is inside
+    the agent-writable working tree** when the factory works on its own
+    repo. Its `config`, `hooks/`, `info/attributes` and `modules/broker/`
+    (objects, refs, config) are all trusted by these checks. An agent that
+    can write there could change the commit `HEAD:broker` resolves to, swap
+    objects, or add config that runs commands (filter drivers,
+    `core.sshCommand`, a remote's `uploadpack`, credential helpers) the next
+    time a person or the factory runs git there. The fsmonitor and hooks
+    overrides cover only the two most direct of these. Closing it needs the
+    agent workspace not to expose `.git` writably (or the build to work
+    from a separate host-only clone), which is a wider change.
+
 - **Security review follow-up fixes.** Judgement calls:
   - **`check_commit_patches` now splits patches on `"\n"` only, not
     `str.splitlines()`.** `splitlines()` also breaks on `\r`, `\x0c`, `\x1c`,
