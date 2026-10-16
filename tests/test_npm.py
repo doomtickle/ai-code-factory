@@ -10,12 +10,12 @@ import urllib.error
 from pathlib import Path
 from unittest import mock
 
-from agentbroker import tools  # noqa: F401 - registers every tool
-from agentbroker.core import (
+from passdesk import tools  # noqa: F401 - registers every tool
+from passdesk.core import (
     config,
 )
-from agentbroker.core.errors import Denied
-from agentbroker.tools import npm
+from passdesk.core.errors import Denied
+from passdesk.tools import npm
 
 from .base import POLICY, Base
 
@@ -92,7 +92,7 @@ class NpmFetchTests(Base):
                        PRIVATE_REG + "@corp/design-system/-/@corp/design-system-9.7.4.tgz", sri(self.PRIV)))
 
     def fetch(self, policy=NPM_POLICY, **args) -> str:
-        with mock.patch("agentbroker.core.net.NO_REDIRECT_OPENER.open", side_effect=self.fake_open):
+        with mock.patch("passdesk.core.net.NO_REDIRECT_OPENER.open", side_effect=self.fake_open):
             return npm.tool_npm_fetch(args, policy)
 
     def mirror(self) -> Path:
@@ -147,7 +147,7 @@ class NpmFetchTests(Base):
             if req.full_url.startswith(PRIVATE_REG):
                 raise urllib.error.HTTPError(req.full_url, 401, "Unauthorized", None, io.BytesIO())
             return self.fake_open(req, timeout)
-        with mock.patch("agentbroker.core.net.NO_REDIRECT_OPENER.open", side_effect=deny_private):
+        with mock.patch("passdesk.core.net.NO_REDIRECT_OPENER.open", side_effect=deny_private):
             out = npm.tool_npm_fetch({}, NPM_POLICY)
         self.assertIn("HTTP 401", out)
         self.assertIn("factory-npm-registry", out)
@@ -304,7 +304,7 @@ class NpmFetchTests(Base):
             if req.full_url == PRIV_URL:
                 raise urllib.error.HTTPError(req.full_url, 403, "Forbidden", None, io.BytesIO())
             return self.fake_open(req, timeout)
-        with mock.patch("agentbroker.core.net.NO_REDIRECT_OPENER.open", side_effect=deny):
+        with mock.patch("passdesk.core.net.NO_REDIRECT_OPENER.open", side_effect=deny):
             out = npm.tool_npm_fetch({}, NPM_POLICY)
         self.assertIn(f"HTTP 403 from {PRIV_URL} (credential attached): the credential was rejected - check "
                       "the \"factory-npm-registry\" keychain entry", out)
@@ -316,7 +316,7 @@ class NpmFetchTests(Base):
             if req.full_url == SIGNED:
                 raise urllib.error.URLError("Tunnel connection failed: 403 Forbidden")
             return self.fake_open(req, timeout)
-        with mock.patch("agentbroker.core.net.NO_REDIRECT_OPENER.open", side_effect=blocked):
+        with mock.patch("passdesk.core.net.NO_REDIRECT_OPENER.open", side_effect=blocked):
             out = npm.tool_npm_fetch({}, NPM_POLICY)
         self.assertIn("could not reach storage.example (no credential attached): Tunnel connection failed", out)
         self.assertIn("add it to the broker kit", out)

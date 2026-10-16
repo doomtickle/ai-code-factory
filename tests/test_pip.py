@@ -2,9 +2,9 @@
 
 import unittest
 
-from agentbroker import tools  # noqa: F401 - registers every tool
-from agentbroker.core.errors import Denied
-from agentbroker.tools import pip
+from passdesk import tools  # noqa: F401 - registers every tool
+from passdesk.core.errors import Denied
+from passdesk.tools import pip
 
 from .base import Base
 

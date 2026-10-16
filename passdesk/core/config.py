@@ -9,13 +9,13 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-SERVER_NAME = "factory-broker"
+SERVER_NAME = "passdesk"
 SERVER_VERSION = "1.0.0"
 USER_AGENT = f"{SERVER_NAME}/{SERVER_VERSION}"
 
 WORKSPACE = Path(os.environ.get("BROKER_WORKSPACE", "/nonexistent"))
 STATE = Path(os.environ.get("BROKER_STATE", "/nonexistent"))
-# policy.toml sits beside the agentbroker package (templates/broker/Dockerfile).
+# policy.toml sits beside the passdesk package (see Dockerfile).
 POLICY_PATH = Path(os.environ.get("BROKER_POLICY", Path(__file__).resolve().parents[2] / "policy.toml"))
 PORT = int(os.environ.get("BROKER_PORT", "8765"))
 MIRRORS = Path(os.environ.get("BROKER_MIRRORS", Path.home() / "mirrors"))

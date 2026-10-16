@@ -5,8 +5,8 @@ import json
 import unittest
 from pathlib import Path
 
-from agentbroker import tools  # noqa: F401 - registers every tool
-from agentbroker.core import auth, config, protocol, registry
+from passdesk import tools  # noqa: F401 - registers every tool
+from passdesk.core import auth, config, protocol, registry
 
 from .base import Base
 

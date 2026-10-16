@@ -2,9 +2,9 @@
 
 import unittest
 
-from agentbroker import tools  # noqa: F401 - registers every tool
-from agentbroker.core import filters
-from agentbroker.tools import web
+from passdesk import tools  # noqa: F401 - registers every tool
+from passdesk.core import filters
+from passdesk.tools import web
 
 from .base import FAKE_ANT, FAKE_GH, Base
 

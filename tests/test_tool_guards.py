@@ -3,9 +3,9 @@
 import unittest
 from unittest import mock
 
-from agentbroker import tools  # noqa: F401 - registers every tool
-from agentbroker.core.errors import Denied
-from agentbroker.tools import git, web
+from passdesk import tools  # noqa: F401 - registers every tool
+from passdesk.core.errors import Denied
+from passdesk.tools import git, web
 
 from .base import FAKE_ANT, FAKE_GH, POLICY, Base
 

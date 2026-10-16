@@ -6,8 +6,8 @@ import unittest
 import urllib.error
 from pathlib import Path
 
-from agentbroker import tools  # noqa: F401 - registers every tool
-from agentbroker.core import config
+from passdesk import tools  # noqa: F401 - registers every tool
+from passdesk.core import config
 
 POLICY = {
     "web": {"allow_hosts": ["docs.python.org", "*.example.com"], "max_bytes": 1000},

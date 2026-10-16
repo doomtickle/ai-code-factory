@@ -7,10 +7,10 @@ import urllib.parse
 from pathlib import Path
 from unittest import mock
 
-from agentbroker import tools  # noqa: F401 - registers every tool
-from agentbroker.core import config, policy, protocol
-from agentbroker.core.errors import Denied
-from agentbroker.tools import jira
+from passdesk import tools  # noqa: F401 - registers every tool
+from passdesk.core import config, policy, protocol
+from passdesk.core.errors import Denied
+from passdesk.tools import jira
 
 from .base import JIRA_POLICY, TEST_CLOUD_ID, Base, _FakeHTTPResponse
 
@@ -52,7 +52,7 @@ class JiraTests(Base):
 
     def test_get_issue_not_assigned_denied(self):
         resp = _FakeHTTPResponse(json.dumps({"issues": []}).encode())
-        with mock.patch("agentbroker.core.net.NO_REDIRECT_OPENER.open", return_value=resp):
+        with mock.patch("passdesk.core.net.NO_REDIRECT_OPENER.open", return_value=resp):
             with self.assertRaisesRegex(Denied, "not assigned to you"):
                 jira.tool_jira_get_issue({"key": "PROJ-1"}, JIRA_POLICY)
 
@@ -103,7 +103,7 @@ class JiraTests(Base):
             "summary": "Fix the thing", "status": {"name": "In Progress"},
             "priority": {"name": "High"}, "updated": "2026-09-20T00:00:00.000+0000"}}]}
         resp = _FakeHTTPResponse(json.dumps(body).encode())
-        with mock.patch("agentbroker.core.net.NO_REDIRECT_OPENER.open", return_value=resp) as urlopen:
+        with mock.patch("passdesk.core.net.NO_REDIRECT_OPENER.open", return_value=resp) as urlopen:
             out = jira.tool_jira_my_issues({}, JIRA_POLICY)
         self.assertIn("UNTRUSTED CONTENT", out)
         self.assertIn("PROJ-42", out)
@@ -127,7 +127,7 @@ class JiraTests(Base):
                           "content": [{"type": "text", "text": "second"}]}]}},
             ]}}}
         issue_resp = _FakeHTTPResponse(json.dumps(issue_body).encode())
-        with mock.patch("agentbroker.core.net.NO_REDIRECT_OPENER.open", side_effect=[search_resp, issue_resp]):
+        with mock.patch("passdesk.core.net.NO_REDIRECT_OPENER.open", side_effect=[search_resp, issue_resp]):
             out = jira.tool_jira_get_issue({"key": "PROJ-1"}, JIRA_POLICY)
         self.assertIn("UNTRUSTED CONTENT", out)
         self.assertIn("Please do it", out)
@@ -142,10 +142,10 @@ class JiraTests(Base):
         # Give the real on-disk policy.toml's [jira] a usable (valid-UUID) cloud_id for this call.
         real_policy = policy.load_policy()
         real_policy["jira"]["cloud_id"] = TEST_CLOUD_ID
-        with mock.patch("agentbroker.core.policy.load_policy", return_value=real_policy):
+        with mock.patch("passdesk.core.policy.load_policy", return_value=real_policy):
             body = {"issues": [{"key": "PROJ-1", "fields": {"summary": "s"}}]}
             resp = _FakeHTTPResponse(json.dumps(body).encode())
-            with mock.patch("agentbroker.core.net.NO_REDIRECT_OPENER.open", return_value=resp):
+            with mock.patch("passdesk.core.net.NO_REDIRECT_OPENER.open", return_value=resp):
                 res = protocol.handle_rpc({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
                                     "params": {"name": "jira_my_issues", "arguments": {}}},
                                    "coordinator")["result"]

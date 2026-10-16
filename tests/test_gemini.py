@@ -7,10 +7,10 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from agentbroker import tools  # noqa: F401 - registers every tool
-from agentbroker.core import config, protocol
-from agentbroker.core.errors import Denied
-from agentbroker.tools import gemini
+from passdesk import tools  # noqa: F401 - registers every tool
+from passdesk.core import config, protocol
+from passdesk.core.errors import Denied
+from passdesk.tools import gemini
 
 from .base import FAKE_GH, POLICY, Base, _FakeHTTPResponse, fake_http_error
 
@@ -23,7 +23,7 @@ class GeminiTests(Base):
     def test_query_success(self):
         body = {"candidates": [{"content": {"parts": [{"text": "a concise summary"}]}}]}
         resp = _FakeHTTPResponse(json.dumps(body).encode())
-        with mock.patch("agentbroker.core.net.NO_REDIRECT_OPENER.open", return_value=resp) as urlopen:
+        with mock.patch("passdesk.core.net.NO_REDIRECT_OPENER.open", return_value=resp) as urlopen:
             out = gemini.tool_gemini_flash_query({"prompt": "summarize this page"}, POLICY)
         self.assertIn("a concise summary", out)
         self.assertIn("UNTRUSTED CONTENT", out)
@@ -33,7 +33,7 @@ class GeminiTests(Base):
         self.assertNotIn("test-key", req.full_url)  # key must not leak into the URL
 
     def test_http_error_hints_at_missing_key(self):
-        with mock.patch("agentbroker.core.net.NO_REDIRECT_OPENER.open", side_effect=fake_http_error(401, b"denied")):
+        with mock.patch("passdesk.core.net.NO_REDIRECT_OPENER.open", side_effect=fake_http_error(401, b"denied")):
             out = gemini.tool_gemini_flash_query({"prompt": "hi"}, POLICY)
         self.assertIn("HTTP 401", out)
         self.assertIn("factory-gemini", out)
@@ -48,7 +48,7 @@ class GeminiTests(Base):
         with mock.patch.dict(os.environ, {"GEMINI_API_KEY": "env-key-should-be-ignored"}):
             body = {"candidates": [{"content": {"parts": [{"text": "ok"}]}}]}
             resp = _FakeHTTPResponse(json.dumps(body).encode())
-            with mock.patch("agentbroker.core.net.NO_REDIRECT_OPENER.open", return_value=resp) as urlopen:
+            with mock.patch("passdesk.core.net.NO_REDIRECT_OPENER.open", return_value=resp) as urlopen:
                 gemini.tool_gemini_flash_query({"prompt": "hi"}, POLICY)
             req = urlopen.call_args[0][0]
         self.assertEqual(req.get_header("X-goog-api-key"), "test-key")
@@ -84,7 +84,7 @@ class GeminiRoleGatingTests(Base):
     def test_researcher_allowed_developer_and_reviewer_denied(self):
         body = {"candidates": [{"content": {"parts": [{"text": "ok"}]}}]}
         resp = _FakeHTTPResponse(json.dumps(body).encode())
-        with mock.patch("agentbroker.core.net.NO_REDIRECT_OPENER.open", return_value=resp):
+        with mock.patch("passdesk.core.net.NO_REDIRECT_OPENER.open", return_value=resp):
             res = self.call("researcher", {"prompt": "hi"})
         self.assertFalse(res["isError"])
         for role in ("developer", "reviewer"):

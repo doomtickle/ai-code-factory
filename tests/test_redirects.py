@@ -9,12 +9,12 @@ import urllib.request
 from unittest import mock
 from urllib.response import addinfourl
 
-from agentbroker import tools  # noqa: F401 - registers every tool
-from agentbroker.core import (
+from passdesk import tools  # noqa: F401 - registers every tool
+from passdesk.core import (
     config,
     net,
 )
-from agentbroker.tools import gemini, jira
+from passdesk.tools import gemini, jira
 
 from .base import JIRA_POLICY, POLICY, Base
 

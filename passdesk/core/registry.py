@@ -1,5 +1,5 @@
-"""The tool registry. Each module in agentbroker/tools/ registers its tools on
-import; importing agentbroker.tools registers them all.
+"""The tool registry. Each module in passdesk/tools/ registers its tools on
+import; importing passdesk.tools registers them all.
 
 An entry is name -> (handler, description, JSON-schema properties, required
 argument names). A handler takes (args, policy) and returns the text sent back

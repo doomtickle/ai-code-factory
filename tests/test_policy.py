@@ -3,10 +3,10 @@
 import unittest
 from pathlib import Path
 
-from agentbroker import tools  # noqa: F401 - registers every tool
-from agentbroker.core import policy
-from agentbroker.core.errors import Denied
-from agentbroker.tools import git
+from passdesk import tools  # noqa: F401 - registers every tool
+from passdesk.core import policy
+from passdesk.core.errors import Denied
+from passdesk.tools import git
 
 from .base import POLICY, Base
 
