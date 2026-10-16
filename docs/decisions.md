@@ -4,6 +4,52 @@ Dated entries, for the user to review. Newest first.
 
 ## 2026-10-16
 
+- **Website copy (accuracy pass on the passdesk marketing site).** Judgement
+  calls:
+  - **FAQ "Can an agent go around Passdesk?" answer was replaced outright**
+    with the brief's exact sentence ("All of an agent's tool traffic goes
+    through Passdesk; apart from its model provider, it has no other way
+    out."), dropping the old answer's second clause ("Passdesk itself can
+    only reach an approved list of hosts"). That clause is still true (the
+    broker's own egress is gated by the sandbox's kit `spec.yaml`, separate
+    from any tool's own host allowlist), but the brief specified this exact
+    replacement text, so it was not preserved; it could be re-added as a
+    second sentence if the site wants to keep making that claim.
+  - **`Problem.tsx`'s "Only to Passdesk" cell** became "Only to Passdesk;
+    apart from its model provider, it has no other way out" — the same
+    idea as the FAQ fix, shortened to fit a table cell rather than pasted
+    verbatim.
+  - **`UnderTheHood.tsx`'s example was split into two files**, not just
+    relabelled: an org-wide `policy.toml` block (`repos`, `branches`,
+    `push_prefix`, `max_diff_mb`, `npm.allow`/`deny`, `web_fetch.hosts`,
+    `max_response_mb`) and a separate `grants/release-bot` block that is
+    just an agent name plus a flat list of allowed tool names. A single
+    relabelled file would still have implied repo lists, branch rules and
+    size limits vary per agent, which they don't — only the tool grant
+    does.
+  - **Dropped the sample audit record's redaction demo** (`jira.comment`
+    with a `[REDACTED]` body) instead of swapping in a different line that
+    still shows redaction. No real Passdesk tool takes a free-text body
+    argument that would plausibly carry a secret, so there was no accurate
+    stand-in; removed the now-dead `redacted` field and the `.tok-redacted`
+    CSS rule that only that demo used.
+  - **Availability "Works today" guardrail note** ("Pull requests open as
+    drafts; force-pushes and branch deletion aren't possible; Jira is
+    read-only.") was added as a prose note under the list, not a fourth
+    bullet, since it qualifies three different existing entries rather
+    than naming one more tool.
+  - **New capability/roadmap IDs S9, S10 and R6** were added to
+    COPY-NOTES.md (built-in guardrails, today's deployment model, and
+    per-agent rules respectively) to back copy the brief asked for that
+    didn't map onto S1-S8/R1-R5.
+  - **FAQ "What do I need to run it?" answer, "One Passdesk serves one
+    project, on your machine,"** is taken as given from the review brief.
+    `passdesk/core/config.py`'s single `BROKER_WORKSPACE` path is
+    consistent with one broker process serving one project, but this repo's
+    own docs don't state the one-project constraint explicitly, so it
+    wasn't independently re-derived — flagging it in case it needs a
+    firmer source before shipping.
+
 - **Security hardening (review findings 5, 7-9).** Judgement calls:
   - **`web_fetch`'s hard-coded credentialed-host denylist**: `github.com`,
     `api.github.com`, `*.githubusercontent.com` (git tooling); `api.atlassian.com`,
