@@ -592,8 +592,10 @@ def check_live(report: Report, pol: dict | None, url: str, http=_http) -> None:
                 report.fail(f"GitHub token can read {repo} but not push to it",
                             "the fine-grained token needs Contents: read/write and Pull requests: read/write on this repo")
             else:
-                report.warn(f"{repo} is reachable but no token was attached (public repo, unauthenticated)",
-                            "run this inside the broker sandbox, where the egress proxy attaches the token")
+                report.warn(f"{repo} is reachable but no token was attached (public repo, unauthenticated): "
+                            "pushes and pull requests will fail",
+                            "store a fine-grained token for the broker sandbox: sbx secret set github --sandbox factory-broker",
+                            "(from a host, outside the sandbox, this warning is expected: only the sandbox's proxy attaches it)")
         elif code == 404:
             report.fail(f"GitHub returns 404 for {repo}: it does not exist, or the token has no access to it",
                         "check the owner/name; outside the broker sandbox no token is attached, so private repos show 404")
