@@ -13,7 +13,7 @@ from pathlib import Path
 
 from ..core import config
 from ..core.errors import Denied
-from ..core.filters import block_outbound_secrets, find_secrets, sanitize
+from ..core.filters import block_outbound_secrets, find_secrets, sanitize, untrusted
 from ..core.registry import register
 from ..core.workspace import copy_workspace_file, factory_dir, install_file, private_tempdir, run, run_capped, tool_lock
 
@@ -169,7 +169,8 @@ def tool_git_push(args: dict, policy: dict) -> str:
         push = git("push", "--porcelain", "origin", f"{incoming}:refs/heads/{branch}", cwd=mirror, check=False)
         sha = git("rev-parse", incoming, cwd=mirror).stdout.strip()
     if push.returncode != 0:
-        return f"Push rejected by GitHub:\n{sanitize(push.stderr + push.stdout, 3000)}"
+        body = sanitize(push.stderr + push.stdout, 3000)
+        return f"Push rejected by GitHub:\n" + untrusted(f"git push {repo}:{branch}", body)
     return f"Pushed {count} commit(s) to {repo}:{branch} ({sha}).\n{sanitize(push.stdout, 2000)}"
 
 
@@ -193,7 +194,7 @@ def tool_github_create_pr(args: dict, policy: dict) -> str:
         detail = sanitize(e.read().decode("utf-8", "replace"), 2000)
         hint = ("\nHint: a GitHub token must be stored for the broker sandbox: "
                 "sbx secret set github --sandbox factory-broker") if e.code in (401, 403, 404) else ""
-        return f"GitHub API returned HTTP {e.code}: {detail}{hint}"
+        return f"GitHub API returned HTTP {e.code}:\n" + untrusted(f"GitHub API ({repo})", detail) + hint
     return f"Opened PR #{pr['number']}: {pr['html_url']}"
 
 

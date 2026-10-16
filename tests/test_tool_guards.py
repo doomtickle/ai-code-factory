@@ -7,7 +7,7 @@ from passdesk import tools  # noqa: F401 - registers every tool
 from passdesk.core.errors import Denied
 from passdesk.tools import git, web
 
-from .base import FAKE_ANT, FAKE_GH, POLICY, Base
+from .base import FAKE_ANT, FAKE_GH, POLICY, Base, fake_http_error
 
 
 class ToolGuardTests(Base):
@@ -28,6 +28,38 @@ class ToolGuardTests(Base):
         with self.assertRaises(Denied):
             git.tool_github_create_pr({"repo": "acme/widgets", "head": "factory/x",
                                      "title": "t", "body": f"key {FAKE_ANT}"}, POLICY)
+
+    def test_github_create_pr_error_body_is_wrapped_untrusted(self):
+        with mock.patch("urllib.request.urlopen", side_effect=fake_http_error(404, b"Not Found")):
+            out = git.tool_github_create_pr({"repo": "acme/widgets", "head": "factory/x", "title": "t"}, POLICY)
+        self.assertIn("UNTRUSTED CONTENT", out)
+        self.assertIn("Not Found", out)
+        self.assertIn("sbx secret set github", out)
+
+    def test_web_fetch_blocks_credentialed_hosts_even_when_allowlisted(self):
+        # An operator adding one of these to [web].allow_hosts must not let
+        # web_fetch make an authenticated read that skips the dedicated
+        # tool's own allowlist (e.g. [git].repos).
+        policy = {**POLICY, "web": {"allow_hosts": [
+            "github.com", "api.github.com", "raw.githubusercontent.com",
+            "api.atlassian.com", "my-site.atlassian.net",
+            "generativelanguage.googleapis.com"], "max_bytes": 1000}}
+        for url, tool in [
+            ("https://github.com/acme/widgets", "git_push"),
+            ("https://api.github.com/repos/acme/widgets", "git_fetch"),
+            ("https://raw.githubusercontent.com/acme/widgets/main/x", "github_create_pr"),
+            ("https://api.atlassian.com/ex/jira/x", "jira_my_issues"),
+            ("https://my-site.atlassian.net/browse/PROJ-1", "jira_get_issue"),
+            ("https://generativelanguage.googleapis.com/v1beta/x", "gemini_flash_query"),
+        ]:
+            with self.assertRaisesRegex(Denied, "attaches credentials", msg=url):
+                web.tool_web_fetch({"url": url}, policy)
+
+    def test_web_fetch_blocks_configured_private_npm_registry_host(self):
+        policy = {**POLICY, "web": {"allow_hosts": ["registry.example.com"], "max_bytes": 1000},
+                  "packages": {"npm_private_registry": "https://registry.example.com/"}}
+        with self.assertRaisesRegex(Denied, "npm_fetch"):
+            web.tool_web_fetch({"url": "https://registry.example.com/some-pkg/-/some-pkg-1.0.0.tgz"}, policy)
 
     def test_web_fetch_final_url_marker_lookalikes_are_neutralized(self):
         # urllib keeps < / > verbatim when it encodes a redirect URL, so a

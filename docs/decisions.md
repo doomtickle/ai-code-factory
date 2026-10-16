@@ -4,6 +4,41 @@ Dated entries, for the user to review. Newest first.
 
 ## 2026-10-16
 
+- **Security hardening (review findings 5, 7-9).** Judgement calls:
+  - **`web_fetch`'s hard-coded credentialed-host denylist**: `github.com`,
+    `api.github.com`, `*.githubusercontent.com` (git tooling); `api.atlassian.com`,
+    `*.atlassian.net` (Jira); `generativelanguage.googleapis.com` (Gemini);
+    and whatever host `[packages].npm_private_registry` resolves to, read
+    fresh from policy on every call since that setting is a deployment
+    overlay. This list is hosts the egress proxy or another broker tool
+    attaches a credential to - not every host those tools happen to talk
+    to - because the risk is specifically an unauthenticated-looking
+    `web_fetch` call turning into an authenticated read that bypasses that
+    tool's own allowlist (e.g. `[git].repos`). It is checked before
+    `[web].allow_hosts` and cannot be overridden by editing that list; the
+    denial message names the dedicated tool to use instead.
+  - **"Tools that write externally" (finding 7) is the hard-coded set
+    `{git_push, github_create_pr}`** in `passdesk/core/protocol.py`, not a
+    new field on every registered tool. Only these two have an effect
+    outside the broker's own state; a future such tool must be added to
+    that set by hand. The pre-run "intent" audit record is best-effort
+    logging of what is about to happen, not a tamper-evident log (that
+    remains out of scope / roadmap) - it just means the attempt is on
+    record a step earlier than before, and the call is refused outright if
+    even that first write fails.
+  - **Content-Length handling (finding 8) treats missing, non-numeric and
+    negative values alike as 400,** before the existing 1 MB
+    (`MAX_REQUEST_BYTES`) cap is applied. None of the three is a "request
+    too large"; conflating them with it previously let a header-less or
+    malformed request silently read 0 bytes instead of being rejected.
+  - **Finding 9's wrapping is limited to bodies that genuinely come from a
+    remote service or `git push`'s own stderr/stdout** (GitHub's PR-create
+    error, Jira's and Gemini's HTTP error bodies, and the push rejection
+    text GitHub forwards through `git push`): local git/bundle errors
+    (`git.py`'s `git()`/`git_capped()` helpers, bundle `verify` failures)
+    stay sanitize-only, since that text is the broker's own git client
+    talking about local state, not content from the internet.
+
 - **Security hardening (review findings 1-4 and 6).** Judgement calls:
   - **`pip_download` now requires `--hash=sha256:` on every line.** This is
     a breaking change for callers whose requirements files are pinned but

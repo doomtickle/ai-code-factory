@@ -12,7 +12,11 @@ get direct network egress; every tool call goes through Passdesk, which:
 - filters content in both directions: it blocks secrets in outbound content
   and cleans up responses on the way back (strips terminal escapes, redacts
   secrets, caps size, marks fetched content as untrusted)
-- writes an audit record for every call
+- writes an audit record for every call, plus an "intent" record *before*
+  running a tool that writes to an external system (`git_push`,
+  `github_create_pr`), so the attempt is on record even if the call fails
+  partway through. A call that writes externally is refused if that intent
+  record can't be written.
 
 Passdesk never runs anything from a caller's workspace: no git hooks or
 repo-local git config, no package install scripts, no binaries or
@@ -40,6 +44,12 @@ between two reads:
 - `git_push` secret-scans every pushed commit on its own (patch, message,
   author and committer), not just the net diff, and scans and counts binary
   files as text.
+- `web_fetch` refuses a hard-coded list of hosts that the egress proxy or
+  another broker tool attaches credentials to (GitHub, Atlassian, the
+  Gemini API, the configured private npm registry), even if an operator
+  adds one to `policy.toml`'s `[web].allow_hosts` - it's an unauthenticated
+  GET and must not become a way to read those hosts without going through
+  the tool whose own allowlist (e.g. `[git].repos`) is meant to gate them.
 
 The package is `passdesk/`:
 - `passdesk/core/`: protocol, auth/grants, policy, content filters, audit,

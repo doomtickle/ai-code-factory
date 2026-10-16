@@ -12,7 +12,7 @@ from passdesk.core import config, policy, protocol
 from passdesk.core.errors import Denied
 from passdesk.tools import jira
 
-from .base import JIRA_POLICY, TEST_CLOUD_ID, Base, _FakeHTTPResponse
+from .base import JIRA_POLICY, TEST_CLOUD_ID, Base, _FakeHTTPResponse, fake_http_error
 
 
 class JiraTests(Base):
@@ -69,6 +69,14 @@ class JiraTests(Base):
             policy = {**JIRA_POLICY, "jira": {**JIRA_POLICY["jira"], "cloud_id": bad}}
             with self.assertRaisesRegex(Denied, "not a valid UUID", msg=bad):
                 jira.tool_jira_my_issues({}, policy)
+
+    def test_jira_api_error_body_is_wrapped_untrusted(self):
+        with mock.patch("passdesk.core.net.NO_REDIRECT_OPENER.open",
+                        side_effect=fake_http_error(500, b"internal error")):
+            data, err = jira.jira_call("/rest/api/3/issue/PROJ-1", {}, JIRA_POLICY)
+        self.assertIsNone(data)
+        self.assertIn("UNTRUSTED CONTENT", err)
+        self.assertIn("internal error", err)
 
     def test_missing_credential_file_denied(self):
         config.JIRA_SECRET_PATH.unlink()

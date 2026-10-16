@@ -1,6 +1,7 @@
 """git_fetch / git_push end to end against a local bare repo."""
 
 import os
+import subprocess
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -219,6 +220,24 @@ class GitFlowTests(Base):
         for a in bundle_args:
             self.assertFalse(os.path.realpath(a).startswith(ws), f"git read the workspace bundle {a}")
         self.assertEqual(len(set(bundle_args)), 1, "every git step must use the same copy")
+
+    def test_push_rejection_wraps_remote_stderr_as_untrusted(self):
+        # Finding 9: a rejection from GitHub (forwarded through "git push"'s
+        # stderr) is remote content and must be wrapped, not just sanitized.
+        self.branch("factory/rej", {"a.txt": b"a\n"})
+        self.bundle("factory/rej")
+        fake_push = subprocess.CompletedProcess(args=[], returncode=1, stdout="",
+                                                 stderr="remote: hook declined\n")
+        real_git = git.git
+
+        def spy(*args, **kw):
+            return fake_push if args[:1] == ("push",) else real_git(*args, **kw)
+        with mock.patch.object(git, "git", side_effect=spy):
+            out = self.push("factory/rej")
+        self.assertIn("Push rejected by GitHub", out)
+        self.assertIn("UNTRUSTED CONTENT", out)
+        self.assertIn("hook declined", out)
+        self.assert_not_on_origin("factory/rej")
 
     def test_bundle_must_be_a_regular_file(self):
         self.branch("factory/dir", {"a.txt": b"a\n"})
