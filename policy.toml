@@ -27,7 +27,6 @@ allow_hosts = [
   "docs.python.org",
   "developer.mozilla.org",
   "nodejs.org",
-  "docs.github.com",
   "pypi.org",
   "www.npmjs.com",
 ]

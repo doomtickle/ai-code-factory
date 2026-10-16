@@ -67,6 +67,30 @@ registry.
 Passdesk is standard-library Python only (3.11+) — a small dependency
 surface is part of its security argument.
 
+## Getting started
+
+[docs/quickstart.md](docs/quickstart.md) takes you from a fresh machine to
+agents pushing branches and opening draft pull requests through Passdesk,
+with the record to show for it.
+
+## Checking a deployment
+
+```
+python3 -m passdesk.doctor --live
+```
+
+Run it inside the broker sandbox (where the baked-in policy, the state
+directory and the credential files are). It changes nothing and prints a fix
+for each problem: the policy's shape (every table and key the tools read),
+hosts in `[web].allow_hosts` that the credentialed-host denylist makes dead,
+the tokens and grants in the state directory, the audit log, the `.factory/`
+exchange directory, the credential files' presence, mode and format, and,
+with `--live`, whether the gateway answers and whether the GitHub token can
+read and push each repo in `[git].repos`. `--kit <spec.yaml>` (repeatable)
+checks that every host the policy can reach is in a deployment's egress
+allowlist; `--egress-hosts` prints that host list for tooling that keeps the
+allowlist in sync. `ai-code-factory`'s `factory doctor` runs it for you.
+
 ## Running the tests
 
 Directly, with Python 3.11+:

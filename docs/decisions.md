@@ -4,6 +4,31 @@ Dated entries, for the user to review. Newest first.
 
 ## 2026-10-16
 
+- **`passdesk doctor` (`passdesk/doctor.py`, `python3 -m passdesk.doctor`)
+  and `docs/quickstart.md`.** The doctor checks a deployment's gateway
+  configuration and prints a fix per problem; `ai-code-factory`'s
+  `factory doctor` runs it inside the broker sandbox and compares the
+  policy's reachable hosts with the broker kit on the host. Judgement calls:
+  - **It reads the credential files** (to check they are non-empty, mode
+    0600 and, for Jira, `email:token`) but never prints a value. That is
+    the same read the tools make, inside the same sandbox; on a host the
+    secrets directory does not exist and the doctor says so instead of
+    warning about every missing file.
+  - **The sbx kit reader is deliberately not a YAML parser**: it takes the
+    plain `- host` items under `allow:` and nothing else. A kit that needs
+    more than that is a reason to run a real parser, not to grow this one.
+  - **Policy wildcards (`*.example.com`) are a warning against a kit**,
+    since kits list exact hosts; the doctor cannot know which subdomains
+    are meant.
+  - **`docs.github.com` is removed from `[web].allow_hosts` and the broker
+    kit.** The doctor's first live run found it: the hardening commit's
+    credentialed-host denylist refuses every `*.github.com` host in
+    `web_fetch`, so the entry had been dead since then while the README
+    still listed it as a documentation host. Removing it is the
+    conservative fix; letting `web_fetch` reach a `github.com` subdomain
+    again would need evidence that the egress proxy attaches no credential
+    there, which nothing here establishes.
+
 - **`ai-code-factory`: the broker image is now built from a `git archive`
   export of the pinned commit, and nothing trusts `broker/.git`.** A review
   of the previous fix (below) found that its checks ran `git -C broker`,
