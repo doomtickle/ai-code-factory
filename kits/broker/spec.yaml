@@ -26,7 +26,6 @@ permissions:
       - docs.python.org
       - developer.mozilla.org
       - nodejs.org
-      - docs.github.com
       - www.npmjs.com
       # gemini_flash_query; the API key is delivered as a file inside the
       # broker sandbox (/etc/factory-broker/secrets/gemini), not this policy

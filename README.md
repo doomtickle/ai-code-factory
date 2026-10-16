@@ -158,7 +158,7 @@ Herdr; run `factory start` again to reopen it.
 
 | Command | What it does |
 |---|---|
-| `factory doctor` | Check the machine is ready; prints the fix for each problem (setup runs it first) |
+| `factory doctor` | Check the machine is ready; prints the fix for each problem (setup runs it first). Once the broker exists, it also runs the gateway's own doctor inside it: policy, tokens and grants, audit log, credentials, a live probe, GitHub access per repo, and the policy's hosts against the broker kit |
 | `factory setup` | One-time setup (safe to re-run) |
 | `factory update [--yes]` | After pulling changes or editing kits, images or policy: pulls the latest factory, rebuilds, recreates only the sandboxes the changes affect (it lists them and what each loses, then asks), and restarts |
 | `factory start [dir]` | Start the factory for a project (default: current folder) and open Herdr |

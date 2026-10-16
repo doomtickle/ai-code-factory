@@ -135,7 +135,7 @@ setup_done() {
 # cmd_doctor -> checks everything setup and start need, printing the fix for
 # each problem. Fails if anything blocks setup. Changes nothing itself.
 cmd_doctor() {
-  local problems=0 missing_pkgs="" os linux="" t pkg out
+  local problems=0 missing_pkgs="" os linux="" t pkg out status doctor hosts kit_hosts missing h
   os="$(uname -s)"
   [ "$os" = Linux ] && linux=1
   # fail SUMMARY [FIX-TEXT...] -> a problem, with its fix indented beneath (multi-line args allowed)
@@ -217,6 +217,46 @@ cmd_doctor() {
   if is_wsl; then
     say "  ${D}Keep projects in the Linux filesystem (e.g. ~/code), not under /mnt/c: sandboxes mount${N}"
     say "  ${D}the project folder, and Windows drives are slow and lose file permissions there.${N}"
+  fi
+
+  # The gateway's own doctor (broker/passdesk/doctor.py) runs inside the
+  # broker sandbox, where the baked-in policy, the state dir and the
+  # credential files are. It changes nothing. Its hosts-vs-kit check needs
+  # the kit files, which live on the host, so that comparison happens here.
+  step "Passdesk (the gateway)"
+  if ! command -v sbx >/dev/null 2>&1 || [ "$(sbx_installed_version)" != "$SBX_VERSION" ]; then
+    warn "checked once sbx is installed and the broker sandbox exists ('factory setup', then 'factory start')"
+  elif ! sandbox_exists "$BROKER_SANDBOX"; then
+    warn "broker sandbox not created yet ('factory start' creates it)"
+  elif [ "$(sbx ls 2>/dev/null | awk -v s="$BROKER_SANDBOX" '$1 == s { print $3 }')" != running ]; then
+    warn "broker sandbox is not running ('factory start' starts it); its checks are skipped"
+  else
+    doctor='cd /opt/factory-broker && PYTHONDONTWRITEBYTECODE=1 python3 -m passdesk.doctor'
+    if out="$(sbx exec "$BROKER_SANDBOX" sh -c "$doctor --live --no-color" 2>&1)"; then status=0; else status=$?; fi
+    case "$out" in
+      *"No module named "*passdesk*)
+        warn "the broker image predates the gateway doctor; run 'factory update' to rebuild it" ;;
+      *)
+        # Its section headers and findings, indented under this step; its own
+        # summary line is dropped in favour of this command's.
+        printf '%s\n' "$out" | sed -e '/^$/d' -e '/problem(s) found\.\|No problems found\./d' \
+          -e 's/^==> /    ==> /' -e 's/^  /    /'
+        if [ "$status" -eq 0 ]; then ok "gateway checks passed"
+        else fail "the gateway reported problems (above)"; fi
+        # Every host the baked-in policy can reach must be in the broker kit(s).
+        hosts="$(sbx exec "$BROKER_SANDBOX" sh -c "$doctor --egress-hosts" 2>/dev/null || true)"
+        kit_hosts="$(sed -n 's/^[[:space:]]*-[[:space:]]*"\{0,1\}\([^"[:space:]#]*\).*/\1/p' \
+          "$ROOT/kits/broker/spec.yaml" "$FACTORY_CONFIG/broker-kit/spec.yaml" 2>/dev/null)"
+        missing=""
+        for h in $hosts; do
+          case "$h" in \*.*) continue ;; esac  # wildcards: the gateway doctor already warns
+          printf '%s\n' "$kit_hosts" | grep -qx "$h" || missing="$missing $h"
+        done
+        if [ -z "$hosts" ]; then warn "could not list the policy's hosts; kit check skipped"
+        elif [ -z "$missing" ]; then ok "every host the policy can reach is in the broker kit"
+        else fail "in the broker policy but not in the broker kit:$missing" \
+          "add them to kits/broker/spec.yaml (or $FACTORY_CONFIG/broker-kit/spec.yaml), then 'factory update'"; fi ;;
+    esac
   fi
 
   say ""
