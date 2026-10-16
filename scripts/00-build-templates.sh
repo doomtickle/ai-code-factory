@@ -12,22 +12,23 @@ require_sbx
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
-# broker/ is a git submodule (passdesk-broker); a plain "git clone" (without
-# --recurse-submodules) leaves it an empty directory, so try once to
-# initialize it before giving up (bin/factory's roles.sh does the same, but
-# this script can also run standalone).
-if [ ! -f "$ROOT/broker/Dockerfile" ]; then
-  git -C "$ROOT" submodule update --init --quiet -- broker >/dev/null 2>&1 || true
-fi
-[ -f "$ROOT/broker/Dockerfile" ] \
-  || die "missing $ROOT/broker/Dockerfile - run 'git submodule update --init' in $ROOT"
-# An edit or an unreviewed local commit in broker/ (an agent working on this
-# repo can write there like any other file) must never get baked into the
-# broker image unreviewed.
-require_broker_at_pin "$ROOT"
-
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
+
+# broker/ is a git submodule (passdesk-broker); a plain "git clone" (without
+# --recurse-submodules) leaves it uninitialized, so try once to initialize it
+# before giving up (bin/factory's roles.sh does the same, but this script can
+# also run standalone). Only a submodule with no trace of initialization at
+# all: anything else goes through the checks below.
+if ! broker_initialized "$ROOT"; then
+  git "${BROKER_GIT_SAFE[@]}" -C "$ROOT" submodule update --init --quiet -- broker >/dev/null 2>&1 || true
+fi
+# The broker image is built from a "git archive" export of the pinned commit,
+# never from the broker/ working tree, which an agent working on this repo
+# can write into (see "broker/ submodule safety" in lib/common.sh). Building
+# is also refused while broker/ has uncommitted work or is off the pin.
+mkdir "$tmp/broker"
+prepare_broker_context "$ROOT" "$tmp/broker"
 
 # build ROLE DOCKERFILE CONTEXT [DOCKER-BUILD-ARGS...]
 build() {
@@ -48,8 +49,8 @@ build() {
 # .dockerignore limits it to what they COPY.
 build developer "$ROOT/templates/developer/Dockerfile" "$ROOT"
 build reviewer "$ROOT/templates/reviewer/Dockerfile" "$ROOT"
-# The broker builds from its own submodule checkout, with that directory as
-# the build context.
+# The broker builds from the export of its pinned commit made above, with
+# that directory as the build context.
 # This machine's policy overlay (an empty one if there is none) goes in as its
 # own build context, so it never has to sit in the repo.
 mkdir "$tmp/config"
@@ -59,6 +60,6 @@ if [ -f "$FACTORY_CONFIG/policy.toml" ]; then
 else
   : > "$tmp/config/policy.toml"
 fi
-build broker "$ROOT/broker/Dockerfile" "$ROOT/broker" --build-context "factory-config=$tmp/config"
+build broker "$tmp/broker/Dockerfile" "$tmp/broker" --build-context "factory-config=$tmp/config"
 
 sbx template ls

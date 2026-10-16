@@ -7,8 +7,11 @@
 # broker/ is a git submodule (passdesk-broker); a plain "git clone" (without
 # --recurse-submodules) leaves it an empty directory, so every command sourcing
 # this file (not just setup/update) tries once to initialize it before giving up.
-if [ ! -f "$ROOT/broker/tools.txt" ]; then
-  git -C "$ROOT" submodule update --init --quiet -- broker >/dev/null 2>&1 || true
+# Only a submodule with no trace of initialization: "submodule update" follows
+# broker/.git, which an agent can write (see "broker/ submodule safety" in
+# common.sh), so a broker/ that has one but lost tools.txt is left to a person.
+if [ ! -f "$ROOT/broker/tools.txt" ] && ! broker_initialized "$ROOT"; then
+  git "${BROKER_GIT_SAFE[@]}" -C "$ROOT" submodule update --init --quiet -- broker >/dev/null 2>&1 || true
 fi
 [ -f "$ROOT/broker/tools.txt" ] \
   || die "missing $ROOT/broker/tools.txt - run 'git submodule update --init' in $ROOT"

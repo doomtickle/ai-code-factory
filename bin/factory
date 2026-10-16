@@ -14,10 +14,10 @@ while [ -L "$src" ]; do
   case "$src" in /*) ;; *) src="$dir/$src" ;; esac
 done
 SCRIPTS="$(cd -P "$(dirname "$src")/.." && pwd)/scripts"
-# ROOT is normally this same repo root; a test may pre-set it to point
-# pull_factory's git commands at a disposable fixture checkout instead, while
-# still sourcing the real scripts/lib/*.sh above from SCRIPTS.
-: "${ROOT:="$(dirname "$SCRIPTS")"}"
+# Always this repo's root, whatever ROOT the environment had: an exported ROOT
+# must never redirect a real run (pull_factory even execs "$ROOT/bin/factory").
+# A test that sources this file sets ROOT to a fixture checkout afterwards.
+ROOT="$(dirname "$SCRIPTS")"
 
 # shellcheck source=../scripts/lib/common.sh
 . "$SCRIPTS/lib/common.sh"
@@ -488,37 +488,64 @@ pull_factory() {
   # "modified" even with =dirty -- only "=all" does). A real uncommitted
   # change to a tracked file or an untracked file in $ROOT still shows and
   # still blocks.
-  if [ -n "$(git -C "$ROOT" status --porcelain --ignore-submodules=all)" ]; then
+  if [ -n "$(git "${BROKER_GIT_SAFE[@]}" -C "$ROOT" status --porcelain --ignore-submodules=all)" ]; then
     warn "$ROOT has uncommitted changes; skipping git pull (commit or stash them to pull)"
     return 0
   fi
   # broker/ is ignored above, so an edit or an unreviewed local commit there
   # (an agent working on this repo can write into broker/ like any other
   # file) would otherwise go unseen: "git submodule update --init" below
-  # would silently detach a local commit, and 00-build-templates.sh would
-  # bake an uncommitted edit into the broker image nobody reviewed. Being
-  # behind the pin is fine -- that's exactly what "submodule update --init"
-  # below fixes -- so only refuse when broker/ is dirty, or has moved away
-  # from the pin's history rather than just lagging behind it.
-  broker_change="$(broker_dirty "$ROOT")"
-  if [ -n "$broker_change" ]; then
-    warn "$ROOT/broker has uncommitted changes (including untracked files); skipping git pull (commit or stash them, then run 'factory update' again)"
-    return 0
-  fi
-  if [ -e "$ROOT/broker/.git" ]; then
+  # would silently detach a local commit. Being behind the pin is fine --
+  # that's exactly what "submodule update --init" below fixes -- so only
+  # refuse when broker/ is dirty, or has moved away from the pin's history
+  # rather than just lagging behind it. Every check goes through broker_git
+  # (lib/common.sh), which never trusts broker/.git and refuses a broker/.git
+  # that doesn't point at the real module directory -- checked before the
+  # pull and submodule update below, which do follow it. Git-ignored files
+  # (e.g. a __pycache__/ from running the broker's tests) don't block: the
+  # update leaves them alone, and the image build never uses the working
+  # tree (it exports the pinned commit). A submodule with no trace of
+  # initialization (a plain clone) has nothing to lose; the update below
+  # initializes it.
+  if broker_initialized "$ROOT"; then
+    if ! broker_change="$(broker_dirty "$ROOT" 2>&1)"; then
+      warn "skipping git pull: $broker_change"
+      return 0
+    fi
+    broker_change="$(broker_blocking_changes "$broker_change")"
+    if [ -n "$broker_change" ]; then
+      warn "$ROOT/broker has uncommitted changes (including untracked files); skipping git pull (commit or stash them, then run 'factory update' again)"
+      return 0
+    fi
     broker_pin_commit="$(broker_pin "$ROOT")"
     broker_head_commit="$(broker_head "$ROOT")"
     if [ "$broker_head_commit" != "$broker_pin_commit" ] \
-      && ! git -C "$ROOT/broker" merge-base --is-ancestor "$broker_head_commit" "$broker_pin_commit" 2>/dev/null; then
+      && ! broker_git "$ROOT" merge-base --is-ancestor "$broker_head_commit" "$broker_pin_commit" 2>/dev/null; then
       warn "$ROOT/broker has a local commit ($broker_head_commit) that isn't part of the pinned history ($broker_pin_commit); skipping git pull (it would otherwise be silently detached - investigate it, then run 'factory update' again)"
       return 0
     fi
   fi
   before="$(git -C "$ROOT" rev-parse HEAD)"
-  git -C "$ROOT" pull --ff-only --recurse-submodules --quiet \
+  git "${BROKER_GIT_SAFE[@]}" -C "$ROOT" pull --ff-only --no-recurse-submodules --quiet \
     || die "git pull failed; sort it out in $ROOT, then run 'factory update' again"
-  git -C "$ROOT" submodule update --init --quiet \
-    || die "git submodule update --init failed; sort it out in $ROOT, then run 'factory update' again"
+  # Move broker/ to the (possibly new) pin. An initialized broker/ is moved
+  # with broker_git rather than "git submodule update", which would follow
+  # broker/.git -- and an agent could rewrite that between the check above
+  # and this step, pointing it at a repository whose config runs commands.
+  # Only a never-initialized submodule goes through "submodule update --init"
+  # (BROKER_GIT_SAFE also reaches the git processes it runs inside broker/).
+  if broker_initialized "$ROOT"; then
+    broker_pin_commit="$(broker_pin "$ROOT")"
+    if ! broker_git "$ROOT" cat-file -e "$broker_pin_commit^{commit}" 2>/dev/null; then
+      broker_git "$ROOT" fetch --quiet origin \
+        || die "fetching broker/ failed; sort it out in $ROOT, then run 'factory update' again"
+    fi
+    broker_git "$ROOT" checkout --quiet --detach "$broker_pin_commit" \
+      || die "checking out the broker pin $broker_pin_commit failed; sort it out in $ROOT/broker, then run 'factory update' again"
+  else
+    git "${BROKER_GIT_SAFE[@]}" -C "$ROOT" submodule update --init --quiet \
+      || die "git submodule update --init failed; sort it out in $ROOT, then run 'factory update' again"
+  fi
   if [ "$(git -C "$ROOT" rev-parse HEAD)" = "$before" ]; then
     ok "already up to date"
     return 0

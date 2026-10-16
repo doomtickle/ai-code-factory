@@ -175,43 +175,166 @@ resolve_python() {
 # --- broker/ submodule safety -------------------------------------------------------
 # broker/ (the passdesk-broker submodule) is where the Broker's code lives.
 # An agent working on the factory's own repo can write into it like any other
-# file, so both the pull in bin/factory's pull_factory and the image build in
-# 00-build-templates.sh need to notice an edit or an unreviewed local commit
-# there instead of silently pulling it forward or baking it into the broker
-# image. These three are the shared primitives; callers combine them because
-# the two sites allow different things (pull_factory allows broker/ to be
-# behind the pin -- that's what "git submodule update --init" fixes -- a
-# build does not).
+# file -- including broker/.git, the gitfile that tells git where broker/'s
+# repository is. So nothing here ever lets git discover that repository from
+# broker/ itself (no "git -C broker"): a planted broker/.git pointing at a
+# fake repository could make any check pass, and a fake repository's config
+# (core.fsmonitor, hooks) would run commands on the host. Instead:
+#
+# - broker/'s git directory is resolved from the superproject
+#   (broker_gitdir), and every git command against it goes through
+#   broker_git, with an explicit --git-dir/--work-tree and core.fsmonitor and
+#   hooks forced off;
+# - broker/.git must still be exactly the gitfile git writes
+#   (broker_check_gitfile), because "git submodule update" and plain git use
+#   by a person in broker/ do follow it;
+# - the broker image is built from a "git archive" export of the pinned
+#   commit (broker_export), never from the broker/ working tree, so nothing
+#   left in the working tree -- edited, untracked or git-ignored (e.g. a
+#   planted __pycache__/*.pyc) -- can reach the image.
+#
+# The main repository's own .git (and so .git/modules/broker, its config and
+# hooks) is trusted here; see the passdesk-broker decision log (2026-10-16)
+# for that open risk.
 
-# broker_dirty ROOT -> "git status --porcelain" output for ROOT/broker if it
-# has uncommitted changes, tracked or untracked (empty if clean, or if
-# ROOT/broker isn't a submodule checkout at all, e.g. a plain tarball with no
-# .git).
+# Config forced on every git command that touches broker/ or that a pull
+# into ROOT may run inside broker/ (git passes -c settings on to the git
+# processes it runs for submodules): no fsmonitor command, no hooks.
+BROKER_GIT_SAFE=(-c core.fsmonitor=false -c core.hooksPath=/dev/null)
+
+# broker_gitdir_rel ROOT -> broker/'s git directory as ROOT's own repository
+# names it (normally ".git/modules/broker", relative to ROOT), whether or not
+# it exists.
+broker_gitdir_rel() {
+  git "${BROKER_GIT_SAFE[@]}" -C "$1" rev-parse --git-path modules/broker
+}
+
+# broker_initialized ROOT -> success if broker/ looks initialized at all
+# (it has a broker/.git entry, or ROOT has a broker module directory). A
+# plain "git clone" without --recurse-submodules leaves neither.
+broker_initialized() {
+  local rel
+  if [ -e "$1/broker/.git" ] || [ -L "$1/broker/.git" ]; then return 0; fi
+  rel="$(broker_gitdir_rel "$1")" || return 1
+  case "$rel" in /*) ;; *) rel="$1/$rel" ;; esac
+  [ -e "$rel" ]
+}
+
+# broker_gitdir ROOT -> absolute path of broker/'s git directory, resolved
+# from ROOT's repository, never from broker/.git. Fails (message on stderr)
+# if the submodule isn't initialized.
+broker_gitdir() {
+  local rel
+  rel="$(broker_gitdir_rel "$1")" || return 1
+  case "$rel" in /*) ;; *) rel="$1/$rel" ;; esac
+  [ -d "$rel" ] && [ -f "$rel/HEAD" ] || {
+    echo "$1/broker is not initialized (no $rel); run 'git -C $1 submodule update --init'" >&2
+    return 1
+  }
+  (cd "$rel" && pwd -P)
+}
+
+# broker_check_gitfile ROOT -> fail (message on stderr) unless ROOT/broker/.git
+# is a regular file (not a symlink, not a directory) holding exactly the
+# gitfile line git writes for this submodule, e.g. "gitdir: ../.git/modules/broker".
+broker_check_gitfile() {
+  local f="$1/broker/.git" nl=$'\n' rel want got
+  rel="$(broker_gitdir_rel "$1")" || return 1
+  case "$rel" in
+    /*) echo "$1's broker module directory ($rel) is not inside the checkout; unsupported layout (e.g. a linked worktree), refusing" >&2
+      return 1 ;;
+  esac
+  want="gitdir: ../$rel"
+  if [ -L "$f" ] || [ ! -f "$f" ]; then
+    echo "$f is not a regular gitfile; refusing to use broker/ (expected a file containing '$want')" >&2
+    return 1
+  fi
+  # Compare the whole file, trailing newline included ("$(cat)" would strip
+  # any number of them).
+  got="$(cat -- "$f"; printf x)"
+  got="${got%x}"
+  [ "$got" = "$want$nl" ] || {
+    echo "$f does not point at $rel (it says '${got%"$nl"}'); refusing to use broker/ - someone redirected it" >&2
+    return 1
+  }
+}
+
+# broker_git ROOT ARGS... -> run "git ARGS..." against broker/'s real
+# repository (see above), after checking broker/.git.
+broker_git() {
+  local root="$1" gitdir
+  shift
+  gitdir="$(broker_gitdir "$root")" || return 1
+  broker_check_gitfile "$root" || return 1
+  git "${BROKER_GIT_SAFE[@]}" --git-dir="$gitdir" --work-tree="$root/broker" "$@"
+}
+
+# broker_dirty ROOT -> "git status --porcelain --ignored" output for ROOT/broker:
+# uncommitted changes, untracked files, and (as "!! " lines) git-ignored
+# files. Empty if clean. Fails if broker/ isn't initialized or broker/.git
+# is wrong. --ignore-submodules=all: broker/ has no submodules of its own,
+# and status must not go running git inside nested repositories.
 broker_dirty() {
-  [ -e "$1/broker/.git" ] || return 0
-  git -C "$1/broker" status --porcelain --untracked-files=all
+  broker_git "$1" status --porcelain --untracked-files=all --ignored=matching --ignore-submodules=all
+}
+
+# broker_blocking_changes DIRTY -> DIRTY (broker_dirty's output) without its
+# git-ignored ("!! ") lines. Ignored files (e.g. a __pycache__/ left by
+# running the broker's tests) don't block anything: the image is built from
+# broker_export, which never includes the working tree, and a pull or
+# submodule update leaves them alone.
+broker_blocking_changes() {
+  printf '%s\n' "$1" | grep -v '^!! ' | sed '/^$/d' || true
 }
 
 # broker_pin ROOT -> the commit ROOT's superproject HEAD pins broker/ to.
 broker_pin() {
-  git -C "$1" rev-parse HEAD:broker
+  git "${BROKER_GIT_SAFE[@]}" -C "$1" rev-parse HEAD:broker
 }
 
 # broker_head ROOT -> broker/'s actually checked-out commit.
 broker_head() {
-  git -C "$1/broker" rev-parse HEAD
+  broker_git "$1" rev-parse HEAD
 }
 
-# require_broker_at_pin ROOT -> die unless ROOT/broker is clean (no
-# uncommitted or untracked changes) and checked out exactly at the
-# superproject's pin. Used right before anything bakes broker/ into an image.
+# require_broker_at_pin ROOT -> die unless ROOT/broker is initialized, its
+# gitfile points where it should, it has no uncommitted or untracked changes,
+# and it is checked out exactly at the superproject's pin. The image itself
+# comes from broker_export, so this is about not building while someone has
+# unreviewed work in broker/, not about what gets copied.
 require_broker_at_pin() {
   local root="$1" dirty pin head
-  dirty="$(broker_dirty "$root")"
+  dirty="$(broker_dirty "$root" 2>&1)" || die "refusing to build the broker image: $dirty"
+  dirty="$(broker_blocking_changes "$dirty")"
   [ -z "$dirty" ] || die "$root/broker has uncommitted changes (including untracked files); refusing to build from it:
 $dirty"
-  pin="$(broker_pin "$root")"
-  head="$(broker_head "$root")"
+  pin="$(broker_pin "$root")" || die "cannot read the broker pin from $root's HEAD"
+  head="$(broker_head "$root" 2>&1)" || die "refusing to build the broker image: $head"
   [ "$head" = "$pin" ] \
     || die "$root/broker is checked out at $head, not the pinned commit $pin; run 'git -C $root submodule update --init' (or investigate why it moved) before building"
+}
+
+# broker_export ROOT DEST -> write the tree of the pinned broker commit into
+# the empty directory DEST, straight from broker/'s repository with
+# "git archive" (no working tree, no checkout, no filters). This is the
+# broker image's build context. Dies if broker/ isn't initialized, its
+# gitfile is wrong, or the pinned commit isn't in its repository.
+broker_export() {
+  local root="$1" dest="$2" pin err
+  pin="$(broker_pin "$root")" || die "cannot read the broker pin from $root's HEAD"
+  if ! err="$(broker_git "$root" cat-file -e "$pin^{commit}" 2>&1)"; then
+    [ -n "$err" ] || err="pinned commit $pin is not in the broker repository; run 'git -C $root submodule update --init'"
+    die "refusing to export the broker: $err"
+  fi
+  broker_git "$root" archive --format=tar "$pin" | tar -x -f - -C "$dest" \
+    || die "exporting broker commit $pin from $root failed"
+}
+
+# prepare_broker_context ROOT DEST -> refuse unless broker/ is clean and at
+# its pin (require_broker_at_pin), then export the pin into DEST
+# (broker_export). 00-build-templates.sh builds the broker image from DEST.
+prepare_broker_context() {
+  require_broker_at_pin "$1"
+  broker_export "$1" "$2"
+  [ -f "$2/Dockerfile" ] || die "the pinned broker commit has no Dockerfile"
 }

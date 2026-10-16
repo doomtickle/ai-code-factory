@@ -17,18 +17,28 @@ set -euo pipefail
 # 3. scripts/lib/common.sh's require_broker_at_pin, used by
 #    scripts/00-build-templates.sh before it builds the broker image, refuses
 #    the same dirty states and anything off the pin (no "behind is fine"
-#    leniency here: the image must be built from exactly the pinned commit).
+#    leniency here).
+# 4. Nothing trusts broker/.git: a redirected gitfile, or one pointing at a
+#    fake repository whose config sets core.fsmonitor, is refused by
+#    pull_factory, require_broker_at_pin and broker_export, and the fsmonitor
+#    payload never runs. An uninitialized submodule is refused by the build.
+# 5. The broker image's build context is a "git archive" export of the
+#    pinned commit (broker_export), byte-for-byte, never the broker/ working
+#    tree: a git-ignored __pycache__/*.pyc planted in broker/ doesn't reach
+#    it. scripts/00-build-templates.sh is run for real against a fixture,
+#    with stub docker and sbx commands, to show it builds from that export.
+# 6. An exported ROOT doesn't redirect a direct run of bin/factory.
 #
 # broker/ is writable by an agent working on this repo's own code like any
 # other file, so all of the above matters for real, not just for a
 # mis-synced checkout.
 #
 # This test sources the real bin/factory (for pull_factory) and
-# scripts/lib/common.sh (for require_broker_at_pin, broker_dirty, broker_pin,
-# broker_head) and calls them directly, against disposable local fixture
-# repos. There is no other shell test harness in this repo (bin/factory is
-# otherwise driven by sbx/docker, which this test must not require), so this
-# exercises the git plumbing directly: no network access, no sbx, no docker.
+# scripts/lib/common.sh (for the broker_* helpers) and calls them directly,
+# against disposable local fixture repos. There is no other shell test
+# harness in this repo (bin/factory is otherwise driven by sbx/docker, which
+# this test must not require), so this exercises the git plumbing directly:
+# no network access, no sbx, no docker.
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # Local-path submodule remotes are disabled by git by default (CVE-2022-39253
@@ -56,8 +66,14 @@ assert_contains() { # assert_contains LABEL HAYSTACK NEEDLE
 git init -q "$tmp/sub"
 # tools.txt is how roles.sh notices an uninitialized submodule; it must be
 # committed in the submodule itself, not added through the superproject.
+# Dockerfile, passdesk/app.py and the *.pyc ignore rule mirror the real
+# broker's layout for the build-context tests.
 echo "git_fetch" > "$tmp/sub/tools.txt"
-git -C "$tmp/sub" add tools.txt
+echo "FROM scratch" > "$tmp/sub/Dockerfile"
+printf '__pycache__/\n*.pyc\n' > "$tmp/sub/.gitignore"
+mkdir -p "$tmp/sub/passdesk"
+echo "print('reviewed')" > "$tmp/sub/passdesk/app.py"
+git -C "$tmp/sub" add tools.txt Dockerfile .gitignore passdesk/app.py
 git -C "$tmp/sub" commit -q -m "sub v1"
 SUB_V1="$(git -C "$tmp/sub" rev-parse HEAD)"
 
@@ -92,10 +108,9 @@ fi
 
 died=""
 (
+  # shellcheck disable=SC1091
+  . "$REPO_ROOT/scripts/lib/common.sh"
   ROOT="$tmp/plain-clone"
-  die() { echo "DIED: $*" >&2; exit 1; }
-  export -f die
-  export ROOT
   # shellcheck disable=SC1091
   . "$REPO_ROOT/scripts/lib/roles.sh"
   [ -f "$ROOT/broker/tools.txt" ] || { echo "tools.txt still missing after sourcing roles.sh" >&2; exit 1; }
@@ -118,17 +133,17 @@ fresh_checkout() {
 }
 
 # run_pull_factory DIR -> pull_factory's (bin/factory) combined stdout+stderr
-# in $PF_OUT, its exit status in $PF_RC. Sourcing bin/factory with ROOT
-# pre-set points its git commands at the fixture DIR instead of this repo
-# (see the ROOT guard bin/factory's top adds for exactly this); running it in
-# a subshell keeps ROOT and every function/variable bin/factory defines from
-# leaking into the rest of this script.
+# in $PF_OUT, its exit status in $PF_RC. Setting ROOT after sourcing
+# bin/factory (which always sets it to this repo) points its git commands at
+# the fixture DIR; running it in a subshell keeps ROOT and every
+# function/variable bin/factory defines from leaking into the rest of this
+# script.
 run_pull_factory() {
   set +e
   PF_OUT="$( (
-    ROOT="$1"
     # shellcheck disable=SC1091
     . "$REPO_ROOT/bin/factory"
+    ROOT="$1"
     pull_factory
   ) 2>&1 )"
   PF_RC=$?
@@ -274,6 +289,249 @@ clean_at_pin="$(fresh_checkout clean-at-pin)"
 run_require_broker_at_pin "$clean_at_pin"
 assert_eq "require_broker_at_pin accepts a clean checkout exactly at the pin" "$RBAP_RC" "0"
 assert_empty "require_broker_at_pin prints nothing when it accepts" "$RBAP_OUT"
+
+# ===========================================================================
+# Part 4: nothing trusts broker/.git.
+# ===========================================================================
+
+# run_common FN ARGS... -> run a scripts/lib/common.sh function in a
+# subshell; combined output in $C_OUT, exit status in $C_RC.
+run_common() {
+  set +e
+  C_OUT="$( (
+    # shellcheck disable=SC1091
+    . "$REPO_ROOT/scripts/lib/common.sh"
+    "$@"
+  ) 2>&1 )"
+  C_RC=$?
+  set -e
+}
+
+# fake_broker_repo CHECKOUT NAME [FSMONITOR-PAYLOAD] -> point CHECKOUT's
+# broker/.git at a fake repository $tmp/NAME (a clone of the broker at the
+# pin) in which an edit to passdesk/app.py is hidden with skip-worktree, so
+# plain "git -C broker" sees a clean checkout exactly at the pin. With a
+# payload script, the fake repository's config also runs it as its
+# core.fsmonitor hook.
+fake_broker_repo() {
+  local co="$1" fake="$tmp/$2"
+  git clone -q --no-checkout "$tmp/sub" "$fake"
+  echo "print('planted')" > "$co/broker/passdesk/app.py"
+  git --git-dir="$fake/.git" --work-tree="$co/broker" read-tree HEAD
+  git --git-dir="$fake/.git" --work-tree="$co/broker" update-index -q --refresh >/dev/null 2>&1 || true
+  git --git-dir="$fake/.git" --work-tree="$co/broker" update-index --skip-worktree passdesk/app.py
+  [ -z "${3:-}" ] || git --git-dir="$fake/.git" config core.fsmonitor "$3"
+  printf 'gitdir: %s\n' "$fake/.git" > "$co/broker/.git"
+}
+
+# --- a redirected broker/.git ------------------------------------------------
+redirected="$(fresh_checkout redirected)"
+fake_broker_repo "$redirected" fake-redirect
+# Control: plain git in broker/ is fooled, which is what 496e013's checks did.
+assert_empty "control: plain 'git -C broker status' is fooled by the fake repository" \
+  "$(git -C "$redirected/broker" status --porcelain --untracked-files=all)"
+assert_eq "control: plain 'git -C broker rev-parse HEAD' reports the pin" \
+  "$(git -C "$redirected/broker" rev-parse HEAD)" "$SUB_V2"
+
+run_require_broker_at_pin "$redirected"
+assert_eq "require_broker_at_pin refuses a redirected broker/.git" "$RBAP_RC" "1"
+assert_contains "require_broker_at_pin's redirect refusal names the problem" \
+  "$RBAP_OUT" "does not point at"
+mkdir "$tmp/ctx-redirected"
+run_common broker_export "$redirected" "$tmp/ctx-redirected"
+assert_eq "broker_export refuses a redirected broker/.git" "$C_RC" "1"
+assert_empty "broker_export wrote nothing for a redirected broker/.git" \
+  "$(ls -A "$tmp/ctx-redirected")"
+run_pull_factory "$redirected"
+assert_eq "redirected broker/.git: pull_factory exits 0 (refuses, does not die)" "$PF_RC" "0"
+assert_contains "pull_factory refuses a redirected broker/.git" "$PF_OUT" "does not point at"
+assert_eq "redirected broker/.git: pull_factory left it untouched" \
+  "$(cat "$redirected/broker/.git")" "gitdir: $tmp/fake-redirect/.git"
+
+# --- broker/.git replaced by a directory or a symlink -------------------------
+gitfile_dir="$(fresh_checkout gitfile-dir)"
+rm "$gitfile_dir/broker/.git"
+mkdir "$gitfile_dir/broker/.git"
+run_require_broker_at_pin "$gitfile_dir"
+assert_eq "require_broker_at_pin refuses a broker/.git directory" "$RBAP_RC" "1"
+assert_contains "the broker/.git directory refusal names the problem" "$RBAP_OUT" "not a regular gitfile"
+
+gitfile_link="$(fresh_checkout gitfile-link)"
+cp "$gitfile_link/broker/.git" "$tmp/gitfile-copy"
+rm "$gitfile_link/broker/.git"
+ln -s "$tmp/gitfile-copy" "$gitfile_link/broker/.git"
+run_require_broker_at_pin "$gitfile_link"
+assert_eq "require_broker_at_pin refuses a symlinked broker/.git, even to the right content" "$RBAP_RC" "1"
+
+# --- an fsmonitor payload in a fake gitdir -----------------------------------
+marker="$tmp/fsmonitor-ran"
+cat > "$tmp/payload.sh" <<PAYLOAD
+#!/bin/sh
+touch "$marker"
+PAYLOAD
+chmod +x "$tmp/payload.sh"
+fsmon="$(fresh_checkout fsmonitor)"
+fake_broker_repo "$fsmon" fake-fsmonitor "$tmp/payload.sh"
+# Control: the payload is live -- plain "git -C broker status" runs it.
+git -C "$fsmon/broker" status --porcelain >/dev/null 2>&1 || true
+[ -e "$marker" ] && ok "control: plain 'git -C broker status' runs the fsmonitor payload" \
+  || bad "control: plain 'git -C broker status' runs the fsmonitor payload"
+rm -f "$marker"
+
+run_require_broker_at_pin "$fsmon"
+assert_eq "require_broker_at_pin refuses a broker/.git pointing at an fsmonitor payload" "$RBAP_RC" "1"
+mkdir "$tmp/ctx-fsmon"
+run_common broker_export "$fsmon" "$tmp/ctx-fsmon"
+assert_eq "broker_export refuses a broker/.git pointing at an fsmonitor payload" "$C_RC" "1"
+run_pull_factory "$fsmon"
+assert_contains "pull_factory refuses a broker/.git pointing at an fsmonitor payload" \
+  "$PF_OUT" "does not point at"
+[ ! -e "$marker" ] && ok "the fsmonitor payload was never run by the checks or pull_factory" \
+  || bad "the fsmonitor payload was never run by the checks or pull_factory"
+
+# An fsmonitor (or hook) in broker/'s real module config -- which lives under
+# the main repo's .git and is trusted -- is still forced off by broker_git.
+fsmon_real="$(fresh_checkout fsmonitor-real)"
+git --git-dir="$fsmon_real/.git/modules/broker" config core.fsmonitor "$tmp/payload.sh"
+run_require_broker_at_pin "$fsmon_real"
+assert_eq "require_broker_at_pin accepts a clean broker/ whose module config sets core.fsmonitor" "$RBAP_RC" "0"
+run_pull_factory "$fsmon_real"
+assert_eq "pull_factory runs normally with core.fsmonitor in the module config" "$PF_RC" "0"
+[ ! -e "$marker" ] && ok "broker_git forces core.fsmonitor off even from the real module config" \
+  || bad "broker_git forces core.fsmonitor off even from the real module config"
+
+# --- an uninitialized submodule ----------------------------------------------
+git clone -q "$tmp/origin.git" "$tmp/uninit"
+run_require_broker_at_pin "$tmp/uninit"
+assert_eq "require_broker_at_pin refuses an uninitialized submodule" "$RBAP_RC" "1"
+assert_contains "the uninitialized refusal names the problem" "$RBAP_OUT" "not initialized"
+mkdir "$tmp/ctx-uninit"
+run_common broker_export "$tmp/uninit" "$tmp/ctx-uninit"
+assert_eq "broker_export refuses an uninitialized submodule" "$C_RC" "1"
+assert_contains "broker_export's uninitialized refusal names the problem" "$C_OUT" "not initialized"
+
+# ...but a module directory without the pinned commit is refused too.
+missing_pin="$(fresh_checkout missing-pin)"
+git -C "$tmp/sub" commit -q --allow-empty -m "sub v3, never fetched by missing-pin"
+SUB_V3="$(git -C "$tmp/sub" rev-parse HEAD)"
+git -C "$missing_pin" update-index --cacheinfo "160000,$SUB_V3,broker"
+git -C "$missing_pin" commit -q -m "pin broker to a commit missing-pin's module dir lacks"
+mkdir "$tmp/ctx-missing-pin"
+run_common broker_export "$missing_pin" "$tmp/ctx-missing-pin"
+assert_eq "broker_export refuses a pin missing from broker/'s repository" "$C_RC" "1"
+assert_contains "broker_export's missing-pin refusal names the commit" "$C_OUT" "$SUB_V3"
+
+# ===========================================================================
+# Part 5: the broker build context is an export of the pin, and
+# 00-build-templates.sh builds from it.
+# ===========================================================================
+pinned_tree="$tmp/pinned-tree"
+mkdir "$pinned_tree"
+git -C "$tmp/sub" archive "$SUB_V2" | tar -x -f - -C "$pinned_tree"
+
+ignored="$(fresh_checkout ignored-pyc)"
+mkdir -p "$ignored/broker/passdesk/__pycache__"
+echo "planted bytecode" > "$ignored/broker/passdesk/__pycache__/app.cpython-312.pyc"
+run_common broker_dirty "$ignored"
+assert_contains "broker_dirty reports a git-ignored .pyc (--ignored)" "$C_OUT" "!! passdesk/__pycache__/"
+run_require_broker_at_pin "$ignored"
+assert_eq "require_broker_at_pin does not block on git-ignored files" "$RBAP_RC" "0"
+mkdir "$tmp/ctx-ignored"
+run_common broker_export "$ignored" "$tmp/ctx-ignored"
+assert_eq "broker_export succeeds with a git-ignored .pyc in broker/" "$C_RC" "0"
+[ ! -e "$tmp/ctx-ignored/passdesk/__pycache__" ] \
+  && ok "a git-ignored .pyc in broker/ is not in the exported build context" \
+  || bad "a git-ignored .pyc in broker/ is not in the exported build context"
+diff -r "$pinned_tree" "$tmp/ctx-ignored" >/dev/null \
+  && ok "the exported build context matches 'git archive' of the pin exactly" \
+  || bad "the exported build context matches 'git archive' of the pin exactly"
+run_pull_factory "$ignored"
+assert_eq "pull_factory does not block on git-ignored files in broker/" "$PF_RC" "0"
+assert_contains "pull_factory with only git-ignored files in broker/ proceeds" "$PF_OUT" "already up to date"
+
+# --- 00-build-templates.sh, run for real with stub docker and sbx ------------
+stubs="$tmp/stubs"
+mkdir -p "$stubs"
+cat > "$stubs/docker" <<'STUB'
+#!/bin/sh
+# docker build -t TAG -f DOCKERFILE [ARGS...] CONTEXT: record the broker's
+# Dockerfile, context path and a copy of the context (gone after the run).
+case "$1" in
+  build)
+    tag="$3" dockerfile="$5"
+    for a in "$@"; do ctx="$a"; done
+    case "$tag" in factory-broker:*)
+      rm -rf "$CAPTURE" && mkdir -p "$CAPTURE" && cp -R "$ctx/." "$CAPTURE/"
+      printf '%s\n' "$dockerfile" > "$CAPTURE.dockerfile"
+      printf '%s\n' "$ctx" > "$CAPTURE.context" ;;
+    esac ;;
+  image) [ "$2" != inspect ] || echo "sha256:stub" ;;
+esac
+STUB
+cat > "$stubs/sbx" <<STUB
+#!/bin/sh
+[ "\$1" != version ] || echo "sbx version: v$(sed -n 's/^readonly SBX_VERSION="\(.*\)"$/\1/p' "$REPO_ROOT/scripts/lib/common.sh") stub"
+STUB
+chmod +x "$stubs/docker" "$stubs/sbx"
+
+# run_build DIR -> run a copy of the real scripts/00-build-templates.sh (and
+# scripts/lib) from inside fixture checkout DIR, so its ROOT is DIR. Output in
+# $B_OUT, status in $B_RC, the broker's build context copied to $DIR.ctx.
+run_build() {
+  rm -rf "$1/scripts"
+  mkdir -p "$1/scripts"
+  cp -R "$REPO_ROOT/scripts/lib" "$1/scripts/lib"
+  cp "$REPO_ROOT/scripts/00-build-templates.sh" "$1/scripts/"
+  set +e
+  B_OUT="$(CAPTURE="$1.ctx" PATH="$stubs:$PATH" XDG_STATE_HOME="$tmp/state" \
+    XDG_CONFIG_HOME="$tmp/config" bash "$1/scripts/00-build-templates.sh" 2>&1)"
+  B_RC=$?
+  set -e
+}
+
+run_build "$ignored"
+assert_eq "00-build-templates.sh succeeds on a clean broker/ at the pin (stub docker)" "$B_RC" "0"
+diff -r "$pinned_tree" "$ignored.ctx" >/dev/null \
+  && ok "00-build-templates.sh builds the broker from exactly the pinned commit's tree" \
+  || bad "00-build-templates.sh builds the broker from exactly the pinned commit's tree"
+case "$(cat "$ignored.ctx.context")" in
+  "$ignored"/*|"$ignored") bad "00-build-templates.sh's broker context is not inside the checkout" ;;
+  *) ok "00-build-templates.sh's broker context is not inside the checkout" ;;
+esac
+assert_eq "00-build-templates.sh takes the broker Dockerfile from the exported context" \
+  "$(cat "$ignored.ctx.dockerfile")" "$(cat "$ignored.ctx.context")/Dockerfile"
+
+run_build "$redirected"
+assert_eq "00-build-templates.sh refuses a redirected broker/.git" "$B_RC" "1"
+assert_contains "00-build-templates.sh's redirect refusal names the problem" "$B_OUT" "does not point at"
+[ ! -e "$redirected.ctx" ] && ok "00-build-templates.sh built nothing for a redirected broker/.git" \
+  || bad "00-build-templates.sh built nothing for a redirected broker/.git"
+
+run_build "$fsmon"
+assert_eq "00-build-templates.sh refuses a broker/.git pointing at an fsmonitor payload" "$B_RC" "1"
+[ ! -e "$marker" ] && ok "00-build-templates.sh never ran the fsmonitor payload" \
+  || bad "00-build-templates.sh never ran the fsmonitor payload"
+
+run_build "$dirty_tracked"
+assert_eq "00-build-templates.sh refuses a dirty broker/" "$B_RC" "1"
+assert_contains "00-build-templates.sh's dirty refusal names the problem" "$B_OUT" "uncommitted changes"
+
+# ===========================================================================
+# Part 6: an exported ROOT doesn't redirect a direct run of bin/factory.
+# Before, bin/factory kept an inherited ROOT, so sourcing roles.sh against
+# this empty directory died on its missing broker/tools.txt.
+# ===========================================================================
+mkdir "$tmp/evil-root"
+set +e
+evil_out="$(ROOT="$tmp/evil-root" "$REPO_ROOT/bin/factory" help 2>&1)"
+evil_rc=$?
+set -e
+assert_eq "an exported ROOT: a direct 'factory help' still succeeds" "$evil_rc" "0"
+case "$evil_out" in
+  *"$tmp/evil-root"*) bad "an exported ROOT is never used by a direct run (output mentions it)" ;;
+  *) ok "an exported ROOT is never used by a direct run" ;;
+esac
+assert_empty "an exported ROOT: nothing was written into it" "$(ls -A "$tmp/evil-root")"
 
 echo "---"
 echo "$pass passed, $fail failed"

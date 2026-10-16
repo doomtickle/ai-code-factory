@@ -118,7 +118,11 @@ The broker and the dispatch bridge are Python standard library only.
 `git clone` leaves it empty. `factory setup` (and any other `factory`
 command) initializes it automatically on first run, so this is optional, but
 you can also clone with `--recurse-submodules` or run
-`git submodule update --init` yourself first.
+`git submodule update --init` yourself first. The broker image is always
+built from a `git archive` export of the commit this repo pins `broker/` to,
+never from the `broker/` working tree, and `factory setup`/`factory update`
+refuse to go on while `broker/` has uncommitted work, is off its pin, or its
+`broker/.git` doesn't point at `.git/modules/broker`.
 
 ```sh
 # Check the machine first; it says how to fix anything missing:
