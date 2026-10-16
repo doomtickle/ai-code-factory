@@ -64,8 +64,11 @@ network: it is made of what the gateway itself verified.
   customer), `tier` (`solo` or `team`), `approvers`, `iat`, `exp`, `v`.
   The public key is baked into the Pro package; verification is offline and
   pure standard library. The token is delivered as a credential file like
-  the webhook URL. Invalid, expired or missing: the plugin logs why and
-  installs no hook, so the gateway keeps working as the free core. Keys
+  the webhook URL and read fresh at every held call, so a key delivered
+  after start-up takes effect at the next push without a restart. While no
+  valid key has ever been seen, the gateway behaves as the free core and
+  logs why once; once a key has been valid and then lapses (expired,
+  removed), held writes are refused rather than silently released. Keys
   are minted by the seller with `openssl` from a private key that never
   enters any repository.
 

@@ -32,11 +32,14 @@ Dated entries, for the user to review. Newest first.
     deployment's console on the host. No new listener or token: whoever
     can write there is the approver. The retry design also means a crash
     or restart of the gateway loses nothing a person decided.
-  - **An expired or invalid license at call time refuses the held write**
-    rather than letting it through: an operator who paid for the gate
-    would rather have it stay closed than silently open. At start-up an
-    invalid license just leaves the hook uninstalled (free behaviour),
-    which the audit log and the doctor both report.
+  - **The license is read at every held call, not at start-up.** The
+    factory delivers credentials after it starts the server, so a key that
+    arrives later must take effect without a restart. While no valid key
+    has ever been seen the gateway behaves as the free core (logged once);
+    once a key has been valid and then lapses, held writes are refused
+    rather than silently released: an operator who paid for the gate would
+    rather have it stay closed. The audit log and the doctor both report
+    which state applies.
   - **License tokens are RSA-2048 PKCS#1 v1.5 over SHA-256**, verified
     with one modular exponentiation in pure standard library (the core's
     rule), signed offline with `openssl`. Ed25519 would be smaller but has
