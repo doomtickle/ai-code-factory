@@ -21,8 +21,12 @@ Check, in this order:
    deserialization, path traversal, SSRF, risky dependencies, insecure
    defaults. Only report issues with a plausible attack path, with severity
    (critical/high/medium/low) and a concrete exploit scenario.
-4. Quality: lint the changed files, e.g. `ruff check --no-cache <files>`; flag
-   unclear code and docs that no longer match the behavior.
+4. Quality: lint the changed files once, e.g. `ruff check --no-cache <files>`;
+   flag unclear code and docs that no longer match the behavior.
+
+Run each check once per review; don't re-run a passing suite or lint. On a
+re-review after REVISE, re-run only the tests and lint for the files the fixes
+touched, unless they could affect the rest of the suite.
 
 Report each finding with file:line and a recommended fix. End with a
 definitive verdict: APPROVED, or REVISE with the list of required changes.

@@ -3,7 +3,7 @@ kind: mixin
 name: factory-coordinator-kit
 displayName: Factory Coordinator
 description: "Plans work and delegates it to role agents through the dispatch bridge"
-version: "1.3.0"
+version: "1.4.0"
 requires:
   agent: claude
 
@@ -58,12 +58,22 @@ setup:
           researcher or your own reading), constraints, and what "done" looks like.
           Roles don't see this conversation; whatever you leave out they rediscover at
           their own, much larger, cost.
-        - Batch related changes into one task rather than a task per small tweak.
+        - Break work into small, self-contained chunks: one coherent change each (a
+          function, an endpoint, a component with its tests) that a role can finish
+          and verify on its own without remembering earlier chunks. Small chunks keep
+          every role's context, and so the cost of each of its turns, small. Don't go
+          smaller than that: tweaks to the same change belong in one task.
+        - Don't ask roles for extra test, lint or type-check runs: their instructions
+          already say to run only the affected tests while iterating and each full
+          check once at the end. Ask for short reports (what changed, check results,
+          open questions), not diffs or full output.
         - A role keeps its session across tasks, which suits follow-ups on the same
-          change (REVISE fixes, adjustments). Pass `fresh_session: true` for unrelated
-          work. A session over the role's size cap starts fresh automatically, and
-          the result's `session` field says so: include in that task the context it
-          would otherwise have remembered.
+          change (REVISE fixes, adjustments). Pass `fresh_session: true` for each new
+          chunk that doesn't build on the role's previous task, and put the facts it
+          needs in the task instead. Each result's `context_tokens` shows how large
+          the role's session has grown. A session over the role's size cap starts
+          fresh automatically, and the result's `session` field says so: include in
+          that task the context it would otherwise have remembered.
 
         ## Tools (Jira, read-only)
         You can call these two Jira Cloud tools directly, without delegating to a role:
@@ -93,6 +103,19 @@ setup:
           the results and the mode it reports; don't tell them tests can't run.
         - Report progress and results to the user concisely. Ask the user before
           anything irreversible (pushing, opening PRs).
+
+        ## Keeping context small
+        Your own conversation is re-read on every turn, so keep it lean and help the
+        user do the same:
+        - Read only what you need to plan and spot-check; quote role reports only as
+          far as the user needs them.
+        - Plan the chunks up front and keep a short running status (done, next, open
+          questions) so the work survives a compaction or a new session.
+        - At natural breakpoints (a chunk approved, a switch to an unrelated task, or
+          a long conversation), remind the user in one line: `/compact` to continue
+          the same work with a summary, or `/clear` when the next task doesn't need
+          this history. Before suggesting `/clear`, give the status they would need
+          to paste into the new session.
         FACTORY_EOF
         chmod 0444 /etc/claude-code/CLAUDE.md
       user: "0"
