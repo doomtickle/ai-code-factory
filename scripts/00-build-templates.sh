@@ -12,15 +12,20 @@ require_sbx
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
+# broker/ is a git submodule (passdesk-broker); an uninitialized checkout has
+# an empty directory and no Dockerfile here.
+[ -f "$ROOT/broker/Dockerfile" ] \
+  || die "missing $ROOT/broker/Dockerfile - run 'git submodule update --init' in $ROOT"
+
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
-# build ROLE CONTEXT [DOCKER-BUILD-ARGS...]
+# build ROLE DOCKERFILE CONTEXT [DOCKER-BUILD-ARGS...]
 build() {
-  local tag="factory-$1:$TEMPLATE_TAG" image="$1" context="$2"
-  shift 2
+  local tag="factory-$1:$TEMPLATE_TAG" image="$1" dockerfile="$2" context="$3"
+  shift 3
   echo "Building $tag..."
-  docker build -t "$tag" -f "$ROOT/templates/$image/Dockerfile" "$@" "$context"
+  docker build -t "$tag" -f "$dockerfile" "$@" "$context"
   echo "Loading $tag into sbx..."
   docker image save "$tag" -o "$tmp/$image.tar"
   sbx template load "$tmp/$image.tar"
@@ -30,10 +35,12 @@ build() {
   docker image inspect --format '{{.Id}}' "$tag" > "$FACTORY_STATE/images/factory-$image-$TEMPLATE_TAG.id"
 }
 
-# All three use the repo root as the context for shared files; .dockerignore
-# limits it to what they COPY.
-build developer "$ROOT"
-build reviewer "$ROOT"
+# developer/reviewer use the repo root as the context for shared files;
+# .dockerignore limits it to what they COPY.
+build developer "$ROOT/templates/developer/Dockerfile" "$ROOT"
+build reviewer "$ROOT/templates/reviewer/Dockerfile" "$ROOT"
+# The broker builds from its own submodule checkout, with that directory as
+# the build context.
 # This machine's policy overlay (an empty one if there is none) goes in as its
 # own build context, so it never has to sit in the repo.
 mkdir "$tmp/config"
@@ -43,6 +50,6 @@ if [ -f "$FACTORY_CONFIG/policy.toml" ]; then
 else
   : > "$tmp/config/policy.toml"
 fi
-build broker "$ROOT" --build-context "factory-config=$tmp/config"
+build broker "$ROOT/broker/Dockerfile" "$ROOT/broker" --build-context "factory-config=$tmp/config"
 
 sbx template ls

@@ -103,7 +103,7 @@ Everything is pinned for repeatable setups:
 | Component | Pinned in |
 |---|---|
 | `sbx` 0.45.1, `herdr` 0.9.1 (+ SHA-256, per platform) | `scripts/lib/common.sh` |
-| Sandbox base images (digests) | `templates/*/Dockerfile` |
+| Sandbox base images (digests) | `templates/*/Dockerfile`, `broker/Dockerfile` |
 | ruff 0.16.8 | `templates/reviewer/Dockerfile` |
 | yarn 1.22.22 (+ SHA-256) and `factory-test` | `templates/developer/Dockerfile`, `templates/reviewer/Dockerfile` |
 | Broker code + policy | baked into `factory-broker:v3` at build time |
@@ -113,6 +113,10 @@ Every script checks the exact `sbx`/`herdr` versions and refuses to run on a mis
 The broker and the dispatch bridge are Python standard library only.
 
 ## Quick start
+
+`broker/` is the `passdesk-broker` repository as a git submodule; a plain
+`git clone` leaves it empty. Either clone with `--recurse-submodules` or run
+`git submodule update --init` once afterwards.
 
 ```sh
 # Check the machine first; it says how to fix anything missing:
@@ -599,6 +603,8 @@ hasn't dispatched any jobs yet just shows an empty report.
   `factory start` again.
 - **Tests:**
   - broker: `docker run --rm --network none -v "$PWD/broker:/b:ro" -w /b factory-broker:v3 python3 -m unittest -v`
+    (`broker/` is the `passdesk-broker` submodule; run `git submodule update --init`
+    first if it's empty)
   - dispatch: `/usr/bin/python3 -m unittest discover -s dispatch -v` (macOS) or
     `python3 -m unittest discover -s dispatch -v` (Linux)
 - **Under the hood:** `factory` wraps the scripts in `scripts/`:
@@ -625,14 +631,14 @@ roles/<name>/kit/spec.yaml   Role kit: Anthropic-only egress
 kits/coordinator/spec.yaml   Coordinator kit
 kits/coordinator/broker.conf Coordinator's direct broker tool grants (Jira)
 kits/broker/spec.yaml        Broker kit: GitHub, registries, docs hosts
-broker/                      Broker MCP server (runs in the broker VM), policy, tests
-broker/agentbroker/core/     Gateway core: protocol, auth and grants, policy, filters, audit
-broker/agentbroker/tools/    One module per broker tool (listed in broker/tools.txt)
+broker/                      passdesk-broker, as a git submodule: MCP server (runs in the broker VM), policy, tests
+broker/passdesk/core/        Gateway core: protocol, auth and grants, policy, filters, audit
+broker/passdesk/tools/       One module per broker tool (listed in broker/tools.txt)
 dispatch/                    Dispatch bridge (runs on the host), tests
 docs/broker-extraction.md    Roadmap for making the broker a standalone gateway
 docs/setup-wsl.md            Step-by-step setup on Windows 11 with WSL2
 windows/enable-wsl.ps1       Windows side of that setup: WSL, Ubuntu, nested virtualization
-templates/<image>/           Pinned images: developer, reviewer (+ruff), broker
+templates/<image>/           Pinned images: developer, reviewer (+ruff)
 templates/agent/factory-test Runs tests in a sandbox-local copy (baked into developer and reviewer)
 config.example/              Example local settings for ~/.config/ai-code-factory/
 scripts/lib/common.sh        Pinned versions, checksums, names, shared checks
@@ -656,7 +662,7 @@ Change pins on purpose, in their own commit, and re-run the full setup to test.
   then copy the top-level `Digest:` into `templates/developer/Dockerfile` **and**
   `templates/reviewer/Dockerfile`.
 - **Broker base image:** same with `docker/sandbox-templates:shell-docker` →
-  `templates/broker/Dockerfile`.
+  `broker/Dockerfile` (in the `passdesk-broker` submodule).
 - After changing any image, bump `TEMPLATE_TAG` (`v1` → `v2`) in `scripts/lib/common.sh`.
 - **sbx / herdr:** update the version, URL and SHA-256 in `scripts/lib/common.sh`,
   for each platform you use:

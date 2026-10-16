@@ -150,7 +150,7 @@ done
 # keychain and piped over stdin into the running broker sandbox, so the value
 # never appears in argv, an env flag, a log, git, or on host disk - it lands
 # only at /etc/factory-broker/secrets/<name> inside the broker sandbox (owned
-# by the "agent" user server.py runs as, mode 0700; see templates/broker/Dockerfile).
+# by the "agent" user server.py runs as, mode 0700; see broker/Dockerfile).
 # Re-running this script re-delivers the value, so rotating the keychain entry
 # and re-running it rotates the credential the broker uses - and *deleting*
 # the keychain entry and re-running it revokes the credential: the stale file
@@ -191,7 +191,7 @@ deliver_secret() {  # deliver_secret NAME SERVICE
   # predates /etc/factory-broker/secrets, and the file would otherwise end up
   # root-owned 0600 and unreadable by "agent" (who server.py runs as) - so
   # chown it too. If it's already "agent" (who owns the directory per
-  # templates/broker/Dockerfile on a rebuilt image), id -u is non-zero and
+  # broker/Dockerfile on a rebuilt image), id -u is non-zero and
   # both chowns are skipped as unnecessary (and would fail).
   if ! printf '%s' "$value" | sbx exec -i "$BROKER_SANDBOX" sh -c \
       'umask 077 && dir="/etc/factory-broker/secrets" && mkdir -p "$dir" \

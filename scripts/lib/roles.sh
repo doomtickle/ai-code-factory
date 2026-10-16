@@ -4,7 +4,10 @@
 
 # Broker tool names, from the manifest the broker's tests keep in sync with its
 # registry (host scripts run on a Python too old to import the broker).
-[ -f "$ROOT/broker/tools.txt" ] || die "missing $ROOT/broker/tools.txt"
+# broker/ is a git submodule (passdesk-broker); an uninitialized checkout has
+# an empty directory here.
+[ -f "$ROOT/broker/tools.txt" ] \
+  || die "missing $ROOT/broker/tools.txt - run 'git submodule update --init' in $ROOT"
 KNOWN_BROKER_TOOLS="$(sed -e '/^#/d' -e '/^[[:space:]]*$/d' "$ROOT/broker/tools.txt" | tr '\n' ' ')"
 readonly KNOWN_BROKER_TOOLS="${KNOWN_BROKER_TOOLS% }"
 readonly KNOWN_TEMPLATES="developer reviewer"

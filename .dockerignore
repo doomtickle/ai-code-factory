@@ -1,7 +1,5 @@
-# Only the files the templates COPY are needed in the build context.
+# Only the files the templates COPY are needed in the build context. The
+# broker image builds from broker/ itself (scripts/00-build-templates.sh), so
+# this only needs to cover the developer/reviewer templates.
 *
-!broker/server.py
-!broker/agentbroker/**/*.py
-!broker/policy.toml
-!broker/run.sh
 !templates/agent/factory-test

@@ -27,7 +27,7 @@ plan, recorded here so the reasoning survives.
 No change in what agents see. The `tools/list` output is byte-identical to
 before, apart from the removed `npm_ci`.
 
-- `broker/server.py` (1,219 lines) is now a thin entry point. The code lives in the `broker/agentbroker/` package:
+- `broker/server.py` (1,219 lines) is now a thin entry point. The code lives in the `broker/agentbroker/` package (renamed `passdesk/` in Phase 2, see Open decisions):
   - `core/`: `config`, `errors`, `policy`, `filters`, `audit`, `workspace`, `net`, `registry`, `auth`, `protocol`. It knows no tool.
   - `tools/`: `web`, `git` (with GitHub PRs), `gemini`, `jira`, `npm`, `pip`. Each module registers its tools with `core.registry.register`. Import order in `tools/__init__.py` sets the `tools/list` order.
 - Settings live in `core/config.py` and are read as `config.NAME` at call time, so tests can point them at temp dirs.
@@ -67,6 +67,13 @@ All changes stay in this repo, and the factory keeps working throughout.
    - a `docker compose` quickstart
    - TLS, with optional mTLS between gateway and broker
    - MCP conformance tests run against the clients it supports
+
+   **Partly done:** the broker moved to its own repository, `passdesk-broker`
+   (history preserved via a subtree split), renamed package and all. The
+   factory consumes it as a git submodule at `broker/`, pinned to a commit —
+   not yet as an image pinned by digest, since there is no registry to push
+   one to. The `docker compose` quickstart, TLS/mTLS and MCP conformance
+   tests are still outstanding.
 2. **Adapters:**
    - *sbx*: today's `start-broker.sh` logic (token minting into `sbx secret`, `sbx mcp add` per principal, credential delivery), moved into the broker repo.
    - *Generic*: setup docs for MCP clients (Claude Code, Codex, Cursor, others), each tested.
@@ -80,6 +87,11 @@ All changes stay in this repo, and the factory keeps working throughout.
 
 ## Open decisions
 
-- **License** for the standalone repository.
+- ~~**License** for the standalone repository.~~ Settled: Apache-2.0.
 - **Default file exchange:** in-protocol transfer is portable but slower for large dependency mirrors. Shared mount stays the sbx default.
-- **Name:** the package is `agentbroker` for now; the server still calls itself `factory-broker`.
+- ~~**Name:** the package is `agentbroker` for now; the server still calls itself `factory-broker`.~~
+  Settled: the project and package are **Passdesk** (`passdesk/`); the MCP
+  `serverInfo.name` it reports is `"passdesk"`. The sandbox name
+  (`factory-broker`) and its filesystem paths (`/opt/factory-broker`,
+  `/etc/factory-broker`) are unchanged — those are the factory's deployment
+  choices, not the project's identity.
