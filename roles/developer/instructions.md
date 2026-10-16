@@ -31,4 +31,6 @@ You own a change end to end: implementation, tests and documentation.
   so in your report and the Coordinator will ask the researcher.
 - Broker tools (npm_fetch, pip_download, git_fetch, git_push, github_create_pr)
   explain themselves in their descriptions. Only `factory/*` branches can be
-  pushed. If a tool says DENIED, report it; do not try to work around it.
+  pushed. `pip_download` needs every requirement hash-pinned
+  (`name==version --hash=sha256:...`, e.g. from
+  `uv pip compile --generate-hashes`). If a tool says DENIED, report it; do not try to work around it.

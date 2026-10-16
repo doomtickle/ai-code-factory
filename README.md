@@ -501,9 +501,9 @@ sandbox (sandboxes are never deleted automatically).
 |---|---|
 | `web_fetch` | HTTPS GET from `[web].allow_hosts`; redirects re-checked; HTML → text; output marked untrusted |
 | `npm_fetch` | Downloads every tarball `yarn.lock` (v1) or `package-lock.json` pins into `.factory/npm-mirror/` (no code runs); each is policy-checked and verified against its lockfile hash; roles install offline with `factory-test` |
-| `pip_download` | Downloads binary wheels for a fully pinned `requirements.txt` into `.factory/wheels/` (no code runs); agent installs offline with `uv` |
+| `pip_download` | Downloads binary wheels for a hash-pinned `requirements.txt` (every line `name==version --hash=sha256:...`, no option lines; generate it with `uv pip compile --generate-hashes`) into `.factory/wheels/` (no code runs); pip only sees a copy the broker writes itself; agent installs offline with `uv` |
 | `git_fetch` | Fetches a branch into a private mirror and hands it to the agent as a bundle in `.factory/incoming/` |
-| `git_push` | Takes a bundle from `.factory/outgoing/`, checks branch rules, secret-scans diff and messages, pushes |
+| `git_push` | Takes a bundle from `.factory/outgoing/` (size-capped, copied once into the broker), checks branch rules, secret-scans every commit's patch (binary files included), message and author/committer, pushes |
 | `github_create_pr` | Opens a (draft) PR; title and body are secret-scanned |
 | `gemini_flash_query` | Sends a prompt to Gemini Flash for cheap/fast summarization or triage; prompt is secret-scanned and size-limited; output marked untrusted |
 | `jira_my_issues` | Lists Jira Cloud issues assigned to the caller (`status`: `todo`/`in_progress`/`all`, default not-Done); read-only; output marked untrusted |
