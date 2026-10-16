@@ -1,0 +1,12 @@
+# Python bytecode cache
+__pycache__/
+*.pyc
+
+# Local secrets / env files: credentials never belong in the repo
+.env
+.env.*
+
+# Local policy overlay built into the image by a consumer; never checked in here
+policy.local.toml
+
+.DS_Store
