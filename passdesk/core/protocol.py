@@ -29,11 +29,25 @@ def grant_hint(principal: str) -> str:
     return f"roles/{principal}/role.conf"
 
 
-def call_tool(name: str, args: dict, principal: str) -> tuple[str, bool]:
+# Tools whose effect lands outside the broker, not just in its own state or
+# the caller's workspace. Their "intent" is audited before fn() runs, so the
+# attempt is on record even if the push/PR call itself fails partway through
+# or the process is killed mid-call - this is an extra write, not a claim
+# that the log is tamper-evident (that's roadmap).
+_WRITES_EXTERNALLY = {"git_push", "github_create_pr"}
+
+
+def call_tool(name: str, args: object, principal: str) -> tuple[str, bool]:
     started = time.monotonic()
     # "role" is the audit log's field name for the principal (scripts/analytics.py reads it).
-    record = {"role": principal, "tool": name, "args": summarize_args(args)}
+    record = {"role": principal, "tool": name}
     try:
+        # Argument shape/type checks live inside the try so a malformed call
+        # (e.g. "arguments" not a JSON object) still gets an audit record and
+        # a normal JSON-RPC error instead of an unhandled exception.
+        if not isinstance(args, dict):
+            raise Denied("arguments must be a JSON object")
+        record["args"] = summarize_args(args)
         if name not in TOOLS:
             raise Denied(f"unknown tool {name!r}")
         if name not in principal_tools(principal):
@@ -49,6 +63,11 @@ def call_tool(name: str, args: dict, principal: str) -> tuple[str, bool]:
             if (expected == "string" and not isinstance(val, str)) or \
                (expected == "boolean" and not isinstance(val, bool)):
                 raise Denied(f"argument {key!r} must be a {expected}")
+        if name in _WRITES_EXTERNALLY:
+            try:
+                audit({**record, "event": "intent"})
+            except OSError as e:
+                raise Denied(f"could not write the audit log; refusing to run {name}: {e}") from e
         text = fn(args, policy.load_policy())
         record.update(decision="allow", result=sanitize(text, 500))
         return text, False
@@ -67,7 +86,12 @@ def handle_rpc(msg: dict, principal: str) -> dict | None:
     method, mid = msg.get("method"), msg.get("id")
     if mid is None:
         return None  # notification
-    params = msg.get("params") or {}
+    params = msg.get("params")
+    if params is None:
+        params = {}
+    elif not isinstance(params, dict):
+        return {"jsonrpc": "2.0", "id": mid,
+                "error": {"code": -32602, "message": "params must be an object"}}
     if method == "initialize":
         result = {"protocolVersion": params.get("protocolVersion", "2025-06-18"),
                   "capabilities": {"tools": {}},
@@ -109,7 +133,12 @@ class Handler(BaseHTTPRequestHandler):
         if principal is None:
             audit({"event": "auth-failure", "client": self.client_address[0], "reason": problem})
             return self._send(401, {"error": "unauthorized"})
-        length = int(self.headers.get("Content-Length") or 0)
+        try:
+            length = int(self.headers.get("Content-Length"))
+        except (TypeError, ValueError):
+            return self._send(400, {"error": "missing or invalid Content-Length"})
+        if length < 0:
+            return self._send(400, {"error": "missing or invalid Content-Length"})
         if length > config.MAX_REQUEST_BYTES:
             return self._send(413, {"error": "request too large"})
         try:

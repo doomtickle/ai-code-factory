@@ -42,7 +42,7 @@ def tool_gemini_flash_query(args: dict, policy: dict) -> str:
         hint = ("\nHint: the broker sandbox's Gemini API key may be missing or invalid; check "
                 "the \"factory-gemini\" host keychain entry and run scripts/start-broker.sh "
                 "again") if e.code in (401, 403) else ""
-        return f"Gemini API returned HTTP {e.code}: {detail}{hint}"
+        return f"Gemini API returned HTTP {e.code}:\n" + untrusted(f"Gemini ({model})", detail) + hint
     parts = []
     for cand in result.get("candidates", []):
         for part in (cand.get("content") or {}).get("parts", []):

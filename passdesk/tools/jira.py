@@ -71,7 +71,7 @@ def jira_call(path: str, params: dict, policy: dict) -> tuple[dict | None, str |
         hint = ("\nHint: check the Atlassian API token and its scopes (read:jira-work, "
                 "read:jira-user) stored for the broker sandbox; see README, Enabling "
                 "Jira") if e.code in (401, 403) else ""
-        return None, f"Jira API returned HTTP {e.code}: {detail}{hint}"
+        return None, f"Jira API returned HTTP {e.code}:\n" + untrusted(f"Jira API ({site})", detail) + hint
 
 
 def build_my_issues_jql(status: str | None, policy: dict) -> str:

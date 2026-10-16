@@ -38,6 +38,12 @@ class GeminiTests(Base):
         self.assertIn("HTTP 401", out)
         self.assertIn("factory-gemini", out)
 
+    def test_http_error_body_is_wrapped_untrusted(self):
+        with mock.patch("passdesk.core.net.NO_REDIRECT_OPENER.open", side_effect=fake_http_error(500, b"oops")):
+            out = gemini.tool_gemini_flash_query({"prompt": "hi"}, POLICY)
+        self.assertIn("UNTRUSTED CONTENT", out)
+        self.assertIn("oops", out)
+
     def test_missing_credential_file_denied(self):
         config.GEMINI_SECRET_PATH.unlink()
         with self.assertRaisesRegex(Denied, "no Gemini API key"):

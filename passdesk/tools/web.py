@@ -19,6 +19,34 @@ from ..core.filters import (
 from ..core.policy import host_allowed
 from ..core.registry import register
 
+# Hosts the egress proxy or the broker itself attaches credentials to.
+# web_fetch is a plain, unauthenticated GET - letting it reach one of these
+# would be an authenticated read that skips the dedicated tool's own
+# allowlist (e.g. [git].repos), so this is checked before [web].allow_hosts
+# and an operator cannot add any of them back by editing that list.
+_CREDENTIALED_HOSTS = {
+    "github.com": "git_fetch, git_push or github_create_pr",
+    "*.github.com": "git_fetch, git_push or github_create_pr",
+    "*.githubusercontent.com": "git_fetch, git_push or github_create_pr",
+    "api.atlassian.com": "jira_my_issues or jira_get_issue",
+    "*.atlassian.net": "jira_my_issues or jira_get_issue",
+    "generativelanguage.googleapis.com": "gemini_flash_query",
+}
+
+
+def credentialed_host_tool(host: str, policy: dict) -> str | None:
+    """Dedicated tool name if host is one that carries a credential elsewhere
+    in the broker, or None. The configured private npm registry is included
+    even though its host isn't known until policy is loaded."""
+    for pattern, tool in _CREDENTIALED_HOSTS.items():
+        if host_allowed(host, [pattern]):
+            return tool
+    private = policy.get("packages", {}).get("npm_private_registry", "")
+    private_host = urllib.parse.urlsplit(private).hostname if private else None
+    if private_host and host_allowed(host, [private_host]):
+        return "npm_fetch"
+    return None
+
 
 def tool_web_fetch(args: dict, policy: dict) -> str:
     url = args["url"]
@@ -32,7 +60,13 @@ def tool_web_fetch(args: dict, policy: dict) -> str:
             raise Denied("only https:// URLs are allowed")
         if parsed.username or parsed.password:
             raise Denied("URLs with credentials are not allowed")
-        if not host_allowed(parsed.hostname or "", allow):
+        host = parsed.hostname or ""
+        tool = credentialed_host_tool(host, policy)
+        if tool:
+            raise Denied(f"host {host} is where the egress proxy or the broker attaches credentials; "
+                         f"use {tool} instead of web_fetch (this refusal cannot be overridden by adding "
+                         "the host to policy.toml [web].allow_hosts)")
+        if not host_allowed(host, allow):
             raise Denied(f"host {parsed.hostname} is not in the web allowlist (policy.toml [web].allow_hosts)")
 
     class Redirects(urllib.request.HTTPRedirectHandler):

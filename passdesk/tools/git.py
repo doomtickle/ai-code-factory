@@ -13,9 +13,9 @@ from pathlib import Path
 
 from ..core import config
 from ..core.errors import Denied
-from ..core.filters import block_outbound_secrets, sanitize
+from ..core.filters import block_outbound_secrets, find_secrets, sanitize, untrusted
 from ..core.registry import register
-from ..core.workspace import factory_dir, run, tool_lock, workspace_path
+from ..core.workspace import copy_workspace_file, factory_dir, install_file, private_tempdir, run, run_capped, tool_lock
 
 _BRANCH_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$")
 _REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
@@ -49,13 +49,27 @@ def check_push_branch(branch: str, policy: dict) -> str:
     return branch
 
 
+_GIT_HARDENING = ("-c", "core.hooksPath=/dev/null", "-c", "protocol.ext.allow=never", "-c", "core.fsmonitor=false")
+
+
 def git(*args: str, cwd: Path, timeout: int = 300, check: bool = True) -> subprocess.CompletedProcess:
-    cmd = ["git", "-c", "core.hooksPath=/dev/null", "-c", "protocol.ext.allow=never",
-           "-c", "core.fsmonitor=false", *args]
-    cp = run(cmd, cwd=cwd, timeout=timeout)
+    cp = run(["git", *_GIT_HARDENING, *args], cwd=cwd, timeout=timeout)
     if check and cp.returncode != 0:
-        raise RuntimeError(f"git {args[0]} failed: {sanitize(cp.stderr.strip(), 2000)}")
+        raise RuntimeError(f"git {args[0]} failed:\n" +
+                           untrusted(f"git {args[0]}", sanitize(cp.stderr.strip(), 2000)))
     return cp
+
+
+def git_capped(*args: str, cwd: Path, limit: int) -> str | None:
+    """stdout of a read-only git command as text, or None if it exceeds limit bytes."""
+    code, out, err = run_capped(["git", *_GIT_HARDENING, *args], cwd=cwd, limit=limit, timeout=300)
+    if out is None:
+        return None
+    if code != 0:
+        raise RuntimeError(f"git {args[0]} failed:\n" +
+                           untrusted(f"git {args[0]}", sanitize(err.strip(), 2000)))
+    # Binary content is scanned too; the secret patterns are ASCII.
+    return out.decode("utf-8", "replace")
 
 
 def ensure_mirror(repo: str) -> Path:
@@ -74,13 +88,39 @@ def tool_git_fetch(args: dict, policy: dict) -> str:
         mirror = ensure_mirror(repo)
         git("fetch", "--no-tags", "origin", f"+refs/heads/{branch}:refs/remotes/origin/{branch}", cwd=mirror)
         name = f"{repo.replace('/', '__')}__{branch.replace('/', '__')}.bundle"
-        bundle = factory_dir("incoming") / name
-        git("bundle", "create", "-q", str(bundle), f"refs/remotes/origin/{branch}", cwd=mirror)
+        with private_tempdir() as tmp:
+            bundle = tmp / name
+            git("bundle", "create", "-q", str(bundle), f"refs/remotes/origin/{branch}", cwd=mirror)
+            with factory_dir("incoming") as incoming:
+                install_file(incoming, name, bundle)
         sha = git("rev-parse", f"refs/remotes/origin/{branch}", cwd=mirror).stdout.strip()
-    rel = bundle.relative_to(config.WORKSPACE)
+    rel = f".factory/incoming/{name}"
     return (f"Fetched {repo}@{branch} ({sha}) into {rel}.\n"
             f"Import it in your sandbox with:\n"
             f"  git fetch {rel} refs/remotes/origin/{branch}:refs/remotes/origin/{branch}")
+
+
+def check_commit_patches(patches: str, base: str) -> None:
+    """Refuse if any commit's added lines, file names or binary content look like secrets."""
+    commits: dict[str, list[str]] = {}
+    lines: list[str] = []
+    # str.splitlines() also breaks on \r, \x0b, \x0c, \x1c-\x1e, U+0085 and
+    # U+2028, not just "\n". git's own patch output only ever uses "\n", so
+    # an added line that *contains* one of those characters (e.g. "ok\r-ghp_...")
+    # must stay one line here -- splitlines() would cut it into a piece
+    # starting with "-", which is then skipped as a removed line, hiding a
+    # secret from the scan below.
+    for line in patches.split("\n"):
+        if line.startswith("commit ") and len(line) >= 47:
+            lines = commits.setdefault(line[7:].strip(), [])
+        elif not line.startswith("-"):  # removed lines are already upstream or in an earlier commit
+            lines.append(line)
+    for sha, added in commits.items():
+        found = find_secrets("\n".join(added))
+        if found:
+            raise Denied(f"commit {sha[:12]} appears to contain secrets ({', '.join(found)}). Every commit is "
+                         "pushed, so a later commit that deletes them does not help: remove them from the "
+                         f"branch history (e.g. git rebase -i origin/{base}), re-create the bundle and retry")
 
 
 def tool_git_push(args: dict, policy: dict) -> str:
@@ -90,10 +130,17 @@ def tool_git_push(args: dict, policy: dict) -> str:
     fname = args["bundle"]
     if "/" in fname or not fname.endswith(".bundle"):
         raise Denied("bundle must be a file name ending in .bundle inside .factory/outgoing/")
-    bundle = workspace_path(f".factory/outgoing/{fname}")
     limits = policy.get("filters", {})
+    max_bundle = int(limits.get("max_bundle_bytes", 100_000_000))
+    max_diff = int(limits.get("max_diff_bytes", 2_000_000))
 
-    with tool_lock:
+    with tool_lock, private_tempdir() as tmp:
+        # One read of the agent's file, as a regular file within the cap; every
+        # git command below runs on this private copy, so it can't be swapped.
+        bundle = tmp / "push.bundle"
+        copy_workspace_file(f".factory/outgoing/{fname}", bundle, max_bundle,
+                            hint=f"bundle only the new commits (git bundle create .factory/outgoing/{fname} "
+                                 f"origin/{base}..{branch}) or push the work in smaller pieces")
         mirror = ensure_mirror(repo)
         git("fetch", "--no-tags", "origin", f"+refs/heads/{base}:refs/remotes/origin/{base}", cwd=mirror)
         verify = git("bundle", "verify", str(bundle), cwd=mirror, check=False)
@@ -112,18 +159,26 @@ def tool_git_push(args: dict, policy: dict) -> str:
             raise Denied(f"{branch} has no commits beyond origin/{base}")
         if count > int(limits.get("max_commits", 200)):
             raise Denied(f"{count} commits exceeds the per-push limit")
-        diff = git("diff", "--no-ext-diff", "--no-textconv", "--unified=0",
-                   f"refs/remotes/origin/{base}...{incoming}", cwd=mirror).stdout
-        if len(diff) > int(limits.get("max_diff_bytes", 2_000_000)):
-            raise Denied("diff exceeds the size limit")
-        added = "\n".join(l[1:] for l in diff.splitlines() if l.startswith("+") and not l.startswith("+++"))
-        block_outbound_secrets("the diff", added)
-        block_outbound_secrets("commit messages", git("log", "--format=%B", rng, cwd=mirror).stdout)
+        # Every commit is pushed, so every commit's patch is scanned (not the
+        # net diff, where a secret added and later deleted would not show).
+        # -a: binary files are scanned and counted as text; --cc: merge
+        # commits show what they change beyond their parents.
+        patches = git_capped("log", "-p", "--cc", "-a", "--no-ext-diff", "--no-textconv", "--no-color",
+                             "--unified=0", "--format=commit %H", rng, cwd=mirror, limit=max_diff)
+        if patches is None:
+            raise Denied(f"the pushed commits' patches exceed [filters].max_diff_bytes ({max_diff} bytes, "
+                         "counted over every commit, binary files included); push fewer or smaller commits")
+        check_commit_patches(patches, base)
+        meta = git_capped("log", "--format=%an <%ae>%n%cn <%ce>%n%B", rng, cwd=mirror, limit=max_diff)
+        if meta is None:
+            raise Denied(f"the commit messages exceed [filters].max_diff_bytes ({max_diff} bytes)")
+        block_outbound_secrets("commit messages or author/committer names and emails", meta)
 
         push = git("push", "--porcelain", "origin", f"{incoming}:refs/heads/{branch}", cwd=mirror, check=False)
         sha = git("rev-parse", incoming, cwd=mirror).stdout.strip()
     if push.returncode != 0:
-        return f"Push rejected by GitHub:\n{sanitize(push.stderr + push.stdout, 3000)}"
+        body = sanitize(push.stderr + push.stdout, 3000)
+        return "Push rejected by GitHub:\n" + untrusted(f"git push {repo}:{branch}", body)
     return f"Pushed {count} commit(s) to {repo}:{branch} ({sha}).\n{sanitize(push.stdout, 2000)}"
 
 
@@ -147,7 +202,7 @@ def tool_github_create_pr(args: dict, policy: dict) -> str:
         detail = sanitize(e.read().decode("utf-8", "replace"), 2000)
         hint = ("\nHint: a GitHub token must be stored for the broker sandbox: "
                 "sbx secret set github --sandbox factory-broker") if e.code in (401, 403, 404) else ""
-        return f"GitHub API returned HTTP {e.code}: {detail}{hint}"
+        return f"GitHub API returned HTTP {e.code}:\n" + untrusted(f"GitHub API ({repo})", detail) + hint
     return f"Opened PR #{pr['number']}: {pr['html_url']}"
 
 
