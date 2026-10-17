@@ -271,6 +271,7 @@ $(sed -n 's/^[[:space:]]*-[[:space:]]*"\{0,1\}\([^"[:space:]#]*\).*/\1/p' "$kit"
           "add them to kits/broker/spec.yaml (or $FACTORY_CONFIG/broker-kit/spec.yaml), then 'factory update'"; fi ;;
     esac
   fi
+  approvals_doctor_check
 
   say ""
   if [ "$problems" -eq 0 ]; then
@@ -384,6 +385,41 @@ npm_private_registry_needs_token() {
   [ -n "$(policy_string packages npm_private_registry)" ]
 }
 
+# approvals_summary -> prints "pending oldest_min expired_unhandled" from
+# scripts/approvals.py summary (see its --help). Fails with nothing printed
+# when Passdesk Pro isn't in use (no approvals dir yet, or ever) or python3
+# isn't available; never dies, so callers stay inert rather than erroring.
+approvals_summary() {
+  local python
+  [ -d "$FACTORY_BROKER_STATE/approvals/pending" ] || return 1
+  python="$(resolve_python 2>/dev/null)" || return 1
+  "$python" "$SCRIPTS/approvals.py" --state "$FACTORY_BROKER_STATE" summary 2>/dev/null
+}
+
+# approvals_status_line -> for `factory status`: one line when there is at
+# least one pending approval, nothing otherwise (Pro unused, or no pending cards).
+approvals_status_line() {
+  local out pending oldest
+  out="$(approvals_summary)" || return 0
+  set -- $out
+  pending="${1:-0}"
+  [ "${pending:-0}" -gt 0 ] || return 0
+  oldest="${2:-0}"
+  say "${B}Approvals:${N} $pending pending (oldest $oldest min) - factory approvals"
+}
+
+# approvals_doctor_check -> for `factory doctor`: warn (not fail) about any
+# expired card with no decision that still matches it; nothing printed when
+# there are none, or when Passdesk Pro isn't in use.
+approvals_doctor_check() {
+  local out expired
+  out="$(approvals_summary)" || return 0
+  set -- $out
+  expired="${3:-0}"
+  [ "${expired:-0}" -gt 0 ] || return 0
+  warn "$expired expired approval(s) with no decision: run 'factory approvals' (the agent's retry makes a fresh card)"
+}
+
 onboarding_hints() {
   local stale
   if [ -z "${FACTORY_UPDATING:-}" ]; then
@@ -441,6 +477,7 @@ cmd_status() {
   if npm_private_registry_needs_token && ! keychain_has factory-npm-registry; then
     warn "private npm registry keychain entry (\"factory-npm-registry\") not found"
   fi
+  approvals_status_line
 
   say ""
   say "${B}Sandboxes${N}"

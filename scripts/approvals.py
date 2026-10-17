@@ -12,6 +12,7 @@ only, and touches nothing but those files.
     factory approvals approve <id> [--as NAME] [--reason TEXT]
     factory approvals decline <id> [--as NAME] [--reason TEXT]
     factory approvals watch                print cards as they arrive
+    factory approvals summary              one line for scripts: "pending oldest_min expired_unhandled"
 """
 
 import argparse
@@ -127,6 +128,47 @@ def decide(state, args, verdict):
     return 0
 
 
+def is_expired_unhandled(state, card, now=None):
+    """A card past its expiry with no decision that still matches it.
+
+    passdesk-pro sweeps expired cards out of pending/ on its own, but only
+    while the broker is actively handling hook() calls; one left behind
+    (broker idle, agent gone) is still expired and still unhandled. A
+    decision file whose nonce doesn't match the card's nonce belongs to an
+    earlier card with the same id (a retry after expiry mints a fresh
+    nonce), so it doesn't count as having handled this one.
+    """
+    if minutes_left(card, now) >= 0:
+        return False
+    path = state / "approvals" / "decisions" / "{}.json".format(card["id"])
+    try:
+        decision = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return True
+    return decision.get("nonce") != card.get("nonce")
+
+
+def summarize(state, now=None):
+    """pending count, the oldest card's age in minutes (None if none), expired-unhandled count."""
+    cards = read_cards(state)
+    oldest_minutes = None
+    if cards:
+        now_ts = time.time() if now is None else now
+        oldest_minutes = int((now_ts - min(float(c.get("created", 0)) for c in cards)) // 60)
+    expired_unhandled = sum(1 for c in cards if is_expired_unhandled(state, c, now))
+    return {"pending": len(cards), "oldest_minutes": oldest_minutes, "expired_unhandled": expired_unhandled}
+
+
+def cmd_summary(state, _args):
+    # One line, three whitespace-separated fields, for a caller (bin/factory)
+    # to read with `set --` rather than parsing JSON: pending count, the
+    # oldest card's age in minutes (-1 if none pending), expired-unhandled count.
+    s = summarize(state)
+    oldest = -1 if s["oldest_minutes"] is None else s["oldest_minutes"]
+    print("{} {} {}".format(s["pending"], oldest, s["expired_unhandled"]))
+    return 0
+
+
 def cmd_watch(state, _args):
     seen = set()
     print("Watching {} (Ctrl-C to stop)".format(state / "approvals" / "pending"))
@@ -154,6 +196,7 @@ def main(argv=None):
         s.add_argument("--as", dest="as_name", default=None, help="approver name to record (default: your user name)")
         s.add_argument("--reason", default="", help="shown to the agent and kept on the record")
     sub.add_parser("watch")
+    sub.add_parser("summary")
     args = p.parse_args(argv)
     state = args.state or default_state()
     if not state.is_dir():
@@ -168,6 +211,8 @@ def main(argv=None):
         return decide(state, args, command)
     if command == "watch":
         return cmd_watch(state, args)
+    if command == "summary":
+        return cmd_summary(state, args)
     p.print_help()
     return 2
 
