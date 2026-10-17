@@ -2,6 +2,32 @@
 
 Dated entries, for the user to review. Newest first.
 
+## 2026-10-17
+
+- **`core/approvals.py`'s `require(card)` now redacts known secret patterns
+  in every string value of the card before any hook sees it**, instead of
+  dropping or masking the field a credential might land in (e.g. the PR
+  title). A card field is not sanitized the way `web_fetch` output is —
+  nothing stops an agent from putting a leaked token into a PR title or
+  branch name, and that card is then echoed verbatim to a Slack/Discord
+  webhook, written to the pending-card file, and printed on an approver's
+  console (`passdesk-pro`'s `notify.py` and `approvals.py`). Reusing
+  `filters.redact` (already applied to audit values in `core/audit.py`) at
+  this one choke point covers all three sinks today and any future approval
+  plugin, without Pro needing its own copy of the patterns or core importing
+  Pro. The redaction is recursive into lists/dicts (a card's `files` list,
+  say) but leaves non-string values alone, and only the copy passed to the
+  hook is touched — the real tool call already ran with the original
+  arguments, so nothing about what actually gets pushed or opened changes.
+  Dropping the title outright (the alternative in the backlog item) was
+  rejected: an approver needs to read the title to decide; redacting the one
+  substring that looks like a credential keeps the rest legible. Redaction
+  is a pure function of the card's content, so a retry of the same call
+  produces the same redacted card and thus the same `card_id` in Pro — this
+  was checked against `passdesk_pro/approvals.py`'s `card_id`, which hashes
+  a fixed set of stable fields (including `bundle_sha256`, a hex digest that
+  matches none of `SECRET_PATTERNS`) from whatever card it's given.
+
 ## 2026-10-16
 
 - **The approval point and plugins (`core/approvals.py`, `core/plugins.py`;

@@ -25,7 +25,13 @@ the code; the decision log records what changed on the way.
   `require` after the title and body pass the secret scan.
 
 The card never carries a credential, and nothing in it comes from the
-network: it is made of what the gateway itself verified.
+network: it is made of what the gateway itself verified. `require` also
+redacts any known secret pattern (`core/filters.py`'s `SECRET_PATTERNS`,
+e.g. a `ghp_...` token) found in a string field - recursively through lists
+and dicts, non-string values untouched - before the hook sees the card, in
+case a credential-looking string reached a field like the PR title. Only
+the redacted copy is shown to a hook; the tool call itself already ran with
+the real arguments.
 
 ## What Pro ships (commercial, `passdesk-pro`)
 

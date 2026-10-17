@@ -125,6 +125,31 @@ class ApprovalPointTests(Base):
         self.assertEqual(seen[-1]["tool"], "github_create_pr")
         self.assertEqual(seen[-1]["head"], "factory/x")
 
+    def test_a_credential_looking_string_is_redacted_before_the_hook_sees_it(self):
+        seen = []
+        approvals.set_hook(seen.append)
+        token = "ghp_" + "a" * 36
+        approvals.require({
+            "tool": "github_create_pr",
+            "title": f"Fix: rotate {token} now",
+            "branch": f"factory/{token}",
+            "file_count": 2,
+            "draft": True,
+            "files": ["a.txt", f"{token}.txt"],
+            "meta": {"note": f"leaked {token}"},
+        })
+        card = seen[-1]
+        self.assertNotIn(token, card["title"])
+        self.assertIn("[REDACTED:github-token]", card["title"])
+        self.assertIn("Fix: rotate", card["title"])
+        self.assertNotIn(token, card["branch"])
+        self.assertNotIn(token, card["files"][1])
+        self.assertEqual(card["files"][0], "a.txt")
+        self.assertNotIn(token, card["meta"]["note"])
+        # Non-string values are untouched.
+        self.assertEqual(card["file_count"], 2)
+        self.assertIs(card["draft"], True)
+
     def test_a_hook_refusal_is_an_ordinary_denial_on_the_record(self):
         approvals.set_hook(lambda card: (_ for _ in ()).throw(Denied("held: approval abc pending")))
         (config.STATE / "roles.json").write_text('{"developer": ["github_create_pr"]}')
