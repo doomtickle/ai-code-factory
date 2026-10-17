@@ -95,7 +95,8 @@ with `--live`, whether the gateway answers and whether the GitHub token can
 read and push each repo in `[git].repos`. `--kit <spec.yaml>` (repeatable)
 checks that every host the policy can reach is in a deployment's egress
 allowlist; `--egress-hosts` prints that host list for tooling that keeps the
-allowlist in sync. `ai-code-factory`'s `factory doctor` runs it for you.
+allowlist in sync. `--json` prints the same report as one JSON object for
+scripts. `ai-code-factory`'s `factory doctor` runs it for you.
 
 ## Running the tests
 

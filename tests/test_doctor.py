@@ -342,6 +342,42 @@ class CliTests(DoctorBase):
             self.assertEqual(doctor.main(["--policy", str(self.policy_path), "--no-color"]), 1)
         self.assertIn("roles.json is invalid", out.getvalue())
 
+    def test_json_flag_matches_the_report(self):
+        import contextlib
+        import io
+        self.policy()
+        self.state()
+        report = self.run_doctor()
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = doctor.main(["--json", "--policy", str(self.policy_path)])
+        self.assertEqual(code, 0)
+        data = json.loads(out.getvalue())
+        self.assertEqual(set(data), {"problems", "warnings", "items"})
+        self.assertEqual(data["problems"], report.problems)
+        self.assertEqual(data["warnings"], report.count(doctor.WARN))
+        self.assertEqual([item["section"] for item in data["items"]],
+                          [sec for sec, _, _, _ in report.items])
+        for item, (sec, level, text, fix) in zip(data["items"], report.items):
+            self.assertEqual(item, {"section": sec, "level": level, "text": text, "fix": fix})
+        self.assertFalse(any("\033" in item["text"] for item in data["items"]),
+                          "--json output must not carry colour codes")
+
+    def test_json_exit_code_matches_human_mode(self):
+        import contextlib
+        import io
+        self.policy()  # no self.state(): leaves real problems so the non-zero path is covered too
+        out_json = io.StringIO()
+        with contextlib.redirect_stdout(out_json):
+            code_json = doctor.main(["--json", "--policy", str(self.policy_path)])
+        out_human = io.StringIO()
+        with contextlib.redirect_stdout(out_human):
+            code_human = doctor.main(["--policy", str(self.policy_path), "--no-color"])
+        self.assertEqual(code_json, code_human)
+        self.assertNotEqual(code_json, 0)
+        data = json.loads(out_json.getvalue())
+        self.assertGreater(data["problems"], 0)
+
 
 if __name__ == "__main__":
     unittest.main()
