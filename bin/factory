@@ -538,7 +538,7 @@ cmd_secret_set() {
 
   if [ -t 0 ]; then
     printf 'Value for %s (input hidden): ' "$name"
-    read -rs value
+    IFS= read -rs value || true
     printf '\n'
   else
     # Read all of stdin, then strip exactly one trailing newline (so
@@ -554,7 +554,8 @@ cmd_secret_set() {
 
   printf '%s' "$value" | secret_deliver_file "$BROKER_SANDBOX" "$name" \
     || die "could not deliver '$name' to the broker sandbox"
-  secret_mark_manual "$name"
+  secret_mark_manual "$name" \
+    || die "delivered '$name' but could not record it as managed by 'factory secret'; the next 'factory start' may remove it"
   ok "delivered '$name' to the broker sandbox; 'factory start' will no longer touch it from the keychain"
 }
 
@@ -569,6 +570,9 @@ cmd_secret_rm() {
     || die "could not remove '$name' from the broker sandbox; it may still be active"
   secret_unmark_manual "$name"
   ok "removed '$name' from the broker sandbox"
+  if keychain_has "factory-$name"; then
+    warn "a keychain entry for 'factory-$name' still exists; the next 'factory start' will deliver it again. To prevent that, delete the keychain entry too (macOS: security delete-generic-password -s factory-$name; Linux: secret-tool clear service factory-$name)"
+  fi
 }
 
 cmd_secret_ls() {

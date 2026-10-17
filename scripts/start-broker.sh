@@ -107,6 +107,16 @@ else
     -e "BROKER_WORKSPACE=$PROJECT" -e "BROKER_STATE=$STATE" \
     shell "$@" "$PROJECT" "$STATE" >/dev/null 2>&1 || die "could not create the broker sandbox"
   record_sandbox_fingerprint "$BROKER_SANDBOX"
+  # A brand new sandbox has none of the credentials delivered, so any marker
+  # left over from a previous one (e.g. after 'factory reset' or 'factory
+  # update' removed the old broker sandbox) is stale: left in place, it would
+  # make secret_sync_from_keychain below skip that name forever, reporting
+  # "leaving it as is" for a credential that no longer exists anywhere.
+  cleared="$(secret_clear_all_manual)"
+  if [ -n "$cleared" ]; then
+    echo "note: this is a new broker sandbox, so the 'factory secret set' marker(s) for:$(printf ' %s' $cleared)" \
+         "were cleared; run 'factory secret set <name>' again for each to redeliver it"
+  fi
 fi
 
 # Start the server if it is not running (kit startup commands do not re-run on restart).

@@ -173,6 +173,10 @@ Herdr; run `factory start` again to reopen it.
 | `factory stop` | Stop the agents, broker and dispatch bridge (state is kept) |
 | `factory reset` | Remove the agent sandboxes to switch projects (your login is kept) |
 
+`factory secret rm <name>` only removes the broker sandbox's copy; if the host
+keychain still has an entry for `factory-<name>`, it warns that the next
+`factory start` will deliver that entry again, and how to clear it too.
+
 `factory start` on a different folder offers to switch projects for you.
 Inside an existing Herdr pane, `factory start` uses that Herdr session; from a
 normal terminal it uses a dedicated Herdr session named `factory`.

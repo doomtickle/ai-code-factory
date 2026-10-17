@@ -4,7 +4,7 @@
 # exception in CLAUDE.md ("Credentials"). Delivered into
 # /etc/factory-broker/secrets/<name> inside the broker sandbox over sbx exec
 # stdin, never through argv, an env flag, a log, or git. Source after
-# common.sh (needs FACTORY_BROKER_STATE and BROKER_SANDBOX).
+# common.sh (needs FACTORY_STATE and BROKER_SANDBOX).
 #
 # Two ways a value reaches here:
 #   - scripts/start-broker.sh, from the host OS keychain (secret_sync_from_keychain),
@@ -15,17 +15,28 @@
 # code is byte-for-byte identical either way.
 #
 # A name `factory secret set` has delivered is marked at
-# $FACTORY_BROKER_STATE/secrets-manual/<name> (an empty file - never the
-# value) so secret_sync_from_keychain leaves it alone: an empty or absent
-# keychain entry for the same name must not revoke a value `factory secret
-# set` just delivered. `factory secret rm` clears the marker.
+# $FACTORY_STATE/secrets-manual/<name> (an empty file - never the value) so
+# secret_sync_from_keychain leaves it alone: an empty or absent keychain
+# entry for the same name must not revoke a value `factory secret set` just
+# delivered. `factory secret rm` clears the marker. The marker dir is under
+# FACTORY_STATE directly, not FACTORY_BROKER_STATE (a subdirectory that is
+# bind-mounted read-write into the broker sandbox): a marker decides whether
+# a later `factory start` is allowed to revoke a credential, so it must sit
+# somewhere a compromised broker can't reach and plant one to block that
+# revocation. FACTORY_STATE itself is never mounted into any sandbox - only
+# its broker/ and roles/<role>/ subdirectories are (scripts/start-broker.sh,
+# scripts/02-launch-factory.sh).
 # shellcheck shell=bash
 
 readonly FACTORY_SECRET_NAMES="jira gemini npm-registry passdesk-license approvals-webhook"
 
-# secret_name_valid NAME -> success if NAME is one of FACTORY_SECRET_NAMES
+# secret_name_valid NAME -> success if NAME is exactly one of
+# FACTORY_SECRET_NAMES (not a substring match: "jira gemini" or "x jira y"
+# must not pass just because the padded string contains " jira ").
 secret_name_valid() {
-  case " $FACTORY_SECRET_NAMES " in *" $1 "*) return 0 ;; *) return 1 ;; esac
+  local n
+  for n in $FACTORY_SECRET_NAMES; do [ "$1" = "$n" ] && return 0; done
+  return 1
 }
 
 # keychain_lookup SERVICE -> value on stdout, or nothing (no OS keychain
@@ -64,7 +75,7 @@ secret_revoke_file() {
 }
 
 # secret_manual_dir -> directory holding one marker file per manually-managed name
-secret_manual_dir() { printf '%s/secrets-manual' "$FACTORY_BROKER_STATE"; }
+secret_manual_dir() { printf '%s/secrets-manual' "$FACTORY_STATE"; }
 
 # secret_is_manual NAME -> success if NAME is marked as managed by `factory secret`
 secret_is_manual() {
@@ -83,6 +94,23 @@ secret_mark_manual() {
 # secret_unmark_manual NAME -> remove NAME's marker, if any
 secret_unmark_manual() {
   rm -f "$(secret_manual_dir)/$1"
+}
+
+# secret_clear_all_manual -> remove every marker, printing the name of each
+# one cleared (one per line, on stdout). Called only when a brand new broker
+# sandbox is created (scripts/start-broker.sh): it starts with none of the
+# credentials delivered, so any marker left over from a previous sandbox is
+# stale and would make secret_sync_from_keychain skip a name that the new
+# sandbox has no file for at all.
+secret_clear_all_manual() {
+  local dir f
+  dir="$(secret_manual_dir)"
+  [ -d "$dir" ] || return 0
+  for f in "$dir"/*; do
+    [ -e "$f" ] || continue
+    basename "$f"
+    rm -f "$f"
+  done
 }
 
 # secret_sync_from_keychain NAME -> called once per name by
