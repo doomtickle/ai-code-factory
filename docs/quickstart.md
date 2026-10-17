@@ -194,9 +194,16 @@ It changes nothing. Each problem comes with its fix.
 - **Tell the roles your test command.** A note in
   `~/.config/ai-code-factory/projects/<project-folder>.md` is added to every
   role's instructions, and lives where the roles cannot edit it.
-- **Jira, Gemini and a private npm registry** are optional and documented in
-  the factory README under "Enabling ...". Each credential lives in your OS
-  keychain and is delivered only into Passdesk's sandbox.
+- **Jira, Gemini, private npm registry, and Passdesk Pro** are optional and
+  documented in the factory README under "Enabling ...". Each credential lives
+  in your OS keychain (macOS Keychain / Linux `secret-tool`) and is delivered
+  only into Passdesk's sandbox. On machines without a keychain (WSL2, headless
+  Linux), use `factory secret set <name>` to read the value from stdin and
+  deliver it the same way (names: `jira`, `gemini`, `npm-registry`,
+  `passdesk-license`, `approvals-webhook`). Remove with `factory secret rm <name>`.
+  Note: these values are lost if the broker sandbox is recreated
+  (`factory reset` or `factory update` if the broker image changes); the run that creates
+  the new broker sandbox (`factory start`, or `factory update` itself) lists which to set again.
 - **Updating** is one command: `factory update` pulls, rebuilds the images
   and recreates only the sandboxes whose inputs changed. If it recreates the
   gateway, re-run `sbx secret set github --sandbox factory-broker`; it

@@ -95,7 +95,8 @@ with `--live`, whether the gateway answers and whether the GitHub token can
 read and push each repo in `[git].repos`. `--kit <spec.yaml>` (repeatable)
 checks that every host the policy can reach is in a deployment's egress
 allowlist; `--egress-hosts` prints that host list for tooling that keeps the
-allowlist in sync. `ai-code-factory`'s `factory doctor` runs it for you.
+allowlist in sync. `--json` prints the same report as one JSON object for
+scripts. `ai-code-factory`'s `factory doctor` runs it for you.
 
 ## Running the tests
 
@@ -111,6 +112,12 @@ Or inside the pinned image, the same way the broker's own `Dockerfile` builds it
 docker build -t passdesk:dev .
 docker run --rm --network none -v "$PWD:/b:ro" -w /b passdesk:dev python3 -m unittest -v
 ```
+
+CI (`.github/workflows/test.yml`) runs this same in-image command, with empty
+`factory-config`/`plugins` build contexts, on every push and pull request. A
+second job would push tagged images (`v*`) to Docker Hub but stays disabled
+until the owner adds the `DOCKERHUB_USERNAME`/`DOCKERHUB_TOKEN` repository
+secrets.
 
 ## Consumers
 
