@@ -37,5 +37,5 @@ cat <<MSG
 Created roles/$name (copied from $from). Next:
   1. Edit roles/$name/role.conf: DESCRIPTION, WORKSPACE (rw/ro), BROKER_TOOLS, LANES, MODEL and MODELS (optional).
   2. Edit its instructions in roles/$name/instructions.md.
-  3. Re-run ./scripts/02-launch-factory.sh <project-dir>.
+  3. Run 'factory start' again.
 MSG

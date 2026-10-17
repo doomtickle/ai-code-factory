@@ -102,6 +102,12 @@ assert_eq "prepare again: exit 0, lane dir last" "$RC:$(printf '%s\n' "$OUT" | t
 assert_eq "prepare again: fetched the new host commit as origin/main" \
   "$(git -C "$lane" rev-parse origin/main)" "$(git -C "$tmp/single" rev-parse main)"
 
+git -C "$tmp/single" checkout -q -b feature
+run "$LANE" prepare "$tmp/single" developer
+assert_eq "prepare again: origin/HEAD follows the branch checked out in the project" \
+  "$(git -C "$lane" symbolic-ref refs/remotes/origin/HEAD)" "refs/remotes/origin/feature"
+git -C "$tmp/single" checkout -q main
+
 run "$LANE" prepare "$tmp/multi" developer-lane2
 assert_eq "prepare (folder of repos): exit 0, lane dir last" \
   "$RC:$(printf '%s\n' "$OUT" | tail -n 1)" "0:$tmp/lanes/developer-lane2"

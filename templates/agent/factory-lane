@@ -120,6 +120,9 @@ cmd_prepare() {
       # The lane is the role's to change; point origin back at the project.
       set_origin "$t" "$s"
       g -C "$t" fetch --quiet --prune origin >&2 || die "fetch failed in $t"
+      # origin/HEAD follows the branch checked out in the project, so new work
+      # starts from where the user is now. A detached project HEAD keeps the old one.
+      g -C "$t" remote set-head origin --auto >/dev/null 2>&1 || true
     else
       say "cloning $s into $t"
       [ "$rel" = . ] || mkdir -p "$lanedir"

@@ -41,7 +41,7 @@ If WSL itself isn't installed, the script says so and gives you the one
 administrator command to run (`wsl --install --no-distribution`). Run it,
 restart Windows, and run the script again.
 
-<details><summary>Doing it by hand instead</summary>
+To do it by hand instead:
 
 1. In PowerShell: `wsl --install -d Ubuntu-24.04`
 2. Create or edit `%UserProfile%\.wslconfig` so it contains:
@@ -50,7 +50,6 @@ restart Windows, and run the script again.
    nestedVirtualization=true
    ```
 3. In PowerShell: `wsl --shutdown`
-</details>
 
 From here on, every command runs in the **Ubuntu** terminal. Open it from the
 Start menu or Windows Terminal.
@@ -195,8 +194,8 @@ git remote add origin git@github.com:<you>/ai-code-factory.git
 git push -u origin main
 ```
 
-After pulling changes later, run `factory setup` again. It's safe to re-run,
-and it rebuilds the images.
+After pulling changes later, run `factory update`. It rebuilds the images and
+recreates only the sandboxes the changes affect (it lists them and asks first).
 
 ## Troubleshooting
 
