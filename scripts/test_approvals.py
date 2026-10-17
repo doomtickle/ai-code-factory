@@ -92,6 +92,53 @@ class ConsoleTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("expired", err)
 
+    def test_summary_none_pending(self):
+        code, out, _ = self.run_cli("summary")
+        self.assertEqual(code, 0)
+        self.assertEqual(out, "0 -1 0\n")
+
+    def test_summary_several_with_oldest_age(self):
+        now = time.time()
+        self.put(card("aaaa000000000000", created=now - 900, expires=now + 600))  # 15 min old
+        self.put(card("bbbb000000000000", created=now - 120, expires=now + 600))  # 2 min old
+        code, out, _ = self.run_cli("summary")
+        self.assertEqual(code, 0)
+        self.assertEqual(out, "2 15 0\n")
+
+    def test_summary_expired_unhandled_vs_expired_but_decided(self):
+        now = time.time()
+        self.put(card("aaaa000000000000", created=now - 1800, expires=now - 120, nonce="n0nce"))
+        self.put(card("bbbb000000000000", created=now - 1800, expires=now - 120, nonce="n0nce"))
+        decisions = self.state / "approvals" / "decisions"
+        decisions.mkdir(parents=True)
+        (decisions / "bbbb000000000000.json").write_text(
+            json.dumps({"id": "bbbb000000000000", "nonce": "n0nce", "decision": "approve"}))
+        code, out, _ = self.run_cli("summary")
+        self.assertEqual(code, 0)
+        self.assertEqual(out, "2 30 1\n")
+
+    def test_summary_stale_decision_nonce_still_counts_as_unhandled(self):
+        # A retry after expiry mints a fresh nonce; a decision for the old
+        # nonce belongs to a card that no longer exists in this form.
+        now = time.time()
+        self.put(card("aaaa000000000000", created=now - 1800, expires=now - 120, nonce="new-nonce"))
+        decisions = self.state / "approvals" / "decisions"
+        decisions.mkdir(parents=True)
+        (decisions / "aaaa000000000000.json").write_text(
+            json.dumps({"id": "aaaa000000000000", "nonce": "stale-nonce", "decision": "approve"}))
+        code, out, _ = self.run_cli("summary")
+        self.assertEqual(code, 0)
+        self.assertEqual(out, "1 30 1\n")
+
+    def test_summarize_with_injectable_now(self):
+        # A fixed `now` far from wall-clock time makes the expected ages exact,
+        # independent of how long the test takes to run.
+        now = 1_000_000.0
+        self.put(card("aaaa000000000000", created=now - 600, expires=now - 1))  # expired, no decision
+        self.put(card("bbbb000000000000", created=now - 1200, expires=now + 600))  # 20 min old, not expired
+        self.assertEqual(approvals.summarize(self.state, now=now),
+                          {"pending": 2, "oldest_minutes": 20, "expired_unhandled": 1})
+
     def test_missing_state_dir(self):
         code, _, err = self.run_cli_with_state(self.state / "missing")
         self.assertEqual(code, 1)

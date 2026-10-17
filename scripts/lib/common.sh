@@ -169,6 +169,11 @@ sandbox_exists() {
   sbx ls -q 2>/dev/null | grep -qx "$1"
 }
 
+# sandbox_running NAME -> success if NAME exists and sbx reports it running
+sandbox_running() {
+  [ "$(sbx ls 2>/dev/null | awk -v s="$1" '$1 == s { print $3 }')" = running ]
+}
+
 # claude_login_stored -> success if sbx holds the global Claude login (the first
 # /login in a factory sandbox, or an API key from `sbx secret set anthropic`).
 claude_login_stored() {

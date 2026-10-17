@@ -25,6 +25,8 @@ require_sha256
 ROOT="$(cd "$(dirname "$0")/.." && pwd -P)"
 # shellcheck source=lib/roles.sh
 . "$ROOT/scripts/lib/roles.sh"
+# shellcheck source=lib/secrets.sh
+. "$ROOT/scripts/lib/secrets.sh"
 PROJECT="$(cd "$1" && pwd -P)"
 STATE="$FACTORY_BROKER_STATE"
 URL="http://127.0.0.1:$BROKER_PORT/mcp"
@@ -105,6 +107,16 @@ else
     -e "BROKER_WORKSPACE=$PROJECT" -e "BROKER_STATE=$STATE" \
     shell "$@" "$PROJECT" "$STATE" >/dev/null 2>&1 || die "could not create the broker sandbox"
   record_sandbox_fingerprint "$BROKER_SANDBOX"
+  # A brand new sandbox has none of the credentials delivered, so any marker
+  # left over from a previous one (e.g. after 'factory reset' or 'factory
+  # update' removed the old broker sandbox) is stale: left in place, it would
+  # make secret_sync_from_keychain below skip that name forever, reporting
+  # "leaving it as is" for a credential that no longer exists anywhere.
+  cleared="$(secret_clear_all_manual)"
+  if [ -n "$cleared" ]; then
+    echo "note: this is a new broker sandbox, so the 'factory secret set' marker(s) for:$(printf ' %s' $cleared)" \
+         "were cleared; run 'factory secret set <name>' again for each to redeliver it"
+  fi
 fi
 
 # Start the server if it is not running (kit startup commands do not re-run on restart).
@@ -151,71 +163,32 @@ for name in $(printf '%s\n' "$registered" | grep '^factory-broker-' || true); do
 done
 
 # Credentials the sbx egress proxy cannot inject (Jira, Gemini, the private
-# npm registry): the narrowly
-# scoped exception in CLAUDE.md ("Credentials"). Looked up in the host OS
-# keychain and piped over stdin into the running broker sandbox, so the value
-# never appears in argv, an env flag, a log, git, or on host disk - it lands
-# only at /etc/factory-broker/secrets/<name> inside the broker sandbox (owned
-# by the "agent" user server.py runs as, mode 0700; see broker/Dockerfile).
-# Re-running this script re-delivers the value, so rotating the keychain entry
-# and re-running it rotates the credential the broker uses - and *deleting*
-# the keychain entry and re-running it revokes the credential: the stale file
-# is removed below rather than left behind for the tool to keep using. Run
-# last (after MCP registration above) and never fatal: a keychain prompt the
-# user denies or a locked keychain, or an old broker image predating
-# /etc/factory-broker/secrets (see README, Upgrading), should warn and leave
-# the rest of the factory usable rather than aborting the whole launch.
-keychain_lookup() {  # keychain_lookup SERVICE -> value on stdout, or nothing
-  case "$(uname -s)" in
-    Darwin) security find-generic-password -s "$1" -w 2>/dev/null || true ;;
-    *) command -v secret-tool >/dev/null 2>&1 && secret-tool lookup service "$1" 2>/dev/null || true ;;
-  esac
-}
-
+# npm registry, and, with the Passdesk Pro plugin, its license key and the
+# approvals webhook URL): the narrowly scoped exception in CLAUDE.md
+# ("Credentials"). Looked up in the host OS keychain and piped over stdin
+# into the running broker sandbox (secret_sync_from_keychain, scripts/lib/secrets.sh),
+# so the value never appears in argv, an env flag, a log, git, or on host
+# disk. Re-running this script re-delivers the value, so rotating the
+# keychain entry and re-running it rotates the credential the broker uses -
+# and *deleting* the keychain entry and re-running it revokes the
+# credential: the stale file is removed rather than left behind for the tool
+# to keep using. A name delivered instead by `factory secret set` (for
+# machines with no OS keychain, e.g. WSL2) is left alone here - see its
+# marker check in secret_sync_from_keychain. Run last (after MCP
+# registration above) and never fatal on a delivery failure: a keychain
+# prompt the user denies or a locked keychain, or an old broker image
+# predating /etc/factory-broker/secrets (see README, Upgrading), should warn
+# and leave the rest of the factory usable rather than aborting the whole
+# launch. A revocation failure is different (see secret_sync_from_keychain)
+# and is fatal, checked below.
 revocation_failed=0
-deliver_secret() {  # deliver_secret NAME SERVICE
-  local name="$1" service="$2" value
-  value="$(keychain_lookup "$service")"
-  if [ -z "$value" ]; then
-    # Not configured, or the keychain entry was removed (or the keychain
-    # prompt was denied/locked) to revoke a previously delivered credential:
-    # drop any stale file so revocation is real (the tool then reports
-    # DENIED with setup instructions instead of silently continuing to work
-    # off the old file). No stdin needed. Unlike a delivery failure below,
-    # this must not be a soft warning: if we can't confirm the stale file is
-    # gone, the credential may still be usable by the tool, so the script
-    # must not report success.
-    if ! sbx exec "$BROKER_SANDBOX" rm -f "/etc/factory-broker/secrets/$name"; then
-      echo "error: could not remove the $name credential file from the broker sandbox;" \
-           "it may still be active even though its keychain entry is gone or unreadable" >&2
-      revocation_failed=1
-    fi
-    return 0
-  fi
-  # We don't know which user `sbx exec` runs commands as for this sandbox. If
-  # it's root, mkdir/chown make this work even on an old broker image that
-  # predates /etc/factory-broker/secrets, and the file would otherwise end up
-  # root-owned 0600 and unreadable by "agent" (who server.py runs as) - so
-  # chown it too. If it's already "agent" (who owns the directory per
-  # broker/Dockerfile on a rebuilt image), id -u is non-zero and
-  # both chowns are skipped as unnecessary (and would fail).
-  if ! printf '%s' "$value" | sbx exec -i "$BROKER_SANDBOX" sh -c \
-      'umask 077 && dir="/etc/factory-broker/secrets" && mkdir -p "$dir" \
-       && { [ "$(id -u)" != 0 ] || chown agent:agent "$dir"; } \
-       && dest="$dir/$1" && cat > "$dest.tmp" && mv "$dest.tmp" "$dest" \
-       && { [ "$(id -u)" != 0 ] || chown agent:agent "$dest"; }' \
-      _ "$name"; then
-    echo "warning: could not deliver the $name credential to the broker sandbox" \
-         "(an old broker image? see README, Upgrading, for the rebuild steps)" >&2
-  fi
-}
-deliver_secret jira factory-jira
-deliver_secret gemini factory-gemini
-deliver_secret npm-registry factory-npm-registry
+secret_sync_from_keychain jira || revocation_failed=1
+secret_sync_from_keychain gemini || revocation_failed=1
+secret_sync_from_keychain npm-registry || revocation_failed=1
 # Passdesk Pro (if its plugin is installed): the license key, and the
 # approvals webhook URL, which is a credential too (it grants posting).
-deliver_secret passdesk-license factory-passdesk-license
-deliver_secret approvals-webhook factory-approvals-webhook
+secret_sync_from_keychain passdesk-license || revocation_failed=1
+secret_sync_from_keychain approvals-webhook || revocation_failed=1
 
 [ "$revocation_failed" = 0 ] \
   || die "a credential revocation failed above; it may still be active in the broker sandbox - see the error(s) above"
