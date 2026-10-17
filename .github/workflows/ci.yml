@@ -28,14 +28,20 @@ jobs:
       - run: scripts/lint.sh
 
   linux:
-    name: tests (Linux, Python ${{ matrix.python }})
+    # Job names are stable (no versions in them): branch protection on main
+    # requires them by name.
+    name: tests (Linux, ${{ matrix.label }})
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
-        # 3.9: the oldest Python the host side supports (the macOS system
-        # Python). 3.14: what the broker image runs.
-        python: ["3.9.25", "3.14.8"]
+        include:
+          # The oldest Python the host side supports (the macOS system Python).
+          - label: oldest Python
+            python: "3.9.25"
+          # What the broker image runs.
+          - label: broker Python
+            python: "3.14.8"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -64,7 +70,7 @@ jobs:
   macos:
     # What a Mac user runs: the system bash (3.2) and the system Python
     # (/usr/bin/python3, from the Command Line Tools), not Homebrew's.
-    name: tests (macOS 14, system bash and Python)
+    name: tests (macOS, system bash and Python)
     runs-on: macos-14
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
