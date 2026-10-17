@@ -25,7 +25,9 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
-tmp="$(mktemp -d)"
+# The physical path: on macOS the temp dir is under /var, a symlink to
+# /private/var, and bin/factory resolves its checkout with pwd -P.
+tmp="$(cd "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf "$tmp"' EXIT
 
 pass=0
