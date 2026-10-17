@@ -181,8 +181,8 @@ factory running in the background; `factory start` reopens it.
   `factory secret set <name>` (README, *Enabling a private npm registry*, etc.) to
   deliver credentials without a keyring. Note that `factory secret set` requires the broker
   to be running, and the values are lost if the broker sandbox is recreated (`factory update`,
-  `factory reset`); the next `factory start` will print which secrets to re-set.
-  Everything else works without them.
+  `factory reset`); the run that creates the new broker sandbox (`factory start`, or `factory update`
+  itself) lists which to set again. Everything else works without them.
 
 ## Keeping it on GitHub
 

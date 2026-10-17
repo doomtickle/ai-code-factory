@@ -175,8 +175,8 @@ Herdr; run `factory start` again to reopen it.
 
 **Note on `factory secret set`:** it delivers a value to the *current* running broker sandbox
 and requires the broker to be running first. Any operation that recreates the broker (`factory reset`,
-or `factory update` if the broker image changes) drops those values; the next `factory start` will
-print which secrets to re-set.
+or `factory update` if the broker image changes) drops those values; the run that creates the new
+broker sandbox (`factory start`, or `factory update` itself) lists which to set again.
 
 `factory secret rm <name>` only removes the broker sandbox's copy; if the host
 keychain still has an entry for `factory-<name>`, it warns that the next
