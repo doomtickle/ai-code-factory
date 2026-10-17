@@ -699,9 +699,13 @@ cmd_docs() {
     "$python" "$SCRIPTS/docs.py" --root "$ROOT"
     return
   fi
+  [ "$(id -u)" != 0 ] || warn "running as root: the factory keeps its state in root's home ($FACTORY_STATE). Run factory as your own user, without sudo."
   out="$FACTORY_STATE/docs/index.html"
   (umask 077 && mkdir -p "$FACTORY_STATE/docs")  # private, like the rest of the state dir
   "$python" "$SCRIPTS/docs.py" --root "$ROOT" --out "$out" || die "could not build the docs"
+  if { [ -n "${WSL_DISTRO_NAME:-}" ] || is_wsl; } && open_docs_on_windows "$out"; then
+    return 0
+  fi
   opener="$(docs_opener)"
   if [ -n "$opener" ]; then
     # Detached and silenced: some openers block, or chatter on stderr.
@@ -714,6 +718,29 @@ cmd_docs() {
 }
 
 stdout_is_tty() { [ -t 1 ]; }
+
+# open_docs_on_windows FILE -> on WSL, copy FILE into the Windows user's temp
+# folder and open it with the Windows default browser. A Windows browser can't
+# always read a page inside the Linux filesystem (never one under /root), and
+# wslview isn't reliable everywhere, so the page goes where Windows can read it.
+# Fails (so the caller falls back) when Windows interop isn't available.
+open_docs_on_windows() {
+  local win_tmp dir copy win_copy
+  command -v cmd.exe >/dev/null 2>&1 && command -v wslpath >/dev/null 2>&1 \
+    && command -v explorer.exe >/dev/null 2>&1 || return 1
+  # From a Linux folder cmd.exe warns about the UNC path (on stderr) and still answers.
+  win_tmp="$(cmd.exe /d /c 'echo %TEMP%' 2>/dev/null | tr -d '\r')" || return 1
+  case "$win_tmp" in [A-Za-z]:\\*) ;; *) return 1 ;; esac
+  dir="$(wslpath -u "$win_tmp" 2>/dev/null)" && [ -d "$dir" ] || return 1
+  copy="$dir/ai-code-factory-docs.html"
+  cp "$1" "$copy" 2>/dev/null || return 1
+  win_copy="$(wslpath -w "$copy")" || return 1
+  # explorer.exe hands the file to the default browser; it exits 1 even on success.
+  ( explorer.exe "$win_copy" >/dev/null 2>&1 & ) || true
+  say "Opening the docs in your Windows browser."
+  say "If no browser window appears, paste this into your browser's address bar:"
+  say "  $win_copy"
+}
 
 # docs_opener -> the command that opens a file in the browser on this
 # machine: open (macOS), wslview (WSL, which maps Linux paths for Windows),

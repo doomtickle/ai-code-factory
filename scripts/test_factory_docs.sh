@@ -43,7 +43,7 @@ assert_not_contains() {
 # --- system tools: only these are on PATH (no sbx, docker, openers) -----------
 sys="$tmp/sys"
 mkdir -p "$sys"
-for t in bash sh env python3 cat dirname readlink grep mkdir sed tr tail head ls rm mv cp chmod sleep; do
+for t in bash sh env python3 cat dirname readlink grep mkdir sed tr tail head ls rm mv cp chmod sleep id; do
   p="$(command -v "$t")" || { echo "test needs $t" >&2; exit 1; }
   ln -s "$p" "$sys/$t"
 done
@@ -64,6 +64,21 @@ for t in open wslview xdg-open; do
     "$t" "$tmp" "$tmp" "$tmp" > "$openers/$t"
   chmod +x "$openers/$t"
 done
+# Windows interop for WSL: cmd.exe answers %TEMP% (with a CRLF, as on Windows),
+# wslpath maps C:\Users\me\Temp <-> $tmp/winc/Users/me/Temp, and explorer.exe
+# records what it was asked to open (exiting 1, as the real one does).
+mkdir -p "$tmp/winc/Users/me/Temp"
+printf '#!/bin/sh\nprintf "C:\\\\Users\\\\me\\\\Temp\\r\\n"\n' > "$openers/cmd.exe"
+cat > "$openers/wslpath" <<WSLPATH
+#!/bin/sh
+case "\$1" in
+  -u) echo "$tmp/winc/Users/me/Temp" ;;
+  -w) printf 'C:\\\\Users\\\\me\\\\Temp\\\\%s\\n' "\${2##*/}" ;;
+esac
+WSLPATH
+printf '#!/bin/sh\nprintf "%%s\\\\n" "explorer.exe $*" > "%s/opened.tmp" && mv "%s/opened.tmp" "%s/opened"\nexit 1\n' \
+  "$tmp" "$tmp" "$tmp" > "$openers/explorer.exe"
+chmod +x "$openers/cmd.exe" "$openers/wslpath" "$openers/explorer.exe"
 # uname: Linux unless FAKE_UNAME says otherwise.
 printf '#!/bin/sh\nif [ "${1:-}" = -s ] && [ -n "${FAKE_UNAME:-}" ]; then echo "$FAKE_UNAME"; else exec "%s" "$@"; fi\n' \
   "$real_uname" > "$stubs/uname"
@@ -181,7 +196,15 @@ assert_eq "WSL (WSL_DISTRO_NAME): opens with wslview" "$(opened)" "wslview $inde
 tty_run Linux yes "" open xdg-open
 assert_eq "WSL without wslview: falls back to xdg-open" "$(opened)" "xdg-open $index"
 
-tty_run Linux no "" open wslview xdg-open
+tty_run Linux yes "" wslview cmd.exe wslpath explorer.exe
+assert_eq "WSL with Windows interop: opens the Windows copy with explorer.exe" \
+  "$(opened)" 'explorer.exe C:\Users\me\Temp\ai-code-factory-docs.html'
+assert_contains "WSL with Windows interop: the page is copied to the Windows temp folder" \
+  "$(cat "$tmp/winc/Users/me/Temp/ai-code-factory-docs.html" 2>/dev/null)" "<title>stub docs</title>"
+assert_contains "WSL with Windows interop: prints the Windows path to paste" \
+  "$(cat "$tmp/out")" 'C:\Users\me\Temp\ai-code-factory-docs.html'
+
+tty_run Linux no "" open wslview xdg-open cmd.exe wslpath explorer.exe
 assert_eq "Linux: opens with xdg-open" "$(opened)" "xdg-open $index"
 assert_contains "Linux: prints the path" "$(cat "$tmp/out")" "$index"
 
