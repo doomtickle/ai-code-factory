@@ -158,11 +158,11 @@ Herdr; run `factory start` again to reopen it.
 
 | Command | What it does |
 |---|---|
-| `factory doctor` | Check the machine is ready; prints the fix for each problem (setup runs it first). Once the broker exists, it also runs the gateway's own doctor inside it: policy, tokens and grants, audit log, credentials, a live probe, GitHub access per repo, and the policy's hosts against the broker kit |
+| `factory doctor` | Check the machine is ready; prints the fix for each problem (setup runs it first). Once the broker exists, it also runs the gateway's own doctor inside it: policy, tokens and grants, audit log, credentials, a live probe, GitHub access per repo, the policy's hosts against the broker kit, and (Passdesk Pro) a warning for any approval that expired with no decision |
 | `factory setup` | One-time setup (safe to re-run) |
 | `factory update [--yes]` | After pulling changes or editing kits, images or policy: pulls the latest factory, rebuilds, recreates only the sandboxes the changes affect (it lists them and what each loses, then asks), and restarts |
 | `factory start [dir]` | Start the factory for a project (default: current folder) and open Herdr |
-| `factory status` | Project, broker, dispatch bridge, login, and sandbox status |
+| `factory status` | Project, broker, dispatch bridge, login, sandbox status, and (Passdesk Pro) pending approvals and the oldest one's age |
 | `factory logs <role>` | Follow a role's transcript; `factory logs broker` / `dispatch` for audit logs |
 | `factory roles` | List roles, their project access and network tools |
 | `factory role new <name> [like]` | Add a role (copied from `reviewer`, or the role you name) |
@@ -382,6 +382,10 @@ call later; the decision is picked up by the retry.
    or `factory approvals decline <id> --reason "..."`; `factory approvals
    watch` prints cards as they arrive. Decisions are plain files in the
    broker state folder, so nothing new listens on the network.
+4. `factory status` shows a line with the pending count and the oldest
+   card's age once there is at least one; `factory doctor` warns (without
+   failing) about any card that expired with no decision, pointing back at
+   `factory approvals`. Both are silent when the plugin isn't in use.
 
 ## Roles
 
