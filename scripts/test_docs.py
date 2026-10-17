@@ -294,6 +294,34 @@ class LinkTests(Fixture):
         self.assertEqual(len(routes), len(guides))
 
 
+
+class LinkBaseTests(Fixture):
+    BASE = "https://github.com/acme/factory/blob/abc1234/"
+
+    def test_repo_file_links_go_to_the_link_base(self):
+        write(self.root, "scripts/lib/common.sh", "# pins\n")
+        write(self.root, "docs/mac-quickstart.html", "<!doctype html>")
+        write(self.root, "README.md", "# T\n\nPins live in [common.sh](scripts/lib/common.sh).\n")
+        page, warnings = docs.build_html(self.root, link_base=self.BASE)
+        self.assertEqual(warnings, [])
+        self.assertIn(f'href="{self.BASE}scripts/lib/common.sh"', page)
+        self.assertNotIn("file://", page)
+        self.assertIn('href="mac-quickstart.html"', page)  # served next to the page
+        self.assertNotIn(str(self.root), page)  # no local checkout path in the footer
+
+    def test_without_a_link_base_repo_files_stay_local(self):
+        write(self.root, "scripts/lib/common.sh", "# pins\n")
+        page = self.build("# T\n\nSee [common.sh](scripts/lib/common.sh).\n")
+        self.assertIn((self.root / "scripts/lib/common.sh").as_uri(), page)
+
+    def test_link_base_must_be_https_and_end_in_a_slash(self):
+        write(self.root, "README.md", "# T\n")
+        for bad in ("http://example.com/", "https://example.com/blob", "javascript:alert(1)/",
+                    'https://e.com/"onmouseover=x/'):
+            with self.assertRaises(docs.DocsError):
+                docs.build_html(self.root, link_base=bad)
+
+
 class SlugTests(unittest.TestCase):
     def test_github_slugs(self):
         cases = {

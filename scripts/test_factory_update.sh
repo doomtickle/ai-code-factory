@@ -106,7 +106,6 @@ else
   bad "fixture: a plain clone leaves broker/ uninitialized"
 fi
 
-died=""
 (
   # shellcheck disable=SC1091
   . "$REPO_ROOT/scripts/lib/common.sh"

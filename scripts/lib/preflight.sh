@@ -4,6 +4,7 @@
 # shellcheck shell=bash
 
 # is_wsl [PROC_VERSION_FILE] -> success under WSL
+# shellcheck disable=SC2120 # the file argument is for tests; callers use the default
 is_wsl() {
   grep -qiE 'microsoft|wsl' "${1:-/proc/version}" 2>/dev/null
 }

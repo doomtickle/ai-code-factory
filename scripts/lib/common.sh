@@ -1,5 +1,7 @@
 # Shared helpers for factory scripts. Source it; do not execute it.
 # shellcheck shell=bash
+# The constants below are used by the scripts that source this file.
+# shellcheck disable=SC2034
 
 # Exact tool versions the factory is tested against. Bump these deliberately,
 # in the same commit as any spec/script changes the new version requires.
@@ -25,6 +27,12 @@ readonly SBX_DEB_UBUNTU2604_URL="https://github.com/docker/sbx-releases/releases
 readonly SBX_DEB_UBUNTU2604_SHA256="db12d894a9d92da7c33afb5a4654bb341a92a90189b2095490ed3128d58f9c3a"
 readonly HERDR_LINUX_X86_64_URL="https://github.com/herdrdev/herdr/releases/download/v${HERDR_VERSION}/herdr-linux-x86_64"
 readonly HERDR_LINUX_X86_64_SHA256="2a02fed16beb651ef006e1d43f048f652ca4dc58ad053cd2d44450563d5c54b7"
+
+# Pinned ShellCheck for scripts/lint.sh (CI and local runs). Hashes checked against
+# the v0.10.0 release downloads on 2026-10-17.
+readonly SHELLCHECK_VERSION="0.10.0"
+readonly SHELLCHECK_LINUX_X86_64_SHA256="6c881ab0698e4e6ea235245f22832860544f17ba386442fe7e9d629f8cbedf87"
+readonly SHELLCHECK_DARWIN_AARCH64_SHA256="bbd2f14826328eee7679da7221f2bc3afb011f6a928b848c80c321f6046ddf81"
 
 # Factory sandbox, template and MCP names. Role sandboxes are factory-<role>.
 readonly BROKER_SANDBOX="factory-broker"

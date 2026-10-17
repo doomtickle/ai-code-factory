@@ -94,7 +94,6 @@ export PATH="$tmp/bin:$PATH"
 export XDG_STATE_HOME="$tmp/state"
 export FAKE_SBX_ARGS="$tmp/sbx-args.log"
 export FAKE_SBX_STDIN="$tmp/sbx-stdin.log"
-BROKER_STATE="$tmp/state/ai-code-factory/broker"
 FACTORY_STATE_DIR="$tmp/state/ai-code-factory"
 MARKER_DIR="$FACTORY_STATE_DIR/secrets-manual"
 

@@ -1,0 +1,119 @@
+# Checks for every pull request and every push to main. Everything is pinned,
+# like the rest of the repo: actions by commit SHA (tag in the comment),
+# runners by OS version, Python by exact version, shellcheck by version and
+# SHA-256 (scripts/lib/common.sh).
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: shellcheck
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: scripts/lint.sh
+
+  linux:
+    name: tests (Linux, Python ${{ matrix.python }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.9: the oldest Python the host side supports (the macOS system
+        # Python). 3.14: what the broker image runs.
+        python: ["3.9.25", "3.14.8"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          submodules: true
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Git identity for test fixtures
+        run: |
+          git config --global user.name "CI"
+          git config --global user.email "ci@example.invalid"
+      - name: dispatch bridge
+        run: python3 -m unittest discover -s dispatch -v
+      - name: host Python scripts (analytics, approvals, docs)
+        run: python3 -m unittest discover -s scripts -p 'test_*.py' -v
+      - name: factory-lane
+        run: bash scripts/test_factory_lane.sh
+      - name: factory update
+        run: bash scripts/test_factory_update.sh
+      - name: factory secret
+        run: bash scripts/test_factory_secret.sh
+      - name: factory docs
+        run: bash scripts/test_factory_docs.sh
+
+  macos:
+    # What a Mac user runs: the system bash (3.2) and the system Python
+    # (/usr/bin/python3, from the Command Line Tools), not Homebrew's.
+    name: tests (macOS 14, system bash and Python)
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          submodules: true
+      - name: Use the system bash and Python first on PATH
+        run: |
+          echo /usr/bin >> "$GITHUB_PATH"
+          echo /bin >> "$GITHUB_PATH"
+      - name: Versions
+        run: |
+          command -v bash python3
+          bash --version | head -n 1
+          python3 --version
+      - name: Git identity for test fixtures
+        run: |
+          git config --global user.name "CI"
+          git config --global user.email "ci@example.invalid"
+      - name: dispatch bridge
+        run: python3 -m unittest discover -s dispatch -v
+      - name: host Python scripts (analytics, approvals, docs)
+        run: python3 -m unittest discover -s scripts -p 'test_*.py' -v
+      - name: factory update
+        run: bash scripts/test_factory_update.sh
+      - name: factory secret
+        run: bash scripts/test_factory_secret.sh
+      - name: factory docs
+        run: bash scripts/test_factory_docs.sh
+      # factory-lane runs only inside the Linux sandboxes, so it's tested on Linux.
+
+  images:
+    name: images and broker tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          submodules: true
+      - name: Build the developer, reviewer and broker images (as factory setup does, without sbx)
+        run: scripts/00-build-templates.sh --build-only
+      - name: Broker tests, inside the broker image, without network
+        run: >
+          docker run --rm --network none -v "$PWD/broker:/b:ro" -w /b factory-broker:v3
+          python3 -B -m unittest discover -s tests -t .
+      - name: Role images carry the factory tools
+        run: |
+          for image in factory-developer:v3 factory-reviewer:v3; do
+            docker run --rm --network none --entrypoint sh "$image" -c \
+              'factory-lane -h >/dev/null && factory-test -h >/dev/null && git --version' \
+              || { echo "::error::$image is missing factory-lane, factory-test or git"; exit 1; }
+          done

@@ -37,7 +37,7 @@ import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from urllib.parse import unquote
+from urllib.parse import quote, unquote
 
 
 class DocsError(Exception):
@@ -473,6 +473,8 @@ class DocRenderer:
             return "#" + self.site.doc_routes[key], False
         if not target.exists():
             return None
+        if self.site.link_base:
+            return self.site.link_base + quote(target.relative_to(root).as_posix()), True
         return target.as_uri(), False
 
     # -- blocks
@@ -729,8 +731,11 @@ class Doc:
 
 
 class Site:
-    def __init__(self, root: Path):
+    def __init__(self, root: Path, link_base: str | None = None):
         self.root = root.resolve()
+        # Published site (e.g. GitHub Pages): links to repo files go to
+        # link_base + their repo path instead of file:// into the checkout.
+        self.link_base = link_base
         self.docs: list[Doc] = []
         self.doc_keys: dict[Path, str] = {}
         self.doc_routes: dict[str, str] = {}
@@ -1512,7 +1517,9 @@ def render_nav(site: Site) -> str:
         if group == "Platform setup":
             mac = site.root / "docs" / "mac-quickstart.html"
             if mac.is_file():
-                extra = (f'<li><a class="file-link" href="{esc(mac.resolve().as_uri())}">'
+                # A published site serves the quickstart next to the page.
+                href = "mac-quickstart.html" if site.link_base else mac.resolve().as_uri()
+                extra = (f'<li><a class="file-link" href="{esc(href)}">'
                          f'macOS quickstart</a></li>')
         if not pages and not extra:
             continue
@@ -1578,9 +1585,14 @@ def render_site(site: Site, now: datetime | None = None) -> str:
                         for d in site.docs if d.kind != "guide")
     if any(d.kind == "guide" for d in site.docs):
         sources = "<code>docs/guides/</code>, " + sources
-    footer = (f'<footer class="site-foot">Built from {built}<code>{esc(str(site.root))}</code> on '
-              f'{esc(now.strftime("%Y-%m-%d %H:%M %Z").strip())}. This page is generated from {sources}: '
-              f'edit those, then run <code>factory docs</code> again.</footer>')
+    if site.link_base:
+        footer = (f'<footer class="site-foot">Built from {built}the factory repository on '
+                  f'{esc(now.strftime("%Y-%m-%d %H:%M %Z").strip())}, from {sources}. Run '
+                  f'<code>factory docs</code> in your checkout for the version that matches it.</footer>')
+    else:
+        footer = (f'<footer class="site-foot">Built from {built}<code>{esc(str(site.root))}</code> on '
+                  f'{esc(now.strftime("%Y-%m-%d %H:%M %Z").strip())}. This page is generated from {sources}: '
+                  f'edit those, then run <code>factory docs</code> again.</footer>')
     pages = "\n".join(render_page(site, k) for k in range(len(site.pages)))
     docs_attr = " ".join(d.key for d in site.docs)
     first_title = site.pages[0].title_plain if site.pages else "Docs"
@@ -1622,11 +1634,14 @@ def render_site(site: Site, now: datetime | None = None) -> str:
 """
 
 
-def build_html(root: Path, now: datetime | None = None) -> tuple[str, list[str]]:
+def build_html(root: Path, now: datetime | None = None,
+               link_base: str | None = None) -> tuple[str, list[str]]:
     """The page for the checkout at root, and any warnings (e.g. broken anchors)."""
     if not root.is_dir():
         raise DocsError(f"{root} is not a directory")
-    site = Site(root)
+    if link_base is not None and not re.match(r"^https://[^\s\"'<>]+/$", link_base):
+        raise DocsError("--link-base must be an https:// URL ending in /")
+    site = Site(root, link_base)
     site.build()
     return render_site(site, now), site.warnings
 
@@ -1658,9 +1673,13 @@ def main(argv=None) -> int:
                         help="the factory checkout (default: the one holding this script)")
     parser.add_argument("--out", type=Path, default=None,
                         help="write the page here (atomically) instead of to stdout")
+    parser.add_argument("--link-base", default=None, metavar="URL",
+                        help="for a published copy (e.g. GitHub Pages): link repo files to URL<path> "
+                             "(e.g. https://github.com/<org>/<repo>/blob/<commit>/) instead of file://, "
+                             "and expect docs/mac-quickstart.html to be served next to the page")
     args = parser.parse_args(argv)
     try:
-        page, _warnings = build_html(args.root)
+        page, _warnings = build_html(args.root, link_base=args.link_base)
         if args.out is not None:
             write_atomic(args.out, page)
         else:
