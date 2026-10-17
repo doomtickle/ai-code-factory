@@ -595,7 +595,7 @@ class ProtocolTests(Base):
     def test_tools_list(self):
         res = d.handle_rpc({"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
         self.assertEqual({t["name"] for t in res["result"]["tools"]},
-                         {"list_roles", "delegate", "wait_for_job", "job_status", "cancel_job"})
+                         {"list_roles", "delegate", "wait_for_job", "job_status", "cancel_job", "factory_docs"})
 
     def test_initialize_briefs_the_coordinator_with_live_roles(self):
         res = d.handle_rpc({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})
@@ -913,6 +913,101 @@ class ImportTests(Base):
         self.assertEqual(report["branches"], [])
         self.assertIn("importing the bundle failed", report["import_errors"][0])
         self.assertFalse(self.marker.exists())
+
+
+class FactoryDocsTest(Base):
+    def setUp(self):
+        super().setUp()
+        docs = d.STATE / "docs"
+        (docs / "guides").mkdir(parents=True)
+        (docs / "README.md").write_text(textwrap.dedent("""\
+            # AI Code Factory
+            A local multi-agent coding setup.
+
+            ## Commands
+            | Command | What it does |
+            |---|---|
+            | `factory update` | Rebuild and recreate stale sandboxes |
+
+            ### Local settings
+            Settings live in ~/.config/ai-code-factory/.
+
+            ### Enabling git push and pull requests
+            Add repos to [git].repos, then run factory update.
+            ```bash
+            # Not a heading: a comment in a code block
+            sbx secret set github --sandbox factory-broker
+            ```
+
+            ## Roles
+            Developer, reviewer, researcher.
+
+            ### Local settings
+            A second heading with the same title.
+            """))
+        (docs / "setup-wsl.md").write_text("# Windows setup\n\n## Troubleshooting\nKVM missing: enable nested virtualization.\n")
+        (docs / "guides" / "01-first-session.md").write_text("# Your first session\nStart here.\n\n## Log in\nType /login.\n")
+
+    def test_contents_list_every_section_with_ids(self):
+        out = d.tool_factory_docs({})
+        for line in ("guide-first-session/intro: Your first session", "guide-first-session/log-in: Log in",
+                     "readme/commands: Commands", "readme/local-settings: Local settings",
+                     "readme/local-settings-1: Local settings", "wsl/troubleshooting: Troubleshooting"):
+            self.assertIn(line, out)
+        self.assertNotIn("Not a heading", out)
+        # Guides come first, then the README, then the WSL guide.
+        self.assertLess(out.index("guide-first-session"), out.index("readme/commands"))
+        self.assertLess(out.index("readme/roles"), out.index("wsl/troubleshooting"))
+
+    def test_section_reads_one_section_with_its_subsections(self):
+        out = d.tool_factory_docs({"section": "readme/commands"})
+        self.assertIn("factory update", out)
+        self.assertIn("### Local settings", out)  # nested under Commands
+        self.assertIn("sbx secret set github", out)  # the code block stays in its section
+        self.assertNotIn("## Roles", out)
+
+    def test_unknown_section_is_denied_with_suggestions(self):
+        with self.assertRaises(d.Denied) as cm:
+            d.tool_factory_docs({"section": "readme/local"})
+        self.assertIn("readme/local-settings", str(cm.exception))
+
+    def test_topic_search_returns_the_best_sections(self):
+        out = d.tool_factory_docs({"topic": "git push"})
+        self.assertTrue(out.startswith("[AI Code Factory] readme/enabling-git-push-and-pull-requests"), out[:200])
+        out = d.tool_factory_docs({"topic": "KVM"})
+        self.assertIn("wsl/troubleshooting", out)
+        self.assertIn("nested virtualization", out)
+
+    def test_topic_with_no_match_says_so(self):
+        out = d.tool_factory_docs({"topic": "kubernetes helm"})
+        self.assertIn("Nothing in the factory docs matches", out)
+
+    def test_output_is_capped(self):
+        (d.STATE / "docs" / "README.md").write_text("# T\n\n## Big\n" + "word " * 10_000)
+        out = d.tool_factory_docs({"section": "readme/big"})
+        self.assertLess(len(out), d.MAX_DOCS_CHARS + 200)
+        self.assertIn("[truncated", out)
+
+    def test_missing_snapshot_is_denied(self):
+        import shutil
+        shutil.rmtree(d.STATE / "docs")
+        with self.assertRaises(d.Denied) as cm:
+            d.tool_factory_docs({})
+        self.assertIn("factory start", str(cm.exception))
+
+    def test_listed_as_a_tool_and_in_the_instructions(self):
+        self.assertIn("factory_docs", [t["name"] for t in d.tool_list()])
+        self.assertIn("factory_docs", d.server_instructions())
+        text, is_error = d.call_tool("factory_docs", {"topic": "local settings"})
+        self.assertFalse(is_error)
+        self.assertIn("readme/local-settings", text)
+        _, is_error = d.call_tool("factory_docs", {"topic": 3})
+        self.assertTrue(is_error)
+
+    def test_doc_slug_matches_github(self):
+        self.assertEqual(d.doc_slug("Getting the developer's work"), "getting-the-developers-work")
+        self.assertEqual(d.doc_slug("Enabling approvals (Passdesk Pro)"), "enabling-approvals-passdesk-pro")
+        self.assertEqual(d.doc_slug("`factory-test` modes"), "factory-test-modes")
 
 
 if __name__ == "__main__":
