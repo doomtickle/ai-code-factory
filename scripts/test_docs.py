@@ -353,11 +353,13 @@ class SlugTests(unittest.TestCase):
 
 class CliTests(Fixture):
     def run_main(self, *argv):
+        # A real text stream over bytes, not a Mock: argparse (3.14+) asks stdout
+        # whether it is a terminal, and main() writes bytes to stdout.buffer.
         out, err = io.BytesIO(), io.StringIO()
-        fake_stdout = mock.Mock()
-        fake_stdout.buffer = out
+        fake_stdout = io.TextIOWrapper(out, encoding="utf-8")
         with mock.patch.object(sys, "stdout", fake_stdout), contextlib.redirect_stderr(err):
             rc = docs.main(list(argv))
+        fake_stdout.flush()
         return rc, out.getvalue().decode("utf-8"), err.getvalue()
 
     def test_out_writes_atomically_and_prints_nothing(self):

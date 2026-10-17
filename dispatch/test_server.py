@@ -775,14 +775,15 @@ class LaneTests(Base):
         self.assertEqual(d.project_repos(d.PROJECT), ["."])
         (d.PROJECT / ".git").unlink()
         self.assertEqual(d.project_repos(d.PROJECT), [])
-        for name in ("b", "a", "B", "plain", ".hidden", "wt"):
+        # No two names that differ only in case: macOS volumes are case-insensitive.
+        for name in ("b", "a", "C", "plain", ".hidden", "wt"):
             (d.PROJECT / name).mkdir()
-        for name in ("b", "a", "B", ".hidden"):
+        for name in ("b", "a", "C", ".hidden"):
             (d.PROJECT / name / ".git").mkdir()
         (d.PROJECT / "wt" / ".git").write_text("gitdir: x\n")
         (d.PROJECT / "link").symlink_to(d.PROJECT / "a")
         (d.PROJECT / "file").write_text("x")
-        self.assertEqual(d.project_repos(d.PROJECT), ["B", "a", "b", "wt"])
+        self.assertEqual(d.project_repos(d.PROJECT), ["C", "a", "b", "wt"])  # byte order
         self.assertEqual(d.project_repos(d.PROJECT / "missing"), [])
 
 
