@@ -14,6 +14,10 @@ for roles defined in roles/*/role.conf, and all it may do to get there is:
   fsmonitor forced off, then `git for-each-ref` to report what arrived. No
   other git command, and nothing from the sandbox ever picks the host path.
 
+It also answers the Coordinator's questions about the factory itself
+(factory_docs) from a read-only snapshot of the factory's markdown docs that
+start-dispatch.sh copies into <DISPATCH_STATE>/docs/.
+
 A role may run up to LANES jobs at once (one per lane, sharing its sandbox).
 Each lane's transcript streams to <DISPATCH_STATE>/logs/<lane>.log (shown in the
 role's Herdr tab) and the role's final report goes back to the Coordinator.
@@ -888,6 +892,147 @@ def tool_cancel_job(args: dict) -> str:
     return f"Cancelled job {job.id} on {job.lane}."
 
 
+
+# --------------------------------------------------------------------------
+# Factory docs (factory_docs): the factory's own markdown, as snapshotted by
+# start-dispatch.sh into STATE/docs/ (README.md, setup-wsl.md, guides/*.md),
+# split into sections the Coordinator can list, search and read.
+
+MAX_DOCS_CHARS = 12_000
+_HEADING = re.compile(r"^(#{1,3})\s+(.+?)\s*#*\s*$")
+_FENCE = re.compile(r"^\s*(```|~~~)")
+_WORD = re.compile(r"[a-z0-9][a-z0-9_.-]*")
+_STOPWORDS = set("""a an and are as at be but by can do does for from get got have how i if in into is it
+its me my not of on or so that the their them then there this to too was we what when where which who
+why will with you your""".split())
+
+
+def doc_slug(heading: str) -> str:
+    """GitHub-style anchor slug: lowercase, punctuation dropped, spaces to dashes."""
+    text = re.sub(r"[`*_\[\]()]", "", heading.strip().lower())
+    text = re.sub(r"[^\w\- ]", "", text)
+    return text.replace(" ", "-")
+
+
+def doc_sources() -> list:
+    """[(doc id, path)] of the snapshotted docs, guides first, in order."""
+    base = STATE / "docs"
+    found = []
+    for path in sorted((base / "guides").glob("*.md")):
+        found.append(("guide-" + re.sub(r"^\d+-", "", path.stem), path))
+    for doc_id, name in (("readme", "README.md"), ("wsl", "setup-wsl.md")):
+        if (base / name).is_file():
+            found.append((doc_id, base / name))
+    return found
+
+
+def load_doc_sections() -> list:
+    """Every ##/### section of every snapshotted doc, as dicts with id, doc, title,
+    level and text (a ## section's text includes its ### subsections). Headings
+    inside fenced code blocks don't count."""
+    sections = []
+    for doc_id, path in doc_sources():
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except (OSError, UnicodeDecodeError):
+            continue
+        doc_title, fence, seen = doc_id, False, {}
+        heads = []  # (line index, level, title)
+        for i, line in enumerate(lines):
+            if _FENCE.match(line):
+                fence = not fence
+                continue
+            m = None if fence else _HEADING.match(line)
+            if not m:
+                continue
+            level, title = len(m.group(1)), m.group(2).strip()
+            if level == 1:
+                doc_title = title
+            heads.append((i, level, title))
+        intro_end = next((i for i, lvl, _ in heads if lvl > 1), len(lines))
+        intro = "\n".join(lines[:intro_end]).strip()
+        if intro:
+            sections.append({"id": f"{doc_id}/intro", "doc": doc_title, "title": doc_title,
+                             "level": 1, "text": intro, "own": intro})
+        for n, (i, level, title) in enumerate(heads):
+            if level == 1:
+                continue
+            end = next((j for j, lvl, _ in heads[n + 1:] if lvl <= level), len(lines))
+            slug = doc_slug(title) or "section"
+            if slug in seen:
+                seen[slug] += 1
+                slug = f"{slug}-{seen[slug]}"
+            else:
+                seen[slug] = 0
+            own_end = heads[n + 1][0] if n + 1 < len(heads) else len(lines)
+            sections.append({"id": f"{doc_id}/{slug}", "doc": doc_title, "title": title,
+                             "level": level, "text": "\n".join(lines[i:end]).strip(),
+                             "own": "\n".join(lines[i:own_end]).strip()})
+    return sections
+
+
+def _capped(parts: list, limit: int = MAX_DOCS_CHARS) -> str:
+    out, used = [], 0
+    for part in parts:
+        if used + len(part) > limit:
+            out.append(part[: max(0, limit - used)] + "\n[truncated; read a narrower section]")
+            break
+        out.append(part)
+        used += len(part)
+    return "\n\n".join(out)
+
+
+def tool_factory_docs(args: dict) -> str:
+    sections = load_doc_sections()
+    if not sections:
+        raise Denied("the factory docs are not loaded; ask the user to run 'factory start' again "
+                     "(it copies them into the dispatch state folder)")
+    section, topic = args.get("section", "").strip(), args.get("topic", "").strip()
+    if section:
+        match = next((s for s in sections if s["id"] == section), None)
+        if match is None:
+            near = [s["id"] for s in sections if section.split("/")[-1] in s["id"]][:5]
+            raise Denied(f"no docs section {section!r}" + (f"; did you mean: {', '.join(near)}" if near else
+                                                         "; call factory_docs with no arguments for the list"))
+        return sanitize(_capped([f"[{match['doc']}] {match['id']}\n\n{match['text']}"]))
+    if topic:
+        terms = [t for t in dict.fromkeys(_WORD.findall(topic.lower()))
+                 if len(t) > 1 and t not in _STOPWORDS]
+        if not terms:
+            raise Denied("topic needs at least one meaningful word, e.g. \"git push\"")
+        scored = []
+        for s in sections:
+            # A section's own text, without its subsections: they are scored on their own.
+            title, body = s["title"].lower(), s["own"].lower()
+            hits = [t for t in terms if t in title or t in body]
+            if not hits:
+                continue
+            score = sum(5 * title.count(t) + min(body.count(t), 10) for t in hits)
+            # Sections that match more of the question beat ones that repeat one word.
+            # Long sections mention everything somewhere; don't let size alone win.
+            scored.append((score * (len(hits) / len(terms)) ** 2 / (1 + len(body) / 6000), s))
+        if not scored:
+            return (f"Nothing in the factory docs matches {topic!r}. Call factory_docs with no "
+                    "arguments for the table of contents.")
+        scored.sort(key=lambda x: -x[0])
+        top = [s for _, s in scored[:3]]
+        parts = [f"[{s['doc']}] {s['id']}\n\n{s['own']}" for s in top]
+        more = [s["id"] for _, s in scored[3:8]]
+        text = _capped(parts)
+        if more:
+            text += "\n\nAlso relevant (read with section): " + ", ".join(more)
+        return sanitize(text)
+    lines = ["Factory docs (read one with section=<id>, or search with topic=<words>):"]
+    doc = None
+    for s in sections:
+        if s["doc"] != doc:
+            doc = s["doc"]
+            lines.append(f"\n{doc}")
+        indent = "  " * max(0, s["level"] - 1)
+        lines.append(f"{indent}- {s['id']}: {s['title']}")
+    return sanitize("\n".join(lines))
+
+
 TOOLS = {
     "list_roles": (tool_list_roles, "List the role agents, what each does, and whether it is idle or busy "
                    "(per lane for roles with several lanes). Roles with a saved session show its "
@@ -924,6 +1069,14 @@ TOOLS = {
                      {"job_id": {"type": "string"}, "timeout_seconds": {"type": "integer"}}, ["job_id"]),
     "job_status": (tool_job_status, "Show the 20 most recent jobs and their status.", {}, []),
     "cancel_job": (tool_cancel_job, "Stop a running job (other lanes of its role keep running).", {"job_id": {"type": "string"}}, ["job_id"]),
+    "factory_docs": (tool_factory_docs, "The AI Code Factory's own documentation (the README, setup "
+                     "guide and how-to guides of the factory itself, not of the user's project), for "
+                     "questions about the factory: setup, factory commands, roles and lanes, broker "
+                     "tools, local settings, getting and merging the developer's work, and error "
+                     "messages. No arguments: the table of contents. topic: search (a few words, e.g. "
+                     "\"git push\" or \"sandbox out of date\"), returns the best sections. section: one "
+                     "section by its id from the contents (e.g. readme/local-settings).",
+                     {"topic": {"type": "string"}, "section": {"type": "string"}}, []),
 }
 
 _TYPES = {"string": str, "boolean": bool, "integer": int}
@@ -1013,6 +1166,11 @@ def server_instructions() -> str:
         "as remote-tracking refs factory-<lane>/factory/<topic> (e.g. "
         "factory-developer/factory/rate-limit; the job result lists them under branches). "
         "Give the reviewer that exact ref to review, and tell the user the ref to merge.",
+        "Questions about the factory itself (how to set it up or change it, factory commands, "
+        "roles and lanes, broker tools, settings, error messages from factory commands): call "
+        "factory_docs and answer from it, not from memory, citing the section. You can't run "
+        "factory commands; tell the user the exact command to run in a terminal on their "
+        "machine (the host), e.g. the Host shell pane.",
         "Roles with several lanes run that many tasks at once. Split large work into "
         "independent chunks, each on its own factory/<topic> branch in its own lane "
         "(delegate without wait_seconds, then wait_for_job each), and send follow-ups for a "

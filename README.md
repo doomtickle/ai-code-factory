@@ -27,7 +27,12 @@ Claude Code running in its own Docker Sandboxes (`sbx`) microVM, laid out in
   It acts only through the dispatch bridge's tools, which can do one thing: run
   a task as `claude -p` inside an existing role sandbox (fixed arguments, no
   shell), and, for the developer, bring the branches it committed back into
-  your project (see "Getting the developer's work"). You never type into role
+  your project (see "Getting the developer's work"). The bridge also gives it
+  the factory's own docs (`factory_docs`: this README and the guides, copied
+  when the factory starts), so you can ask it about the factory itself from
+  any project, e.g. *"how do I enable git push?"* or *"what does this
+  `factory start` error mean?"*. It answers from the docs and tells you the
+  command to run on your machine; it can't run it. You never type into role
   sandboxes and nothing is typed into a terminal for you. It also gets direct, read-only access to two broker tools
   (`jira_my_issues`, `jira_get_issue`, see "Enabling Jira"), configured in
   `kits/coordinator/broker.conf` the same way a role's `BROKER_TOOLS` are.

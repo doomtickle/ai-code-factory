@@ -62,6 +62,19 @@ done
 rm -rf "$STATE/instructions"
 mv "$STATE/instructions.tmp" "$STATE/instructions"
 
+# The factory's own docs, for the Coordinator's factory_docs tool. A snapshot,
+# like the instructions above: the bridge reads this copy, so a role working on
+# the factory's own repo can't change what the Coordinator is told.
+rm -rf "$STATE/docs.tmp"
+mkdir -p "$STATE/docs.tmp/guides"
+cp "$ROOT/README.md" "$STATE/docs.tmp/README.md"
+[ ! -f "$ROOT/docs/setup-wsl.md" ] || cp "$ROOT/docs/setup-wsl.md" "$STATE/docs.tmp/setup-wsl.md"
+for guide in "$ROOT"/docs/guides/*.md; do
+  if [ -f "$guide" ]; then cp "$guide" "$STATE/docs.tmp/guides/"; fi
+done
+rm -rf "$STATE/docs"
+mv "$STATE/docs.tmp" "$STATE/docs"
+
 running_pid() {
   local pid
   pid="$(cat "$STATE/pid" 2>/dev/null || true)"
