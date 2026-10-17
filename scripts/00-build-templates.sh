@@ -1,14 +1,25 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Usage: 00-build-templates.sh [--build-only]
+#
 # Builds the sandbox templates locally and loads them into the sbx runtime.
 # No registry push: each image goes docker build -> tar -> sbx template load.
+# --build-only builds the same images (docker only) without sbx: no load, and
+# nothing recorded in the state dir. CI uses it.
 
 # shellcheck source=lib/common.sh
 . "$(dirname "$0")/lib/common.sh"
 
+build_only=""
+case "${1:-}" in
+  "") ;;
+  --build-only) build_only=1 ;;
+  *) die "usage: $0 [--build-only]" ;;
+esac
+
 require_bin docker
-require_sbx
+[ -n "$build_only" ] || require_sbx
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
@@ -36,6 +47,7 @@ build() {
   shift 3
   echo "Building $tag..."
   docker build -t "$tag" -f "$dockerfile" "$@" "$context"
+  [ -z "$build_only" ] || return 0
   echo "Loading $tag into sbx..."
   docker image save "$tag" -o "$tmp/$image.tar"
   sbx template load "$tmp/$image.tar"
@@ -72,4 +84,4 @@ fi
 build broker "$tmp/broker/Dockerfile" "$tmp/broker" --build-context "factory-config=$tmp/config" \
   --build-context "plugins=$tmp/plugins"
 
-sbx template ls
+[ -n "$build_only" ] || sbx template ls

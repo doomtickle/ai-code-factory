@@ -294,6 +294,34 @@ class LinkTests(Fixture):
         self.assertEqual(len(routes), len(guides))
 
 
+
+class LinkBaseTests(Fixture):
+    BASE = "https://github.com/acme/factory/blob/abc1234/"
+
+    def test_repo_file_links_go_to_the_link_base(self):
+        write(self.root, "scripts/lib/common.sh", "# pins\n")
+        write(self.root, "docs/mac-quickstart.html", "<!doctype html>")
+        write(self.root, "README.md", "# T\n\nPins live in [common.sh](scripts/lib/common.sh).\n")
+        page, warnings = docs.build_html(self.root, link_base=self.BASE)
+        self.assertEqual(warnings, [])
+        self.assertIn(f'href="{self.BASE}scripts/lib/common.sh"', page)
+        self.assertNotIn("file://", page)
+        self.assertIn('href="mac-quickstart.html"', page)  # served next to the page
+        self.assertNotIn(str(self.root), page)  # no local checkout path in the footer
+
+    def test_without_a_link_base_repo_files_stay_local(self):
+        write(self.root, "scripts/lib/common.sh", "# pins\n")
+        page = self.build("# T\n\nSee [common.sh](scripts/lib/common.sh).\n")
+        self.assertIn((self.root / "scripts/lib/common.sh").as_uri(), page)
+
+    def test_link_base_must_be_https_and_end_in_a_slash(self):
+        write(self.root, "README.md", "# T\n")
+        for bad in ("http://example.com/", "https://example.com/blob", "javascript:alert(1)/",
+                    'https://e.com/"onmouseover=x/'):
+            with self.assertRaises(docs.DocsError):
+                docs.build_html(self.root, link_base=bad)
+
+
 class SlugTests(unittest.TestCase):
     def test_github_slugs(self):
         cases = {
@@ -325,11 +353,13 @@ class SlugTests(unittest.TestCase):
 
 class CliTests(Fixture):
     def run_main(self, *argv):
+        # A real text stream over bytes, not a Mock: argparse (3.14+) asks stdout
+        # whether it is a terminal, and main() writes bytes to stdout.buffer.
         out, err = io.BytesIO(), io.StringIO()
-        fake_stdout = mock.Mock()
-        fake_stdout.buffer = out
+        fake_stdout = io.TextIOWrapper(out, encoding="utf-8")
         with mock.patch.object(sys, "stdout", fake_stdout), contextlib.redirect_stderr(err):
             rc = docs.main(list(argv))
+        fake_stdout.flush()
         return rc, out.getvalue().decode("utf-8"), err.getvalue()
 
     def test_out_writes_atomically_and_prints_nothing(self):

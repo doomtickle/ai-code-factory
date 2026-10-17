@@ -154,7 +154,7 @@ setup_done() {
 # cmd_doctor -> checks everything setup and start need, printing the fix for
 # each problem. Fails if anything blocks setup. Changes nothing itself.
 cmd_doctor() {
-  local problems=0 missing_pkgs="" os linux="" t pkg out status doctor hosts kit kit_hosts missing h
+  local problems=0 missing_pkgs="" os linux="" t out status doctor hosts kit kit_hosts missing h
   os="$(uname -s)"
   [ "$os" = Linux ] && linux=1
   # fail SUMMARY [FIX-TEXT...] -> a problem, with its fix indented beneath (multi-line args allowed)

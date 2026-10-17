@@ -3,3 +3,4 @@
 # this only needs to cover the developer/reviewer templates.
 *
 !templates/agent/factory-test
+!templates/agent/factory-lane

@@ -1,5 +1,8 @@
 # AI Code Factory
 
+[![CI](https://github.com/doomtickle/ai-code-factory/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/doomtickle/ai-code-factory/actions/workflows/ci.yml)
+Docs site: <https://doomtickle.github.io/ai-code-factory/> (the same page `factory docs` opens locally)
+
 A local multi-agent coding setup. You talk to a **Coordinator** agent; it breaks
 the work down and delegates it to **role agents** (Developer, Reviewer and
 Researcher, or any role you add). Every agent is
@@ -770,12 +773,22 @@ hasn't dispatched any jobs yet just shows an empty report.
 - **Rotating tokens:** the sbx daemon caches them. Delete `broker/tokens/<role>.sha256`
   (or `dispatch/token.sha256`) in the state folder, run `factory start`, run `sbx daemon restart`, then
   `factory start` again.
-- **Tests:**
-  - broker: `docker run --rm --network none -v "$PWD/broker:/b:ro" -w /b factory-broker:v3 python3 -m unittest -v`
+- **Tests:** CI (`.github/workflows/ci.yml`) runs all of these on every pull
+  request and push to main: on Linux with Python 3.9 and 3.14, on macOS 14 with
+  the system bash and Python, plus shellcheck and an image build. To run them
+  yourself (use `/usr/bin/python3` on macOS):
+  - shell lint: `scripts/lint.sh` (downloads the pinned shellcheck once)
+  - dispatch: `python3 -m unittest discover -s dispatch -v`
+  - host scripts: `python3 -m unittest discover -s scripts -p 'test_*.py' -v`
+  - shell tests: `bash scripts/test_factory_update.sh`, and likewise
+    `test_factory_secret.sh`, `test_factory_docs.sh` and `test_factory_lane.sh`
+  - images, without sbx: `scripts/00-build-templates.sh --build-only`
+  - broker: `docker run --rm --network none -v "$PWD/broker:/b:ro" -w /b factory-broker:v3 python3 -B -m unittest discover -s tests -t .`
     (`broker/` is the `passdesk-broker` submodule; run `git submodule update --init`
     first if it's empty)
-  - dispatch: `/usr/bin/python3 -m unittest discover -s dispatch -v` (macOS) or
-    `python3 -m unittest discover -s dispatch -v` (Linux)
+- **Docs site:** `.github/workflows/docs.yml` publishes the `factory docs` page
+  to GitHub Pages whenever the docs change on main, with links to repo files
+  pointing at that commit on GitHub (`scripts/docs.py --link-base`).
 - **Under the hood:** `factory` wraps the scripts in `scripts/`:
   - `install-prereqs.sh`, `00-build-templates.sh` and `01-init-security.sh` (setup)
   - `02-launch-factory.sh <dir>`, which calls `start-broker.sh` and `start-dispatch.sh`
@@ -827,6 +840,8 @@ scripts/start-broker.sh, scripts/start-dispatch.sh   (called by the launch scrip
 scripts/analytics.py, scripts/test_analytics.py      Cost/performance report (factory analytics)
 scripts/approvals.py         Passdesk Pro approval cards (factory approvals)
 scripts/docs.py              Builds the docs site (factory docs)
+scripts/lint.sh              Pinned shellcheck over every shell script (CI)
+.github/workflows/            CI (ci.yml) and the docs site on GitHub Pages (docs.yml)
 ```
 
 ## Upgrading a pin
