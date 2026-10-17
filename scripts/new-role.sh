@@ -19,7 +19,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd -P)"
 name="$1"
 from="${2:-reviewer}"
 
-valid_role_name "$name" || die "invalid role name '$name' (lowercase letters, digits, dashes; not: $RESERVED_ROLE_NAMES)"
+valid_role_name "$name" || die "invalid role name '$name' (lowercase letters, digits, dashes; not ending in -lane<N>; not: $RESERVED_ROLE_NAMES)"
 [ ! -e "$ROOT/roles/$name" ] || die "roles/$name already exists"
 [ -f "$ROOT/roles/$from/role.conf" ] || die "no role named '$from' to copy"
 
@@ -35,7 +35,7 @@ sbx kit validate "$ROOT/roles/$name/kit" >/dev/null
 
 cat <<MSG
 Created roles/$name (copied from $from). Next:
-  1. Edit roles/$name/role.conf: DESCRIPTION, WORKSPACE (rw/ro), BROKER_TOOLS, MODEL and MODELS (optional).
+  1. Edit roles/$name/role.conf: DESCRIPTION, WORKSPACE (rw/ro), BROKER_TOOLS, LANES, MODEL and MODELS (optional).
   2. Edit its instructions in roles/$name/instructions.md.
   3. Re-run ./scripts/02-launch-factory.sh <project-dir>.
 MSG

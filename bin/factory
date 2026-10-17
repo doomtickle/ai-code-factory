@@ -63,7 +63,8 @@ ${B}Usage${N}
                              and open it in Herdr
   factory status             What is running, and for which project
   factory stop               Stop the agents, broker and dispatch bridge
-  factory logs [name]        Follow a role's work (e.g. developer), or broker / dispatch
+  factory logs [name]        Follow a role's work (all its lanes; e.g. developer,
+                             or one lane: developer-lane2), or broker / dispatch
   factory roles              List roles and what they may do
   factory role new <name> [like]
                              Add a role, copied from an existing one (default: reviewer)
@@ -477,6 +478,10 @@ cmd_status() {
   fi
   approvals_status_line
 
+  local r role_list=""
+  for r in $(list_roles); do role_list="$role_list${role_list:+, }$r ($(lanes_label "$r"))"; done
+  say "${B}Roles${N} ${role_list:-none}"
+
   say ""
   say "${B}Sandboxes${N}"
   sbx ls --json | jq -r '.sandboxes[] | select(.name | startswith("factory-")) | "  \(.name)\t\(.status)"' \
@@ -525,20 +530,44 @@ cmd_logs() {
         '[.ts[11:19], (.role // ""), (.tool // .event // ""), (.decision // .status // ""), (.reason // "")] | map(select(. != "")) | join("  ")'
       ;;
     *)
-      [ -f "$ROOT/roles/$name/role.conf" ] || die "unknown role '$name' (see: factory roles)"
+      # A role: every lane's transcript (with several, tail heads each chunk
+      # with its file name). Or one lane of a role, e.g. developer-lane2.
+      local lane lanes logs=()
+      printf '%s' "$name" | grep -Eqx '[a-z][a-z0-9-]{1,40}' || die "unknown role '$name' (see: factory roles)"
+      if [ -f "$ROOT/roles/$name/role.conf" ]; then
+        lanes="$(role_lane_names "$name")"
+      else
+        case "$name" in
+          *-lane[0-9]*) lane="${name%-lane*}" ;;
+          *) lane="" ;;
+        esac
+        [ -n "$lane" ] && [ -f "$ROOT/roles/$lane/role.conf" ] && role_lane_names "$lane" | grep -qx -- "$name" \
+          || die "unknown role '$name' (see: factory roles; one lane: <role>-lane<N>, N up to its LANES)"
+        lanes="$name"
+      fi
       mkdir -p "$FACTORY_DISPATCH_STATE/logs"
-      touch "$FACTORY_DISPATCH_STATE/logs/$name.log"
-      tail -n 100 -F "$FACTORY_DISPATCH_STATE/logs/$name.log"
+      for lane in $lanes; do
+        touch "$FACTORY_DISPATCH_STATE/logs/$lane.log"
+        logs+=("$FACTORY_DISPATCH_STATE/logs/$lane.log")
+      done
+      tail -n 100 -F "${logs[@]}"
       ;;
   esac
+}
+
+# lanes_label ROLE -> "1 lane" / "3 lanes": how many jobs ROLE runs at once
+lanes_label() {
+  local n
+  n="$(role_lanes "$1")"
+  if [ "$n" = 1 ]; then echo "1 lane"; else echo "$n lanes"; fi
 }
 
 cmd_roles() {
   local r
   for r in $(list_roles); do
-    printf '%s%-18s%s %-9s %s\n' "$B" "$r" "$N" \
-      "$( [ "$(role_get "$r" WORKSPACE)" = rw ] && echo "edits" || echo "read-only")" \
-      "$(role_get "$r" DESCRIPTION)"
+    printf '%s%-18s%s %-9s %-8s %s\n' "$B" "$r" "$N" \
+      "$( [ "$(role_get "$r" WORKSPACE)" = rw ] && echo "branches" || echo "read-only")" \
+      "$(lanes_label "$r")" "$(role_get "$r" DESCRIPTION)"
     printf '  %snetwork tools: %s%s\n' "$D" "$(role_get "$r" BROKER_TOOLS | sed 's/ /, /g; s/^$/none/')" "$N"
   done
 }
@@ -736,8 +765,27 @@ describe_loss() {
         echo "nothing (it keeps no history)"
       fi ;;
     "$COORDINATOR_SANDBOX") echo "the Coordinator's conversation history" ;;
-    *) echo "the role's saved session (its next task starts fresh)" ;;
+    *)
+      if [ "$(role_get "${1#factory-}" WORKSPACE)" = rw ]; then
+        echo "the saved sessions of its lanes (their next tasks start fresh) and its lane clones: anything not committed to a factory/* branch (committed branches are already in your project as factory-<lane>/... refs)"
+      else
+        echo "the role's saved sessions (its next tasks start fresh)"
+      fi ;;
   esac
+}
+
+# forget_role_sessions ROLE -> delete the saved session of every lane of ROLE
+# (sessions/<lane> and <lane>.json), including lanes beyond its current LANES.
+forget_role_sessions() {
+  local f lane
+  for f in "$FACTORY_DISPATCH_STATE"/sessions/*; do
+    [ -e "$f" ] || continue
+    lane="${f##*/}"
+    lane="${lane%.json}"
+    if [ "$lane" = "$1" ] || printf '%s' "$lane" | grep -Eqx -- "$1-lane[0-9]+"; then
+      rm -f "$f"
+    fi
+  done
 }
 
 cmd_update() {
@@ -772,9 +820,7 @@ cmd_update() {
   if [ -n "$stale" ]; then
     # shellcheck disable=SC2086 # one argument per sandbox
     sbx rm --force $stale >/dev/null
-    for sb in $stale; do
-      rm -f "$FACTORY_DISPATCH_STATE/sessions/${sb#factory-}" "$FACTORY_DISPATCH_STATE/sessions/${sb#factory-}.json"
-    done
+    for sb in $stale; do forget_role_sessions "${sb#factory-}"; done
     ok "removed $stale"
   fi
   project="$(bound_project)"

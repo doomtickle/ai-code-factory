@@ -8,10 +8,11 @@ Claude Code running in its own Docker Sandboxes (`sbx`) microVM, laid out in
 
 ```
  You ─▶ Coordinator VM ──MCP──▶ dispatch bridge (host) ──sbx exec──▶ role VMs
-        (can't edit files)      list_roles · delegate ·              claude -p, one task at a time
-                                wait_for_job · cancel_job                  │
-                                                                           │ MCP (per-role tools)
-                                                                           ▼
+        (can't edit files)      list_roles · delegate ·              claude -p, one task per lane
+                                wait_for_job · cancel_job            (developer: in git clones)
+                                      ▲                                    │
+          your project ◀── git fetch ─┘ factory/* branches as bundles      │ MCP (per-role tools)
+          (refs/remotes/factory-<lane>/)                                   ▼
                                                   Broker VM ──▶ GitHub / npm / PyPI / docs
                                                   policy · secret filtering · audit
 ```
@@ -25,15 +26,20 @@ Claude Code running in its own Docker Sandboxes (`sbx`) microVM, laid out in
   bridge's MCP instructions, which list the current roles.
   It acts only through the dispatch bridge's tools, which can do one thing: run
   a task as `claude -p` inside an existing role sandbox (fixed arguments, no
-  shell). You never type into role sandboxes and nothing is typed into a
-  terminal for you. It also gets direct, read-only access to two broker tools
+  shell), and, for the developer, bring the branches it committed back into
+  your project (see "Getting the developer's work"). You never type into role
+  sandboxes and nothing is typed into a terminal for you. It also gets direct, read-only access to two broker tools
   (`jira_my_issues`, `jira_get_issue`, see "Enabling Jira"), configured in
   `kits/coordinator/broker.conf` the same way a role's `BROKER_TOOLS` are.
 - **Roles:** defined as data in `roles/<name>/`. Each role has its own
-  instructions, a kit (Anthropic-only network access), an image, **read-write or
-  read-only** access to the project, and a list of the broker tools it may use.
-  Roles remember earlier tasks (each keeps a Claude session). You can watch every
-  role work live in its Herdr tab. Job results show the job's cost, the
+  instructions, a kit (Anthropic-only network access), an image, a list of the
+  broker tools it may use, and a number of **lanes**: how many tasks it runs at
+  once (`LANES`, e.g. 3 for the developer). No role can write to your project:
+  every role sandbox mounts it read-only. The developer (`WORKSPACE="rw"`)
+  works in git clones of it on its sandbox's own disk, one per lane, and hands
+  back committed `factory/*` branches. Read-only roles (`WORKSPACE="ro"`)
+  just read it. Roles remember earlier tasks (each lane keeps a Claude
+  session). You can watch every role work live in its Herdr tab. Job results show the job's cost, the
   session's running total and its context size. A session over the role's
   `MAX_SESSION_TOKENS` (100k by default) isn't resumed: the next task starts
   fresh, because every turn of a resumed session re-reads its whole history.
@@ -140,7 +146,11 @@ factory start
 `factory start` runs the whole factory for that folder and opens it in Herdr:
 
 - **coordinator** tab: the Coordinator (top) and a host shell (bottom).
-- one tab per role, showing its live transcript.
+- one tab per role, showing its live transcripts (all its lanes).
+
+The folder must be a git repository, or a folder whose subfolders are git
+repositories: the developer works in clones of them, from what is committed
+(see "Getting the developer's work").
 
 **The first time**, type `/login` in the Coordinator pane and sign in with your
 Claude subscription, then run `factory start` again (the Host shell pane below
@@ -162,9 +172,9 @@ Herdr; run `factory start` again to reopen it.
 | `factory setup` | One-time setup (safe to re-run) |
 | `factory update [--yes]` | After pulling changes or editing kits, images or policy: pulls the latest factory, rebuilds, recreates only the sandboxes the changes affect (it lists them and what each loses, then asks), and restarts |
 | `factory start [dir]` | Start the factory for a project (default: current folder) and open Herdr |
-| `factory status` | Project, broker, dispatch bridge, login, sandbox status, and (Passdesk Pro) pending approvals and the oldest one's age |
-| `factory logs <role>` | Follow a role's transcript; `factory logs broker` / `dispatch` for audit logs |
-| `factory roles` | List roles, their project access and network tools |
+| `factory status` | Project, broker, dispatch bridge, login, roles (with their lanes), sandbox status, and (Passdesk Pro) pending approvals and the oldest one's age |
+| `factory logs <role>` | Follow a role's transcripts, all its lanes (`factory logs developer-lane2` for one lane); `factory logs broker` / `dispatch` for audit logs |
+| `factory roles` | List roles, their project access, lanes and network tools |
 | `factory role new <name> [like]` | Add a role (copied from `reviewer`, or the role you name) |
 | `factory analytics` | Cost, token and performance report from the audit logs (`--json`, `--html`) |
 | `factory secret set <name>` | Store a credential (for keychain-less machines); reads from stdin |
@@ -217,8 +227,9 @@ factory update
   (Roles, "Per-project notes"). These need no rebuild.
 
 The folder sits outside the repo on purpose. When the factory works on its own
-repo, the developer can write anywhere in it, and a change to a git-ignored
-file there wouldn't show up in `git diff`. Settings you don't use are inert:
+repo, the developer's branches can change anything in it once you merge them,
+and the broker writes into the project's `.factory/`; settings must stay out of
+reach of both. Settings you don't use are inert:
 `npm_fetch` only contacts a private registry for lockfile entries that point
 there, so one machine can serve both work and personal projects. If your team
 shares settings, keep a copy of the folder somewhere for teammates to copy.
@@ -233,7 +244,10 @@ shares settings, keep a copy of the folder somewhere for teammates to copy.
    sbx secret set github --sandbox factory-broker
    ```
 Agents may only push branches starting with `factory/`. They can never push to
-protected branches (`main`, `master`, `release/*`) and can't force-push.
+protected branches (`main`, `master`, `release/*`) and can't force-push. The
+developer bundles a branch from its clone into `.factory/outgoing/` in the
+project (the one project folder it can write) and hands the file name to
+`git_push`.
 
 ### Enabling a private npm registry
 
@@ -417,11 +431,21 @@ call later; the decision is picked up by the retry.
 
 Three roles, split by what each is allowed to do rather than by job title:
 
-| Role | Does | Project access | Broker tools |
-|---|---|---|---|
-| developer | implements the change, writes and runs its tests, updates the docs | read-write | `npm_fetch`, `pip_download`, `git_fetch`, `git_push`, `github_create_pr` |
-| reviewer | independent check of correctness, tests, security and docs; runs the tests; APPROVED / REVISE | read-only | `npm_fetch` |
-| researcher | looks things up on the web and reports with sources | read-only | `web_fetch`, `gemini_flash_query` |
+| Role | Does | Project access | Lanes | Broker tools |
+|---|---|---|---|---|
+| developer | implements the change, writes and runs its tests, updates the docs | read-only; works in its own clones, hands back `factory/*` branches | 3 | `npm_fetch`, `pip_download`, `git_fetch`, `git_push`, `github_create_pr` |
+| reviewer | independent check of correctness, tests, security and docs; runs the tests; APPROVED / REVISE | read-only | 2 | `npm_fetch` |
+| researcher | looks things up on the web and reports with sources | read-only | 1 | `web_fetch`, `gemini_flash_query` |
+
+**Lanes.** A role with `LANES="3"` runs up to three tasks at once, in lanes
+named `developer`, `developer-lane2` and `developer-lane3`. Each lane has its
+own Claude session and transcript, and, for the developer, its own clones;
+all lanes share the role's one sandbox. The Coordinator gives independent
+chunks to separate lanes, each on its own branch, and sends a follow-up (a
+REVISE, say) back to the lane that did the work. `LANES` is read per task (1
+to 8; empty means 1), so changing it needs no new sandbox; `factory start`
+updates the role's tab. Several lanes share the sandbox's CPU and memory and
+your Claude subscription's usage limits, so more lanes isn't always faster.
 
 Models, set per role in `role.conf` `MODEL` (aliases resolve to the newest
 model of that tier):
@@ -457,7 +481,8 @@ starts a fresh session.
 
 The split follows the capabilities that matter:
 
-- **Only the developer can change the project.**
+- **No role can change your project.** The developer proposes changes as
+  branches; you merge them.
 - **The reviewer judges work it didn't write** and can't alter it.
 - **Only the researcher reads the web.** Web pages are the main way
   prompt-injection attacks arrive, and anything fetched lands in a role that
@@ -466,6 +491,40 @@ The split follows the capabilities that matter:
 
 For a deeper security pass, the Coordinator can ask the reviewer for a
 security-only review.
+
+### Getting the developer's work
+
+The developer works in a lane: git clones of your project's repositories on
+its sandbox's own disk, cloned from the read-only project and fetched again
+before every task. It bases new work on your checked-out branch (or the base
+the task names) and commits to a `factory/<topic>` branch. It sees only what
+is committed: ask it to work on uncommitted changes and it will say they're
+missing, so commit first.
+
+After each developer job, whether it finished, failed or was cancelled, the
+dispatch bridge brings the lane's committed `factory/*` branches into your
+repository as remote-tracking branches named after the lane:
+
+```sh
+git branch -r | grep factory-                        # factory-developer/factory/rate-limit, ...
+git log -p main..factory-developer/factory/rate-limit
+git merge factory-developer/factory/rate-limit      # or: git switch -c rate-limit factory-developer/factory/rate-limit
+```
+
+The job's result lists them (`branches`: repo, ref and commit), and the
+Coordinator tells you which one to merge once it is reviewed. The reviewer
+checks out the same ref in its own sandbox. When the project is a folder of
+repositories, each branch arrives in the repository it belongs to.
+
+Nothing writes your working tree outside the git-ignored `.factory/` (the
+developer's `.factory/outgoing/`, the broker's downloads), and nothing writes
+your `.git` except that import: the bridge asks the developer's sandbox for a
+git bundle of the lane's `factory/*` branches (minus what your repository
+already has), then runs one fixed `git fetch` of it into
+`refs/remotes/factory-<lane>/`, with hooks and `core.fsmonitor` forced off.
+No git hook or config from the sandbox can run on your machine. It never prunes, so a branch stays until you
+delete it (`git branch -rd factory-developer/factory/rate-limit`). Work the
+developer didn't commit stays in its lane for the next task there.
 
 ### Running tests
 
@@ -476,7 +535,10 @@ project. Instead:
 
 1. The role calls the broker's `npm_fetch` tool. The broker reads `yarn.lock`
    (v1) or `package-lock.json` as data and downloads every tarball it pins,
-   for all platforms, into `.factory/npm-mirror/`. Each one must come from an
+   for all platforms, into `.factory/npm-mirror/`. The broker reads the
+   lockfile from your project, so a developer that changed one in its clone
+   copies it (with its `package.json`) to `.factory/outgoing/lock/` and
+   fetches from there. Each one must come from an
    allowed registry, pass the `[packages]` policy and match its lockfile hash.
    No package manager or package code runs in the broker. The first fetch of a
    typical frontend project is a few hundred MB, and later calls only download
@@ -491,7 +553,9 @@ project. Instead:
    Roles use it for full-suite runs.
    `factory-test` (baked into the developer and reviewer images) works in a
    copy of the project on the sandbox's own disk, so nothing is written to the
-   project and the read-only reviewer can run tests too. It sets `CI=true` so
+   project and the read-only reviewer can run tests too. The developer runs it
+   from its lane, the reviewer from its checkout of the branch under review;
+   both use the mirror in the project's `.factory/npm-mirror/`. It sets `CI=true` so
    runners like Vitest and Jest don't start in watch mode. Snapshots or
    coverage the tests write stay in the copy. Every run says which mode it used:
    - **clean** (tried first): syncs the project, minus `node_modules` and
@@ -520,10 +584,13 @@ project, so projects need no factory files, and roles can't change it. For examp
 The images also include yarn 1.22.22, so `yarn` scripts and git hooks that
 call `yarn` work. Python projects still use `pip_download` and `uv` directly.
 
-Each role is `roles/<name>/role.conf` (description, image, `WORKSPACE=rw|ro`,
+Each role is `roles/<name>/role.conf` (description, image, `WORKSPACE=rw|ro`, `LANES`,
 `BROKER_TOOLS`, `MODEL`, `MODELS`, `EFFORT`, `MAX_SESSION_TOKENS`), `roles/<name>/instructions.md` (passed to every task
-as part of the system prompt) and `roles/<name>/kit/spec.yaml` (its network policy). Read-only roles
-get a writable scratch directory in `~/.local/state/ai-code-factory/roles/<name>/` and the project mounted `:ro`.
+as part of the system prompt) and `roles/<name>/kit/spec.yaml` (its network policy). Every role
+gets a writable scratch directory in `~/.local/state/ai-code-factory/roles/<name>/` and the project mounted `:ro`.
+`rw` roles also get the project's `.factory/outgoing/` writable (bundles for `git_push`,
+lockfiles for `npm_fetch`), keep their clones in the sandbox, and need the project to
+be a git repository or a folder of them.
 
 **Add a role:**
 ```sh
@@ -533,7 +600,7 @@ factory role new docs-writer developer   # or copy any existing role
 Edit its `role.conf` and instructions, then run `factory start` again. It creates
 the sandbox and a tab, and the Coordinator sees the new role in `list_roles`.
 
-**Change a role:** edit instructions, `BROKER_TOOLS`, `MODEL`, `MODELS`, `EFFORT` or `MAX_SESSION_TOKENS` and run `factory start`
+**Change a role:** edit instructions, `BROKER_TOOLS`, `LANES`, `MODEL`, `MODELS`, `EFFORT` or `MAX_SESSION_TOKENS` and run `factory start`
 again. All of these take effect from the next task:
 `factory start` copies the instructions into the state folder and the bridge
 reads that copy, so a role editing this repo can't change prompts on its own. Kit, image, project access and
@@ -562,7 +629,7 @@ sandbox (sandboxes are never deleted automatically).
 | `npm_fetch` | Downloads every tarball `yarn.lock` (v1) or `package-lock.json` pins into `.factory/npm-mirror/` (no code runs); each is policy-checked and verified against its lockfile hash; roles install offline with `factory-test` |
 | `pip_download` | Downloads binary wheels for a hash-pinned `requirements.txt` (every line `name==version --hash=sha256:...`, no option lines; generate it with `uv pip compile --generate-hashes`) into `.factory/wheels/` (no code runs); pip only sees a copy the broker writes itself; agent installs offline with `uv` |
 | `git_fetch` | Fetches a branch into a private mirror and hands it to the agent as a bundle in `.factory/incoming/` |
-| `git_push` | Takes a bundle from `.factory/outgoing/` (size-capped, copied once into the broker), checks branch rules, secret-scans every commit's patch (binary files included), message and author/committer, pushes |
+| `git_push` | Takes a bundle the developer wrote from its clone to `.factory/outgoing/` (size-capped, copied once into the broker), checks branch rules, secret-scans every commit's patch (binary files included), message and author/committer, pushes |
 | `github_create_pr` | Opens a (draft) PR; title and body are secret-scanned |
 | `gemini_flash_query` | Sends a prompt to Gemini Flash for cheap/fast summarization or triage; prompt is secret-scanned and size-limited; output marked untrusted |
 | `jira_my_issues` | Lists Jira Cloud issues assigned to the caller (`status`: `todo`/`in_progress`/`all`, default not-Done); read-only; output marked untrusted |
@@ -571,13 +638,14 @@ sandbox (sandboxes are never deleted automatically).
 The broker never runs anything from the agent-writable workspace. Git network
 operations happen in private mirrors inside the broker VM, code moves in and out
 as git bundles, and npm install scripts are disabled. `.factory/` in the project
-is git-ignored automatically.
+is git-ignored automatically (`factory start` creates it, with
+`.factory/outgoing/`, and refuses to run if either is a symlink).
 
 ## Analytics
 
 `factory analytics` aggregates `dispatch/audit.jsonl` (job-end records: cost,
 duration, context size, model), `broker/audit.jsonl` (individual broker tool
-calls) and `dispatch/sessions/<role>.json` (each role's current session totals)
+calls) and `dispatch/sessions/<lane>.json` (the current session totals of each lane of each role)
 in the state folder (see Operating) into a cost and performance report. It only reads these files — nothing is sent
 anywhere — and runs entirely on the host, using the same Python resolution as
 the dispatch bridge (`resolve_python` in `scripts/lib/common.sh`): the pinned
@@ -610,20 +678,24 @@ hasn't dispatched any jobs yet just shows an empty report.
   state folder, `~/.local/state/ai-code-factory/` (`$XDG_STATE_HOME/ai-code-factory/`
   if you set `XDG_STATE_HOME`):
   - `dispatch/audit.jsonl`: every Coordinator tool call and job
-  - `dispatch/logs/<role>.log`: role transcripts
-  - `dispatch/sessions/<role>` (session id) and `<role>.json` (its total cost
+  - `dispatch/logs/<lane>.log`: role transcripts, one per lane (`developer.log`,
+    `developer-lane2.log`, ...)
+  - `dispatch/sessions/<lane>` (session id) and `<lane>.json` (its total cost
     and context size after the last job)
+  - `dispatch/imports/`: bundles being imported from a developer lane (deleted
+    once imported)
   - `broker/audit.jsonl`: every broker call, with the calling role
   - Server errors: `dispatch/dispatch.log` and `broker/broker.log`
 - **Why state is outside the repo:** the broker re-reads its tool grants
   (`broker/roles.json`) and token hashes on every call. Inside the repo they would
-  be editable by any role that can write to the project, which includes the
-  developer when the factory works on its own repo. Only the broker sandbox and
+  be one merged developer branch away from being changed when the factory works
+  on its own repo, and the broker writes into the project's `.factory/`. Only the broker sandbox and
   the dispatch bridge see the state folder. `factory start` moves state from the
   old in-repo location (`.broker/`, `.dispatch/`, `.roles/`) the first time, and
   tells you which sandboxes to recreate.
 - **Working on the factory with the factory:** point it at this repo as usual.
-  Review `git diff` before restarting anything: `scripts/`, `bin/factory` and
+  Review a developer branch (`git log -p main..factory-developer/factory/<topic>`)
+  before you merge it, and before restarting anything: `scripts/`, `bin/factory` and
   `dispatch/server.py` run on your Mac with your permissions, and roles, kits and
   broker policy change what the sandboxes may do.
 - **Changing broker policy:** edit `broker/policy.toml` (and `kits/broker/spec.yaml` if
@@ -642,12 +714,27 @@ hasn't dispatched any jobs yet just shows an empty report.
   creates. Before it removes anything, it lists each out-of-date sandbox and
   what recreating it discards, then asks (`--yes` skips the question):
   - **Coordinator:** its conversation history.
-  - **A role:** its saved session; the next task starts fresh.
+  - **A role:** its lanes' saved sessions; their next tasks start fresh. For
+    the developer, also its lane clones: anything it didn't commit to a
+    `factory/*` branch (committed branches are already in your project).
   - **Broker:** a GitHub token stored with `--sandbox factory-broker`, because
     `sbx rm` deletes secrets scoped to the removed sandbox. Re-add it
     afterwards; `factory start` reminds you.
 
   Sandboxes created before fingerprints existed count as out of date once.
+
+  **Upgrading to lanes:** the developer sandbox used to mount your project
+  read-write and edit your working tree directly. Now it mounts the project
+  read-only and works in its own clones, so its sandbox must be recreated:
+  `factory start` refuses to run with the old one and asks for
+  `factory update`, which recreates it. That discards its conversation history
+  and any changes it made directly in the project that it hadn't pushed;
+  there are none to lose, because it edited your live working tree, where
+  its work already is. From then on it works from committed state: commit
+  (or stash) what you want it to build on. The same `factory update` rebuilds
+  the developer and reviewer images (they gain `factory-lane`), restarts the
+  dispatch bridge, and also recreates the Coordinator, because its briefing
+  changed, so the Coordinator's conversation history is discarded too.
 - **Coordinator briefing:** the Coordinator learns what the factory is from
   `/etc/claude-code/CLAUDE.md`, written from `kits/coordinator/spec.yaml` when its
   sandbox is created (a mixin kit's `agentInstructions` aren't loaded reliably), and
@@ -686,7 +773,7 @@ login is kept.
 
 ```
 bin/factory                  The CLI
-roles/<name>/role.conf       Role definition: description, image, rw/ro, broker tools
+roles/<name>/role.conf       Role definition: description, image, rw/ro, lanes, broker tools
 roles/<name>/instructions.md Role instructions (added to each task's system prompt)
 roles/<name>/kit/spec.yaml   Role kit: Anthropic-only egress
 kits/coordinator/spec.yaml   Coordinator kit
@@ -701,6 +788,7 @@ docs/setup-wsl.md            Step-by-step setup on Windows 11 with WSL2
 windows/enable-wsl.ps1       Windows side of that setup: WSL, Ubuntu, nested virtualization
 templates/<image>/           Pinned images: developer, reviewer (+ruff)
 templates/agent/factory-test Runs tests in a sandbox-local copy (baked into developer and reviewer)
+templates/agent/factory-lane Lane clones: prepare, export bundles, check out a branch to review
 config.example/              Example local settings for ~/.config/ai-code-factory/
 scripts/lib/common.sh        Pinned versions, checksums, names, shared checks
 scripts/lib/roles.sh         Role parsing and validation

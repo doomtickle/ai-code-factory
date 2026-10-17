@@ -11,6 +11,7 @@ import tempfile
 import textwrap
 import time
 import unittest
+import uuid
 from pathlib import Path
 
 import server as d
@@ -23,7 +24,44 @@ FAKE_SBX = textwrap.dedent(r'''
     with open(log, "a") as f:
         f.write(json.dumps(args) + "\n")
     if args[:2] == ["ls", "-q"]:
-        print("factory-developer\nfactory-reviewer\nfactory-opuser\nfactory-tiered")
+        print("factory-developer\nfactory-reviewer\nfactory-opuser\nfactory-tiered\nfactory-builder")
+        sys.exit(0)
+    if args[0] == "exec" and args[2:3] == ["pkill"]:
+        sys.exit(1)  # nothing matched: the test's "claude" is this fake, killed via its process group
+    if args[0] == "exec" and args[2:4] == ["factory-lane", "prepare"]:
+        project, lane = args[4], args[5]
+        mode = os.environ.get("FAKE_PREPARE", "")
+        print("Cloning into the lane...", file=sys.stderr)
+        if mode == "fail":
+            print("fatal: \x1b[31mclone failed\x1b[0m", file=sys.stderr)
+            sys.exit(2)
+        print("progress noise")
+        print("relative/dir" if mode == "badpath" else "/home/agent/lanes/" + lane)
+        sys.exit(0)
+    if args[0] == "exec" and args[2:4] == ["factory-lane", "export"]:
+        import subprocess, tempfile
+        project, lane, rel = args[4], args[5], args[6]
+        mode = os.environ.get("FAKE_EXPORT", "")
+        if mode == "big":
+            for _ in range(100):
+                sys.stdout.buffer.write(b"x" * 1000)
+            sys.exit(0)
+        if mode == "fail":
+            print("fatal: \x1b[31mexport broke\x1b[0m", file=sys.stderr)
+            sys.exit(1)
+        root = os.environ.get("FAKE_LANES")
+        repo = os.path.normpath(os.path.join(root or "/nonexistent", lane, rel))
+        if not os.path.isdir(repo):
+            print("nothing to export", file=sys.stderr)
+            sys.exit(3)
+        tmp = tempfile.mkdtemp()
+        bundle = os.path.join(tmp, "b")
+        cp = subprocess.run(["git", "-C", repo, "bundle", "create", "--quiet", bundle,
+                             "--branches=factory/*", "--not", "--remotes=origin"])
+        if cp.returncode != 0:
+            sys.exit(3)
+        with open(bundle, "rb") as f:
+            sys.stdout.buffer.write(f.read())
         sys.exit(0)
     if args[0] == "exec" and "claude" in args:
         task = args[args.index("-p") + 1]
@@ -33,7 +71,8 @@ FAKE_SBX = textwrap.dedent(r'''
             sys.exit(1)
         if task == "hang":
             time.sleep(60)
-        sid = resume or "sess-" + str(os.getpid())
+        sid = resume or (args[args.index("--session-id") + 1] if "--session-id" in args
+                         else "sess-" + str(os.getpid()))
         # Like claude, total_cost_usd is cumulative for the session (0.25 per run).
         cost_file = os.path.join(os.path.dirname(log), "cost-" + sid)
         total = (float(open(cost_file).read()) if os.path.exists(cost_file) else 0.0) + 0.25
@@ -69,9 +108,9 @@ FAKE_SBX = textwrap.dedent(r'''
 ''').lstrip()
 
 
-def conf(desc, workspace, tools, model="", models=""):
+def conf(desc, workspace, tools, model="", models="", lanes=""):
     return (f'DESCRIPTION="{desc}"\nTEMPLATE="developer"\nWORKSPACE="{workspace}"\n'
-            f'BROKER_TOOLS="{tools}"\nMODEL="{model}"\nMODELS="{models}"\n')
+            f'BROKER_TOOLS="{tools}"\nMODEL="{model}"\nMODELS="{models}"\nLANES="{lanes}"\n')
 
 
 class Base(unittest.TestCase):
@@ -79,10 +118,10 @@ class Base(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         root = Path(self.tmp.name)
         d.ROOT, d.PROJECT, d.STATE = root / "repo", root / "project", root / "state"
-        for p in (d.ROOT / "roles", d.PROJECT, d.STATE / "logs", d.STATE / "sessions",
+        for p in (d.ROOT / "roles", d.PROJECT / ".git", d.STATE / "logs", d.STATE / "sessions",
                   d.STATE / "instructions"):
-            p.mkdir(parents=True)
-        for name in ("developer", "reviewer", "tester", "opuser", "tiered"):
+            p.mkdir(parents=True)  # PROJECT/.git: a (stub) repo, so rw roles may run
+        for name in ("developer", "reviewer", "tester", "opuser", "tiered", "builder"):
             (d.STATE / "instructions" / f"{name}.md").write_text(f"# {name}\nDo {name} work.\n")
         for name, text in {"developer": conf("Builds things", "rw", "web_fetch npm_ci"),
                            "reviewer": conf("Reviews things", "ro", ""),
@@ -90,6 +129,8 @@ class Base(unittest.TestCase):
                            "opuser": conf("Uses a pinned model", "rw", "", model="opus"),
                            "tiered": conf("Picks a model per task", "rw", "", model="sonnet",
                                           models="haiku opus bad;name"),
+                           "builder": conf("Builds in parallel", "rw", "", lanes="2"),
+                           "dev-lane2": conf("Named like a lane", "rw", ""),
                            "Bad_Name": conf("x", "rw", ""),
                            "coordinator": conf("Reserved name", "rw", "")}.items():
             (d.ROOT / "roles" / name).mkdir()
@@ -100,6 +141,8 @@ class Base(unittest.TestCase):
         d.SBX = str(fake)
         self.sbx_log = root / "sbx-calls.jsonl"
         os.environ["FAKE_SBX_LOG"] = str(self.sbx_log)
+        for var in ("FAKE_PREPARE", "FAKE_EXPORT", "FAKE_LANES"):
+            os.environ.pop(var, None)
         d._jobs.clear()
         d._seen_sandboxes.clear()
 
@@ -111,6 +154,12 @@ class Base(unittest.TestCase):
 
     def sbx_calls(self):
         return [json.loads(l) for l in self.sbx_log.read_text().splitlines()]
+
+    def claude_calls(self):
+        return [c for c in self.sbx_calls() if c[0] == "exec" and "claude" in c]
+
+    def lane_calls(self, sub):
+        return [c for c in self.sbx_calls() if c[0] == "exec" and c[2:4] == ["factory-lane", sub]]
 
     def delegate(self, role, task, **kw):
         out = d.tool_delegate({"role": role, "task": task, **kw})
@@ -128,7 +177,7 @@ class SanitizeTests(unittest.TestCase):
 class RoleTests(Base):
     def test_load_roles_parses_and_skips_invalid_names(self):
         roles = d.load_roles()
-        self.assertEqual(sorted(roles), ["developer", "opuser", "reviewer", "tester", "tiered"])
+        self.assertEqual(sorted(roles), ["builder", "developer", "opuser", "reviewer", "tester", "tiered"])
         self.assertEqual(roles["developer"]["broker_tools"], ["web_fetch", "npm_ci"])
         self.assertEqual(roles["reviewer"]["workspace"], "ro")
         self.assertEqual(roles["developer"]["model"], "")
@@ -167,16 +216,20 @@ class DelegateTests(Base):
         report = json.loads(d.tool_wait_for_job({"job_id": job_id, "timeout_seconds": 30}))
         self.assertEqual(report["status"], "done")
         self.assertEqual(report["report"], "REPORT: did add a feature")
-        exec_call = [c for c in self.sbx_calls() if c[0] == "exec"][0]
-        self.assertEqual(exec_call[:7], ["exec", "-w", str(d.PROJECT), "-e", "CLAUDE_CODE_DISABLE_AUTO_MEMORY=1",
-                                         "factory-developer", "claude"])
+        exec_call = self.claude_calls()[0]
+        lane = "/home/agent/lanes/developer"
+        self.assertEqual(exec_call[:13], ["exec", "-w", lane, "-e", "CLAUDE_CODE_DISABLE_AUTO_MEMORY=1",
+                                          "-e", f"FACTORY_PROJECT={d.PROJECT}", "-e", "FACTORY_LANE=developer",
+                                          "-e", f"FACTORY_LANE_ROOT={lane}", "factory-developer", "claude"])
         self.assertEqual(exec_call[exec_call.index("-p") + 1], "add a feature")
         self.assertNotIn("--resume", exec_call)
+        sid = exec_call[exec_call.index("--session-id") + 1]
+        self.assertEqual(str(uuid.UUID(sid)), sid)
         self.assertNotIn("--model", exec_call)  # developer leaves MODEL unset
         prompt = exec_call[exec_call.index("--append-system-prompt") + 1]
         self.assertIn("You are the developer", prompt)
         self.assertTrue(prompt.endswith("# developer\nDo developer work."))
-        self.assertTrue((d.STATE / "sessions" / "developer").read_text().startswith("sess-"))
+        self.assertEqual((d.STATE / "sessions" / "developer").read_text(), sid + "\n")
         log = (d.STATE / "logs" / "developer.log").read_text()
         self.assertIn("🔧 Bash", log)
         self.assertIn("Working on it now", log)  # ANSI stripped
@@ -232,12 +285,12 @@ class DelegateTests(Base):
     def test_delegate_passes_configured_model(self):
         job_id = self.delegate("opuser", "add a feature")
         d.tool_wait_for_job({"job_id": job_id, "timeout_seconds": 30})
-        exec_call = [c for c in self.sbx_calls() if c[0] == "exec"][0]
+        exec_call = self.claude_calls()[0]
         self.assertEqual(exec_call[exec_call.index("--model") + 1], "opus")
 
     def exec_models(self):
         return [c[c.index("--model") + 1] if "--model" in c else None
-                for c in self.sbx_calls() if c[0] == "exec"]
+                for c in self.claude_calls()]
 
     def test_allowed_models_include_the_default_and_skip_bad_names(self):
         self.assertEqual(d.load_roles()["tiered"]["models"], ["sonnet", "haiku", "opus"])
@@ -266,7 +319,7 @@ class DelegateTests(Base):
         switched = json.loads(d.tool_delegate({"role": "tiered", "task": "three", "model": "opus",
                                                "wait_seconds": 30}))
         self.assertIn("previous one ran on sonnet, this task on opus", switched["session"])
-        execs = [c for c in self.sbx_calls() if c[0] == "exec"]
+        execs = self.claude_calls()
         self.assertIn("--resume", execs[1])
         self.assertNotIn("--resume", execs[2])
         self.assertEqual(self.exec_models(), ["sonnet", "sonnet", "opus"])
@@ -285,16 +338,16 @@ class DelegateTests(Base):
         out = json.loads(d.tool_delegate({"role": "developer", "task": "x", "effort": "low",
                                           "wait_seconds": 30}))
         self.assertEqual(out["effort"], "low")
-        exec_call = [c for c in self.sbx_calls() if c[0] == "exec"][0]
+        exec_call = self.claude_calls()[0]
         self.assertEqual(exec_call[exec_call.index("--effort") + 1], "low")
         d.tool_wait_for_job({"job_id": self.delegate("developer", "y"), "timeout_seconds": 30})
-        self.assertNotIn("--effort", [c for c in self.sbx_calls() if c[0] == "exec"][1])
+        self.assertNotIn("--effort", self.claude_calls()[1])
 
     def test_role_default_effort_and_bad_effort(self):
         conf_path = d.ROOT / "roles" / "opuser" / "role.conf"
         conf_path.write_text(conf_path.read_text() + 'EFFORT="high"\n')
         d.tool_wait_for_job({"job_id": self.delegate("opuser", "x"), "timeout_seconds": 30})
-        exec_call = [c for c in self.sbx_calls() if c[0] == "exec"][0]
+        exec_call = self.claude_calls()[0]
         self.assertEqual(exec_call[exec_call.index("--effort") + 1], "high")
         for bad in ("max", "high --model opus", ""):
             out, is_error = d.call_tool("delegate", {"role": "opuser", "task": "x", "effort": bad})
@@ -308,7 +361,7 @@ class DelegateTests(Base):
         d.tool_wait_for_job({"job_id": self.delegate("developer", "two"), "timeout_seconds": 30})
         d.tool_wait_for_job({"job_id": self.delegate("developer", "three", fresh_session=True),
                              "timeout_seconds": 30})
-        execs = [c for c in self.sbx_calls() if c[0] == "exec"]
+        execs = self.claude_calls()
         self.assertEqual(execs[1][execs[1].index("--resume") + 1], sid)
         self.assertNotIn("--resume", execs[2])
 
@@ -323,7 +376,7 @@ class DelegateTests(Base):
         self.assertIn("automatic", out["session"])
         self.assertIn("~85k tokens, over the 50k cap", out["session"])
         self.assertEqual(out["cost_usd"], 0.25)  # a fresh session's cost is its own total
-        self.assertNotIn("--resume", [c for c in self.sbx_calls() if c[0] == "exec"][1])
+        self.assertNotIn("--resume", self.claude_calls()[1])
 
     def test_session_under_the_default_cap_or_uncapped_resumes(self):
         self.assertEqual(d.load_roles()["developer"]["max_session_tokens"], d.DEFAULT_MAX_SESSION_TOKENS)
@@ -332,7 +385,7 @@ class DelegateTests(Base):
         d.tool_wait_for_job({"job_id": self.delegate("developer", "one"), "timeout_seconds": 30})
         out = json.loads(d.tool_delegate({"role": "developer", "task": "two", "wait_seconds": 30}))
         self.assertEqual(out["session"], "continuing its previous session")
-        self.assertIn("--resume", [c for c in self.sbx_calls() if c[0] == "exec"][1])
+        self.assertIn("--resume", self.claude_calls()[1])
 
     def test_delegate_with_wait_returns_the_report(self):
         out = json.loads(d.tool_delegate({"role": "developer", "task": "build", "wait_seconds": 30}))
@@ -357,9 +410,10 @@ class DelegateTests(Base):
         job_id = self.delegate("developer", "x")
         report = json.loads(d.tool_wait_for_job({"job_id": job_id, "timeout_seconds": 30}))
         self.assertEqual(report["status"], "done")
-        execs = [c for c in self.sbx_calls() if c[0] == "exec"]
+        execs = self.claude_calls()
         self.assertIn("--resume", execs[0])
         self.assertNotIn("--resume", execs[1])
+        self.assertIn("--session-id", execs[1])
 
     def test_failed_result_is_reported(self):
         report = json.loads(d.tool_wait_for_job({"job_id": self.delegate("developer", "fail"),
@@ -547,7 +601,10 @@ class ProtocolTests(Base):
         res = d.handle_rpc({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})
         text = res["result"]["instructions"]
         self.assertIn("Coordinator of the AI Code Factory", text)
-        self.assertIn("- developer (edits the project): Builds things", text)
+        self.assertIn("- developer (edits a private clone): Builds things", text)
+        self.assertIn("- builder (edits a private clone, 2 lanes): Builds in parallel", text)
+        self.assertIn("factory-<lane>/factory/<topic>", text)
+        self.assertNotIn("dev-lane2", text)
         self.assertIn("- reviewer (project read-only): Reviews things", text)
         self.assertNotIn("Bad_Name", text)
         self.assertNotIn("Reserved name", text)
@@ -556,6 +613,306 @@ class ProtocolTests(Base):
         (d.ROOT / "roles" / "designer" / "role.conf").write_text(conf("Designs things", "ro", ""))
         res = d.handle_rpc({"jsonrpc": "2.0", "id": 2, "method": "initialize", "params": {}})
         self.assertIn("- designer (project read-only): Designs things", res["result"]["instructions"])
+
+
+def git(*args, cwd=None):
+    """Test-side git, isolated from the user's global and system git config."""
+    import subprocess
+    env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
+    return subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@example.com",
+                           "-c", "init.defaultBranch=main", *args],
+                          cwd=cwd, env=env, check=True, capture_output=True, text=True).stdout.strip()
+
+
+class LaneTests(Base):
+    def wait(self, job_id):
+        return json.loads(d.tool_wait_for_job({"job_id": job_id, "timeout_seconds": 30}))
+
+    def test_parse_lanes(self):
+        for value, want in (("", 1), ("1", 1), ("3", 3), (" 8 ", 8), ("0", 1), ("9", 1),
+                            ("-2", 1), ("two", 1), ("2 3", 1), ("٣", 1)):
+            self.assertEqual(d.parse_lanes(value), want, value)
+        roles = d.load_roles()
+        self.assertEqual((roles["builder"]["lanes"], roles["developer"]["lanes"]), (2, 1))
+        self.assertEqual(d.lane_names("builder", 3), ["builder", "builder-lane2", "builder-lane3"])
+
+    def test_role_named_like_a_lane_is_rejected(self):
+        roles = d.load_roles()
+        self.assertNotIn("dev-lane2", roles)
+        for name in ("x-lane1", "dev-lane10"):
+            (d.ROOT / "roles" / name).mkdir()
+            (d.ROOT / "roles" / name / "role.conf").write_text(conf("x", "ro", ""))
+        (d.ROOT / "roles" / "lane-keeper").mkdir()
+        (d.ROOT / "roles" / "lane-keeper" / "role.conf").write_text(conf("x", "ro", ""))
+        roles = d.load_roles()
+        self.assertNotIn("x-lane1", roles)
+        self.assertNotIn("dev-lane10", roles)
+        self.assertIn("lane-keeper", roles)
+
+    def test_lowest_idle_lane_then_busy_then_denied(self):
+        first = d._jobs[self.delegate("builder", "hang")]
+        second = d._jobs[self.delegate("builder", "hang")]
+        self.assertEqual((first.lane, second.lane), ("builder", "builder-lane2"))
+        with self.assertRaisesRegex(d.Denied, r"all 2 lanes of builder are busy \(jobs .*%s" % second.id):
+            d.tool_delegate({"role": "builder", "task": "x"})
+        with self.assertRaisesRegex(d.Denied, "builder-lane2 is busy with job " + second.id):
+            d.tool_delegate({"role": "builder", "task": "x", "lane": 2})
+        for bad in (0, 3):
+            out, is_error = d.call_tool("delegate", {"role": "builder", "task": "x", "lane": bad})
+            self.assertTrue(is_error)
+            self.assertIn("lane must be an integer from 1 to 2", out)
+        out, is_error = d.call_tool("delegate", {"role": "builder", "task": "x", "lane": True})
+        self.assertTrue(is_error)
+        state = next(l for l in d.tool_list_roles({}).splitlines() if l.startswith("- builder"))
+        self.assertIn(f"[2 lanes: builder busy ({first.id}), builder-lane2 busy ({second.id})]", state)
+        d.tool_cancel_job({"job_id": first.id})
+        third = d._jobs[self.delegate("builder", "after")]
+        self.assertEqual(third.lane, "builder")
+        report = self.wait(third.id)
+        self.assertEqual(report["lane"], "builder")
+        self.assertEqual(json.loads(d.tool_job_status({}))[0]["lane"], "builder")
+
+    def test_per_lane_sessions_and_logs(self):
+        out = json.loads(d.tool_delegate({"role": "builder", "task": "one", "lane": 2, "wait_seconds": 30}))
+        self.assertEqual(out["lane"], "builder-lane2")
+        sessions = d.STATE / "sessions"
+        sid = (sessions / "builder-lane2").read_text().strip()
+        self.assertEqual(json.loads((sessions / "builder-lane2.json").read_text())["session_id"], sid)
+        self.assertFalse((sessions / "builder").exists())
+        self.assertIn("   > one", (d.STATE / "logs" / "builder-lane2.log").read_text())
+        self.assertFalse((d.STATE / "logs" / "builder.log").exists())
+        again = json.loads(d.tool_delegate({"role": "builder", "task": "two", "lane": 2, "wait_seconds": 30}))
+        self.assertEqual(again["session"], "continuing its previous session")
+        other = json.loads(d.tool_delegate({"role": "builder", "task": "three", "wait_seconds": 30}))
+        self.assertEqual((other["lane"], other["session"]), ("builder", "fresh session"))
+        calls = self.claude_calls()
+        self.assertEqual(calls[1][calls[1].index("--resume") + 1], sid)
+        self.assertNotIn("--resume", calls[2])
+        self.assertIn("FACTORY_LANE=builder-lane2", calls[0])
+        self.assertIn("FACTORY_LANE=builder", calls[2])
+        line = next(l for l in d.tool_list_roles({}).splitlines() if l.startswith("- builder"))
+        self.assertIn("[2 lanes: builder idle, builder-lane2 idle]", line)
+        self.assertIn("; sessions: builder ~85k tokens, $0.25 so far; builder-lane2 ~85k tokens, $0.50 so far",
+                      line)
+
+    def test_malformed_saved_session_id_is_not_resumed(self):
+        (d.STATE / "sessions" / "developer").write_text("bad id; rm -rf\n")
+        out = json.loads(d.tool_delegate({"role": "developer", "task": "x", "wait_seconds": 30}))
+        self.assertIn("malformed", out["session"])
+        call = self.claude_calls()[0]
+        self.assertNotIn("--resume", call)
+        self.assertIn("--session-id", call)
+
+    def test_cancel_targets_the_jobs_session(self):
+        import re
+        job_id = self.delegate("developer", "hang")
+        deadline = time.monotonic() + 10
+        while not self.claude_calls() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        call = self.claude_calls()[0]
+        sid = call[call.index("--session-id") + 1]
+        d.tool_cancel_job({"job_id": job_id})
+        pkill = [c for c in self.sbx_calls() if c[2:3] == ["pkill"]]
+        pattern = f"^claude -p .*--(session-id|resume) {sid}( |$)"
+        self.assertEqual(pkill, [["exec", "factory-developer", "pkill", "-INT", "-f", pattern]])
+        cmdline = " ".join(call[call.index("claude"):])
+        # pkill matches the NUL-to-space joined argv with POSIX regexec, where "." also
+        # matches the newlines in the task and system prompt (hence DOTALL here).
+        self.assertTrue(re.search(pattern, cmdline, re.DOTALL))
+        self.assertFalse(re.search(pattern, cmdline.replace(sid, str(uuid.uuid4())), re.DOTALL))
+        self.assertFalse(re.search(pattern, cmdline.replace(sid, sid + "0"), re.DOTALL))
+        self.assertEqual(d._jobs[job_id].status, "cancelled")
+        self.assertEqual(len(self.lane_calls("export")), 1)  # claude ran: its commits are imported
+
+    def test_env_and_workdir_for_ro_roles(self):
+        self.wait(self.delegate("reviewer", "look"))
+        call = self.claude_calls()[0]
+        self.assertEqual(call[:9], ["exec", "-w", str(d.PROJECT), "-e", "CLAUDE_CODE_DISABLE_AUTO_MEMORY=1",
+                                    "-e", f"FACTORY_PROJECT={d.PROJECT}", "-e", "FACTORY_LANE=reviewer"])
+        self.assertEqual(call[9], "factory-reviewer")
+        self.assertFalse(any(a.startswith("FACTORY_LANE_ROOT=") for a in call))
+        self.assertEqual(self.lane_calls("prepare") + self.lane_calls("export"), [])
+        report = self.wait(next(iter(d._jobs)))
+        self.assertNotIn("branches", report)
+        self.assertNotIn("import_errors", report)
+
+    def test_rw_role_prepares_the_lane_first(self):
+        report = self.wait(self.delegate("developer", "x"))
+        self.assertEqual(report["status"], "done")
+        self.assertEqual((report["branches"], report["import_errors"]), ([], []))  # export exit 3
+        kinds = [c[2:4] if c[2] == "factory-lane" else ["claude"] for c in self.sbx_calls() if c[0] == "exec"]
+        self.assertEqual(kinds, [["factory-lane", "prepare"], ["claude"], ["factory-lane", "export"]])
+        self.assertEqual(self.lane_calls("prepare")[0],
+                         ["exec", "factory-developer", "factory-lane", "prepare", str(d.PROJECT), "developer"])
+        self.assertEqual(self.lane_calls("export")[0],
+                         ["exec", "factory-developer", "factory-lane", "export", str(d.PROJECT), "developer", "."])
+
+    def test_prepare_failure_fails_the_job_without_claude_or_export(self):
+        os.environ["FAKE_PREPARE"] = "fail"
+        report = self.wait(self.delegate("developer", "x"))
+        self.assertEqual(report["status"], "failed")
+        self.assertIn("factory-lane prepare failed (exit 2)", report["report"])
+        self.assertIn("clone failed", report["report"])
+        self.assertNotIn("\x1b", report["report"])
+        self.assertEqual(self.claude_calls(), [])
+        self.assertEqual(self.lane_calls("export"), [])
+        os.environ["FAKE_PREPARE"] = "badpath"
+        report = self.wait(self.delegate("developer", "x"))
+        self.assertEqual(report["status"], "failed")
+        self.assertIn("valid lane directory", report["report"])
+        self.assertEqual(self.claude_calls(), [])
+
+    def test_rw_role_needs_a_git_project(self):
+        (d.PROJECT / ".git").rmdir()
+        with self.assertRaisesRegex(d.Denied, "not a git repository"):
+            d.tool_delegate({"role": "developer", "task": "x"})
+        self.wait(self.delegate("reviewer", "x"))  # read-only roles still run
+
+    def test_project_repos(self):
+        self.assertEqual(d.project_repos(d.PROJECT), ["."])
+        (d.PROJECT / ".git").rmdir()
+        (d.PROJECT / ".git").write_text("gitdir: /elsewhere\n")  # a worktree: still a repo
+        self.assertEqual(d.project_repos(d.PROJECT), ["."])
+        (d.PROJECT / ".git").unlink()
+        self.assertEqual(d.project_repos(d.PROJECT), [])
+        for name in ("b", "a", "B", "plain", ".hidden", "wt"):
+            (d.PROJECT / name).mkdir()
+        for name in ("b", "a", "B", ".hidden"):
+            (d.PROJECT / name / ".git").mkdir()
+        (d.PROJECT / "wt" / ".git").write_text("gitdir: x\n")
+        (d.PROJECT / "link").symlink_to(d.PROJECT / "a")
+        (d.PROJECT / "file").write_text("x")
+        self.assertEqual(d.project_repos(d.PROJECT), ["B", "a", "b", "wt"])
+        self.assertEqual(d.project_repos(d.PROJECT / "missing"), [])
+
+
+class ImportTests(Base):
+    """End to end: a real bundle from a lane clone imported into a real host repo."""
+
+    def setUp(self):
+        super().setUp()
+        (d.PROJECT / ".git").rmdir()
+        self.lanes = Path(self.tmp.name) / "lanes"
+        os.environ["FAKE_LANES"] = str(self.lanes)
+        self.marker = Path(self.tmp.name) / "hook-ran"
+
+    def make_host(self, repo):
+        repo.mkdir(parents=True, exist_ok=True)
+        git("init", "-q", str(repo))
+        (repo / "README").write_text("hello\n")
+        git("add", "README", cwd=repo)
+        git("commit", "-q", "-m", "base", cwd=repo)
+        # Hooks and fsmonitor a compromised agent might have planted: must never run.
+        hook = repo / ".git" / "hooks" / "reference-transaction"
+        hook.write_text(f"#!/bin/sh\necho ran >> '{self.marker}'\n")
+        hook.chmod(0o755)
+        fsmon = repo / ".git" / "fsmon.sh"
+        fsmon.write_text(f"#!/bin/sh\necho fsmonitor >> '{self.marker}'\n")
+        fsmon.chmod(0o755)
+        git("config", "core.fsmonitor", str(fsmon), cwd=repo)
+
+    def make_lane(self, host, lane, rel, branches):
+        clone = self.lanes / lane / rel
+        clone.parent.mkdir(parents=True, exist_ok=True)
+        git("clone", "-q", str(host), str(clone))
+        commits = {}
+        for name in branches:
+            git("checkout", "-q", "-b", f"factory/{name}", "origin/main", cwd=clone)
+            (clone / f"{name}.txt").write_text(name)
+            git("add", ".", cwd=clone)
+            git("commit", "-q", "-m", name, cwd=clone)
+            commits[name] = git("rev-parse", "HEAD", cwd=clone)
+        return commits
+
+    def wait(self, job_id):
+        return json.loads(d.tool_wait_for_job({"job_id": job_id, "timeout_seconds": 60}))
+
+    def test_import_into_remote_tracking_refs_without_hooks(self):
+        self.make_host(d.PROJECT)
+        # The hook does run for ordinary git in this repo, so its silence below means something.
+        git("update-ref", "refs/probe", "HEAD", cwd=d.PROJECT)
+        git("-c", "core.hooksPath=/dev/null", "update-ref", "-d", "refs/probe", cwd=d.PROJECT)
+        self.assertTrue(self.marker.exists())
+        self.marker.unlink()
+        commits = self.make_lane(d.PROJECT, "developer", ".", ["rate-limit", "docs"])
+        report = self.wait(self.delegate("developer", "build"))
+        self.assertEqual(report["status"], "done")
+        self.assertEqual(report["import_errors"], [])
+        got = {b["ref"]: b["commit"] for b in report["branches"]}
+        self.assertEqual(set(got), {"factory-developer/factory/rate-limit", "factory-developer/factory/docs"})
+        self.assertTrue(all(b["repo"] == "." for b in report["branches"]))
+        for name, sha in commits.items():
+            self.assertEqual(git("rev-parse", f"refs/remotes/factory-developer/factory/{name}", cwd=d.PROJECT),
+                             sha)
+            self.assertTrue(sha.startswith(got[f"factory-developer/factory/{name}"]))
+        self.assertFalse(self.marker.exists(), "a host hook or fsmonitor ran during import")
+        self.assertEqual(git("branch", "--list", "factory/*", cwd=d.PROJECT), "")  # no local branches
+        self.assertFalse((d.PROJECT / ".git" / "FETCH_HEAD").exists())
+        self.assertEqual(list((d.STATE / "imports").iterdir()), [])  # bundle deleted
+        log = (d.STATE / "logs" / "developer.log").read_text()
+        self.assertIn("⎇ branch factory-developer/factory/rate-limit at", log)
+        end = [json.loads(l) for l in (d.STATE / "audit.jsonl").read_text().splitlines()
+               if '"job-end"' in l][-1]
+        self.assertEqual(end["branches"], report["branches"])
+        self.assertEqual(len(self.lane_calls("export")), 1)
+
+    def test_lane_refs_are_namespaced_per_lane(self):
+        self.make_host(d.PROJECT)
+        self.make_lane(d.PROJECT, "builder-lane2", ".", ["x"])
+        report = self.wait(d.tool_delegate({"role": "builder", "task": "t", "lane": 2})
+                           .split("job ", 1)[1].split(" ", 1)[0])
+        self.assertEqual([b["ref"] for b in report["branches"]], ["factory-builder-lane2/factory/x"])
+
+    def test_multi_repo_project(self):
+        for name in ("api", "web"):
+            self.make_host(d.PROJECT / name)
+        (d.PROJECT / "notes").mkdir()
+        commits = self.make_lane(d.PROJECT / "web", "developer", "web", ["ui"])
+        report = self.wait(self.delegate("developer", "build"))
+        self.assertEqual(report["import_errors"], [])
+        self.assertEqual([(b["repo"], b["ref"]) for b in report["branches"]],
+                         [("web", "factory-developer/factory/ui")])
+        self.assertEqual(git("rev-parse", "refs/remotes/factory-developer/factory/ui", cwd=d.PROJECT / "web"),
+                         commits["ui"])
+        self.assertEqual([c[6] for c in self.lane_calls("export")], ["api", "web"])
+        self.assertFalse(self.marker.exists())
+
+    def test_nothing_to_export(self):
+        self.make_host(d.PROJECT)
+        self.make_lane(d.PROJECT, "developer", ".", [])  # a lane without factory/* branches
+        report = self.wait(self.delegate("developer", "build"))
+        self.assertEqual((report["status"], report["branches"], report["import_errors"]), ("done", [], []))
+
+    def test_export_failure_is_reported_sanitized(self):
+        self.make_host(d.PROJECT)
+        os.environ["FAKE_EXPORT"] = "fail"
+        report = self.wait(self.delegate("developer", "build"))
+        self.assertEqual(report["status"], "done")
+        self.assertEqual(len(report["import_errors"]), 1)
+        self.assertIn("export failed (exit 1)", report["import_errors"][0])
+        self.assertIn("export broke", report["import_errors"][0])
+        self.assertNotIn("\x1b", report["import_errors"][0])
+
+    def test_bundle_size_cap(self):
+        self.make_host(d.PROJECT)
+        os.environ["FAKE_EXPORT"] = "big"
+        old = d.MAX_BUNDLE_BYTES
+        d.MAX_BUNDLE_BYTES = 10_000
+        try:
+            report = self.wait(self.delegate("developer", "build"))
+        finally:
+            d.MAX_BUNDLE_BYTES = old
+        self.assertEqual(report["branches"], [])
+        self.assertIn("exceeds 10000 bytes", report["import_errors"][0])
+        self.assertEqual(list((d.STATE / "imports").iterdir()), [])
+
+    def test_garbage_bundle_is_an_import_error(self):
+        self.make_host(d.PROJECT)
+        os.environ["FAKE_EXPORT"] = "big"  # 100 kB of "x": not a bundle
+        report = self.wait(self.delegate("developer", "build"))
+        self.assertEqual(report["branches"], [])
+        self.assertIn("importing the bundle failed", report["import_errors"][0])
+        self.assertFalse(self.marker.exists())
 
 
 if __name__ == "__main__":

@@ -635,5 +635,18 @@ class MainTests(Base):
         json.loads(out, parse_constant=_reject_constants)  # raises if NaN/Infinity slipped through
 
 
+
+class LaneSessionsTest(unittest.TestCase):
+    def test_lane_sessions_fold_into_their_role(self):
+        sessions = {"developer": {"context_tokens": 1000},
+                    "developer-lane2": {"context_tokens": 500},
+                    "reviewer": {"context_tokens": 200}}
+        jobs = [{"role": "developer", "lane": "developer-lane2", "status": "done", "cost_usd": 0.5}]
+        stats = a.per_role_stats(jobs, [], sessions)
+        self.assertEqual(sorted(stats), ["developer", "reviewer"])
+        self.assertEqual(stats["developer"]["context_tokens_current"], 1500)
+        self.assertEqual(stats["developer"]["jobs"], 1)
+
+
 if __name__ == "__main__":
     unittest.main()
