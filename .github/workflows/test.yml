@@ -3,16 +3,20 @@
 # does. Runs on push to main and factory/* work branches (the repo's own
 # branch naming convention) and on every pull request, so a PR from any
 # other branch name or a fork still gets covered; workflow_dispatch allows
-# a manual re-run. Actions are pinned to commits; the comment is the tag
-# each one resolved from (see passdesk/.github/workflows/deploy.yml for the
-# same pattern). actions/checkout is the only third-party action with a SHA
-# we have verified locally, so every other step uses the runner's docker CLI
+# a manual re-run. Also runs on v* tags: a branches filter on "push" does
+# not match tag pushes, so "tags: ['v*']" is listed separately to let the
+# (currently disabled) publish job trigger once it's turned on. Actions are
+# pinned to commits; the comment is the tag each one resolved from (see
+# passdesk/.github/workflows/deploy.yml for the same pattern).
+# actions/checkout is the only third-party action with a SHA we have
+# verified locally, so every other step uses the runner's docker CLI
 # directly instead of an unverified action.
 name: Gateway tests
 
 on:
   push:
     branches: [main, 'factory/**']
+    tags: ['v*']
   pull_request:
   workflow_dispatch:
 
