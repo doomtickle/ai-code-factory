@@ -167,6 +167,9 @@ Herdr; run `factory start` again to reopen it.
 | `factory roles` | List roles, their project access and network tools |
 | `factory role new <name> [like]` | Add a role (copied from `reviewer`, or the role you name) |
 | `factory analytics` | Cost, token and performance report from the audit logs (`--json`, `--html`) |
+| `factory secret set <name>` | Store a credential (for keychain-less machines); reads from stdin |
+| `factory secret rm <name>` | Remove a manually-stored credential |
+| `factory secret ls` | List manually-stored credentials |
 | `factory stop` | Stop the agents, broker and dispatch bridge (state is kept) |
 | `factory reset` | Remove the agent sandboxes to switch projects (your login is kept) |
 
@@ -246,6 +249,9 @@ private ones it couldn't fetch.
      `add-generic-password` otherwise refuses with "already exists")
    - Linux: `secret-tool store --label "Factory npm registry token" service factory-npm-registry`
      (replaces any existing value)
+   
+   No keychain (WSL2, headless Linux)? Run `factory secret set npm-registry` and paste the token.
+   To revoke, run `factory secret rm npm-registry`.
 
    The value decides the auth scheme:
 
@@ -306,6 +312,9 @@ agent sandbox (the narrowly-scoped exception documented in this repo's
 1. Store the key in the keychain, service `factory-gemini`:
    - macOS: `security add-generic-password -s factory-gemini -a factory -w` (prompts for the key)
    - Linux: `secret-tool store --label "Factory Gemini key" service factory-gemini` (prompts for the key)
+   
+   No keychain (WSL2, headless Linux)? Run `factory secret set gemini` and paste the key.
+   To revoke, run `factory secret rm gemini`.
 2. Run `factory start` (or `./scripts/start-broker.sh <project-dir>` directly) again to
    deliver it to the broker sandbox. Re-running after changing the keychain entry
    rotates the key the broker uses.
@@ -343,6 +352,9 @@ credential the broker can't use yet.
      enter `you@example.com:TOKEN` as the value)
    - Linux: `secret-tool store --label "Factory Jira token" service factory-jira`
      (prompts; enter `you@example.com:TOKEN` as the value)
+   
+   No keychain (WSL2, headless Linux)? Run `factory secret set jira` and paste `you@example.com:TOKEN`.
+   To revoke, run `factory secret rm jira`.
 4. Run `factory start` (or `./scripts/start-broker.sh <project-dir>` directly) again to
    deliver it to the broker sandbox.
 
@@ -375,6 +387,10 @@ call later; the decision is picked up by the retry.
    service `factory-passdesk-license`, as for Gemini above. Optionally store
    a Slack, Discord or ntfy webhook URL under `factory-approvals-webhook` to
    be told when something is waiting.
+   
+   No keychain (WSL2, headless Linux)? Run `factory secret set passdesk-license` to deliver the
+   license key, and `factory secret set approvals-webhook` for the webhook URL.
+   Revoke with `factory secret rm passdesk-license` or `factory secret rm approvals-webhook`.
 2. Run `factory update`: it bakes the plugin into the broker image, names it
    in `PASSDESK_PLUGINS` when it creates the broker sandbox, and delivers
    the two credentials. `factory doctor` then reports the license.

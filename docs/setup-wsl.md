@@ -177,9 +177,9 @@ factory running in the background; `factory start` reopens it.
   `config.example/` to `~/.config/ai-code-factory/` and edit it. README,
   *Local settings*.
 - **Gemini, Jira, private npm registry:** these read their tokens from the Linux
-  keyring with `secret-tool`. WSL usually has no keyring running, so they need
-  extra setup that hasn't been tested on WSL yet. Everything else works without
-  them.
+  keyring with `secret-tool`. WSL usually has no keyring running. Instead, use
+  `factory secret set <name>` (README, *Enabling a private npm registry*, etc.) to
+  deliver credentials without a keyring. Everything else works without them.
 
 ## Keeping it on GitHub
 
