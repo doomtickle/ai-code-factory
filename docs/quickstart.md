@@ -202,8 +202,8 @@ It changes nothing. Each problem comes with its fix.
   deliver it the same way (names: `jira`, `gemini`, `npm-registry`,
   `passdesk-license`, `approvals-webhook`). Remove with `factory secret rm <name>`.
   Note: these values are lost if the broker sandbox is recreated
-  (`factory reset` or `factory update` if the broker image changes); the next
-  `factory start` will print which secrets to re-set.
+  (`factory reset` or `factory update` if the broker image changes); the run that creates
+  the new broker sandbox (`factory start`, or `factory update` itself) lists which to set again.
 - **Updating** is one command: `factory update` pulls, rebuilds the images
   and recreates only the sandboxes whose inputs changed. If it recreates the
   gateway, re-run `sbx secret set github --sandbox factory-broker`; it
