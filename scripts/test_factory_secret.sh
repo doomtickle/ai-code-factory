@@ -25,6 +25,12 @@ set -euo pipefail
 # 7. secret_clear_all_manual (scripts/lib/secrets.sh), called by
 #    scripts/start-broker.sh only when it creates a brand new broker
 #    sandbox, removes every marker and reports each name it cleared.
+# 8. "factory secret save/forget" with the Windows Credential Manager
+#    backend (WSL2), driven through a fake powershell.exe: the value reaches
+#    PowerShell only on stdin, a saved file credential is delivered to the
+#    running broker and not marked manual, "github" becomes the
+#    broker-scoped sbx secret (on stdin, never global), and a service name
+#    that isn't ours never reaches PowerShell.
 #
 # Drives the real bin/factory as a subprocess (not sourced, since the
 # command dispatch under test runs only in that mode - see the guard at the
@@ -53,10 +59,13 @@ assert_not_contains() { # assert_not_contains LABEL HAYSTACK NEEDLE
 }
 # assert_value_not_leaked LABEL NEEDLE -> NEEDLE appears in no file under
 # $tmp except the fake sbx's recorded stdin (FAKE_SBX_STDIN), where a
-# delivered value legitimately lands.
+# delivered value legitimately lands (and, for part 8, the fake PowerShell's
+# stdin and its fake credential store).
 assert_value_not_leaked() {
   local hits
-  hits="$(grep -rlF -- "$2" "$tmp" 2>/dev/null | grep -vxF "$FAKE_SBX_STDIN" || true)"
+  hits="$(grep -rlF -- "$2" "$tmp" 2>/dev/null \
+    | grep -vxF -e "$FAKE_SBX_STDIN" -e "$FAKE_SBX_SECRET_STDIN" -e "$tmp/ps-stdin.log" \
+    | grep -v "^$tmp/wincred/" || true)"
   assert_empty "$1" "$hits"
 }
 
@@ -84,6 +93,7 @@ case "$1" in
       cat > "$FAKE_SBX_STDIN"
     fi
     ;;
+  secret) [ "${2:-}" != set ] || cat > "$FAKE_SBX_SECRET_STDIN" ;;
 esac
 FAKE_SBX
 chmod +x "$tmp/bin/sbx"
@@ -94,6 +104,10 @@ export PATH="$tmp/bin:$PATH"
 export XDG_STATE_HOME="$tmp/state"
 export FAKE_SBX_ARGS="$tmp/sbx-args.log"
 export FAKE_SBX_STDIN="$tmp/sbx-stdin.log"
+export FAKE_SBX_SECRET_STDIN="$tmp/sbx-secret-stdin.log"
+# No keychain unless a part asks for one: on a WSL2 machine the real Windows
+# Credential Manager would otherwise be found and queried.
+export FACTORY_KEYCHAIN=none
 FACTORY_STATE_DIR="$tmp/state/ai-code-factory"
 MARKER_DIR="$FACTORY_STATE_DIR/secrets-manual"
 
@@ -120,7 +134,7 @@ run_factory_with_stdin() {
   set -e
 }
 
-reset_fakes() { : > "$FAKE_SBX_ARGS"; rm -f "$FAKE_SBX_STDIN"; }
+reset_fakes() { : > "$FAKE_SBX_ARGS"; rm -f "$FAKE_SBX_STDIN" "$FAKE_SBX_SECRET_STDIN"; }
 
 # ===========================================================================
 # Part 1: an invalid name is rejected before sbx is touched.
@@ -346,6 +360,107 @@ rm -f "$MARKER_DIR/npm-registry"  # Part 4c already cleared it; harmless if it h
 run_sync npm-registry
 assert_eq "sync: a failed revocation returns exit status 2" "$S_RC" "2"
 assert_contains "sync: a failed revocation is reported as an error" "$S_OUT" "could not remove"
+
+# ===========================================================================
+# Part 8: the Windows Credential Manager backend (WSL2) through a fake
+# powershell.exe, which records its argv and stdin and keeps a fake store
+# under $tmp/wincred/<service>. It reads the operation and service from the
+# script it is given (scripts/lib/secrets.sh wincred_run).
+# ===========================================================================
+install_good_fake_sbx
+mkdir -p "$tmp/wincred"
+cat > "$tmp/bin/powershell.exe" <<'FAKE_PS'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >> "$FAKE_PS_ARGS"
+script="${*: -1}"
+op="$(printf '%s' "$script" | sed -n 's/.*op=\([a-z]*\).*/\1/p' | head -n1)"
+svc="$(printf '%s' "$script" | grep -o "Retrieve('factory-[a-z-]*'" | head -n1 | sed "s/Retrieve('//; s/'//")"
+case "$op" in
+  lookup) [ ! -f "$FAKE_PS_STORE/$svc" ] || cat "$FAKE_PS_STORE/$svc" ;;
+  store) cat > "$FAKE_PS_STDIN"; cp "$FAKE_PS_STDIN" "$FAKE_PS_STORE/$svc" ;;
+  delete) rm -f "$FAKE_PS_STORE/$svc" ;;
+esac
+FAKE_PS
+chmod +x "$tmp/bin/powershell.exe"
+export FAKE_PS_ARGS="$tmp/ps-args.log" FAKE_PS_STDIN="$tmp/ps-stdin.log" FAKE_PS_STORE="$tmp/wincred"
+reset_ps() { : > "$FAKE_PS_ARGS"; rm -f "$FAKE_PS_STDIN"; }
+
+FACTORY_KEYCHAIN=wincred
+FACTORY_POWERSHELL="$tmp/bin/powershell.exe"
+export FACTORY_KEYCHAIN FACTORY_POWERSHELL
+
+reset_fakes; reset_ps
+rm -rf "$MARKER_DIR"; mkdir -p "$MARKER_DIR"; : > "$MARKER_DIR/jira"
+run_factory_with_stdin $'wc-secret-1\n' secret save jira
+assert_eq "save jira (wincred): exits 0" "$F_RC" "0"
+assert_eq "save jira: PowerShell got exactly the value on stdin" "$(cat "$FAKE_PS_STDIN")" "wc-secret-1"
+assert_not_contains "save jira: the value never appears in PowerShell's argv" "$(cat "$FAKE_PS_ARGS")" "wc-secret-1"
+assert_contains "save jira: stored under factory-jira" "$(cat "$FAKE_PS_ARGS")" "Retrieve('factory-jira'"
+assert_eq "save jira: delivered to the running broker on stdin" "$(cat "$FAKE_SBX_STDIN" 2>/dev/null)" "wc-secret-1"
+assert_not_contains "save jira: the value never appears in sbx's argv" "$(cat "$FAKE_SBX_ARGS")" "wc-secret-1"
+[ ! -e "$MARKER_DIR/jira" ] && ok "save jira: the 'factory secret set' marker is cleared (the keychain manages it now)" \
+  || bad "save jira: the 'factory secret set' marker is cleared"
+assert_value_not_leaked "save jira: value lands nowhere else under the temp dir" "wc-secret-1"
+
+reset_fakes; reset_ps
+run_factory_with_stdin $'gh-token-abc\n' secret save github
+assert_eq "save github: exits 0" "$F_RC" "0"
+assert_contains "save github: registers the broker-scoped sbx secret" \
+  "$(cat "$FAKE_SBX_ARGS")" "secret set -f github --sandbox factory-broker"
+assert_eq "save github: the token reaches sbx on stdin" "$(cat "$FAKE_SBX_SECRET_STDIN" 2>/dev/null)" "gh-token-abc"
+assert_not_contains "save github: the token never appears in sbx's argv" "$(cat "$FAKE_SBX_ARGS")" "gh-token-abc"
+assert_eq "save github: never a global secret (every 'secret set' names the broker sandbox)" \
+  "$(grep '^secret set' "$FAKE_SBX_ARGS" | grep -vc -- '--sandbox factory-broker' || true)" "0"
+
+run_github_sync() { # -> output in $G_OUT
+  G_OUT="$( (
+    # shellcheck disable=SC1091
+    . "$REPO_ROOT/scripts/lib/common.sh"
+    # shellcheck disable=SC1091
+    . "$REPO_ROOT/scripts/lib/secrets.sh"
+    github_sync_from_keychain
+  ) 2>&1 )"
+}
+reset_fakes; reset_ps
+run_github_sync
+assert_contains "github sync with a keychain entry: re-registers it (what start-broker.sh does on every start)" \
+  "$(cat "$FAKE_SBX_ARGS")" "secret set -f github --sandbox factory-broker"
+assert_contains "github sync with a keychain entry: says where the token came from" "$G_OUT" "restored from the keychain"
+rm -f "$tmp/wincred/factory-github"
+reset_fakes; reset_ps
+run_github_sync
+assert_empty "github sync without a keychain entry: leaves sbx alone" "$(cat "$FAKE_SBX_ARGS")"
+
+reset_fakes; reset_ps
+run_factory secret save not-a-secret
+assert_contains "save: unknown name is rejected" "$F_OUT" "unknown secret"
+assert_empty "save: unknown name never reaches PowerShell" "$(cat "$FAKE_PS_ARGS")"
+
+reset_fakes; reset_ps
+run_factory_with_stdin '' secret save gemini
+[ "$F_RC" -ne 0 ] && ok "save: empty value exits non-zero" || bad "save: empty value exits non-zero (got 0)"
+assert_empty "save: empty value is never stored" "$(cat "$FAKE_PS_ARGS")"
+
+reset_fakes; reset_ps
+run_factory secret forget jira
+assert_eq "forget jira: exits 0" "$F_RC" "0"
+[ ! -e "$tmp/wincred/factory-jira" ] && ok "forget jira: deleted from the keychain" || bad "forget jira: deleted from the keychain"
+assert_contains "forget jira: removes the broker's file" \
+  "$(cat "$FAKE_SBX_ARGS")" "exec factory-broker rm -f /etc/factory-broker/secrets/jira"
+
+reset_ps
+set +e
+( . "$REPO_ROOT/scripts/lib/common.sh"; . "$REPO_ROOT/scripts/lib/secrets.sh"
+  keychain_lookup "factory-jira'); Remove-Item C:\\ ; ('" ) >/dev/null 2>&1
+set -e
+assert_empty "wincred: a service name that isn't ours never reaches PowerShell" "$(cat "$FAKE_PS_ARGS")"
+
+FACTORY_KEYCHAIN=none
+reset_fakes; reset_ps
+run_factory_with_stdin 'x' secret save jira
+assert_contains "save with no keychain: says what to do instead" "$F_OUT" "no keychain"
+assert_empty "save with no keychain: PowerShell is never called" "$(cat "$FAKE_PS_ARGS")"
 
 echo "---"
 echo "$pass passed, $fail failed"

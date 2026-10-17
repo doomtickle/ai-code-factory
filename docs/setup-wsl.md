@@ -170,18 +170,19 @@ factory running in the background; `factory start` reopens it.
 ## Optional extras
 
 - **Letting agents push branches and open PRs:** README, *Enabling git push and
-  pull requests*. The GitHub token goes into sbx's secret store, so this works
-  the same as on a Mac.
+  pull requests*. Save the GitHub token once with `factory secret save github`:
+  it is kept in the Windows Credential Manager and restored for the broker
+  every time the broker is created, so `factory update` never asks for it again.
 - **Personal settings** (repos agents may push to, extra hosts): copy
   `config.example/` to `~/.config/ai-code-factory/` and edit it. README,
   *Local settings*.
-- **Gemini, Jira, private npm registry:** these read their tokens from the Linux
-  keyring with `secret-tool`. WSL usually has no keyring running. Instead, use
-  `factory secret set <name>` (README, *Enabling a private npm registry*, etc.) to
-  deliver credentials without a keyring. Note that `factory secret set` requires the broker
-  to be running, and the values are lost if the broker sandbox is recreated (`factory update`,
-  `factory reset`); the run that creates the new broker sandbox (`factory start`, or `factory update`
-  itself) lists which to set again. Everything else works without them.
+- **Gemini, Jira, private npm registry, Passdesk Pro:** WSL usually has no Linux
+  keyring, so the factory uses the **Windows Credential Manager** instead
+  (through `powershell.exe`; the value never appears on a command line). Save
+  each credential once with `factory secret save <name>`; every broker start
+  delivers it. You can see the entries in Windows under *Credential Manager →
+  Web Credentials* (`factory-<name>`). `factory secret set <name>` still exists
+  for a one-off value that should not be saved. Everything else works without them.
 
 ## Keeping it on GitHub
 

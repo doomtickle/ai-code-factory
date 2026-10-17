@@ -252,8 +252,9 @@ broker kit, and names any that aren't.
 
 > **Warning:** Recreating the broker sandbox deletes a GitHub token stored with
 > `--sandbox factory-broker`, and any credential you delivered with
-> `factory secret set`. `factory update` tells you before it removes anything,
-> and the run that creates the new broker lists what to set again.
+> `factory secret set`. Credentials saved with `factory secret save` come back
+> by themselves; for the rest, `factory update` tells you before it removes
+> anything, and the run that creates the new broker lists what to set again.
 
 The same folder holds your `[git].repos` for pushes, a private npm registry and
 your Jira site. See [Local settings](../../README.md#local-settings) and the
