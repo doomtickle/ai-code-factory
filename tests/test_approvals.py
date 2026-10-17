@@ -137,6 +137,7 @@ class ApprovalPointTests(Base):
             "draft": True,
             "files": ["a.txt", f"{token}.txt"],
             "meta": {"note": f"leaked {token}"},
+            "pair": ("clean.txt", f"{token}.txt"),
         })
         card = seen[-1]
         self.assertNotIn(token, card["title"])
@@ -146,6 +147,9 @@ class ApprovalPointTests(Base):
         self.assertNotIn(token, card["files"][1])
         self.assertEqual(card["files"][0], "a.txt")
         self.assertNotIn(token, card["meta"]["note"])
+        self.assertNotIn(token, card["pair"][1])
+        self.assertEqual(card["pair"][0], "clean.txt")
+        self.assertIsInstance(card["pair"], tuple)
         # Non-string values are untouched.
         self.assertEqual(card["file_count"], 2)
         self.assertIs(card["draft"], True)

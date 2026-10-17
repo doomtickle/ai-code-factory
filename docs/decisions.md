@@ -15,10 +15,12 @@ Dated entries, for the user to review. Newest first.
   `filters.redact` (already applied to audit values in `core/audit.py`) at
   this one choke point covers all three sinks today and any future approval
   plugin, without Pro needing its own copy of the patterns or core importing
-  Pro. The redaction is recursive into lists/dicts (a card's `files` list,
-  say) but leaves non-string values alone, and only the copy passed to the
-  hook is touched — the real tool call already ran with the original
-  arguments, so nothing about what actually gets pushed or opened changes.
+  Pro. The redaction is recursive into lists/dicts/tuples (a card's `files`
+  list, say) but leaves non-string values alone, and only the copy passed to
+  the hook is touched. The write itself, which runs only after `require`
+  returns (`passdesk/tools/git.py:187,209`), still uses the original
+  arguments; only the copy shown to the hook is scrubbed, so nothing about
+  what actually gets pushed or opened changes.
   Dropping the title outright (the alternative in the backlog item) was
   rejected: an approver needs to read the title to decide; redacting the one
   substring that looks like a credential keeps the rest legible. Redaction
@@ -27,6 +29,23 @@ Dated entries, for the user to review. Newest first.
   was checked against `passdesk_pro/approvals.py`'s `card_id`, which hashes
   a fixed set of stable fields (including `bundle_sha256`, a hex digest that
   matches none of `SECRET_PATTERNS`) from whatever card it's given.
+  - **A `[REDACTED:...]` marker means the real write still contains that
+    string; an approver should decline, not just note it.** This matters
+    most for `git_push`'s `branch` field: `github_create_pr`'s title and
+    body are already refused outright by `block_outbound_secrets` before
+    `require` is ever called (`tools/git.py:206-207`), but a push's branch
+    name is never secret-scanned (`check_push_branch`, `tools/git.py:42-51`)
+    — a branch named `factory/ghp_...` would be published to GitHub exactly
+    as typed if approved. Blocking secrets in branch names the same way is
+    a separate backlog follow-up, not done here.
+  - **Two writes whose cards differ only in the redacted substring get the
+    same card id** (`passdesk_pro/approvals.py`'s `card_id` hashes whatever
+    card it's given, which is the redacted one), so one decision could cover
+    either. Accepted for this change: the content that actually gets pushed
+    is still pinned by `head` and `bundle_sha256`, neither of which
+    redaction touches (a hex digest matches no `SECRET_PATTERNS` entry), and
+    closing this gap means blocking secrets in branch names outright (the
+    follow-up above), not redacting harder.
 
 ## 2026-10-16
 

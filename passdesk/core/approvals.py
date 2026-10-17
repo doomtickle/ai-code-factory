@@ -52,6 +52,8 @@ def _redacted(value):
         return {k: _redacted(v) for k, v in value.items()}
     if isinstance(value, list):
         return [_redacted(v) for v in value]
+    if isinstance(value, tuple):
+        return tuple(_redacted(v) for v in value)
     return value
 
 
@@ -63,8 +65,9 @@ def require(card: dict) -> None:
     string value in the copy the hook sees has gone through
     `filters.redact` - so a leaked credential cannot reach a notification,
     the pending card file or the console through a card field (the title,
-    say). The real tool call already ran with the unredacted arguments;
-    only what gets shown to an approver is scrubbed here.
+    say). The write itself, which runs only after `require` returns
+    (`passdesk/tools/git.py:187,209`), still uses the original arguments;
+    only the copy shown to the hook is scrubbed.
     """
     if _hook is None:
         return
