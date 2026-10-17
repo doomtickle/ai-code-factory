@@ -25,6 +25,8 @@ ROOT="$(dirname "$SCRIPTS")"
 . "$SCRIPTS/lib/roles.sh"
 # shellcheck source=../scripts/lib/preflight.sh
 . "$SCRIPTS/lib/preflight.sh"
+# shellcheck source=../scripts/lib/secrets.sh
+. "$SCRIPTS/lib/secrets.sh"
 
 readonly HERDR_SESSION_NAME="factory"
 
@@ -65,6 +67,11 @@ ${B}Usage${N}
   factory roles              List roles and what they may do
   factory role new <name> [like]
                              Add a role, copied from an existing one (default: reviewer)
+  factory secret set <name>  Deliver a broker credential (jira, gemini, npm-registry,
+                             passdesk-license, approvals-webhook) from stdin, for
+                             machines with no OS keychain (e.g. WSL2)
+  factory secret rm <name>   Remove a credential delivered with 'factory secret set'
+  factory secret ls          List credentials managed by 'factory secret set'
   factory analytics          Cost, token and performance report from the audit logs
   factory approvals          Pushes and PRs the gateway is holding for you (Passdesk Pro):
                              list, show <id>, approve <id>, decline <id> --reason ..., watch
@@ -230,7 +237,7 @@ cmd_doctor() {
     warn "checked once sbx is installed and the broker sandbox exists ('factory setup', then 'factory start')"
   elif ! sandbox_exists "$BROKER_SANDBOX"; then
     warn "broker sandbox not created yet ('factory start' creates it)"
-  elif [ "$(sbx ls 2>/dev/null | awk -v s="$BROKER_SANDBOX" '$1 == s { print $3 }')" != running ]; then
+  elif ! sandbox_running "$BROKER_SANDBOX"; then
     warn "broker sandbox is not running ('factory start' starts it); its checks are skipped"
   else
     doctor='cd /opt/factory-broker && PYTHONDONTWRITEBYTECODE=1 python3 -m passdesk.doctor'
@@ -508,6 +515,85 @@ cmd_role() {
   esac
 }
 
+# --- secret --------------------------------------------------------------------------
+# For machines with no OS keychain (e.g. WSL2, which has neither macOS
+# Keychain nor secret-tool), so Jira, Gemini, the private npm registry token,
+# and the Passdesk Pro plugin's license key and approvals webhook URL can
+# still be delivered. Shares its remote delivery/revocation code with
+# scripts/start-broker.sh's keychain-based path (scripts/lib/secrets.sh) and
+# marks the name as manually managed, so the next 'factory start' does not
+# try to revoke it for having no (or an empty) keychain entry.
+require_broker_running_for_secret() {
+  require_sbx
+  sandbox_running "$BROKER_SANDBOX" \
+    || die "the broker sandbox is not running; run 'factory start' first"
+}
+
+cmd_secret_set() {
+  [ $# -eq 1 ] || die "usage: factory secret set <name>"
+  local name="$1" value
+  secret_name_valid "$name" \
+    || die "unknown secret '$name' (one of: $FACTORY_SECRET_NAMES)"
+  require_broker_running_for_secret
+
+  if [ -t 0 ]; then
+    printf 'Value for %s (input hidden): ' "$name"
+    read -rs value
+    printf '\n'
+  else
+    # Read all of stdin, then strip exactly one trailing newline (so
+    # "echo token | factory secret set jira" works) without losing any
+    # other trailing whitespace the value may legitimately contain. The
+    # trailing "x" sentinel stops "$(...)" from stripping every trailing
+    # newline itself.
+    value="$(cat; printf x)"
+    value="${value%x}"
+    case "$value" in *$'\n') value="${value%$'\n'}" ;; esac
+  fi
+  [ -n "$value" ] || die "empty value for '$name'"
+
+  printf '%s' "$value" | secret_deliver_file "$BROKER_SANDBOX" "$name" \
+    || die "could not deliver '$name' to the broker sandbox"
+  secret_mark_manual "$name"
+  ok "delivered '$name' to the broker sandbox; 'factory start' will no longer touch it from the keychain"
+}
+
+cmd_secret_rm() {
+  [ $# -eq 1 ] || die "usage: factory secret rm <name>"
+  local name="$1"
+  secret_name_valid "$name" \
+    || die "unknown secret '$name' (one of: $FACTORY_SECRET_NAMES)"
+  require_broker_running_for_secret
+
+  secret_revoke_file "$BROKER_SANDBOX" "$name" \
+    || die "could not remove '$name' from the broker sandbox; it may still be active"
+  secret_unmark_manual "$name"
+  ok "removed '$name' from the broker sandbox"
+}
+
+cmd_secret_ls() {
+  local dir found=""
+  dir="$(secret_manual_dir)"
+  if [ -d "$dir" ]; then
+    local f
+    for f in "$dir"/*; do
+      [ -e "$f" ] || continue
+      found=1
+      say "  $(basename "$f")"
+    done
+  fi
+  [ -n "$found" ] || say "No secrets are managed with 'factory secret set' (see: factory secret)."
+}
+
+cmd_secret() {
+  case "${1:-}" in
+    set) shift; cmd_secret_set "$@" ;;
+    rm) shift; cmd_secret_rm "$@" ;;
+    ls) shift; cmd_secret_ls "$@" ;;
+    *) die "usage: factory secret <set|rm|ls> <name>" ;;
+  esac
+}
+
 # --- analytics ---------------------------------------------------------------------
 cmd_analytics() {
   local python
@@ -687,6 +773,7 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
     logs|log) cmd_logs "$@" ;;
     roles) cmd_roles "$@" ;;
     role) cmd_role "$@" ;;
+    secret) cmd_secret "$@" ;;
     analytics) cmd_analytics "$@" ;;
     approvals|approve) cmd_approvals "$@" ;;
     help|-h|--help) usage ;;
