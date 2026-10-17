@@ -179,7 +179,10 @@ factory running in the background; `factory start` reopens it.
 - **Gemini, Jira, private npm registry:** these read their tokens from the Linux
   keyring with `secret-tool`. WSL usually has no keyring running. Instead, use
   `factory secret set <name>` (README, *Enabling a private npm registry*, etc.) to
-  deliver credentials without a keyring. Everything else works without them.
+  deliver credentials without a keyring. Note that `factory secret set` requires the broker
+  to be running, and the values are lost if the broker sandbox is recreated (`factory update`,
+  `factory reset`); the next `factory start` will print which secrets to re-set.
+  Everything else works without them.
 
 ## Keeping it on GitHub
 

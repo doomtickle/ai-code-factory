@@ -173,6 +173,11 @@ Herdr; run `factory start` again to reopen it.
 | `factory stop` | Stop the agents, broker and dispatch bridge (state is kept) |
 | `factory reset` | Remove the agent sandboxes to switch projects (your login is kept) |
 
+**Note on `factory secret set`:** it delivers a value to the *current* running broker sandbox
+and requires the broker to be running first. Any operation that recreates the broker (`factory reset`,
+or `factory update` if the broker image changes) drops those values; the next `factory start` will
+print which secrets to re-set.
+
 `factory secret rm <name>` only removes the broker sandbox's copy; if the host
 keychain still has an entry for `factory-<name>`, it warns that the next
 `factory start` will deliver that entry again, and how to clear it too.
@@ -254,8 +259,8 @@ private ones it couldn't fetch.
    - Linux: `secret-tool store --label "Factory npm registry token" service factory-npm-registry`
      (replaces any existing value)
    
-   No keychain (WSL2, headless Linux)? Run `factory secret set npm-registry` and paste the token.
-   To revoke, run `factory secret rm npm-registry`.
+   No keychain (WSL2, headless Linux)? Run `factory secret set npm-registry` and paste the token
+   (see the note under `factory secret set` above). To revoke, run `factory secret rm npm-registry`.
 
    The value decides the auth scheme:
 
@@ -317,8 +322,8 @@ agent sandbox (the narrowly-scoped exception documented in this repo's
    - macOS: `security add-generic-password -s factory-gemini -a factory -w` (prompts for the key)
    - Linux: `secret-tool store --label "Factory Gemini key" service factory-gemini` (prompts for the key)
    
-   No keychain (WSL2, headless Linux)? Run `factory secret set gemini` and paste the key.
-   To revoke, run `factory secret rm gemini`.
+   No keychain (WSL2, headless Linux)? Run `factory secret set gemini` and paste the key
+   (see the note under `factory secret set` above). To revoke, run `factory secret rm gemini`.
 2. Run `factory start` (or `./scripts/start-broker.sh <project-dir>` directly) again to
    deliver it to the broker sandbox. Re-running after changing the keychain entry
    rotates the key the broker uses.
@@ -357,8 +362,8 @@ credential the broker can't use yet.
    - Linux: `secret-tool store --label "Factory Jira token" service factory-jira`
      (prompts; enter `you@example.com:TOKEN` as the value)
    
-   No keychain (WSL2, headless Linux)? Run `factory secret set jira` and paste `you@example.com:TOKEN`.
-   To revoke, run `factory secret rm jira`.
+   No keychain (WSL2, headless Linux)? Run `factory secret set jira` and paste `you@example.com:TOKEN`
+   (see the note under `factory secret set` above). To revoke, run `factory secret rm jira`.
 4. Run `factory start` (or `./scripts/start-broker.sh <project-dir>` directly) again to
    deliver it to the broker sandbox.
 
@@ -391,14 +396,15 @@ call later; the decision is picked up by the retry.
    service `factory-passdesk-license`, as for Gemini above. Optionally store
    a Slack, Discord or ntfy webhook URL under `factory-approvals-webhook` to
    be told when something is waiting.
-   
-   No keychain (WSL2, headless Linux)? Run `factory secret set passdesk-license` to deliver the
-   license key, and `factory secret set approvals-webhook` for the webhook URL.
-   Revoke with `factory secret rm passdesk-license` or `factory secret rm approvals-webhook`.
-2. Run `factory update`: it bakes the plugin into the broker image, names it
-   in `PASSDESK_PLUGINS` when it creates the broker sandbox, and delivers
-   the two credentials. `factory doctor` then reports the license.
-3. Decide with `factory approvals` (list), `factory approvals approve <id>`
+2. Run `factory update`: it bakes the plugin into the broker image and names it
+   in `PASSDESK_PLUGINS` when it creates the broker sandbox. `factory doctor`
+   then reports the license.
+3. If using keychain, the credentials are delivered automatically when the broker
+   starts. If you have no keychain (WSL2, headless Linux), run `factory secret set passdesk-license`
+   and paste the license key, then `factory secret set approvals-webhook` and paste the webhook URL
+   (see the note under `factory secret set` above). Revoke with `factory secret rm passdesk-license`
+   or `factory secret rm approvals-webhook`.
+4. Decide with `factory approvals` (list), `factory approvals approve <id>`
    or `factory approvals decline <id> --reason "..."`; `factory approvals
    watch` prints cards as they arrive. Decisions are plain files in the
    broker state folder, so nothing new listens on the network.
