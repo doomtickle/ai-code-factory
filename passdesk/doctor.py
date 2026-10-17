@@ -1,6 +1,6 @@
 """passdesk doctor: check a Passdesk deployment and say how to fix each problem.
 
-    python3 -m passdesk.doctor [--live] [--kit spec.yaml ...]
+    python3 -m passdesk.doctor [--live] [--kit spec.yaml ...] [--json]
 
 It reads the policy (with its local overlay), the state directory (tokens,
 grants, audit log), the workspace's exchange directory, the credential files,
@@ -98,6 +98,15 @@ class Report:
 
     def messages(self, level: str | None = None) -> list[str]:
         return [text for _, lvl, text, _ in self.items if level is None or lvl == level]
+
+    def to_dict(self) -> dict:
+        """The same findings as `render`, as a JSON-ready object."""
+        return {
+            "problems": self.problems,
+            "warnings": self.count(WARN),
+            "items": [{"section": sec, "level": level, "text": text, "fix": fix}
+                      for sec, level, text, fix in self.items],
+        }
 
 
 # --- policy -------------------------------------------------------------------------
@@ -698,6 +707,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--url", default="", help=f"broker MCP URL for --live (default: http://127.0.0.1:{config.PORT}/mcp)")
     parser.add_argument("--egress-hosts", action="store_true",
                         help="print every host the policy can reach, one per line, and exit")
+    parser.add_argument("--json", action="store_true",
+                        help="print the report as one JSON object instead of the human-readable text")
     parser.add_argument("--no-color", action="store_true")
     args = parser.parse_args(argv)
 
@@ -711,7 +722,10 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     report = run(args.policy, args.kit, args.live, args.url)
-    print(render(report, color=sys.stdout.isatty() and not args.no_color))
+    if args.json:
+        print(json.dumps(report.to_dict()))
+    else:
+        print(render(report, color=sys.stdout.isatty() and not args.no_color))
     return 1 if report.problems else 0
 
 
