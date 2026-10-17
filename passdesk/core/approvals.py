@@ -17,6 +17,8 @@ from __future__ import annotations
 import contextvars
 from typing import Callable
 
+from . import filters
+
 Hook = Callable[[dict], None]
 
 # The principal whose call is running, set by the protocol layer per call so
@@ -36,12 +38,37 @@ def hook_installed() -> bool:
     return _hook is not None
 
 
+def _redacted(value):
+    """Recursively redact known secret patterns in every string value.
+
+    A credential-looking string (a leaked token pasted into a PR title, say)
+    must not reach a notification webhook, the pending card file or the
+    console verbatim, however it got into the card. Non-string values (ints,
+    bools, the digest in `bundle_sha256`) pass through untouched.
+    """
+    if isinstance(value, str):
+        return filters.redact(value)
+    if isinstance(value, dict):
+        return {k: _redacted(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_redacted(v) for v in value]
+    if isinstance(value, tuple):
+        return tuple(_redacted(v) for v in value)
+    return value
+
+
 def require(card: dict) -> None:
     """Hold here until the write described by `card` may proceed.
 
     Returns to allow it; raises Denied (from the hook) to refuse it. The
-    card gains the calling principal before the hook sees it.
+    card gains the calling principal before the hook sees it, and every
+    string value in the copy the hook sees has gone through
+    `filters.redact` - so a leaked credential cannot reach a notification,
+    the pending card file or the console through a card field (the title,
+    say). The write itself, which runs only after `require` returns
+    (`passdesk/tools/git.py:187,209`), still uses the original arguments;
+    only the copy shown to the hook is scrubbed.
     """
     if _hook is None:
         return
-    _hook({**card, "principal": PRINCIPAL.get()})
+    _hook(_redacted({**card, "principal": PRINCIPAL.get()}))

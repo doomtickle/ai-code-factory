@@ -25,7 +25,33 @@ the code; the decision log records what changed on the way.
   `require` after the title and body pass the secret scan.
 
 The card never carries a credential, and nothing in it comes from the
-network: it is made of what the gateway itself verified.
+network: it is made of what the gateway itself verified. `require` also
+redacts any known secret pattern (`core/filters.py`'s `SECRET_PATTERNS`,
+e.g. a `ghp_...` token) found in a string field - recursively through lists,
+dicts and tuples, non-string values untouched - before the hook sees the
+card, in case a credential-looking string reached a field like the PR
+title. Only the redacted copy is shown to a hook; the write itself, which
+runs only after `require` returns, still uses the original arguments; only
+the copy shown to the hook is scrubbed.
+
+**A `[REDACTED:...]` marker on a card means the real write contains that
+string, and an approver should decline it.** This matters most for a push's
+`branch` field: unlike the PR title and body, which `block_outbound_secrets`
+already refuses outright before `require` is ever called
+(`tools/git.py:206-207`), a push's branch name is not secret-scanned
+(`check_push_branch`, `tools/git.py:42-51`) - a branch literally named
+`factory/ghp_...` would be published to GitHub exactly as typed if approved.
+The marker is a signal to the approver, not a guarantee that denying is
+optional.
+
+A consequence worth knowing: two pushes whose cards differ only in the part
+that got redacted (e.g. two different secrets in an otherwise identical
+branch name) produce the same card id (`passdesk_pro/approvals.py`'s
+`card_id`, which hashes the card it is given - the redacted one), so one
+decision could be reused for either. The content that actually gets pushed
+is still pinned by `head` and `bundle_sha256`, which redaction never
+touches; blocking secrets in branch names the way titles and bodies already
+are is a separate backlog item, not fixed here.
 
 ## What Pro ships (commercial, `passdesk-pro`)
 
