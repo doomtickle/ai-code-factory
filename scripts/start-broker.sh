@@ -189,6 +189,11 @@ secret_sync_from_keychain npm-registry || revocation_failed=1
 # approvals webhook URL, which is a credential too (it grants posting).
 secret_sync_from_keychain passdesk-license || revocation_failed=1
 secret_sync_from_keychain approvals-webhook || revocation_failed=1
+# The GitHub token is not a file: it is the broker-scoped sbx secret the
+# egress proxy injects. 'sbx rm' deletes it with the sandbox, so restore it
+# from the keychain (factory-github, 'factory secret save github') on every
+# start; without a keychain entry, a token set by hand is left alone.
+github_sync_from_keychain
 
 [ "$revocation_failed" = 0 ] \
   || die "a credential revocation failed above; it may still be active in the broker sandbox - see the error(s) above"

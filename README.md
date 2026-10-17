@@ -190,14 +190,25 @@ Herdr; run `factory start` again to reopen it.
 | `factory docs [--print]` | Open these docs, with guides, as a web page in your browser (offline, works before setup); `--print` writes the HTML to stdout instead |
 | `factory approvals [approve <id> \| decline <id> --reason "..." \| watch]` | List, decide and watch Passdesk Pro approval cards (see "Enabling approvals") |
 | `factory analytics` | Cost, token and performance report from the audit logs (`--json`, `--html`) |
-| `factory secret set <name>` | Store a credential (for keychain-less machines); reads from stdin |
-| `factory secret rm <name>` | Remove a manually-stored credential |
-| `factory secret ls` | List manually-stored credentials |
+| `factory secret save <name>` | Store a credential **once** in this machine's keychain (`github`, `jira`, `gemini`, `npm-registry`, `passdesk-license`, `approvals-webhook`); every broker start delivers it, including after `factory update` or `factory reset` |
+| `factory secret forget <name>` | Delete a saved credential from the keychain and from the running broker |
+| `factory secret set <name>` | Deliver a credential to the running broker only, without saving it (lost when the broker is recreated); reads from stdin |
+| `factory secret rm <name>` | Remove a credential delivered with `set` |
+| `factory secret ls` | List credentials delivered with `set` |
 | `factory stop` | Stop the agents, broker and dispatch bridge (state is kept) |
 | `factory reset` | Remove the agent sandboxes to switch projects (your login is kept) |
 
-**Note on `factory secret set`:** it delivers a value to the *current* running broker sandbox
-and requires the broker to be running first. Any operation that recreates the broker (`factory reset`,
+**Storing credentials once:** `factory secret save <name>` keeps the value in this
+machine's keychain under `factory-<name>`: the macOS Keychain, the Linux keyring
+(`secret-tool`), or, on WSL2, the **Windows Credential Manager** (encrypted under
+your Windows login, no unlock prompt). From then on every broker start delivers it,
+so recreating the broker (`factory update`, `factory reset`) needs nothing retyped.
+The GitHub token is saved the same way (`factory secret save github`) and restored
+as the broker-scoped sbx secret on every start. To rotate a credential, save it
+again; to revoke it, `factory secret forget <name>`.
+
+**`factory secret set`** delivers a value to the *current* running broker sandbox
+only, and requires the broker to be running first. Any operation that recreates the broker (`factory reset`,
 or `factory update` if the broker image changes) drops those values; the run that creates the new
 broker sandbox (`factory start`, or `factory update` itself) lists which to set again.
 
@@ -259,11 +270,19 @@ shares settings, keep a copy of the folder somewhere for teammates to copy.
 
 1. Add the repos agents may use to `[git].repos` in your local `policy.toml`
    (Local settings; for example `"my-org/my-project"`), then run `factory update` to rebuild the broker image and recreate the broker sandbox.
-2. Store a GitHub fine-grained token scoped to those repos (Contents: read/write,
-   Pull requests: read/write) **for the broker sandbox only**:
+2. Create a GitHub fine-grained token scoped to those repos (Contents: read/write,
+   Pull requests: read/write) and save it once:
    ```sh
-   sbx secret set github --sandbox factory-broker
+   factory secret save github
    ```
+   It goes into this machine's keychain (`factory-github`), and every broker start
+   registers it as an sbx secret **for the broker sandbox only**, so it survives
+   `factory update` and `factory reset`. The same token keeps working until its
+   GitHub expiry date; when it expires, create a new one and save it again.
+   (Without a keychain: `sbx secret set github --sandbox factory-broker`, which
+   has to be repeated whenever the broker sandbox is recreated.) Never store it
+   globally (`sbx secret set github` without `--sandbox`): sbx would then inject it
+   for every sandbox.
 Agents may only push branches starting with `factory/`. They can never push to
 protected branches (`main`, `master`, `release/*`) and can't force-push. The
 developer bundles a branch from its clone into `.factory/outgoing/` in the
@@ -294,8 +313,8 @@ private ones it couldn't fetch.
    - Linux: `secret-tool store --label "Factory npm registry token" service factory-npm-registry`
      (replaces any existing value)
    
-   No keychain (WSL2, headless Linux)? Run `factory secret set npm-registry` and paste the token
-   (see the note under `factory secret set` above). To revoke, run `factory secret rm npm-registry`.
+   Or, on any machine including WSL2: `factory secret save npm-registry` and paste the token
+   (see *Storing credentials once* above). To revoke: `factory secret forget npm-registry`.
 
    The value decides the auth scheme:
 
@@ -357,8 +376,8 @@ agent sandbox (the narrowly-scoped exception documented in this repo's
    - macOS: `security add-generic-password -s factory-gemini -a factory -w` (prompts for the key)
    - Linux: `secret-tool store --label "Factory Gemini key" service factory-gemini` (prompts for the key)
    
-   No keychain (WSL2, headless Linux)? Run `factory secret set gemini` and paste the key
-   (see the note under `factory secret set` above). To revoke, run `factory secret rm gemini`.
+   Or, on any machine including WSL2: `factory secret save gemini` and paste the key
+   (see *Storing credentials once* above). To revoke: `factory secret forget gemini`.
 2. Run `factory start` (or `./scripts/start-broker.sh <project-dir>` directly) again to
    deliver it to the broker sandbox. Re-running after changing the keychain entry
    rotates the key the broker uses.
@@ -397,8 +416,8 @@ credential the broker can't use yet.
    - Linux: `secret-tool store --label "Factory Jira token" service factory-jira`
      (prompts; enter `you@example.com:TOKEN` as the value)
    
-   No keychain (WSL2, headless Linux)? Run `factory secret set jira` and paste `you@example.com:TOKEN`
-   (see the note under `factory secret set` above). To revoke, run `factory secret rm jira`.
+   Or, on any machine including WSL2: `factory secret save jira` and paste `you@example.com:TOKEN`
+   (see *Storing credentials once* above). To revoke: `factory secret forget jira`.
 4. Run `factory start` (or `./scripts/start-broker.sh <project-dir>` directly) again to
    deliver it to the broker sandbox.
 
@@ -434,11 +453,11 @@ call later; the decision is picked up by the retry.
 2. Run `factory update`: it bakes the plugin into the broker image and names it
    in `PASSDESK_PLUGINS` when it creates the broker sandbox. `factory doctor`
    then reports the license.
-3. If using keychain, the credentials are delivered automatically when the broker
-   starts. If you have no keychain (WSL2, headless Linux), run `factory secret set passdesk-license`
-   and paste the license key, then `factory secret set approvals-webhook` and paste the webhook URL
-   (see the note under `factory secret set` above). Revoke with `factory secret rm passdesk-license`
-   or `factory secret rm approvals-webhook`.
+3. From the keychain, the credentials are delivered automatically when the broker
+   starts. On any machine, including WSL2: `factory secret save passdesk-license`
+   and paste the license key, then `factory secret save approvals-webhook` and paste the webhook URL
+   (see *Storing credentials once* above). Revoke with `factory secret forget passdesk-license`
+   or `factory secret forget approvals-webhook`.
 4. Decide with `factory approvals` (list), `factory approvals approve <id>`
    or `factory approvals decline <id> --reason "..."`; `factory approvals
    watch` prints cards as they arrive. Decisions are plain files in the
@@ -828,7 +847,7 @@ templates/agent/factory-lane Lane clones: prepare, export bundles, check out a b
 config.example/              Example local settings for ~/.config/ai-code-factory/
 scripts/lib/common.sh        Pinned versions, checksums, names, shared checks
 scripts/lib/roles.sh         Role parsing and validation
-scripts/lib/secrets.sh       factory secret set/rm (keychain-less machines)
+scripts/lib/secrets.sh       keychains (macOS, secret-tool, Windows Credential Manager), factory secret
 scripts/lib/preflight.sh     Platform checks shared by the installer and factory doctor
 scripts/install-prereqs.sh   Install pinned sbx + herdr
 scripts/00-build-templates.sh

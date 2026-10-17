@@ -189,10 +189,11 @@ Agents can push `factory/*` branches and open draft pull requests through the
 broker, once you allow it. Setup is in
 [Enabling git push and pull requests](../../README.md#enabling-git-push-and-pull-requests):
 list the repos in `[git].repos` in your local `policy.toml`, run
-`factory update`, and store a GitHub token for the broker sandbox only:
+`factory update`, and save a GitHub token once (it is restored for the broker
+sandbox only, on every start):
 
 ```bash
-sbx secret set github --sandbox factory-broker
+factory secret save github
 ```
 
 Then ask:

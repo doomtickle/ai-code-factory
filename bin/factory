@@ -76,9 +76,13 @@ ${B}Usage${N}
   factory roles              List roles and what they may do
   factory role new <name> [like]
                              Add a role, copied from an existing one (default: reviewer)
-  factory secret set <name>  Deliver a broker credential (jira, gemini, npm-registry,
-                             passdesk-license, approvals-webhook) from stdin, for
-                             machines with no OS keychain (e.g. WSL2)
+  factory secret save <name> Store a credential once in this machine's keychain
+                             (github, jira, gemini, npm-registry, passdesk-license,
+                             approvals-webhook); every broker start then delivers it
+  factory secret forget <name>
+                             Delete it from the keychain and from the running broker
+  factory secret set <name>  Deliver a broker credential to the running broker only
+                             (until it is recreated), for machines with no keychain
   factory secret rm <name>   Remove a credential delivered with 'factory secret set'
   factory secret ls          List credentials managed by 'factory secret set'
   factory docs [--print]     Open these docs, with guides, in your browser (offline);
@@ -362,13 +366,8 @@ git_push_enabled() {
   policy_value git repos | grep -qE '\[.*[^][:space:]].*\]'
 }
 
-# keychain_has SERVICE -> success if a credential is stored for SERVICE
-keychain_has() {
-  case "$(uname -s)" in
-    Darwin) security find-generic-password -s "$1" >/dev/null 2>&1 ;;
-    *) command -v secret-tool >/dev/null 2>&1 && secret-tool lookup service "$1" >/dev/null 2>&1 ;;
-  esac
-}
+# keychain_has SERVICE: scripts/lib/secrets.sh (macOS Keychain, Linux
+# secret-tool, or the Windows Credential Manager on WSL2).
 
 # any_jira_tool_granted -> success if the Coordinator or any role is granted a
 # jira_* broker tool (jira_my_issues, jira_get_issue). Other broker tools
@@ -439,8 +438,14 @@ onboarding_hints() {
   if ! claude_login_stored; then
     warn "first time: type /login in the Coordinator pane to sign in with your Claude subscription, then run 'factory start' again (e.g. in the Host shell pane) to create the role sandboxes"
   fi
-  if git_push_enabled && ! sbx secret ls 2>/dev/null | grep -q " github "; then
-    warn "git push/PR is enabled but no GitHub token is stored: run 'sbx secret set github --sandbox $BROKER_SANDBOX' (see README: Enabling git push and pull requests)"
+  if git_push_enabled; then
+    local sbx_secrets
+    sbx_secrets="$(sbx secret ls 2>/dev/null || true)"
+    if printf '%s\n' "$sbx_secrets" | awk '$1 == "(global)" && $3 == "github" { f = 1 } END { exit !f }'; then
+      warn "a global GitHub token is stored, so sbx injects it for every sandbox, not just the broker. Run 'factory secret save github', then remove the global one: sbx secret rm github"
+    elif ! printf '%s\n' "$sbx_secrets" | grep -q " github "; then
+      warn "git push/PR is enabled but no GitHub token is stored: run 'factory secret save github' (see README: Enabling git push and pull requests)"
+    fi
   fi
   if any_jira_tool_granted; then
     keychain_has factory-jira || warn "Jira tools are granted but no token is stored in the keychain (see README: Enabling Jira)"
@@ -611,27 +616,96 @@ cmd_secret_set() {
     || die "unknown secret '$name' (one of: $FACTORY_SECRET_NAMES)"
   require_broker_running_for_secret
 
-  if [ -t 0 ]; then
-    printf 'Value for %s (input hidden): ' "$name"
-    IFS= read -rs value || true
-    printf '\n'
-  else
-    # Read all of stdin, then strip exactly one trailing newline (so
-    # "echo token | factory secret set jira" works) without losing any
-    # other trailing whitespace the value may legitimately contain. The
-    # trailing "x" sentinel stops "$(...)" from stripping every trailing
-    # newline itself.
-    value="$(cat; printf x)"
-    value="${value%x}"
-    case "$value" in *$'\n') value="${value%$'\n'}" ;; esac
-  fi
-  [ -n "$value" ] || die "empty value for '$name'"
+  value="$(read_secret_value "$name"; printf x)"; value="${value%x}"  # x: keep trailing newlines exact
 
   printf '%s' "$value" | secret_deliver_file "$BROKER_SANDBOX" "$name" \
     || die "could not deliver '$name' to the broker sandbox"
   secret_mark_manual "$name" \
     || die "delivered '$name' but could not record it as managed by 'factory secret'; the next 'factory start' may remove it"
   ok "delivered '$name' to the broker sandbox; 'factory start' will no longer touch it from the keychain"
+}
+
+# read_secret_value NAME -> the value from a hidden prompt (terminal) or all of
+# stdin, minus exactly one trailing newline; dies on an empty value.
+read_secret_value() {
+  local value
+  if [ -t 0 ]; then
+    printf 'Value for %s (input hidden): ' "$1" >&2
+    IFS= read -rs value || true
+    printf '\n' >&2
+  else
+    # The trailing "x" sentinel stops "$(...)" from stripping every trailing
+    # newline itself; then exactly one ("echo token | ...") is removed.
+    value="$(cat; printf x)"
+    value="${value%x}"
+    case "$value" in *$'\n') value="${value%$'\n'}" ;; esac
+  fi
+  [ -n "$value" ] || die "empty value for '$1'"
+  printf '%s' "$value"
+}
+
+# cmd_secret_save NAME -> store NAME once in this machine's keychain
+# (factory-<NAME>: macOS Keychain, Linux secret-tool, or the Windows
+# Credential Manager on WSL2), so every broker start from now on delivers it
+# - including after 'factory update' or 'factory reset' recreate the broker.
+# NAME is one of the broker credential files, or "github" (the broker-scoped
+# sbx secret). If the broker is running, it gets the value right away.
+cmd_secret_save() {
+  [ $# -eq 1 ] || die "usage: factory secret save <name>"
+  local name="$1" backend value
+  keychain_name_valid "$name" \
+    || die "unknown secret '$name' (one of: $FACTORY_KEYCHAIN_NAMES)"
+  backend="$(keychain_backend)"
+  case "$backend" in
+    macos)
+      [ -t 0 ] || die "on macOS run 'factory secret save $name' in a terminal: Keychain prompts for the value itself"
+      say "Keychain will ask for the value of $name twice."
+      security add-generic-password -U -s "factory-$name" -a factory -w \
+        || die "could not save factory-$name in the Keychain" ;;
+    secret-tool|wincred)
+      value="$(read_secret_value "$name"; printf x)"; value="${value%x}"  # x: keep trailing newlines exact
+      printf '%s' "$value" | keychain_store "factory-$name" \
+        || die "could not save factory-$name in the keychain ($backend)"
+      unset value ;;
+    *)
+      die "this machine has no keychain the factory can use (macOS Keychain, secret-tool, or Windows Credential Manager on WSL2); use 'factory secret set $name' after each broker start instead" ;;
+  esac
+  keychain_has "factory-$name" || die "saved factory-$name, but reading it back failed"
+  ok "saved factory-$name in the keychain ($backend); every broker start delivers it from now on"
+
+  if [ "$name" != github ]; then secret_unmark_manual "$name"; fi  # the keychain manages it now
+  if command -v sbx >/dev/null 2>&1 && sandbox_running "$BROKER_SANDBOX"; then
+    if [ "$name" = github ]; then
+      github_sync_from_keychain
+    else
+      secret_sync_from_keychain "$name" >/dev/null && ok "delivered '$name' to the running broker"
+    fi
+  else
+    say "The broker isn't running; 'factory start' will deliver it."
+  fi
+}
+
+# cmd_secret_forget NAME -> delete factory-<NAME> from the keychain, and its
+# copy in the running broker (the file, or the broker-scoped sbx secret).
+cmd_secret_forget() {
+  [ $# -eq 1 ] || die "usage: factory secret forget <name>"
+  local name="$1"
+  keychain_name_valid "$name" \
+    || die "unknown secret '$name' (one of: $FACTORY_KEYCHAIN_NAMES)"
+  keychain_delete "factory-$name"
+  ! keychain_has "factory-$name" || die "could not delete factory-$name from the keychain"
+  ok "deleted factory-$name from the keychain"
+  if command -v sbx >/dev/null 2>&1 && sandbox_running "$BROKER_SANDBOX"; then
+    if [ "$name" = github ]; then
+      sbx secret rm github --sandbox "$BROKER_SANDBOX" -f >/dev/null 2>&1 || true
+      ok "removed the broker's GitHub token"
+    else
+      secret_revoke_file "$BROKER_SANDBOX" "$name" \
+        || die "could not remove '$name' from the broker sandbox; it may still be active"
+      secret_unmark_manual "$name"
+      ok "removed '$name' from the broker sandbox"
+    fi
+  fi
 }
 
 cmd_secret_rm() {
@@ -646,7 +720,7 @@ cmd_secret_rm() {
   secret_unmark_manual "$name"
   ok "removed '$name' from the broker sandbox"
   if keychain_has "factory-$name"; then
-    warn "a keychain entry for 'factory-$name' still exists; the next 'factory start' will deliver it again. To prevent that, delete the keychain entry too (macOS: security delete-generic-password -s factory-$name; Linux: secret-tool clear service factory-$name)"
+    warn "a keychain entry for 'factory-$name' still exists; the next 'factory start' will deliver it again. To prevent that: factory secret forget $name"
   fi
 }
 
@@ -669,7 +743,9 @@ cmd_secret() {
     set) shift; cmd_secret_set "$@" ;;
     rm) shift; cmd_secret_rm "$@" ;;
     ls) shift; cmd_secret_ls "$@" ;;
-    *) die "usage: factory secret <set|rm|ls> <name>" ;;
+    save) shift; cmd_secret_save "$@" ;;
+    forget) shift; cmd_secret_forget "$@" ;;
+    *) die "usage: factory secret <save|forget|set|rm|ls> <name>" ;;
   esac
 }
 
