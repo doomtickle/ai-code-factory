@@ -196,12 +196,12 @@ source ~/.zshrc</pre><button class="copy" type="button">Copy</button></div>
       <li class="step">
         <h3>Start the factory on a project</h3>
         <div class="step-body">
-          <p>Run it from the project folder. It opens Herdr with a Coordinator tab and one tab per role.</p>
+          <p>Run it from the project folder: a git repository, or a folder of them. It opens Herdr with a Coordinator tab and one tab per role.</p>
           <div class="cmd"><pre>cd ~/code/my-project
 factory start</pre><button class="copy" type="button">Copy</button></div>
           <div class="panes" aria-label="What Herdr shows">
             <div class="pane"><b>coordinator</b><span>Claude on top, a host shell below</span></div>
-            <div class="pane"><b>developer</b><span>Live transcript: edits, tests, docs</span></div>
+            <div class="pane"><b>developer</b><span>Live transcripts: code, tests, docs on factory/* branches</span></div>
             <div class="pane"><b>reviewer</b><span>Live transcript: read-only review</span></div>
             <div class="pane"><b>researcher</b><span>Live transcript: the only role on the web</span></div>
           </div>
@@ -223,6 +223,8 @@ factory start</pre><button class="copy" type="button">Copy</button></div>
         <h3>Give the Coordinator a job</h3>
         <div class="step-body">
           <p>Describe the outcome you want. The Coordinator splits it into small pieces, picks a model and effort for each role, and gets the work reviewed. It asks before pushing or opening a PR.</p>
+          <p>The developer works in its own clones of your project, from what is committed, so commit first. Its branches appear in your repository after each job; merge the one the Coordinator says is approved:</p>
+          <div class="cmd"><pre>git merge factory-developer/factory/rate-limit</pre><button class="copy" type="button">Copy</button></div>
           <div class="cmd"><pre>Research how to add rate limiting to the API, implement it with tests, and get it reviewed.</pre><button class="copy" type="button">Copy</button></div>
           <p>Press <strong>Ctrl+B</strong> then <strong>Q</strong> to leave it running in the background, and <code>factory start</code> to come back. When the Coordinator suggests <code>/compact</code> or <code>/clear</code> between pieces of work, take it: that keeps every later turn cheap.</p>
         </div>
@@ -238,7 +240,7 @@ factory start</pre><button class="copy" type="button">Copy</button></div>
         <tbody>
           <tr><td><code>factory update</code></td><td>Pull, rebuild and recreate whatever changed, then restart</td></tr>
           <tr><td><code>factory status</code></td><td>Project, broker, bridge, login and sandbox status</td></tr>
-          <tr><td><code>factory logs developer</code></td><td>Follow a role's transcript (<code>broker</code> or <code>dispatch</code> for audit logs)</td></tr>
+          <tr><td><code>factory logs developer</code></td><td>Follow a role's transcripts, all its lanes (<code>broker</code> or <code>dispatch</code> for audit logs)</td></tr>
           <tr><td><code>factory analytics</code></td><td>Cost, tokens and model use per role (<code>--html</code> for a report)</td></tr>
           <tr><td><code>factory stop</code></td><td>Stop agents, broker and bridge; state is kept</td></tr>
           <tr><td><code>factory reset</code></td><td>Remove agent sandboxes to switch projects; the login is kept</td></tr>

@@ -42,7 +42,7 @@ die() {
 }
 
 # Runtime state: audit logs, transcripts, sessions, token hashes, per-role tool
-# grants, and read-only roles' scratch dirs. It lives outside the repo so no
+# grants, and roles' scratch dirs. It lives outside the repo so no
 # agent workspace can reach it, even when the factory works on its own repo
 # (the broker re-reads grants and token hashes on every call). One per machine,
 # like the sandbox names. Keep in sync with default_state() in scripts/analytics.py.
@@ -96,6 +96,27 @@ migrate_state() {
     echo "Moving $root/.$old to $new..."
     mv "$root/.$old" "$new"
   done
+}
+
+# project_repos PROJECT -> the git repositories roles with WORKSPACE="rw" work
+# on, as paths relative to PROJECT, one per line: "." if PROJECT/.git exists
+# (a directory, or a gitfile), else every immediate subdirectory that isn't
+# hidden or a symlink and has a .git of its own, in byte order. Empty when
+# PROJECT is neither a repo nor a folder of repos. Keep in sync with
+# project_repos() in dispatch/server.py and templates/agent/factory-lane.
+project_repos() {
+  local project="$1" d name
+  if [ -d "$project/.git" ] || [ -f "$project/.git" ]; then
+    printf '.\n'
+    return 0
+  fi
+  for d in "$project"/*; do
+    name="${d##*/}"
+    case "$name" in .*) continue ;; esac
+    [ -d "$d" ] && [ ! -L "$d" ] || continue
+    [ -d "$d/.git" ] || [ -f "$d/.git" ] || continue
+    printf '%s\n' "$name"
+  done | LC_ALL=C sort
 }
 
 sbx_installed_version() {

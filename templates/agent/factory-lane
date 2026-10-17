@@ -1,0 +1,235 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Usage: factory-lane repos   <project>
+#        factory-lane prepare <project> <lane>
+#        factory-lane export  <project> <lane> <rel>
+#        factory-lane review  <project> <ref> [<rel>]
+#
+# Private git clones ("lanes") of the read-only project, on this sandbox's own
+# disk. A writable role works in its lane and commits to factory/* branches;
+# the dispatch bridge brings those back to the host as git bundles.
+#
+# <project> is the project's absolute path (FACTORY_PROJECT), mounted read-only.
+# It is one repo (it has a .git) or a folder of repos (its immediate, not
+# hidden, not symlinked subdirectories that have a .git). A repo's <rel> is "."
+# or that subdirectory's name.
+#
+#   repos    Print the project's repos (<rel>), one per line.
+#   prepare  Clone each repo into the lane (or fetch origin if it is already
+#            cloned). The last line of stdout is the lane dir:
+#            ${FACTORY_LANES_ROOT:-$HOME/lanes}/<lane> (repo "."), with the
+#            repos of a folder of repos as its subdirectories.
+#   export   Write to stdout a git bundle of the lane repo's factory/* branches,
+#            without what origin (the host) already has. Exit 3 when there is
+#            nothing to export.
+#   review   For read-only roles: clone <project>/<rel> (default ".") into
+#            $HOME/review/, check out <ref> (e.g.
+#            factory-developer/factory/x, or refs/remotes/factory-developer/factory/x)
+#            as branch "review", discarding local edits there, and print the
+#            checkout's path as the last line of stdout. origin is the project,
+#            so `git diff origin/main...HEAD` shows the change.
+#
+# <lane> must match ^[a-z][a-z0-9-]{1,40}$.
+#
+# Baked into the developer and reviewer images (templates/*/Dockerfile).
+
+USAGE="usage: factory-lane repos <project> | prepare <project> <lane> | export <project> <lane> <rel> | review <project> <ref> [<rel>]"
+
+die() { echo "factory-lane: $*" >&2; exit 1; }
+say() { echo "factory-lane: $*" >&2; }
+
+# Byte-order globbing and sorting, as the host side (common.sh, server.py) sorts.
+export LC_ALL=C
+export GIT_TERMINAL_PROMPT=0
+
+# The read-only source may be owned by another uid (e.g. macOS uid 501).
+g() { git -c safe.directory='*' -c core.fsmonitor=false "$@"; }
+
+# project_repos PROJECT: see the header.
+project_repos() {
+  local p="$1" d name
+  if [ -e "$p/.git" ]; then
+    echo .
+    return 0
+  fi
+  for d in "$p"/*; do
+    name="${d##*/}"
+    case "$name" in .*|*$'\n'*) continue ;; esac
+    [ ! -L "$d" ] && [ -d "$d" ] || continue
+    [ -d "$d/.git" ] || [ -f "$d/.git" ] || continue
+    printf '%s\n' "$name"
+  done
+}
+
+check_project() {
+  case "$1" in /*) ;; *) die "project must be an absolute path: $1" ;; esac
+  [ -d "$1" ] || die "no such project directory: $1"
+}
+
+check_lane() {
+  [[ "$1" =~ ^[a-z][a-z0-9-]{1,40}$ ]] || die "invalid lane name: $1"
+}
+
+check_rel() { # check_rel PROJECT REL
+  local r
+  while IFS= read -r r; do
+    [ "$r" != "$2" ] || return 0
+  done < <(project_repos "$1")
+  die "not a repo of $1: $2"
+}
+
+lanes_root() {
+  local root="${FACTORY_LANES_ROOT:-$HOME/lanes}"
+  case "$root" in /*) ;; *) die "FACTORY_LANES_ROOT must be absolute: $root" ;; esac
+  printf '%s\n' "$root"
+}
+
+# set_origin REPO URL: (re)point origin at URL, re-adding it if it was removed.
+set_origin() {
+  g -C "$1" remote set-url origin "$2" 2>/dev/null || g -C "$1" remote add origin "$2" >&2 \
+    || die "can't set origin in $1"
+}
+
+# source_of PROJECT REL: the repo's path in the project.
+source_of() { if [ "$2" = . ]; then printf '%s\n' "$1"; else printf '%s\n' "$1/$2"; fi; }
+
+# target LANE_DIR REL: where repo REL lives in the lane.
+target() { if [ "$2" = . ]; then printf '%s\n' "$1"; else printf '%s\n' "$1/$2"; fi; }
+
+cmd_repos() {
+  [ $# -eq 1 ] || die "$USAGE"
+  check_project "$1"
+  project_repos "$1"
+}
+
+cmd_prepare() {
+  [ $# -eq 2 ] || die "$USAGE"
+  local project="$1" lane="$2" root lanedir rel t s found=""
+  check_project "$project"
+  check_lane "$lane"
+  root="$(lanes_root)"
+  lanedir="$root/$lane"
+  mkdir -p "$root"
+  while IFS= read -r rel; do
+    found=1
+    t="$(target "$lanedir" "$rel")"
+    s="$(source_of "$project" "$rel")"
+    if [ -e "$t/.git" ]; then
+      say "fetching $s into $t"
+      # The lane is the role's to change; point origin back at the project.
+      set_origin "$t" "$s"
+      g -C "$t" fetch --quiet --prune origin >&2 || die "fetch failed in $t"
+    else
+      say "cloning $s into $t"
+      [ "$rel" = . ] || mkdir -p "$lanedir"
+      g clone --quiet --no-hardlinks -- "$s" "$t" >&2 || die "clone of $s failed"
+    fi
+  done < <(project_repos "$project")
+  [ -n "$found" ] || die "no git repos in $project (it has no .git, nor subdirectories with one)"
+  (cd "$lanedir" && pwd -P)
+}
+
+cmd_export() {
+  [ $# -eq 3 ] || die "$USAGE"
+  local project="$1" lane="$2" rel="$3" repo rc
+  check_project "$project"
+  check_lane "$lane"
+  check_rel "$project" "$rel"
+  repo="$(target "$(lanes_root)/$lane" "$rel")"
+  if [ ! -e "$repo/.git" ]; then
+    say "nothing to export: no lane clone at $repo"
+    exit 3
+  fi
+  if [ -z "$(g -C "$repo" for-each-ref --count=1 --format='%(refname)' refs/heads/factory/)" ]; then
+    say "nothing to export: no factory/* branches in $repo"
+    exit 3
+  fi
+  if [ -z "$(g -C "$repo" rev-list -n 1 '--branches=factory/*' --not --remotes=origin)" ]; then
+    say "nothing to export: origin already has every factory/* commit in $repo"
+    exit 3
+  fi
+  # Global: the EXIT trap runs after this function's locals are gone.
+  tmp="$(mktemp -d)"
+  trap 'rm -rf "$tmp"' EXIT
+  set +e
+  g -C "$repo" bundle create --quiet "$tmp/lane.bundle" '--branches=factory/*' --not --remotes=origin \
+    >/dev/null 2>"$tmp/err"
+  rc=$?
+  set -e
+  if [ "$rc" -ne 0 ]; then
+    cat "$tmp/err" >&2
+    if grep -q 'empty bundle' "$tmp/err"; then
+      say "nothing to export from $repo"
+      exit 3
+    fi
+    die "git bundle create failed in $repo"
+  fi
+  cat "$tmp/err" >&2
+  cat "$tmp/lane.bundle"
+}
+
+cmd_review() {
+  [ $# -eq 2 ] || [ $# -eq 3 ] || die "$USAGE"
+  local project="$1" ref="$2" rel="${3:-.}" src full cand name dir
+  check_project "$project"
+  check_rel "$project" "$rel"
+  [[ "$ref" =~ ^[A-Za-z0-9._/-]+$ ]] || die "invalid ref: $ref"
+  case "$ref" in -*|*..*) die "invalid ref: $ref" ;; esac
+  src="$(source_of "$project" "$rel")"
+  if [[ "$ref" == refs/* ]]; then
+    full="$ref"
+  else
+    full=""
+    for cand in "refs/remotes/$ref" "refs/heads/$ref" "refs/tags/$ref"; do
+      if g check-ref-format "$cand" && g -C "$src" show-ref --verify --quiet "$cand"; then
+        full="$cand"
+        break
+      fi
+    done
+    [ -n "$full" ] || die "no such ref in $src: $ref"
+  fi
+  g check-ref-format "$full" || die "invalid ref: $ref"
+  g -C "$src" show-ref --verify --quiet "$full" || die "no such ref in $src: $full"
+
+  name="${full#refs/remotes/}"
+  [ "$rel" = . ] || name="$rel--$name"
+  name="$(printf '%s' "$name" | tr -c 'A-Za-z0-9._-' '_')"
+  name="$name-$(printf '%s\n%s' "$rel" "$full" | sha256sum | cut -c1-8)"
+  # Each lane of a reviewer gets its own checkout, so two lanes reviewing the
+  # same ref don't share one.
+  case "${FACTORY_LANE:-}" in
+    '') ;;
+    *[!a-z0-9-]*) die "invalid FACTORY_LANE: $FACTORY_LANE" ;;
+    *) name="$FACTORY_LANE--$name" ;;
+  esac
+  dir="$HOME/review/$name"
+  mkdir -p "$HOME/review"
+  if [ -e "$dir/.git" ]; then
+    say "refreshing $dir from $src"
+    set_origin "$dir" "$src"
+    g -C "$dir" fetch --quiet --prune origin >&2 || die "fetch failed in $dir"
+  else
+    say "cloning $src into $dir"
+    g clone --quiet --no-hardlinks -- "$src" "$dir" >&2 || die "clone of $src failed"
+  fi
+  g -C "$dir" fetch --quiet --no-tags origin "+$full:refs/factory-review/target" >&2 \
+    || die "fetch of $full failed"
+  g -C "$dir" checkout --quiet --force -B review refs/factory-review/target >&2 \
+    || die "checkout of $full failed in $dir"
+  g -C "$dir" clean --quiet -fd >&2
+  say "checked out $full ($(g -C "$dir" rev-parse --short HEAD)) as branch review"
+  (cd "$dir" && pwd -P)
+}
+
+[ $# -ge 1 ] || die "$USAGE"
+cmd="$1"
+shift
+case "$cmd" in
+  -h|--help|help) sed -n '4,35p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+  repos) cmd_repos "$@" ;;
+  prepare) cmd_prepare "$@" ;;
+  export) cmd_export "$@" ;;
+  review) cmd_review "$@" ;;
+  *) die "$USAGE" ;;
+esac

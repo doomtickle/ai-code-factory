@@ -153,7 +153,7 @@ def load_broker_calls(broker_audit: Path) -> tuple[list[dict], int]:
 
 def load_sessions(sessions_dir: Path) -> tuple[dict, int]:
     """({role: session metadata}, malformed_file_count), from
-    dispatch/sessions/<role>.json. Missing dir -> no sessions."""
+    dispatch/sessions/<lane>.json (one per lane of each role). Missing dir -> no sessions."""
     sessions: dict = {}
     malformed = 0
     if not sessions_dir.is_dir():
@@ -228,10 +228,18 @@ def context_trend(series: list[float]) -> tuple[str | None, float | None]:
     return trend, change_pct
 
 
+_LANE_SUFFIX = re.compile(r"-lane[0-9]+$")
+
+
 def per_role_stats(jobs: list[dict], broker_calls: list[dict], sessions: dict) -> dict:
+    # A role with several lanes keeps one session file per lane (<role>-lane<k>.json);
+    # its current context is the sum over its lanes.
+    role_sessions: dict = {}
+    for name, meta in sessions.items():
+        role_sessions.setdefault(_LANE_SUFFIX.sub("", name), []).append(meta)
     roles = sorted({j.get("role") for j in jobs if j.get("role")}
                    | {c.get("role") for c in broker_calls if c.get("role")}
-                   | set(sessions))
+                   | set(role_sessions))
     result = {}
     for role in roles:
         role_jobs = [j for j in jobs if j.get("role") == role]
@@ -248,8 +256,9 @@ def per_role_stats(jobs: list[dict], broker_calls: list[dict], sessions: dict) -
         context_series = [c for _, c in dated_context]
         trend, change_pct = context_trend(context_series)
 
-        session = sessions.get(role, {})
-        current_context = _num(session.get("context_tokens"))
+        lane_context = [c for c in (_num(m.get("context_tokens")) for m in role_sessions.get(role, []))
+                        if c is not None]
+        current_context = _finite_sum(lane_context) if lane_context else None
         if current_context is None and context_series:
             current_context = context_series[-1]
 

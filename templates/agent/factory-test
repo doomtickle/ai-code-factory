@@ -15,12 +15,17 @@ set -euo pipefail
 #
 # Modes (-m, or FACTORY_TEST_MODE; default auto):
 #   clean  Install dependencies exactly as the lockfile pins them, offline,
-#          from .factory/npm-mirror/ (the broker's npm_fetch tool fills it).
+#          from .factory/npm-mirror/ (the broker's npm_fetch tool fills it): the
+#          nearest one at or above <project-dir>, else the one in
+#          $FACTORY_PROJECT (the host project, when <project-dir> is a lane clone).
 #   host   Use a copy of the project's own node_modules, installed on the host.
 #          Packages built for the host's platform (e.g. @esbuild/darwin-arm64)
 #          get their Linux counterparts, at the same version, from the mirror.
 #          Results then reflect the host's installed versions, not the lockfile.
-#   auto   clean; if that install fails and the project has a node_modules,
+#          In a lane clone (<project-dir> at or under $FACTORY_LANE_ROOT), which
+#          has no node_modules, the node_modules come from the same path under
+#          $FACTORY_PROJECT (copied, never modified).
+#   auto   clean; if that install fails and host mode has a node_modules,
 #          fall back to host.
 #
 # Why a copy: the project folder is shared with the host, whose node_modules
@@ -42,7 +47,7 @@ while getopts "C:m:qh" opt; do
     C) src="$OPTARG" ;;
     m) mode="$OPTARG" ;;
     q) quiet=1 ;;
-    h) sed -n '4,28p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    h) sed -n '4,33p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) die "usage: factory-test [-C <project-dir>] [-m auto|clean|host] [-q] [--] [<command> [args...]]" ;;
   esac
 done
@@ -57,7 +62,24 @@ base="$root/$(basename "$src")-$(printf '%s' "$src" | sha256sum | cut -c1-12)"
 mirror="$src/.factory/npm-mirror"
 dir="$src"
 while [ ! -d "$dir/.factory/npm-mirror" ] && [ "$dir" != / ]; do dir="$(dirname "$dir")"; done
-[ ! -d "$dir/.factory/npm-mirror" ] || mirror="$dir/.factory/npm-mirror"
+if [ -d "$dir/.factory/npm-mirror" ]; then mirror="$dir/.factory/npm-mirror"
+# A lane clone has no .factory/: npm_fetch fills the host project's mirror.
+elif [ -n "${FACTORY_PROJECT:-}" ]; then mirror="$FACTORY_PROJECT/.factory/npm-mirror"
+fi
+
+# modsrc: where host mode takes node_modules from. The project dir itself, or,
+# for a lane clone without node_modules, the same path in the host project.
+modsrc=""
+if [ -d "$src/node_modules" ]; then
+  modsrc="$src"
+elif [ -n "${FACTORY_PROJECT:-}" ] && [ -n "${FACTORY_LANE_ROOT:-}" ] \
+     && lane_root="$(cd "$FACTORY_LANE_ROOT" 2>/dev/null && pwd -P)"; then
+  case "$src/" in
+    "$lane_root"/*)
+      sub="${src#"$lane_root"}"
+      [ ! -d "$FACTORY_PROJECT$sub/node_modules" ] || modsrc="$FACTORY_PROJECT$sub" ;;
+  esac
+fi
 
 if [ -f "$src/yarn.lock" ]; then lock=yarn.lock
 elif [ -f "$src/package-lock.json" ]; then lock=package-lock.json
@@ -106,9 +128,18 @@ clean_install() {
 # host_modules: sync the project, node_modules included, into $base-host and add
 # this platform's counterparts of the host's native packages from the mirror.
 host_modules() {
-  [ -d "$src/node_modules" ] || die "host mode needs the project's node_modules, and $src has none"
+  [ -n "$modsrc" ] || die "host mode needs the project's node_modules, and $src has none"
   mkdir -p "$base-host"
-  rsync -a --delete --exclude=/.git --exclude=/.factory "$src/" "$base-host/"
+  if [ "$modsrc" = "$src" ]; then
+    rsync -a --delete --exclude=/.git --exclude=/.factory "$src/" "$base-host/"
+  else
+    # The lane's files, then every node_modules (nested ones included) from the
+    # host project. Each rsync leaves what the other one excludes alone.
+    say "using the node_modules of $modsrc"
+    rsync -a --delete --exclude=/.git --exclude=/.factory --exclude=node_modules "$src/" "$base-host/"
+    rsync -a -m --delete --exclude=/.git --exclude=/.factory \
+      --include='*/' --include='node_modules/***' --exclude='*' "$modsrc/" "$base-host/"
+  fi
   node - "$base-host" "$mirror" <<'NODE'
 // For every package with optionalDependencies (esbuild, rollup, swc, ...): if
 // the installed one is for another platform and none fits this one, unpack the
@@ -228,7 +259,7 @@ elif [ "$mode" = host ]; then
 elif clean_install; then
   copy="$base"
   label="clean install ($lock, offline from .factory/npm-mirror)"
-elif [ "$mode" = auto ] && [ -d "$src/node_modules" ]; then
+elif [ "$mode" = auto ] && [ -n "$modsrc" ]; then
   say "the clean install failed (above); falling back to a copy of the project's own node_modules"
   host_modules
   copy="$base-host"

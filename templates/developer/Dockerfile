@@ -1,8 +1,8 @@
 # Developer sandbox template: pinned Claude Code base. Its tools (ripgrep, git,
-# jq, curl, node, rsync) come from the pinned base, plus pinned yarn and
-# factory-test below, so nothing is installed at sandbox start and every
-# teammate gets byte-identical tooling. Built with the repo root as the build
-# context (see scripts/00-build-templates.sh).
+# jq, curl, node, rsync) come from the pinned base, plus pinned yarn,
+# factory-test and factory-lane below, so nothing is installed at sandbox start
+# and every teammate gets byte-identical tooling. Built with the repo root as
+# the build context (see scripts/00-build-templates.sh).
 # Pinned to the multi-arch index digest (linux/amd64 + linux/arm64). To upgrade, run:
 #   docker buildx imagetools inspect docker/sandbox-templates:claude-code
 # and replace the digest with the top-level "Digest:" value (keep in sync with
@@ -24,6 +24,9 @@ RUN curl -fsSLo /tmp/yarn.tgz "https://registry.npmjs.org/yarn/-/yarn-${YARN_VER
  && npm install -g --ignore-scripts --no-audit --no-fund /tmp/yarn.tgz \
  && rm /tmp/yarn.tgz \
  && [ "$(yarn --version)" = "${YARN_VERSION}" ]
-# Last, so editing the script reuses the cached yarn layer.
+# Last, so editing the scripts reuses the cached yarn layer. factory-lane
+# manages the role's private git clones of the read-only project (lanes) and
+# the reviewer's checkouts of branches to review.
 COPY --chmod=0555 templates/agent/factory-test /usr/local/bin/factory-test
+COPY --chmod=0555 templates/agent/factory-lane /usr/local/bin/factory-lane
 USER agent

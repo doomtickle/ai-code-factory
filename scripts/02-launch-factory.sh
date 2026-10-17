@@ -8,7 +8,8 @@ set -euo pipefail
 #   - one sandbox per role in roles/, plus the Coordinator sandbox
 #   - a Herdr workspace "code-factory": a "coordinator" tab where you talk to
 #     the Coordinator (plus a host shell), and one tab per role showing the
-#     live transcript of the tasks the Coordinator delegates to it.
+#     live transcripts of the tasks the Coordinator delegates to it (every
+#     lane's, for a role with LANES > 1).
 # Inside a Herdr pane it uses the current Herdr session. Otherwise it uses the
 # session named by FACTORY_HERDR_SESSION (bin/factory sets "factory"), starting
 # that session's server if needed; attach with `herdr session attach <name>`.
@@ -48,6 +49,11 @@ readonly COORDINATOR_TAB="coordinator"
 roles="$(list_roles)"
 [ -n "$roles" ] || die "no roles defined in roles/"
 for role in $roles; do validate_role "$role"; done
+rw_roles=""
+for role in $roles; do
+  [ "$(role_get "$role" WORKSPACE)" != rw ] || rw_roles="$rw_roles $role"
+done
+rw_roles="${rw_roles# }"
 
 # --- Preflight ------------------------------------------------------------------
 # Layout before roles/: one broker registration shared by all agents.
@@ -60,11 +66,20 @@ if sbx mcp ls -q 2>/dev/null | grep -qx "$BROKER_SANDBOX"; then
 then re-run this script."
 fi
 
-# Existing sandboxes are bound to the project they were created for.
+# rw roles work in git clones of the project's repositories (lanes), so the
+# project must be a git repository or a folder of them.
+if [ -n "$rw_roles" ] && [ -z "$(project_repos "$PROJECT")" ]; then
+  die "$PROJECT is not a git repository or a folder of git repositories; the $rw_roles role(s) work in git clones of it (each commits to factory/* branches you merge). Run 'git init' and commit, or start the factory on the repo itself."
+fi
+
+# Existing sandboxes are bound to the project they were created for: the
+# project is the Coordinator's workspace, mounted read-only into role
+# sandboxes (rw roles also mount its .factory/outgoing).
 sandboxes_json="$(sbx ls --json)"
 for sb in "$COORDINATOR_SANDBOX" $(for r in $roles; do role_sandbox "$r"; echo; done); do
   ws_list="$(printf '%s' "$sandboxes_json" | jq -r --arg n "$sb" '.sandboxes[] | select(.name == $n) | .workspaces[]')"
-  if [ -n "$ws_list" ] && ! printf '%s\n' "$ws_list" | grep -q "^$PROJECT\(:ro\)\{0,1\}\$"; then
+  if [ -n "$ws_list" ] && ! printf '%s\n' "$ws_list" \
+      | grep -qxF -e "$PROJECT" -e "$PROJECT:ro" -e "$PROJECT/.factory/outgoing"; then
     die "$sb was created for a different project. To switch projects, see README (Switching projects)."
   fi
 done
@@ -73,6 +88,23 @@ done
 # roles must mount their state dir where it is now (outside the repo), not an
 # old location (e.g. .broker/ or .roles/ inside the repo, before state moved).
 require_state_outside "$PROJECT"
+# rw roles from before lanes mounted the project itself read-write, .git
+# included (no scratch dir); a role switched from ro to rw lacks the outgoing
+# mount. Their fingerprint (RW_LAYOUT and workspace in lib/roles.sh) marks
+# them out of date, so `factory update` recreates them; refuse to run one
+# until then.
+old_layout=""
+for r in $rw_roles; do
+  sb="$(role_sandbox "$r")"
+  ws_list="$(printf '%s' "$sandboxes_json" | jq -r --arg n "$sb" '.sandboxes[] | select(.name == $n) | .workspaces[]')"
+  [ -n "$ws_list" ] || continue
+  if ! printf '%s\n' "$ws_list" | grep -qxF "$FACTORY_ROLES_SCRATCH/$r" \
+      || ! printf '%s\n' "$ws_list" | grep -qxF "$PROJECT/.factory/outgoing"; then
+    old_layout="$old_layout $sb"
+  fi
+done
+[ -z "$old_layout" ] || die "these sandboxes were created with an older layout (the project mounted read-write, or no .factory/outgoing) and must be recreated:$old_layout
+Run 'factory update': it recreates them (your Claude login, the logs and your project are kept; those roles start a fresh conversation)."
 stale=""
 for sb in "$BROKER_SANDBOX" $(for r in $roles; do [ "$(role_get "$r" WORKSPACE)" = ro ] && role_sandbox "$r"; echo; done); do
   if [ "$sb" = "$BROKER_SANDBOX" ]; then want="$FACTORY_BROKER_STATE"; else want="$FACTORY_ROLES_SCRATCH/${sb#factory-}"; fi
@@ -85,14 +117,36 @@ done
   sbx rm --force$stale
 then re-run."
 
+# PROJECT/.factory/outgoing is the one project path rw roles can write: they
+# put git bundles there for the broker's git_push. Create it before the
+# sandboxes mount it, git-ignored (the broker writes the same .gitignore).
+# Refuse symlinks: mkdir -p and the redirect below would follow them out of
+# the project.
+if [ -n "$rw_roles" ]; then
+  for p in .factory .factory/outgoing .factory/.gitignore; do
+    [ ! -L "$PROJECT/$p" ] || die "$PROJECT/$p is a symlink; refusing to use it (remove it, then re-run)"
+    case "$p" in
+      .factory/.gitignore) [ -e "$PROJECT/$p" ] || printf '*\n' > "$PROJECT/$p" ;;
+      *) mkdir -p "$PROJECT/$p" ;;
+    esac
+  done
+fi
+
 "$ROOT/scripts/start-broker.sh" "$PROJECT"
 "$ROOT/scripts/start-dispatch.sh" "$PROJECT"
 
 # --- Sandboxes --------------------------------------------------------------------
 # create_sandbox NAME TEMPLATE KIT-DIR "MCP-LIST" WORKSPACE-MODE
 # MCP-LIST is space-separated (empty for none); one --static-mcp per entry.
-# rw: the project is the primary (read/write) workspace. ro: sbx requires a
-# writable primary, so a scratch dir is primary and the project is mounted :ro.
+# sbx requires a writable primary workspace. Modes:
+#   project (the Coordinator only): the project is the primary workspace; its
+#     kit's managed settings keep the agent from changing it.
+#   rw: a scratch dir is primary, the project is mounted :ro, and only
+#     PROJECT/.factory/outgoing (nested on top) is writable. The role works in
+#     git clones on the sandbox's own disk (lanes, templates/agent/factory-lane);
+#     the dispatch bridge imports their factory/* branches as git bundles.
+#     Keep in sync with RW_LAYOUT in lib/roles.sh.
+#   ro: a scratch dir is primary and the project is mounted :ro.
 create_sandbox() {
   local name="$1" template="$2" kit="$3" mcp_list="$4" mode="$5" scratch mcp
   sandbox_exists "$name" && return 0
@@ -101,13 +155,17 @@ create_sandbox() {
   for mcp in $mcp_list; do
     set -- "$@" --static-mcp "$mcp"
   done
-  if [ "$mode" = rw ]; then
-    sbx create "$@" claude "$PROJECT" >/dev/null
-  else
-    scratch="$FACTORY_ROLES_SCRATCH/${name#factory-}"
-    mkdir -p "$scratch"
-    sbx create "$@" claude "$scratch" "${PROJECT}:ro" >/dev/null
-  fi
+  scratch="$FACTORY_ROLES_SCRATCH/${name#factory-}"
+  case "$mode" in
+    project) sbx create "$@" claude "$PROJECT" >/dev/null ;;
+    rw)
+      mkdir -p "$scratch"
+      sbx create "$@" claude "$scratch" "$PROJECT:ro" "$PROJECT/.factory/outgoing" >/dev/null ;;
+    ro)
+      mkdir -p "$scratch"
+      sbx create "$@" claude "$scratch" "$PROJECT:ro" >/dev/null ;;
+    *) die "create_sandbox: unknown workspace mode '$mode'" ;;
+  esac
   record_sandbox_fingerprint "$name"
 }
 
@@ -117,7 +175,7 @@ create_sandbox() {
 # kits/coordinator/broker.conf grants it tools.
 coordinator_mcp="$DISPATCH_MCP"
 [ -z "$(coordinator_broker_tools)" ] || coordinator_mcp="$coordinator_mcp $(role_broker_mcp coordinator)"
-create_sandbox "$COORDINATOR_SANDBOX" developer "$ROOT/kits/coordinator" "$coordinator_mcp" rw
+create_sandbox "$COORDINATOR_SANDBOX" developer "$ROOT/kits/coordinator" "$coordinator_mcp" project
 # sbx gives a sandbox the stored Claude login only when it creates it: a role
 # sandbox created before the first /login stays logged out, and role panes take
 # no input to /login there. So until a login is stored, create only the
@@ -161,20 +219,22 @@ run_if_idle() {
   fi
 }
 
-# stop_stale_tail PANE LOG -> stop a transcript tail that follows a different
-# file (e.g. the in-repo .dispatch/logs/ from before state moved out), so the
-# pane is idle and run_if_idle restarts it on LOG. Only a plain `tail` is
-# stopped, by pid; nothing is typed into the pane.
+# stop_stale_tail PANE LOG... -> stop a transcript tail that follows other
+# files than LOG... (e.g. the in-repo .dispatch/logs/ from before state moved
+# out, or a role's lanes before its LANES changed), so the pane is idle and
+# run_if_idle restarts it on LOG.... Only a plain `tail` is stopped, by pid;
+# nothing is typed into the pane.
 stop_stale_tail() {
-  local pid
-  pid="$(hd pane process-info --pane "$1" | jq -r --arg log "$2" \
-    '.result.process_info.foreground_processes[] | select(.name == "tail" and .argv[-1] != $log) | .pid' \
+  local pane="$1" pid
+  shift
+  pid="$(hd pane process-info --pane "$pane" | jq -r --argjson logs "$(jq -n '$ARGS.positional' --args "$@")" \
+    '.result.process_info.foreground_processes[] | select(.name == "tail" and .argv[-($logs | length):] != $logs) | .pid' \
     | head -n 1 || true)"
   [ -n "$pid" ] || return 0
-  echo "Restarting transcript tail in pane $1 (it follows an old log path)..."
+  echo "Restarting transcript tail in pane $pane (it follows other log paths)..."
   kill "$pid" 2>/dev/null || true
   for _ in 1 2 3 4 5; do
-    pane_idle "$1" && return 0
+    pane_idle "$pane" && return 0
     sleep 1
   done
 }
@@ -230,13 +290,18 @@ if [ "$host_cwd" != "$PROJECT" ] && pane_idle "$host_shell"; then
 fi
 run_if_idle "$coordinator" "sbx run --name $COORDINATOR_SANDBOX"
 
-# One tab per role, tailing its transcript (read-only; nothing is typed into sandboxes).
+# One tab per role, tailing the transcripts of all its lanes (read-only;
+# nothing is typed into sandboxes). With several files, tail heads each chunk
+# with "==> <lane>.log <==".
 for role in $roles; do
   pane="$(tab_pane "$role")"
   hd pane rename "$pane" "$role (transcript)" >/dev/null
-  log="$FACTORY_DISPATCH_STATE/logs/$role.log"
-  stop_stale_tail "$pane" "$log"
-  run_if_idle "$pane" "clear; tail -n 200 -F $(printf '%q' "$log")"
+  logs=()
+  for lane in $(role_lane_names "$role"); do
+    logs+=("$FACTORY_DISPATCH_STATE/logs/$lane.log")
+  done
+  stop_stale_tail "$pane" "${logs[@]}"
+  run_if_idle "$pane" "clear; tail -n 200 -F$(printf ' %q' "${logs[@]}")"
 done
 
 # Close transcript tabs of roles that no longer exist.

@@ -1,7 +1,7 @@
-# Reviewer sandbox template: Claude Code base + ruff, yarn and factory-test,
-# baked in at build time because the reviewer kit's egress policy only allows
-# api.anthropic.com. Built with the repo root as the build context (see
-# scripts/00-build-templates.sh).
+# Reviewer sandbox template: Claude Code base + ruff, yarn, factory-test and
+# factory-lane, baked in at build time because the reviewer kit's egress policy
+# only allows api.anthropic.com. Built with the repo root as the build context
+# (see scripts/00-build-templates.sh).
 # Pinned to the multi-arch index digest (linux/amd64 + linux/arm64) so every
 # teammate builds from the identical base. To upgrade, run:
 #   docker buildx imagetools inspect docker/sandbox-templates:claude-code
@@ -14,7 +14,7 @@ ARG RUFF_VERSION=0.16.8
 # System Python is externally managed (PEP 668), so install ruff as an
 # isolated uv tool with its binary on the system PATH.
 USER root
-RUN for t in node npm rsync sha256sum; do command -v "$t" >/dev/null || { echo "missing: $t" >&2; exit 1; }; done
+RUN for t in git node npm rsync sha256sum; do command -v "$t" >/dev/null || { echo "missing: $t" >&2; exit 1; }; done
 RUN UV_TOOL_DIR=/opt/uv-tools UV_TOOL_BIN_DIR=/usr/local/bin \
       uv tool install "ruff==${RUFF_VERSION}" \
  && ruff --version
@@ -31,6 +31,9 @@ RUN curl -fsSLo /tmp/yarn.tgz "https://registry.npmjs.org/yarn/-/yarn-${YARN_VER
  && npm install -g --ignore-scripts --no-audit --no-fund /tmp/yarn.tgz \
  && rm /tmp/yarn.tgz \
  && [ "$(yarn --version)" = "${YARN_VERSION}" ]
-# Last, so editing the script reuses the cached yarn layer.
+# Last, so editing the scripts reuses the cached yarn layer. factory-lane
+# manages the role's private git clones of the read-only project (lanes) and
+# the reviewer's checkouts of branches to review.
 COPY --chmod=0555 templates/agent/factory-test /usr/local/bin/factory-test
+COPY --chmod=0555 templates/agent/factory-lane /usr/local/bin/factory-lane
 USER agent

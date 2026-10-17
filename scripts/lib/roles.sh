@@ -57,13 +57,39 @@ in_list() {
   case " $2 " in *" $1 "*) return 0 ;; *) return 1 ;; esac
 }
 
+# Role names must not end in -lane<N>: that is how a role's extra lanes are
+# named (role_lane_names), so such a role would collide with another's lane.
 valid_role_name() {
-  printf '%s' "$1" | grep -Eq '^[a-z][a-z0-9-]{1,30}$' && ! in_list "$1" "$RESERVED_ROLE_NAMES"
+  printf '%s' "$1" | grep -Eq '^[a-z][a-z0-9-]{1,30}$' && ! in_list "$1" "$RESERVED_ROLE_NAMES" \
+    && ! printf '%s' "$1" | grep -Eq -- '-lane[0-9]+$'
+}
+
+# role_lanes ROLE -> how many jobs ROLE may run at once (LANES in role.conf,
+# 1 when empty). validate_role rejects values outside 1..8.
+role_lanes() {
+  local n
+  n="$(role_get "$1" LANES)"
+  printf '%s' "${n:-1}"
+}
+
+# role_lane_names ROLE -> ROLE's lane names, one per line: lane 1 is ROLE
+# itself, lane k >= 2 is ROLE-lane<k>. Each lane has its own session and
+# transcript (DISPATCH_STATE sessions/<lane>, logs/<lane>.log); all lanes
+# share the role's one sandbox.
+role_lane_names() {
+  local n k
+  n="$(role_lanes "$1")"
+  printf '%s\n' "$1"
+  k=2
+  while [ "$k" -le "$n" ]; do
+    printf '%s-lane%s\n' "$1" "$k"
+    k=$((k + 1))
+  done
 }
 
 validate_role() {
   local r="$1" t m
-  valid_role_name "$r" || die "invalid role name '$r' (lowercase letters, digits, dashes; not: $RESERVED_ROLE_NAMES)"
+  valid_role_name "$r" || die "invalid role name '$r' (lowercase letters, digits, dashes; not ending in -lane<N>; not: $RESERVED_ROLE_NAMES)"
   [ -f "$ROOT/roles/$r/kit/spec.yaml" ] || die "role $r: missing roles/$r/kit/spec.yaml"
   [ -s "$ROOT/roles/$r/instructions.md" ] || die "role $r: missing or empty roles/$r/instructions.md"
   in_list "$(role_get "$r" TEMPLATE)" "$KNOWN_TEMPLATES" \
@@ -82,6 +108,9 @@ validate_role() {
   m="$(role_get "$r" EFFORT)"
   [ -z "$m" ] || in_list "$m" "low medium high xhigh" \
     || die "role $r: EFFORT must be low, medium, high or xhigh (or empty)"
+  m="$(role_get "$r" LANES)"
+  [ -z "$m" ] || printf '%s' "$m" | grep -Eq '^[1-8]$' \
+    || die "role $r: LANES must be a whole number from 1 to 8 (or empty)"
   m="$(role_get "$r" MAX_SESSION_TOKENS)"
   [ -z "$m" ] || printf '%s' "$m" | grep -Eq '^[0-9]+$' \
     || die "role $r: MAX_SESSION_TOKENS must be a whole number of tokens (or empty)"
@@ -94,6 +123,16 @@ validate_role() {
 # `factory start` reports the sandbox as out of date and `factory update`
 # recreates it. Grants in broker.conf are left out: the broker re-reads them on
 # every call, so only gaining or losing broker access at all needs a new sandbox.
+# LANES is left out too: the bridge reads it per job, and lanes share one
+# sandbox. Roles with WORKSPACE="rw" also record their mount layout
+# (RW_LAYOUT), so a change to how such sandboxes are created marks the old
+# ones out of date.
+
+# How 02-launch-factory.sh lays out an rw role's sandbox. lanes-v1: a scratch
+# dir as the writable primary workspace, the project read-only, and only
+# PROJECT/.factory/outgoing writable; the role works in lane clones on the
+# sandbox's own disk. (Before: the project itself, read-write.)
+readonly RW_LAYOUT="lanes-v1"
 
 sandbox_fingerprint_file() { printf '%s/sandboxes/%s' "$FACTORY_STATE" "$1"; }
 
@@ -131,7 +170,9 @@ sandbox_fingerprint() {
       role="${name#factory-}"
       printf 'image=%s\nkit=%s\nworkspace=%s\nbroker=%s\n' "$(image_build_id "$(role_get "$role" TEMPLATE)")" \
         "$(dir_hash "$ROOT/roles/$role/kit")" "$(role_get "$role" WORKSPACE)" \
-        "$(yes_no "$(role_get "$role" BROKER_TOOLS)")" ;;
+        "$(yes_no "$(role_get "$role" BROKER_TOOLS)")"
+      # Only rw roles: read-only roles' sandboxes keep their fingerprint.
+      [ "$(role_get "$role" WORKSPACE)" != rw ] || printf 'layout=%s\n' "$RW_LAYOUT" ;;
   esac | sha256_hash
 }
 
