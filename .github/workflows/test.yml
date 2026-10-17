@@ -1,0 +1,82 @@
+# Builds the broker image from this repo's Dockerfile and runs its test
+# suite inside it, the same way the README's "Running the tests" section
+# does. Runs on push to main and factory/* work branches (the repo's own
+# branch naming convention) and on every pull request, so a PR from any
+# other branch name or a fork still gets covered; workflow_dispatch allows
+# a manual re-run. Actions are pinned to commits; the comment is the tag
+# each one resolved from (see passdesk/.github/workflows/deploy.yml for the
+# same pattern). actions/checkout is the only third-party action with a SHA
+# we have verified locally, so every other step uses the runner's docker CLI
+# directly instead of an unverified action.
+name: Gateway tests
+
+on:
+  push:
+    branches: [main, 'factory/**']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+
+      - name: Prepare empty build contexts
+        run: |
+          mkdir -p "$RUNNER_TEMP/factory-config" "$RUNNER_TEMP/plugins"
+          : > "$RUNNER_TEMP/factory-config/policy.toml"
+
+      - name: Build image
+        run: |
+          docker buildx build --load -t passdesk:ci \
+            --build-context "factory-config=$RUNNER_TEMP/factory-config" \
+            --build-context "plugins=$RUNNER_TEMP/plugins" \
+            .
+
+      - name: Run tests
+        run: |
+          docker run --rm --network none -e PYTHONDONTWRITEBYTECODE=1 \
+            -v "$PWD:/b:ro" -w /b passdesk:ci python3 -m unittest -v
+
+  publish:
+    # Disabled until the owner adds DOCKERHUB_USERNAME and DOCKERHUB_TOKEN
+    # as repository secrets. To enable, remove the "false &&" below.
+    if: false && startsWith(github.ref, 'refs/tags/v')
+    needs: test
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+
+      - name: Prepare empty build contexts
+        run: |
+          mkdir -p "$RUNNER_TEMP/factory-config" "$RUNNER_TEMP/plugins"
+          : > "$RUNNER_TEMP/factory-config/policy.toml"
+
+      - name: Build image
+        run: |
+          docker buildx build --load -t passdesk:publish \
+            --build-context "factory-config=$RUNNER_TEMP/factory-config" \
+            --build-context "plugins=$RUNNER_TEMP/plugins" \
+            .
+
+      - name: Log in to Docker Hub
+        run: |
+          echo "$DOCKERHUB_TOKEN" | docker login --username "$DOCKERHUB_USERNAME" --password-stdin
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Push image
+        run: |
+          docker tag passdesk:publish "${DOCKERHUB_USERNAME}/passdesk:${GITHUB_REF_NAME}"
+          docker push "${DOCKERHUB_USERNAME}/passdesk:${GITHUB_REF_NAME}"
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
