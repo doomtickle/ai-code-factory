@@ -112,6 +112,12 @@ docker build -t passdesk:dev .
 docker run --rm --network none -v "$PWD:/b:ro" -w /b passdesk:dev python3 -m unittest -v
 ```
 
+CI (`.github/workflows/test.yml`) runs this same in-image command, with empty
+`factory-config`/`plugins` build contexts, on every push and pull request. A
+second job would push tagged images (`v*`) to Docker Hub but stays disabled
+until the owner adds the `DOCKERHUB_USERNAME`/`DOCKERHUB_TOKEN` repository
+secrets.
+
 ## Consumers
 
 ai-code-factory consumes this repository as a git submodule: its agents

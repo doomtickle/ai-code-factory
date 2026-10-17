@@ -2,6 +2,32 @@
 
 Dated entries, for the user to review. Newest first.
 
+## 2026-10-17
+
+- **CI (`.github/workflows/test.yml`).** Builds the Dockerfile with empty
+  `factory-config`/`plugins` build contexts and runs `python3 -m unittest -v`
+  inside the built image, exactly as the README's "Running the tests" section
+  does: `--network none` and a read-only bind mount, so the suite runs with
+  no network and cannot write into the checkout. Judgement calls:
+  - **Only `actions/checkout` is used**, pinned to the one SHA already
+    verified in `passdesk/.github/workflows/deploy.yml`. Every other step
+    (building, running the tests, the eventual Docker Hub push) uses the
+    runner's own `docker` CLI via `run:` rather than a third-party action
+    whose commit we have not independently verified.
+  - **Triggers are `push` on `main` and `factory/**` plus `v*` tags, and
+    `pull_request` and `workflow_dispatch`.** Push branch coverage follows
+    this repo's own branch naming convention; `pull_request` already covers
+    any other branch name or a fork, so widening `push` to every branch
+    would just duplicate runs. The `v*` tag filter is listed separately
+    from `branches`, since a `push.branches` filter does not match tag
+    pushes — without it, the (currently disabled) `publish` job could never
+    trigger even once it's turned on.
+  - **The tag-triggered `publish` job is disabled** (`if: false && ...`)
+    until the owner adds `DOCKERHUB_USERNAME`/`DOCKERHUB_TOKEN` as repository
+    secrets. It logs in with `docker login --password-stdin`, piping the
+    token from the env, never argv, and reuses the same empty build
+    contexts as the test job.
+
 ## 2026-10-16
 
 - **The approval point and plugins (`core/approvals.py`, `core/plugins.py`;
