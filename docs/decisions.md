@@ -4,6 +4,22 @@ Dated entries, for the user to review. Newest first.
 
 ## 2026-10-17
 
+- **Cloudflare Web Analytics beacon script on passdesk.dev carries no
+  Subresource Integrity hash.** The marketing site (`passdesk/` repo, GitHub
+  Pages) loads the beacon from `https://static.cloudflareinsights.com/beacon.min.js`
+  (gated on public env var `VITE_CF_ANALYTICS_TOKEN`, validated as 32 hex chars,
+  shipped in doomtickle/passdesk#5). Cloudflare updates `beacon.min.js` in
+  place at an unversioned URL, so a pinned hash would silently break analytics
+  on the next update — this is a deliberate exception to the workspace rule
+  "every pin is by digest or checksum," applying only to the marketing site,
+  never to the gateway or its image.
+  - **Mitigation:** the script runs on a static page with no credentials, no
+    login and no user data beyond the waitlist form; worst case of a
+    compromised beacon is script injection on the public marketing page.
+  - **Revisit if:** the site gains a login, payment flow, or anything
+    secret-bearing, or if Cloudflare publishes versioned beacon URLs.
+  - **Documented in:** `passdesk/README.md` "Analytics".
+
 - **`core/approvals.py`'s `require(card)` now redacts known secret patterns
   in every string value of the card before any hook sees it**, instead of
   dropping or masking the field a credential might land in (e.g. the PR
