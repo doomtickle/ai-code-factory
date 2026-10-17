@@ -120,9 +120,12 @@ The broker and the dispatch bridge are Python standard library only.
 
 ## Quick start
 
+For a browsable version of these docs, with step-by-step guides, run
+`./bin/factory docs` (it works offline, before setup).
+
 `broker/` is the `passdesk-broker` repository as a git submodule; a plain
 `git clone` leaves it empty. `factory setup` (and any other `factory`
-command) initializes it automatically on first run, so this is optional, but
+command but `factory docs` and `factory help`) initializes it automatically on first run, so this is optional, but
 you can also clone with `--recurse-submodules` or run
 `git submodule update --init` yourself first. The broker image is always
 built from a `git archive` export of the commit this repo pins `broker/` to,
@@ -176,6 +179,8 @@ Herdr; run `factory start` again to reopen it.
 | `factory logs <role>` | Follow a role's transcripts, all its lanes (`factory logs developer-lane2` for one lane); `factory logs broker` / `dispatch` for audit logs |
 | `factory roles` | List roles, their project access, lanes and network tools |
 | `factory role new <name> [like]` | Add a role (copied from `reviewer`, or the role you name) |
+| `factory docs [--print]` | Open these docs, with guides, as a web page in your browser (offline, works before setup); `--print` writes the HTML to stdout instead |
+| `factory approvals [approve <id> \| decline <id> --reason "..." \| watch]` | List, decide and watch Passdesk Pro approval cards (see "Enabling approvals") |
 | `factory analytics` | Cost, token and performance report from the audit logs (`--json`, `--html`) |
 | `factory secret set <name>` | Store a credential (for keychain-less machines); reads from stdin |
 | `factory secret rm <name>` | Remove a manually-stored credential |
@@ -192,12 +197,20 @@ broker sandbox (`factory start`, or `factory update` itself) lists which to set 
 keychain still has an entry for `factory-<name>`, it warns that the next
 `factory start` will deliver that entry again, and how to clear it too.
 
-`factory start` on a different folder offers to switch projects for you.
 Inside an existing Herdr pane, `factory start` uses that Herdr session; from a
 normal terminal it uses a dedicated Herdr session named `factory`.
 
 > If you already have `sbx` from Homebrew at a different version, either run
 > `brew uninstall sbx` or put `~/.local/bin` ahead of `/opt/homebrew/bin` in `PATH`.
+
+### Switching projects
+
+The factory serves one project at a time: its sandboxes are created for that
+folder. `factory start <other-folder>` notices and offers to switch: it removes
+the agent sandboxes (as `factory reset` does) and creates new ones for the new
+folder. Your Claude login, settings and logs are kept; the roles' conversations
+are not. Branches already imported into the old project (`factory-<lane>/...`)
+stay there. To do it by hand, run `factory reset`, then `factory start <other-folder>`.
 
 ### Local settings
 
@@ -237,7 +250,7 @@ shares settings, keep a copy of the folder somewhere for teammates to copy.
 ### Enabling git push and pull requests
 
 1. Add the repos agents may use to `[git].repos` in your local `policy.toml`
-   (Local settings; for example `"my-org/my-project"`), then run `factory setup` to rebuild.
+   (Local settings; for example `"my-org/my-project"`), then run `factory update` to rebuild the broker image and recreate the broker sandbox.
 2. Store a GitHub fine-grained token scoped to those repos (Contents: read/write,
    Pull requests: read/write) **for the broker sandbox only**:
    ```sh
@@ -422,7 +435,7 @@ call later; the decision is picked up by the retry.
    or `factory approvals decline <id> --reason "..."`; `factory approvals
    watch` prints cards as they arrive. Decisions are plain files in the
    broker state folder, so nothing new listens on the network.
-4. `factory status` shows a line with the pending count and the oldest
+5. `factory status` shows a line with the pending count and the oldest
    card's age once there is at least one; `factory doctor` warns (without
    failing) about any card that expired with no decision, pointing back at
    `factory approvals`. Both are silent when the plugin isn't in use.
@@ -580,6 +593,9 @@ project, so projects need no factory files, and roles can't change it. For examp
 - Tests: `factory-test -q -- npx vitest run` (`npm test` starts watch mode).
 - Type check: `factory-test -q -- npx tsc --noEmit`.
 ```
+Keep them short: a role's instructions plus these notes must stay under 20,000
+characters, or the bridge refuses that role's tasks (`instructions for <role>
+exceed 20000 characters`).
 
 The images also include yarn 1.22.22, so `yarn` scripts and git hooks that
 call `yarn` work. Python projects still use `pip_download` and `uv` directly.
@@ -785,6 +801,8 @@ broker/passdesk/tools/       One module per broker tool (listed in broker/tools.
 dispatch/                    Dispatch bridge (runs on the host), tests
 docs/broker-extraction.md    Roadmap for making the broker a standalone gateway
 docs/setup-wsl.md            Step-by-step setup on Windows 11 with WSL2
+docs/guides/*.md             Task-oriented guides (rendered by factory docs)
+docs/mac-quickstart.html     One-page Mac quickstart
 windows/enable-wsl.ps1       Windows side of that setup: WSL, Ubuntu, nested virtualization
 templates/<image>/           Pinned images: developer, reviewer (+ruff)
 templates/agent/factory-test Runs tests in a sandbox-local copy (baked into developer and reviewer)
@@ -792,6 +810,7 @@ templates/agent/factory-lane Lane clones: prepare, export bundles, check out a b
 config.example/              Example local settings for ~/.config/ai-code-factory/
 scripts/lib/common.sh        Pinned versions, checksums, names, shared checks
 scripts/lib/roles.sh         Role parsing and validation
+scripts/lib/secrets.sh       factory secret set/rm (keychain-less machines)
 scripts/lib/preflight.sh     Platform checks shared by the installer and factory doctor
 scripts/install-prereqs.sh   Install pinned sbx + herdr
 scripts/00-build-templates.sh
@@ -801,6 +820,8 @@ scripts/03-stop-factory.sh
 scripts/new-role.sh <name> [<role-to-copy>]
 scripts/start-broker.sh, scripts/start-dispatch.sh   (called by the launch script)
 scripts/analytics.py, scripts/test_analytics.py      Cost/performance report (factory analytics)
+scripts/approvals.py         Passdesk Pro approval cards (factory approvals)
+scripts/docs.py              Builds the docs site (factory docs)
 ```
 
 ## Upgrading a pin
@@ -823,6 +844,7 @@ Change pins on purpose, in their own commit, and re-run the full setup to test.
     `SBX_DEB_UBUNTU2604_*`), and of `herdr-linux-x86_64` on the herdr release
     (`HERDR_LINUX_X86_64_*`). Check each against the file you download
     (`sha256sum <file>`); never guess a checksum.
+
   Kit keys, CLI flags and lifecycle behavior have changed between sbx releases, so
   re-run `sbx kit validate` on every kit and the broker/dispatch lifecycle checks.
 - **ruff:** change `RUFF_VERSION` in `templates/reviewer/Dockerfile`.

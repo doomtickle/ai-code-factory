@@ -2,7 +2,8 @@
 # (agent sandboxes still reach only Anthropic). Copy to
 # ~/.config/ai-code-factory/broker-kit/spec.yaml alongside policy.toml. It is
 # applied when the broker sandbox is created, so after changing it run
-#   sbx rm --force factory-broker && factory start
+#   factory update
+# (it recreates the broker sandbox when this kit changes)
 schemaVersion: "2"
 kind: mixin
 name: factory-broker-local-kit
