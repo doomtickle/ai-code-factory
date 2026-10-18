@@ -4,6 +4,38 @@ Dated entries, for the user to review. Newest first.
 
 ## 2026-10-18
 
+- **Principal CLI added (doomtickle/passdesk-ops#36, plan task W1.2):
+  `python3 -m passdesk principal add|list|revoke` (`passdesk/__main__.py`,
+  `passdesk/principal.py`).** Mints a token, writes its SHA-256 hash to
+  `tokens/<name>.sha256` and an object-form grant to `grants.json` — the
+  same files and formats `ai-code-factory/scripts/start-broker.sh` writes,
+  so either tool can manage what the other wrote. Judgement calls:
+  - **Writes only `grants.json`, never the legacy `roles.json`.** The CLI
+    is a second, independent writer of this state; `roles.json` is called
+    a "transition shim" to be dropped (see the entry below), so new code
+    doesn't need to maintain it. `core.auth.grants_path()` already falls
+    back to `roles.json` only when `grants.json` is absent, so a deployment
+    that has only ever run `start-broker.sh` keeps working unchanged until
+    the CLI's first `add`, at which point `grants.json` becomes the file in
+    effect — consistent with how `start-broker.sh` itself resolves the two.
+  - **`add` refuses to overwrite an existing principal** (token file or
+    grants entry) rather than rotating it, so a bare retry can't silently
+    invalidate a token already handed to an agent; the caller must
+    `revoke` first. `revoke` is all-or-nothing (removes whatever of the
+    token/grant pair exists) rather than requiring both to be present,
+    since a hand-edited or partially-migrated state may have only one.
+  - **Principal name charset is `^[a-z][a-z0-9_-]{0,63}$`**, stricter than
+    strictly necessary to block path traversal (no `.`, `/` or NUL) -
+    chosen to match the factory's own role-name convention
+    (`ai-code-factory/scripts/lib/roles.sh:valid_role_name`) rather than
+    inventing a separate rule two tools would need to agree on by
+    coincidence.
+  - **No locking across concurrent CLI invocations.** `add`/`revoke` do a
+    read-modify-write of `grants.json` with no file lock, matching
+    `start-broker.sh`'s own non-atomic read-modify-write of the same file;
+    this CLI is for an operator running one command at a time, not
+    concurrent automation.
+
 - **Identity/protocol layer de-factory-ized (doomtickle/passdesk-ops#36),
   per `docs/broker-extraction.md` (ai-code-factory) Phase 1 items 1, 2 and
   6.** `grant_hint`'s hard-coded `coordinator` special case is gone; a grant

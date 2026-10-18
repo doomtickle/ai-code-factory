@@ -131,6 +131,35 @@ the AI Code Factory, these are stored in the host keychain and delivered by
 `scripts/start-broker.sh`; any other deployment just needs to write the file
 to that path before the broker's first call that needs it.
 
+## Managing principals
+
+A principal is whatever a token was minted for (see `passdesk/core/auth.py`).
+`ai-code-factory`'s `scripts/start-broker.sh` mints one per role automatically;
+for any other deployment, or to add or remove one by hand, use the CLI:
+
+```
+python3 -m passdesk principal add <name> --tools TOOL [TOOL ...]
+python3 -m passdesk principal list
+python3 -m passdesk principal revoke <name>
+```
+
+`add` mints a fresh token, writes its SHA-256 hash to
+`BROKER_STATE/tokens/<name>.sha256` and the tool grant to
+`BROKER_STATE/grants.json` (mode 0600; `BROKER_STATE` and its `tokens/`
+directory are created mode 0700 if missing) — the same files and formats
+`start-broker.sh` writes, so either one can manage what the other wrote.
+The token itself is printed to stdout exactly once and is never written to
+disk or logged; capture it immediately (e.g. `token=$(python3 -m passdesk
+principal add alice --tools git_fetch)`), there is no way to recover it
+afterwards short of `revoke` and `add` again. A principal name must start
+with a lowercase letter and contain only lowercase letters, digits, `_` or
+`-`; `--tools` accepts only names in the running registry (`tools.txt`).
+
+`list` prints each existing principal and its granted tools, never a hash
+or a token, and flags a principal missing a token or a grant (its calls
+would fail). `revoke` removes both the token hash and the grant; a token
+already handed to an agent stops authenticating immediately.
+
 ## Checking a deployment
 
 ```
