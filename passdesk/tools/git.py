@@ -27,6 +27,11 @@ def check_branch_name(name: str) -> str:
     if (not _BRANCH_RE.match(name) or ".." in name or "//" in name
             or name.endswith((".lock", "/", ".")) or "@{" in name):
         raise Denied(f"invalid branch name: {name!r}")
+    # Every ref name an agent supplies (fetch and push branch, base, PR head)
+    # is sent to GitHub, and a pushed branch or PR head is published under
+    # that name, so a credential in a branch name is refused outright rather
+    # than merely redacted on the approval card.
+    block_outbound_secrets("branch name", name)
     return name
 
 
@@ -231,15 +236,15 @@ register({
                    "branch": {"type": "string"}}, ["repo", "branch"]),
     "git_push": (tool_git_push, "Push a branch to an allowlisted GitHub repo. First run "
                  "`git bundle create .factory/outgoing/<name>.bundle origin/<base>..<branch>` "
-                 "(or the whole branch). Diff and commit messages are secret-scanned; protected branches "
-                 "are refused and force-pushes are impossible.",
+                 "(or the whole branch). Diff, commit messages and the branch name are secret-scanned; "
+                 "protected branches are refused and force-pushes are impossible.",
                  {"repo": {"type": "string", "description": "owner/name"},
                   "branch": {"type": "string", "description": "branch to push; must use the allowed prefix"},
                   "bundle": {"type": "string", "description": "file name inside .factory/outgoing/"},
                   "base": {"type": "string", "description": "branch the work is based on (default from policy)"}},
                  ["repo", "branch", "bundle"]),
     "github_create_pr": (tool_github_create_pr, "Open a pull request on an allowlisted GitHub repo. "
-                         "Title and body are secret-scanned. Draft by default.",
+                         "Title, body and branch names are secret-scanned. Draft by default.",
                          {"repo": {"type": "string"}, "head": {"type": "string"}, "base": {"type": "string"},
                           "title": {"type": "string"}, "body": {"type": "string"},
                           "draft": {"type": "boolean"}}, ["repo", "head", "title"]),

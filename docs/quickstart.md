@@ -73,8 +73,9 @@ factory setup
 
 Everything else keeps its default: agents may push only branches starting
 with `factory/`, never to `main`, `master` or `release/*`, pull requests
-open as drafts, every pushed commit is scanned for secrets, and `web_fetch`
-reaches only a short list of documentation hosts.
+open as drafts, every pushed commit (and every branch name, PR title and PR
+body) is scanned for secrets, and `web_fetch` reaches only a short list of
+documentation hosts.
 
 ## 3. Give the key to Passdesk, not to the agents
 

@@ -11,7 +11,7 @@ from passdesk.core import config, workspace
 from passdesk.core.errors import Denied
 from passdesk.tools import git
 
-from .base import FAKE_ANT, FAKE_GH, POLICY, Base
+from .base import FAKE_ANT, FAKE_AWS, FAKE_GH, POLICY, Base
 
 
 class GitFlowTests(Base):
@@ -97,6 +97,17 @@ class GitFlowTests(Base):
             git.tool_git_push({"repo": "acme/widgets", "branch": "factory/leak", "bundle": "l.bundle"}, POLICY)
         cp = workspace.run(["git", "rev-parse", "--verify", "-q", "refs/heads/factory/leak"], cwd=self.origin)
         self.assertNotEqual(cp.returncode, 0, "secret-bearing branch reached origin")
+
+    def test_push_blocks_secret_in_branch_name(self):
+        # A clean bundle under a credential-looking branch name: the name
+        # itself is what would be published, so the push is refused before
+        # the bundle is even read.
+        name = f"factory/{FAKE_AWS}"
+        self.branch(name, {"a.txt": b"fine\n"})
+        self.bundle(name)
+        with self.assertRaisesRegex(Denied, r"branch name appears to contain secrets \(aws-access-key\)"):
+            self.push(name)
+        self.assert_not_on_origin(name)
 
     # --- helpers for the hardening tests below -------------------------------
 

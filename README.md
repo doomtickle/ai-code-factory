@@ -43,7 +43,8 @@ between two reads:
   `uv pip compile --generate-hashes` or `pip-compile --generate-hashes`.
 - `git_push` secret-scans every pushed commit on its own (patch, message,
   author and committer), not just the net diff, and scans and counts binary
-  files as text.
+  files as text. Branch names, PR titles and PR bodies are scanned too, so a
+  credential cannot leave as the name of the thing being pushed.
 - `web_fetch` refuses a hard-coded list of hosts that the egress proxy or
   another broker tool attaches credentials to (GitHub, Atlassian, the
   Gemini API, the configured private npm registry), even if an operator

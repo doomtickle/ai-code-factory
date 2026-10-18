@@ -7,7 +7,7 @@ from passdesk import tools  # noqa: F401 - registers every tool
 from passdesk.core.errors import Denied
 from passdesk.tools import git, web
 
-from .base import FAKE_ANT, FAKE_GH, POLICY, Base, fake_http_error
+from .base import FAKE_ANT, FAKE_AWS, FAKE_GH, POLICY, Base, fake_http_error
 
 
 class ToolGuardTests(Base):
@@ -28,6 +28,24 @@ class ToolGuardTests(Base):
         with self.assertRaises(Denied):
             git.tool_github_create_pr({"repo": "acme/widgets", "head": "factory/x",
                                      "title": "t", "body": f"key {FAKE_ANT}"}, POLICY)
+
+    def test_push_and_pr_refuse_secret_bearing_ref_names_before_any_write(self):
+        # A credential in a branch name must be refused up front, like one in
+        # a PR title: not held for approval with a [REDACTED] marker, and
+        # never sent to GitHub. Every ref the agent names is covered (push
+        # branch, PR head, and the base of either).
+        seen = []
+        with mock.patch("passdesk.core.approvals._hook", side_effect=lambda card: seen.append(card)), \
+                mock.patch("urllib.request.urlopen", side_effect=AssertionError("reached the network")):
+            for args in [{"branch": f"factory/{FAKE_AWS}"}, {"base": f"main-{FAKE_ANT}"}]:
+                with self.assertRaisesRegex(Denied, "branch name appears to contain secrets", msg=args):
+                    git.tool_git_push({"repo": "acme/widgets", "branch": "factory/x", "bundle": "x.bundle",
+                                       **args}, POLICY)
+            for args in [{"head": f"factory/{FAKE_AWS}"}, {"base": f"main-{FAKE_ANT}"}]:
+                with self.assertRaisesRegex(Denied, "branch name appears to contain secrets", msg=args):
+                    git.tool_github_create_pr({"repo": "acme/widgets", "head": "factory/x", "title": "t",
+                                               **args}, POLICY)
+        self.assertEqual(seen, [], "a secret-bearing ref name reached the approval hook")
 
     def test_github_create_pr_error_body_is_wrapped_untrusted(self):
         with mock.patch("urllib.request.urlopen", side_effect=fake_http_error(404, b"Not Found")):

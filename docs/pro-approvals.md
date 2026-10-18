@@ -35,23 +35,21 @@ runs only after `require` returns, still uses the original arguments; only
 the copy shown to the hook is scrubbed.
 
 **A `[REDACTED:...]` marker on a card means the real write contains that
-string, and an approver should decline it.** This matters most for a push's
-`branch` field: unlike the PR title and body, which `block_outbound_secrets`
-already refuses outright before `require` is ever called
-(`tools/git.py:206-207`), a push's branch name is not secret-scanned
-(`check_push_branch`, `tools/git.py:42-51`) - a branch literally named
-`factory/ghp_...` would be published to GitHub exactly as typed if approved.
-The marker is a signal to the approver, not a guarantee that denying is
-optional.
+string, and an approver should decline it.** In practice it should never
+appear: every agent-supplied card field is refused by `block_outbound_secrets`
+before `require` is called - the PR title and body (`tools/git.py`,
+`tool_github_create_pr`), and every ref name (`check_branch_name`: the push
+branch, the PR head, and the base of either), so a branch literally named
+`factory/ghp_...` is denied rather than held. File names are covered by the
+per-commit patch scan. The redaction in `require` is defense in depth for a
+pattern that slipped past those checks, not the first line.
 
-A consequence worth knowing: two pushes whose cards differ only in the part
-that got redacted (e.g. two different secrets in an otherwise identical
-branch name) produce the same card id (`passdesk_pro/approvals.py`'s
-`card_id`, which hashes the card it is given - the redacted one), so one
-decision could be reused for either. The content that actually gets pushed
-is still pinned by `head` and `bundle_sha256`, which redaction never
-touches; blocking secrets in branch names the way titles and bodies already
-are is a separate backlog item, not fixed here.
+The same holds for the card id: two pushes whose cards differ only in a
+redacted substring would get the same id (`passdesk_pro/approvals.py`'s
+`card_id` hashes the card it is given - the redacted one), but a card that
+needed redacting is one the refusals above should have stopped, and the
+content that actually gets pushed is still pinned by `head` and
+`bundle_sha256`, which redaction never touches.
 
 ## What Pro ships (commercial, `passdesk-pro`)
 

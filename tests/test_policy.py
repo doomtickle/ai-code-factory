@@ -8,7 +8,7 @@ from passdesk.core import policy
 from passdesk.core.errors import Denied
 from passdesk.tools import git
 
-from .base import POLICY, Base
+from .base import FAKE_ANT, FAKE_AWS, FAKE_GH, POLICY, Base
 
 
 class PolicyTests(Base):
@@ -26,6 +26,18 @@ class PolicyTests(Base):
         for bad in ["../x", "-x", "a..b", "a//b", "x.lock", "x/", "a@{1}", "a b", "a;rm"]:
             with self.assertRaises(Denied, msg=bad):
                 git.check_branch_name(bad)
+
+    def test_branch_names_block_secrets(self):
+        # Every secret pattern whose alphabet fits a ref name is refused as a
+        # secret, not merely redacted on the approval card.
+        for secret, kind in [(FAKE_GH, "github-token"), (FAKE_AWS, "aws-access-key"),
+                             (FAKE_ANT, "anthropic-key"), ("xoxb-" + "1" * 12, "slack-token"),
+                             ("AIza" + "d" * 35, "google-api-key")]:
+            for name in [secret, f"factory/{secret}", f"factory/fix-{secret}-2"]:
+                with self.assertRaisesRegex(Denied, rf"branch name appears to contain secrets \({kind}\)", msg=name):
+                    git.check_branch_name(name)
+                with self.assertRaisesRegex(Denied, "secrets", msg=name):
+                    git.check_push_branch(name, POLICY)
 
     def test_push_branch_policy(self):
         git.check_push_branch("factory/feature", POLICY)
