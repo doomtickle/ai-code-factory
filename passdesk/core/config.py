@@ -43,9 +43,10 @@ ALLOWED_ORIGINS = frozenset(
 # CLAUDE.md's "Credentials" section). Written by scripts/start-broker.sh, read
 # fresh on every call so rotating the host keychain entry and re-running that
 # script rotates the credential without restarting the broker.
-# SECRETS_DIR is only where the three paths below default to; each is still
-# independently overridable (BROKER_JIRA_SECRET, etc.) for a deployment that
-# wants one of them somewhere else entirely.
+# SECRETS_DIR is where the three paths below default to, and also where
+# credentials.secrets_dir() looks up any other credential name; each of the
+# three is still independently overridable (BROKER_JIRA_SECRET, etc.) for a
+# deployment that wants one of them somewhere else entirely.
 SECRETS_DIR = os.environ.get("BROKER_SECRETS_DIR", "/etc/factory-broker/secrets")
 JIRA_SECRET_PATH = Path(os.environ.get("BROKER_JIRA_SECRET", f"{SECRETS_DIR}/jira"))
 GEMINI_SECRET_PATH = Path(os.environ.get("BROKER_GEMINI_SECRET", f"{SECRETS_DIR}/gemini"))
@@ -103,7 +104,7 @@ def validate() -> None:
     if DEPLOYMENT not in ("sbx", "standalone"):
         raise ValueError(f'BROKER_DEPLOYMENT={DEPLOYMENT!r} must be "sbx" or "standalone"')
     ns = REF_NAMESPACE
-    if not _REF_NAMESPACE_RE.match(ns) or ".." in ns or "//" in ns or ns.endswith(("/", ".")):
+    if not _REF_NAMESPACE_RE.fullmatch(ns) or ".." in ns or "//" in ns or ns.endswith(("/", ".")):
         raise ValueError(f'BROKER_REF_NAMESPACE={ns!r} must be a ref path under "refs/" '
                          '(e.g. "refs/factory"): no "..", no trailing slash, no empty component')
     if ns in _RESERVED_REF_PREFIXES or any(ns.startswith(p + "/") for p in _RESERVED_REF_PREFIXES):
@@ -116,6 +117,6 @@ def validate() -> None:
     secrets_dir = SECRETS_DIR
     if not Path(secrets_dir).is_absolute() or ".." in Path(secrets_dir).parts:
         raise ValueError(f'BROKER_SECRETS_DIR={secrets_dir!r} must be an absolute path with no ".." component')
-    if not _PUSH_PREFIX_RE.match(DEFAULT_PUSH_BRANCH_PREFIX):
+    if not _PUSH_PREFIX_RE.fullmatch(DEFAULT_PUSH_BRANCH_PREFIX):
         raise ValueError(f'BROKER_PUSH_PREFIX={DEFAULT_PUSH_BRANCH_PREFIX!r} must contain only ref-safe '
                          'characters (letters, digits, "." "_" "-" "/"), no whitespace or control characters')

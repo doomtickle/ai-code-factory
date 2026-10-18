@@ -68,7 +68,7 @@ class GitHubTokenTests(Base):
             self.addCleanup(setattr, config, name, getattr(config, name))
         config.CREDENTIAL_PROVIDERS = "file,env-file"  # the standalone default
         config.DEPLOYMENT = "standalone"
-        self.write_secret(credentials.SECRETS_DIR / "github", TOKEN + "\n")
+        self.write_secret(credentials.secrets_dir() / "github", TOKEN + "\n")
         config.MIRRORS = Path(self.tmp.name) / "mirrors"
         # Make the trace switches that would print headers look switched on.
         env = mock.patch.dict(os.environ, {"GIT_TRACE": "1", "GIT_TRACE_CURL": "1", "GIT_TRACE_PACKET": "1",
@@ -311,7 +311,7 @@ class GitHubTokenTests(Base):
 
     def test_a_value_that_is_not_a_github_token_is_refused_without_echoing_it(self):
         for bad in ("short_tok", "has-a-dash-" + "x" * 20, "x" * 256, "spaces in " + "x" * 20):
-            self.write_secret(credentials.SECRETS_DIR / "github", bad)
+            self.write_secret(credentials.secrets_dir() / "github", bad)
             with self.assertRaises(Denied) as cm:
                 git.git_auth_env()
             self.assertNotIn(bad, str(cm.exception))
@@ -323,7 +323,7 @@ class GitHubTokenTests(Base):
     def test_rotated_token_is_read_fresh(self):
         self.assertIn(B64, git.git_auth_env()["GIT_CONFIG_VALUE_0"])
         new = "TESTONLY_" + "r8" * 20
-        self.write_secret(credentials.SECRETS_DIR / "github", new)
+        self.write_secret(credentials.secrets_dir() / "github", new)
         self.assertIn(base64.b64encode(f"x-access-token:{new}".encode()).decode(),
                       git.git_auth_env()["GIT_CONFIG_VALUE_0"])
         self.assertNotIn(TOKEN, filters.redact(TOKEN + new))  # the old value is still redacted
@@ -349,7 +349,7 @@ class ProxyModeTests(Base):
         config.CREDENTIAL_PROVIDERS = "proxy,file,env-file"  # the sbx default
 
     def test_sbx_default_ignores_a_github_file(self):
-        self.write_secret(credentials.SECRETS_DIR / "github", TOKEN)
+        self.write_secret(credentials.secrets_dir() / "github", TOKEN)
         self.assertIsNone(git.git_auth_env())
 
     def test_git_environment_is_unchanged(self):

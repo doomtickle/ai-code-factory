@@ -25,7 +25,7 @@ class CredentialTestBase(Base):
         self.addCleanup(setattr, config, "CREDENTIAL_PROVIDERS", config.CREDENTIAL_PROVIDERS)
         config.CREDENTIAL_PROVIDERS = "proxy,file,env-file"
         self.addCleanup(credentials._registered.clear)
-        self.secrets = credentials.SECRETS_DIR
+        self.secrets = Path(config.SECRETS_DIR)
         self.docker = credentials.DOCKER_SECRETS_DIR
 
     def audit_log(self) -> str:
@@ -97,6 +97,18 @@ class FileProviderTests(CredentialTestBase):
     def test_other_names_live_in_the_secrets_directory(self):
         self.write_secret(self.secrets / "approvals-webhook", "https://hooks.example.com/x")
         self.assertEqual(credentials.get("approvals-webhook"), "https://hooks.example.com/x")
+
+    def test_secrets_dir_follows_config_secrets_dir(self):
+        # A name with no dedicated *_SECRET_PATH falls back to secrets_dir() / name,
+        # which must track config.SECRETS_DIR (BROKER_SECRETS_DIR), not a copy of it.
+        self.assertEqual(credentials.secrets_dir(), self.secrets)
+        moved = self.secrets.parent / "moved-secrets"
+        self.write_secret(moved / "approvals-webhook", "https://hooks.example.com/moved")
+        with mock.patch.object(config, "SECRETS_DIR", str(moved)):
+            self.assertEqual(credentials.secrets_dir(), moved)
+            self.assertEqual(credentials.get("approvals-webhook"), "https://hooks.example.com/moved")
+        # config.SECRETS_DIR restored by the mock: the default location applies again.
+        self.assertIsNone(credentials.get("approvals-webhook"))
 
     def test_docker_secret_is_the_fallback(self):
         self.write_secret(self.docker / "jira", "docker@example.com:tok")
@@ -286,6 +298,28 @@ class FileSafetyTests(CredentialTestBase):
         self.assertEqual(credentials.get("gemini"), "docker-key")
 
 
+@unittest.skipUnless(os.path.isdir("/proc/self/fd"), "needs /proc")
+class FdPathTests(CredentialTestBase):
+    """_fd_path trusts the kernel's own resolution of the descriptor (readlink on
+    /proc/self/fd/N) instead of walking the returned path again with realpath, which
+    would reopen a race window between the open and the check."""
+
+    def test_does_not_re_resolve_through_the_filesystem(self):
+        target = self.secrets.parent / "store" / "gemini"
+        self.write_secret(target, "tok")
+        fd = os.open(target, os.O_RDONLY)
+        try:
+            expected = os.readlink(f"/proc/self/fd/{fd}")
+            with mock.patch("os.path.realpath", side_effect=AssertionError("_fd_path must not re-walk the path")):
+                self.assertEqual(credentials._fd_path(fd, "fallback"), expected)
+        finally:
+            os.close(fd)
+
+    def test_falls_back_when_proc_is_unavailable(self):
+        with mock.patch("os.readlink", side_effect=OSError("no /proc")):
+            self.assertEqual(credentials._fd_path(0, "fallback-path"), "fallback-path")
+
+
 class PluginProviderTests(CredentialTestBase):
     def test_registered_provider_is_consulted_after_the_built_ins(self):
         seen = []
@@ -358,6 +392,44 @@ class PluginProviderTests(CredentialTestBase):
         self.assertEqual(plugins.load(), ["fake_credential_plugin"])
         self.assertEqual(credentials.get("jira"), "from-keychain")
         self.assertIsNone(credentials.get("gemini"))
+
+
+class OnUnusableTests(CredentialTestBase):
+    """`get`'s `on_unusable` parameter (doomtickle/passdesk-ops#53): a
+    read-only caller like the doctor must see why a credential was refused
+    without the lookup writing to the audit log."""
+
+    def test_default_still_audits(self):
+        self.write_secret(self.docker / "gemini", "x")
+        config.GEMINI_SECRET_PATH.mkdir(parents=True)  # a directory: refused as unusable
+        self.assertEqual(credentials.get("gemini"), "x")
+        self.assertIn("is not a regular file", self.audit_log())
+
+    def test_custom_callback_runs_instead_of_the_audit_write(self):
+        self.write_secret(self.docker / "gemini", "x")
+        config.GEMINI_SECRET_PATH.mkdir(parents=True)
+        seen = []
+        value = credentials.get("gemini", on_unusable=lambda name, provider, reason: seen.append((name, provider, reason)))
+        self.assertEqual(value, "x")
+        self.assertEqual(len(seen), 1)
+        name, provider, reason = seen[0]
+        self.assertEqual((name, provider), ("gemini", "file"))
+        self.assertIn("is not a regular file", reason)
+        self.assertEqual(self.audit_log(), "")  # nothing written: the callback took it instead
+
+    def test_custom_callback_also_catches_the_control_character_refusal(self):
+        self.write_secret(config.GEMINI_SECRET_PATH, f"{FIXTURE_VALUE}\x00")
+        seen = []
+        value = credentials.get("gemini", on_unusable=lambda name, provider, reason: seen.append(reason))
+        self.assertIsNone(value)
+        self.assertEqual(seen, ["the value contains control characters"])
+        self.assertEqual(self.audit_log(), "")
+
+    def test_custom_callback_never_sees_the_value(self):
+        self.write_secret(config.GEMINI_SECRET_PATH, FIXTURE_VALUE + "\x00")
+        seen = []
+        credentials.get("gemini", on_unusable=lambda name, provider, reason: seen.append(reason))
+        self.assertFalse(any(FIXTURE_VALUE in r for r in seen))
 
 
 class NoLeakTests(CredentialTestBase):

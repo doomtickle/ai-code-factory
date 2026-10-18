@@ -25,6 +25,10 @@ Every lookup reads fresh, so rotating a file rotates the credential without
 a restart. A value loses leading and trailing whitespace (as the old reader's
 `.strip()` did); an empty value counts as absent. Secret values never appear in an exception, an
 audit record or a repr: errors name the credential and the provider only.
+
+`get`'s refusals (an unusable file, a control character in the value) are
+audited by default; pass `on_unusable` to route them elsewhere instead (a
+read-only caller like the doctor, which must change nothing on disk).
 """
 
 from __future__ import annotations
@@ -71,9 +75,6 @@ MAX_SECRET_BYTES = 64 * 1024
 # would quote the whole value in the ValueError it raises.
 _CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
 
-# The deployment's secrets directory. Read only through secrets_dir(), so
-# making it configurable is a change to that one function.
-SECRETS_DIR = Path("/etc/factory-broker/secrets")
 DOCKER_SECRETS_DIR = Path("/run/secrets")
 
 # Names the deployment's egress proxy injects, so the gateway never holds them.
@@ -81,7 +82,10 @@ PROXY_INJECTED = frozenset({"github"})
 
 
 def secrets_dir() -> Path:
-    return SECRETS_DIR
+    """The deployment's secrets directory (BROKER_SECRETS_DIR), read fresh on
+    every call so a test (or a future reload) can repoint it without this
+    module needing its own copy."""
+    return Path(config.SECRETS_DIR)
 
 
 def check_name(name: str) -> None:
@@ -95,13 +99,14 @@ def _inside(path: str, root: Path) -> bool:
 
 
 def _fd_path(fd: int, fallback: str) -> str:
-    """The resolved path of the file open on `fd`, from /proc; `fallback` where /proc is unavailable."""
+    """The path the kernel resolved `fd` to, from /proc/self/fd; `fallback` where /proc is
+    unavailable. os.readlink's result is the kernel's own resolution of the descriptor, not a
+    second filesystem walk, so it cannot be redirected by a symlink swap made after the open."""
     link = f"/proc/self/fd/{fd}"
     try:
-        os.readlink(link)
+        return os.readlink(link)
     except OSError:
         return fallback
-    return os.path.realpath(link)
 
 
 def read_secret_file(path: Path) -> str | None:
@@ -157,6 +162,15 @@ def read_secret_file(path: Path) -> str | None:
         raise _Unusable(f"{path} is not UTF-8 text") from None
 
 
+def _unusable(name: str, provider: str, reason: str) -> None:
+    """The default `on_unusable`: today's behaviour, unchanged for every
+    caller that doesn't pass its own (see `get`)."""
+    try:
+        audit({"event": "credential_unusable", "credential": name, "provider": provider, "reason": reason})
+    except OSError:
+        pass  # outside a running gateway (the doctor, say) there may be no audit log
+
+
 # --- built-in providers ---------------------------------------------------------------
 
 def _proxy(name: str):
@@ -171,12 +185,12 @@ def _secret_path(name: str) -> Path:
     return configured.get(name) or secrets_dir() / name
 
 
-def _file(name: str) -> str | None:
+def _file(name: str, on_unusable: Callable[[str, str, str], None] = _unusable) -> str | None:
     for path in (_secret_path(name), DOCKER_SECRETS_DIR / name):
         try:
             value = read_secret_file(path)
         except _Unusable as e:
-            _unusable(name, "file", str(e))
+            on_unusable(name, "file", str(e))
             continue
         if value is not None and value.strip():
             return value
@@ -231,26 +245,24 @@ def provider_order() -> list[str]:
     return order + [n for n in _registered if n not in order]
 
 
-def _unusable(name: str, provider: str, reason: str) -> None:
-    try:
-        audit({"event": "credential_unusable", "credential": name, "provider": provider, "reason": reason})
-    except OSError:
-        pass  # outside a running gateway (the doctor, say) there may be no audit log
-
-
-def get(name: str) -> str | None:
+def get(name: str, on_unusable: Callable[[str, str, str], None] = _unusable) -> str | None:
     """The secret called `name` from the first provider that has one, or None.
 
     Raises CredentialError for an invalid name, a misconfigured provider
     list, or a provider that fails; the error never carries a value.
+
+    `on_unusable(credential_name, provider, reason)` runs for every refusal
+    along the way (default: audit it, as every caller used to). `reason`
+    never carries a secret value. A caller that must change nothing on disk
+    (the doctor) can pass a callback that just collects `reason` instead.
     """
     check_name(name)
     for provider in provider_order():
         fn = BUILTIN.get(provider) or _registered[provider]
         try:
-            value = fn(name)
+            value = fn(name, on_unusable) if fn is _file else fn(name)
         except _Unusable as e:
-            _unusable(name, provider, str(e))
+            on_unusable(name, provider, str(e))
             continue
         except Exception:  # noqa: BLE001 - a plugin's message might hold the value
             raise CredentialError(f"credential provider {provider!r} failed to look up {name!r}") from None
@@ -264,7 +276,7 @@ def get(name: str) -> str | None:
         if not value:
             continue
         if _CONTROL_RE.search(value):
-            _unusable(name, provider, "the value contains control characters")
+            on_unusable(name, provider, "the value contains control characters")
             continue
         return value
     return None
