@@ -84,9 +84,10 @@ surface is part of its security argument.
 Passdesk has no required deployment: it reads its settings from the
 environment and speaks MCP over HTTP, so any container runtime or process
 supervisor that can set a few environment variables and point an MCP client
-at the port can run it. "Deploying with Docker Sandboxes (sbx)" below is one
-such adapter; it's documented in detail because it's the one this repo's own
-CI and test fixtures exercise, not because it's the only one.
+at the port can run it. Two are documented here: plain `docker compose`
+([docs/standalone.md](docs/standalone.md), with an egress guard and an
+isolation check), and "Deploying with Docker Sandboxes (sbx)" below, the
+one this repo's own CI and test fixtures exercise.
 
 **Configuration (environment variables, all optional with working defaults):**
 
@@ -434,8 +435,9 @@ time: they are the one part of the image not pinned by digest (the build log
 prints the versions). The non-root user's uid is a build argument
 (`--build-arg PASSDESK_UID=... PASSDESK_GID=...`) for a Linux host whose
 user isn't uid 1000; the gateway must be able to write the workspace's
-exchange directory. A compose quickstart for this image is a separate
-change (doomtickle/passdesk-ops#58).
+exchange directory. [docs/standalone.md](docs/standalone.md) is the `docker compose` quickstart
+for this image, with the isolation check that shows the agent's only ways
+out are the gateway and the egress guard.
 
 ## Deploying with Docker Sandboxes (sbx)
 

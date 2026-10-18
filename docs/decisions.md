@@ -4,6 +4,48 @@ Dated entries, for the user to review. Newest first.
 
 ## 2026-10-18
 
+- **Compose quickstart and isolation check (doomtickle/passdesk-ops#58,
+  Phase 3a W3.4).** `compose.yaml` runs the gateway, the egress guard and
+  a Claude Code agent; `scripts/isolation-check.py` runs in the agent's
+  network namespace and fails on any escape the Q2 research named;
+  `docs/standalone.md` is the walkthrough. Judgement calls:
+  - **The `agents` network is `internal: true` and
+    `gateway_mode_ipv4: isolated` with IPv6 off**, exactly as Q2
+    recommends: internal alone left the Docker host's services reachable
+    on the bridge address. That option needs Engine 28.0.0 (Desktop 4.39);
+    an older engine refuses the file, which fails closed, and the docs say
+    so rather than offering a fallback.
+  - **The isolation check is a separate compose service with
+    `network_mode: "service:agent"`**, running the Passdesk image (which
+    has Python) in the agent container's own network namespace, instead
+    of a script executed inside the agent image: the result is the same
+    namespace, and it doesn't depend on what the agent image ships. The
+    script is mounted read-only from this checkout, never from the
+    workspace. It fails on an IPv4 gateway in the routing table, a real
+    IPv6 default route (a `::/0` reject route on `lo`, which an IPv6-less
+    network leaves behind, is not one), and anything answering on the
+    address a gateway would have had.
+  - **The agent is `docker/sandbox-templates:claude-code`, pinned by
+    digest, with `command: sleep infinity`**; the user attaches with
+    `docker compose exec agent claude`. Building our own Node image would
+    have meant a version-pinned but not checksum-pinned `npm install`.
+    The template's `agent` user is uid 1000, matching the gateway's, so
+    the bind-mounted `.factory/` exchange works on a Linux host too.
+  - **The agent's MCP token comes in through `PASSDESK_TOKEN` from
+    `.env`**, and the docs register the server at user scope with the
+    header reading `${PASSDESK_TOKEN}`, so the token is in neither a
+    config file nor the compose file. It is the one secret the agent must
+    hold; it grants only its own tools.
+  - **`BROKER_INSECURE_BIND=1` on the gateway**, since its port is not
+    published and only the internal network reaches it; the doctor's
+    warning says what to do if that ever changes.
+  - **Only `passdesk` has a `build:`; `egress-guard` reuses the tag with
+    `pull_policy: never`.** Two services building the same tag in parallel
+    collided in the containerd image store.
+  - **Not verified here:** a native Linux engine, Docker Desktop for Mac,
+    and a real push (no GitHub token was used). The docs' "checked on"
+    line says so; doomtickle/passdesk-ops#78 covers the real push.
+
 - **Egress guard: `python3 -m passdesk egress-guard` (doomtickle/passdesk-ops#57,
   Phase 3a W3.3).** A CONNECT-only allowlist proxy (`passdesk/egress_guard.py`,
   stdlib `socketserver`/`selectors`) for an agent container's model traffic

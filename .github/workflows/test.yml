@@ -66,6 +66,14 @@ jobs:
             sh -c 'unset BROKER_DEPLOYMENT BROKER_STATE BROKER_WORKSPACE BROKER_SECRETS_DIR
                    exec python3 -m unittest -v'
 
+      - name: Validate the compose quickstart
+        # The stack itself (and its isolation check) runs in CI as a
+        # separate change (doomtickle/passdesk-ops#59); this only checks the
+        # file parses with the secret and workspace it expects.
+        run: |
+          mkdir -p secrets workspace && : > secrets/github
+          docker compose config --quiet
+
       - name: Standalone image smoke test
         run: |
           docker run --rm --network none passdesk:ci-standalone sh -c '
