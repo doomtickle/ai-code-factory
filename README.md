@@ -93,7 +93,7 @@ CI and test fixtures exercise, not because it's the only one.
 | `BROKER_POLICY` | `policy.toml` beside the package | The policy file to load (plus `policy.local.toml` beside it, if present, merged table by table). |
 | `BROKER_PORT` | `8765` | The port the MCP server listens on. |
 | `BROKER_MIRRORS` | `~/mirrors` | Where git tools keep their bare mirror clones. |
-| `BROKER_EXCHANGE_DIR` | `.factory` | Name of the workspace subdirectory `git_fetch`, `npm_fetch` and `pip_download` use to hand files to the agent's own sandbox. |
+| `BROKER_EXCHANGE_DIR` | `.factory` | Name of the workspace subdirectory `git_fetch`, `npm_fetch` and `pip_download` use to hand files to the agent's own sandbox. Must be a single path component: not empty, no `/` or NUL, not `.` or `..`, not absolute; the broker refuses to start the exchange directory otherwise. |
 | `BROKER_JIRA_SECRET` | `/etc/factory-broker/secrets/jira` | File holding the Jira credential (`email:token`); see "Configuring credentials". |
 | `BROKER_GEMINI_SECRET` | `/etc/factory-broker/secrets/gemini` | File holding the Gemini API key. |
 | `BROKER_NPM_REGISTRY_SECRET` | `/etc/factory-broker/secrets/npm-registry` | File holding the private npm registry credential. |

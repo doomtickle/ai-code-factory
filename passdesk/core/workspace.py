@@ -226,9 +226,18 @@ def install_file(dir_fd: int, name: str, src: Path) -> None:
 def factory_dir(sub: str) -> Iterator[int]:
     """O_DIRECTORY fd for <exchange>/<sub> (created if missing, symlinks
     refused), with <exchange>/.gitignore ensured. Closed on exit. The
-    exchange directory's name is config.EXCHANGE_DIR (default ".factory")."""
+    exchange directory's name is config.EXCHANGE_DIR (default ".factory"),
+    checked here against the same rules as _check_name so a misconfigured
+    BROKER_EXCHANGE_DIR (e.g. "..", an absolute path) can't resolve outside
+    the workspace or bypass dir_fd containment."""
     _check_name(sub)
     root = config.EXCHANGE_DIR
+    try:
+        _check_name(root)
+    except ValueError:
+        raise Denied(f"BROKER_EXCHANGE_DIR={root!r} is not a plain directory name; "
+                      "it must be a single path component, not absolute, "
+                      "and not '.' or '..'") from None
     ffd = _open_dir([root], create=True)
     try:
         try:
