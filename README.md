@@ -56,7 +56,8 @@ between two reads:
 The package is `passdesk/`:
 - `passdesk/core/`: protocol, auth/grants, policy, content filters, audit,
   workspace file exchange, registry, the approval point every external
-  write passes through (`approvals.py`) and plugin loading (`plugins.py`;
+  write passes through (`approvals.py`), credential lookup
+  (`credentials.py`, below) and plugin loading (`plugins.py`;
   `PASSDESK_PLUGINS` names modules, the image's `plugins` build context
   holds them). Knows no tool. A deployment may install an approval hook
   that holds pushes and pull requests for a person; the design is in
@@ -98,6 +99,8 @@ CI and test fixtures exercise, not because it's the only one.
 | `BROKER_GEMINI_SECRET` | `/etc/factory-broker/secrets/gemini` | File holding the Gemini API key. |
 | `BROKER_NPM_REGISTRY_SECRET` | `/etc/factory-broker/secrets/npm-registry` | File holding the private npm registry credential. |
 | `PASSDESK_PLUGINS` | `` (empty) | Comma-separated plugin modules to import at start-up (e.g. the commercial `passdesk-pro` approval hook). |
+| `PASSDESK_CREDENTIAL_PROVIDERS` | `proxy,file,env-file` | Credential providers in lookup order; see "Configuring credentials". A name that isn't a provider stops the server at start-up. |
+| `PASSDESK_SECRET_<NAME>_FILE` | unset | Path of a file holding credential `<NAME>` (upper-cased, `-` as `_`: `PASSDESK_SECRET_NPM_REGISTRY_FILE`). Holds a path, never the secret. |
 
 `BROKER_WORKSPACE` and `BROKER_STATE` are required in practice (there is
 nothing at `/nonexistent`); every other variable above has a usable default.
@@ -130,6 +133,35 @@ the file rotates the credential without restarting the broker. With sbx +
 the AI Code Factory, these are stored in the host keychain and delivered by
 `scripts/start-broker.sh`; any other deployment just needs to write the file
 to that path before the broker's first call that needs it.
+
+Every credential is looked up by name (`jira`, `gemini`, `npm-registry`;
+`github` is the proxy's) through `passdesk/core/credentials.py`, which asks
+each provider in `PASSDESK_CREDENTIAL_PROVIDERS` in turn and takes the
+first value found:
+
+1. `proxy`: names the egress proxy injects (`github`). The lookup stops
+   there with no value, so Passdesk never holds them.
+2. `file`: the path above for the credential (or
+   `/etc/factory-broker/secrets/<name>` for any other name), then the Docker
+   secret `/run/secrets/<name>`.
+3. `env-file`: the file named by `PASSDESK_SECRET_<NAME>_FILE`, which must
+   be an absolute path.
+
+There is deliberately no provider that reads the secret itself from an
+environment variable: those leak into child processes and `docker inspect`.
+A plugin can add providers (a keychain, a vault) by calling
+`credentials.register_provider(name, fn)` from its `activate()`; name it in
+`PASSDESK_CREDENTIAL_PROVIDERS` to place it, otherwise it is asked last.
+
+A credential file is used only if it is a regular file (symlinks are
+followed) of at most 64 KiB of UTF-8, outside the agent workspace (checked
+on the resolved path and, where `/proc` exists, on the opened file; a bind
+mount of the workspace elsewhere is not detected). Leading and trailing
+whitespace is dropped, as before; an empty file counts as absent, and a
+value with a control character left inside it (a second line, say) is
+refused. A refused file is skipped and recorded in the audit
+log as a `credential_unusable` event naming the credential, the provider and
+the reason, never the value.
 
 ## Checking a deployment
 

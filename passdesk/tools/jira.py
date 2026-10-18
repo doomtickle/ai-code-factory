@@ -10,10 +10,10 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from ..core import config
+from ..core import config, credentials
 from ..core.errors import Denied
 from ..core.filters import sanitize, untrusted
-from ..core.net import NO_REDIRECT_OPENER, read_secret_file
+from ..core.net import NO_REDIRECT_OPENER
 from ..core.registry import register
 
 # Jira Cloud (read-only): scoped API token via the api.atlassian.com gateway.
@@ -30,7 +30,7 @@ _CLOUD_ID_RE = re.compile(
 
 
 def jira_auth_header() -> str:
-    value = read_secret_file(config.JIRA_SECRET_PATH)  # "email:token"
+    value = credentials.get("jira")  # "email:token"
     if not value:
         raise Denied("no Jira credential found; the deployment must deliver a scoped API token "
                      "(value \"email:token\") to BROKER_JIRA_SECRET's path - see README, "

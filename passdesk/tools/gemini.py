@@ -6,10 +6,10 @@ import json
 import urllib.error
 import urllib.request
 
-from ..core import config
+from ..core import config, credentials
 from ..core.errors import Denied
 from ..core.filters import block_outbound_secrets, sanitize, untrusted
-from ..core.net import NO_REDIRECT_OPENER, read_secret_file
+from ..core.net import NO_REDIRECT_OPENER
 from ..core.registry import register
 
 
@@ -22,7 +22,7 @@ def tool_gemini_flash_query(args: dict, policy: dict) -> str:
     if len(prompt) > max_chars:
         raise Denied(f"prompt exceeds {max_chars} characters")
     block_outbound_secrets("prompt", prompt)
-    api_key = read_secret_file(config.GEMINI_SECRET_PATH)
+    api_key = credentials.get("gemini")
     if not api_key:
         raise Denied("no Gemini API key found; the deployment must deliver one to "
                      "BROKER_GEMINI_SECRET's path - see README, Configuring credentials")

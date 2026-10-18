@@ -12,10 +12,10 @@ import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 
-from ..core import config
+from ..core import config, credentials
 from ..core.errors import Denied
 from ..core.filters import sanitize
-from ..core.net import NO_REDIRECT_OPENER, read_secret_file
+from ..core.net import NO_REDIRECT_OPENER
 from ..core.policy import check_package, host_allowed
 from ..core.registry import register
 from ..core.workspace import (atomic_write, factory_dir, file_in_dir, open_workspace_dir, read_in_dir, tool_lock,
@@ -139,7 +139,7 @@ def npm_tarball(label: str, resolved: str | None, integrity: str | None, policy:
 
 def npm_registry_auth() -> str | None:
     """Authorization header value for npm_private_registry, or None if no credential was delivered."""
-    value = read_secret_file(config.NPM_REGISTRY_SECRET_PATH)
+    value = credentials.get("npm-registry")
     if not value:
         return None
     if value.startswith(("Bearer ", "Basic ")):

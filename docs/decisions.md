@@ -4,6 +4,64 @@ Dated entries, for the user to review. Newest first.
 
 ## 2026-10-18
 
+- **Credentials come from ordered providers (`core/credentials.py`,
+  doomtickle/passdesk-ops#36, Phase 3 plan W2.1).** `get(name)` asks
+  `proxy`, `file` (the configured path or `/etc/factory-broker/secrets/<name>`,
+  then `/run/secrets/<name>`) and `env-file` (`PASSDESK_SECRET_<NAME>_FILE`)
+  in the order `PASSDESK_CREDENTIAL_PROVIDERS` gives, and plugins add
+  providers with `register_provider` from `activate()`. Jira, Gemini and the
+  npm registry read through it. Owner decision recorded with it: in
+  standalone mode the gateway itself will hold the GitHub token (wired up
+  by W2.2, not here), and users are advised to use fine-grained tokens
+  limited to chosen repos. The gateway stays outside every agent sandbox, so
+  "credentials never enter agent sandboxes" still holds, but redaction and
+  keeping secrets off argv, disk and logs carry more weight once it holds
+  GitHub's token too. Judgement calls:
+  - **No provider reads a value from an environment variable**, only a path:
+    values in the environment leak into child processes (git, pip) and
+    `docker inspect`.
+  - **`proxy` stops the lookup.** It returns a sentinel (`INJECTED`) for
+    `github`, so with the default order a stray `secrets/github` file is
+    never picked up; standalone mode (W2.2) drops `proxy` from the list.
+  - **Surrounding whitespace is stripped with `.strip()`, as the old reader
+    did** (the plan says no change in behaviour for the moved reads; an
+    earlier draft stripped only trailing newlines, which turned `'key\t\n'`
+    into a refused value and kept spaces around a key). The control-character
+    check runs on the stripped value, and applies to plugin providers' values
+    too.
+  - **A value with a control character inside it is refused** (treated as
+    absent, audited). Before, a Gemini key or bare npm token with a second
+    line reached `http.client`, whose "Invalid header value" error quotes the
+    whole header back to the agent.
+  - **File safety:** symlinks are followed (as before; Kubernetes secret
+    volumes are symlinks), but the file reached must be a regular file of at
+    most 64 KiB of UTF-8. A non-regular path is refused before it is opened
+    (so a device node is never opened) and again on the open descriptor; the
+    open is non-blocking so a FIFO swapped in between cannot hang a call. Group- or world-readable files
+    are accepted, since Docker secrets are 0444 by default; the doctor still
+    warns about loose modes in the secrets directory. A file inside the agent
+    workspace (directly or through a symlink) is refused, checked on the
+    resolved path and then on the descriptor's `/proc/self/fd` path, which
+    catches a swap between check and open (without `/proc` only the first
+    check runs). The checks are on paths, so a bind mount of the workspace at
+    another path, or a hard link to a file in it, is not detected; keeping
+    the workspace out of the gateway's secret locations is the deployment's
+    job. Missing or
+    unreadable files are absent as before; refused ones are skipped and
+    recorded as a `credential_unusable` audit event without the value.
+  - **Names are `[a-z][a-z0-9]*(-[a-z0-9]+)*`, at most 64 characters**, so a
+    name is always one file name and maps to exactly one env-file variable
+    (no `_`, which the variable uses for `-`).
+  - **Plugin providers cannot replace a built-in, and one not named in
+    `PASSDESK_CREDENTIAL_PROVIDERS` is asked last**, so loading a plugin
+    never changes what today's files return. An unknown name in the list
+    stops the server at start-up.
+  - **A provider that raises becomes a `CredentialError` naming only the
+    provider and credential**, raised `from None`, since a plugin's own
+    message might hold the value.
+  - **The secrets directory is read only through `secrets_dir()`**, so making
+    it configurable (a separate change) is a one-line edit there.
+
 - **Identity/protocol layer de-factory-ized (doomtickle/passdesk-ops#36),
   per `docs/broker-extraction.md` (ai-code-factory) Phase 1 items 1, 2 and
   6.** `grant_hint`'s hard-coded `coordinator` special case is gone; a grant
