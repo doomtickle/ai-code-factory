@@ -103,7 +103,11 @@ def github_token() -> str | None:
     if not _TOKEN_RE.fullmatch(token):
         raise Denied("the github credential is not a GitHub token (expected 20-255 letters, digits or "
                      "underscores); deliver a fine-grained token - see README, Configuring credentials")
-    filters.remember_secret(token, git_basic_auth(token).removeprefix("Basic "))
+    b64 = git_basic_auth(token).removeprefix("Basic ")
+    # Remembered without its "=" padding: a prefix of the padded form, so
+    # redaction catches an echo of either form (e.g. one with padding
+    # stripped by a tool that doesn't preserve it).
+    filters.remember_secret(token, b64.rstrip("="))
     return token
 
 
@@ -307,7 +311,8 @@ def tool_github_create_pr(args: dict, policy: dict) -> str:
         with open_url(req, timeout=30) as resp:
             pr = json.load(resp)
     except urllib.error.HTTPError as e:
-        detail = sanitize(e.read().decode("utf-8", "replace"), 2000)
+        with e:
+            detail = sanitize(e.read().decode("utf-8", "replace"), 2000)
         if token is not None:
             fix = (f"the gateway's github credential must be a token with Contents and Pull requests "
                    f"read/write access to {repo}")

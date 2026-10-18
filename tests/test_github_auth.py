@@ -13,7 +13,15 @@ import urllib.request
 from pathlib import Path
 from unittest import mock
 
-from passdesk.core import approvals, config, credentials, filters, policy, protocol, workspace
+from passdesk.core import (
+    approvals,
+    config,
+    credentials,
+    filters,
+    policy,
+    protocol,
+    workspace,
+)
 from passdesk.core.errors import Denied
 from passdesk.tools import git
 
@@ -201,6 +209,51 @@ class GitHubTokenTests(Base):
         out = git.sanitize(f"remote: bad credentials {TOKEN}\n! [remote rejected] Basic {B64}")
         self.assertFalse(leaks(out))
 
+    def test_push_sends_auth_only_on_the_base_fetch_and_the_push(self):
+        """Regression guard for git.py's two auth=True call sites (the base fetch and the
+        final push): every other git call tool_git_push makes (mirror set-up, bundle verify,
+        rev-list, rev-parse, diff) must run with no auth at all."""
+        def sh(*cmd, cwd):
+            cp = workspace.run(list(cmd), cwd=cwd, extra_env={"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
+                                                               "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"})
+            self.assertEqual(cp.returncode, 0, cp.stderr)
+            return cp.stdout.strip()
+        root = Path(self.tmp.name)
+        origin = root / "origin.git"
+        sh("git", "init", "--bare", "-q", "-b", "main", str(origin), cwd=root)
+        seed = root / "seed"
+        sh("git", "clone", "-q", str(origin), str(seed), cwd=root)
+        (seed / "README").write_text("hello\n")
+        sh("git", "add", ".", cwd=seed)
+        sh("git", "commit", "-q", "-m", "init", cwd=seed)
+        sh("git", "push", "-q", "origin", "HEAD:main", cwd=seed)
+        sh("git", "checkout", "-q", "-b", "factory/feature", cwd=seed)
+        (seed / "feature.txt").write_text("new feature\n")
+        sh("git", "add", "feature.txt", cwd=seed)
+        sh("git", "commit", "-q", "-m", "add feature", cwd=seed)
+        outgoing = config.WORKSPACE / ".factory/outgoing"
+        outgoing.mkdir(parents=True, exist_ok=True)
+        sh("git", "bundle", "create", "-q", str(outgoing / "f.bundle"), "main..factory/feature", cwd=seed)
+        self.mirror_at(str(origin))  # the gateway's mirror points at this local repo, not github.com
+
+        calls = []
+        real = git.git
+
+        def spy(*args, **kwargs):
+            calls.append((args[0], kwargs.get("auth", False)))
+            return real(*args, **kwargs)
+        p = mock.patch.object(git, "git", side_effect=spy)
+        p.start()
+        self.addCleanup(p.stop)
+
+        out = git.tool_git_push({"repo": "acme/widgets", "branch": "factory/feature", "bundle": "f.bundle"}, POLICY)
+        self.assertIn("Pushed 1 commit(s)", out)
+
+        authed = [cmd for cmd, auth in calls if auth]
+        unauthed = {cmd for cmd, auth in calls if not auth}
+        self.assertEqual(authed, ["fetch", "push"])
+        self.assertTrue({"bundle", "rev-list", "rev-parse", "diff"} <= unauthed)
+
     # --- github_create_pr ------------------------------------------------------------
 
     def test_pr_sends_a_bearer_token_and_never_follows_redirects(self):
@@ -225,7 +278,7 @@ class GitHubTokenTests(Base):
         self.assertFalse(leaks(out))
 
     def test_pr_error_echoing_the_token_is_redacted(self):
-        srv, port = self.server()
+        _, port = self.server()
         with mock.patch.object(git, "GITHUB_API", f"http://127.0.0.1:{port}/echo"):
             out = git.tool_github_create_pr(PR_ARGS, POLICY)
         self.assertIn("HTTP 401", out)
@@ -274,6 +327,17 @@ class GitHubTokenTests(Base):
         self.assertIn(base64.b64encode(f"x-access-token:{new}".encode()).decode(),
                       git.git_auth_env()["GIT_CONFIG_VALUE_0"])
         self.assertNotIn(TOKEN, filters.redact(TOKEN + new))  # the old value is still redacted
+
+    def test_both_padded_and_unpadded_base64_forms_are_redacted(self):
+        git.github_token()
+        self.assertTrue(B64.endswith("="), "fixture no longer exercises padding")
+        # The padded form is caught too (the stripped value remembered below is a
+        # prefix of it); only the "=" padding itself, which carries no token
+        # bytes, survives in the output.
+        self.assertEqual(filters.redact(f"seen {B64} here"), "seen [REDACTED:live-credential]== here")
+        self.assertEqual(filters.redact(f"seen {B64.rstrip('=')} here"), "seen [REDACTED:live-credential] here")
+        self.assertFalse(leaks(filters.redact(B64)))
+        self.assertFalse(leaks(filters.redact(B64.rstrip("="))))
 
 
 class ProxyModeTests(Base):
