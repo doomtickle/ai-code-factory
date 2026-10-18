@@ -259,12 +259,18 @@ class RevokeTests(PrincipalBase):
         # A deployment with only roles.json (bob and carol); bob has a token.
         # revoke("bob") should remove bob's token and grant, write grants.json
         # with carol still present, and bob should no longer authenticate.
+        token = "b" * 64
         (config.STATE / "tokens").mkdir(parents=True, exist_ok=True)
-        (config.STATE / "tokens" / "bob.sha256").write_text("a" * 64 + "\n")
+        self.token_hash_path("bob").write_text(principal.token_digest(token) + "\n")
         (config.STATE / "roles.json").write_text(json.dumps({
             "bob": {"tools": ["git_fetch"], "source": "roles/bob/role.conf"},
             "carol": {"tools": ["npm_fetch"], "source": "roles/carol/role.conf"}
         }))
+
+        # Bob's token works before the revoke.
+        got, reason = auth.authenticate(f"Bearer {token}")
+        self.assertEqual(got, "bob")
+        self.assertIsNone(reason)
 
         # Revoke bob
         principal.revoke("bob")
@@ -281,7 +287,7 @@ class RevokeTests(PrincipalBase):
         self.assertEqual(auth.principal_tools("carol"), {"npm_fetch"})
 
         # Bob no longer authenticates
-        got, reason = auth.authenticate("Bearer a" * 64)
+        got, reason = auth.authenticate(f"Bearer {token}")
         self.assertIsNone(got)
         self.assertIsNotNone(reason)
 
