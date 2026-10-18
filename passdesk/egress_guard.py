@@ -149,10 +149,16 @@ def relay(a: socket.socket, b: socket.socket) -> None:
                     return
 
 
-class Handler(socketserver.StreamRequestHandler):
-    timeout = READ_TIMEOUT  # on the connection while the request is read
-    rbufsize = 0            # unbuffered: nothing the client sends after the headers is swallowed
+def _header_end(buf: bytes) -> int:
+    """Index just past the header block's blank line, or -1 if not there yet."""
+    for terminator in (b"\r\n\r\n", b"\n\n"):
+        at = buf.find(terminator)
+        if at >= 0:
+            return at + len(terminator)
+    return -1
 
+
+class Handler(socketserver.StreamRequestHandler):
     def refuse(self, code: int, reason: str) -> None:
         log(f"deny {code} {reason} client={self.client_address[0]}")
         try:
@@ -168,32 +174,42 @@ class Handler(socketserver.StreamRequestHandler):
         finally:
             self.server.slots.release()
 
-    def read_request(self) -> str | None:
-        """The request line, with the header block consumed and bounded;
-        None (after a refusal) when it doesn't fit or doesn't arrive."""
-        try:
-            line = self.rfile.readline(MAX_LINE + 1)
-            total = len(line)
-            if total > MAX_LINE or not line.endswith(b"\n"):
-                self.refuse(400, "request line too long or incomplete")
+    def read_request(self) -> tuple[str, bytes] | None:
+        """The request line, plus any bytes the client sent after its header
+        block (relayed once the tunnel is up, not swallowed). One deadline
+        for the whole read, whatever the pace, and one size cap; None after
+        a refusal when it doesn't fit or doesn't arrive."""
+        deadline = time.monotonic() + READ_TIMEOUT
+        buf = b""
+        while (end := _header_end(buf)) < 0:
+            if len(buf) > MAX_HEADER_BYTES:
+                self.refuse(400, "headers too long")
                 return None
-            while True:
-                header = self.rfile.readline(MAX_HEADER_BYTES + 1)
-                total += len(header)
-                if total > MAX_HEADER_BYTES:
-                    self.refuse(400, "headers too long")
-                    return None
-                if header in (b"\r\n", b"\n", b""):
-                    break
-        except OSError:
-            self.refuse(408, "timed out reading the request")
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                self.refuse(408, "timed out reading the request")
+                return None
+            self.connection.settimeout(remaining)
+            try:
+                chunk = self.connection.recv(MAX_HEADER_BYTES + 1 - len(buf))
+            except OSError:
+                self.refuse(408, "timed out reading the request")
+                return None
+            if not chunk:
+                self.refuse(400, "connection closed before the request completed")
+                return None
+            buf += chunk
+        line = buf[:end].split(b"\n", 1)[0].rstrip(b"\r")
+        if len(line) > MAX_LINE:
+            self.refuse(400, "request line too long")
             return None
-        return line.decode("ascii", "replace").rstrip("\r\n")
+        return line.decode("ascii", "replace"), buf[end:]
 
     def serve(self) -> None:
-        request = self.read_request()
-        if request is None:
+        read = self.read_request()
+        if read is None:
             return
+        request, early = read
         match = _REQUEST_RE.fullmatch(request)
         if match is None:
             method = request.split(" ", 1)[0]
@@ -214,8 +230,13 @@ class Handler(socketserver.StreamRequestHandler):
             return self.refuse(502, f"{host}: cannot connect: {e}")
         with upstream:
             self.connection.settimeout(None)
-            self.wfile.write(b"HTTP/1.1 200 Connection established\r\n\r\n")
             log(f"allow {host}:443 -> {upstream.getpeername()[0]} client={self.client_address[0]}")
+            try:
+                if early:
+                    upstream.sendall(early)
+                self.wfile.write(b"HTTP/1.1 200 Connection established\r\n\r\n")
+            except OSError:
+                return
             relay(self.connection, upstream)
 
 

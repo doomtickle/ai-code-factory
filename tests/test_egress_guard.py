@@ -209,9 +209,35 @@ class RequestRefusalTests(GuardBase):
         self.assertEqual(status, "HTTP/1.1 400 Refused")
 
     def test_slow_client_is_cut_off(self):
-        with mock.patch.object(guard.Handler, "timeout", 0.3):
+        with mock.patch.object(guard, "READ_TIMEOUT", 0.3):
             _, status = self.open(b"CONNECT model.example:443 HTTP/1.1\r\n")  # never finishes the headers
         self.assertEqual(status, "HTTP/1.1 408 Refused")
+
+    def test_dripping_client_is_cut_off_at_the_deadline(self):
+        # One byte every 0.1 s, forever: the deadline is on the whole read,
+        # not reset by each byte that arrives.
+        with mock.patch.object(guard, "READ_TIMEOUT", 0.5):
+            sock = socket.create_connection(self.guard.server_address, timeout=5)
+            self.addCleanup(sock.close)
+            sock.settimeout(0.1)
+            data = b""
+            for byte in b"CONNECT model.example:443 HTTP/1.1\r\nX-Slow: " + b"y" * 100:
+                try:
+                    sock.sendall(bytes([byte]))
+                    data = sock.recv(1, socket.MSG_PEEK)  # nothing until the 408
+                except TimeoutError:
+                    continue
+                break
+            sock.settimeout(5)
+            data = sock.recv(200)
+        self.assertTrue(data.startswith(b"HTTP/1.1 408"), data)
+
+    def test_client_closing_early_is_400(self):
+        sock = socket.create_connection(self.guard.server_address, timeout=5)
+        sock.sendall(b"CONNECT model.example:443 HTTP/1.1\r\n")
+        sock.shutdown(socket.SHUT_WR)
+        with sock:
+            self.assertTrue(sock.recv(200).startswith(b"HTTP/1.1 400"))
 
     def test_dns_failure_is_502(self):
         with mock.patch.object(guard.socket, "getaddrinfo", addrinfo(error=socket.gaierror("no such name"))):
