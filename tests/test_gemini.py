@@ -96,7 +96,7 @@ class GeminiRoleGatingTests(Base):
         for role in ("developer", "reviewer"):
             res = self.call(role, {"prompt": "hi"})
             self.assertTrue(res["isError"], msg=role)
-            self.assertIn(f"{role} role may not use gemini_flash_query", res["content"][0]["text"])
+            self.assertIn(f"principal {role!r} is not granted tool 'gemini_flash_query'", res["content"][0]["text"])
 
 
 if __name__ == "__main__":

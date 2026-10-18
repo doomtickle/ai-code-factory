@@ -1,7 +1,9 @@
-# Broker tool names, one per line, in tools/list order. Read by
-# scripts/lib/roles.sh to validate BROKER_TOOLS grants: host scripts run on
-# the system Python, too old to import the broker. tests/test_registry.py
-# fails if this drifts from what passdesk/tools/ registers.
+# Broker tool names, one per line, in tools/list order. Agents reach the
+# broker only as MCP tools; deployments such as Docker Sandboxes (sbx) and
+# AI Code Factory are adapters on top, and some validate grants against this
+# list from a script too old to import the broker (3.11+, tomllib) directly.
+# tests/test_registry.py fails if this drifts from what passdesk/tools/
+# registers.
 web_fetch
 git_fetch
 git_push

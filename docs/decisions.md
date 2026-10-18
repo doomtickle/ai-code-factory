@@ -2,6 +2,46 @@
 
 Dated entries, for the user to review. Newest first.
 
+## 2026-10-18
+
+- **Identity/protocol layer de-factory-ized (doomtickle/passdesk-ops#36),
+  per `docs/broker-extraction.md` (ai-code-factory) Phase 1 items 1, 2 and
+  6.** `grant_hint`'s hard-coded `coordinator` special case is gone; a grant
+  in the grants file may now be either the old bare list of tool names or an
+  object `{"tools": [...], "source": "..."}`, and the deny message
+  (`principal 'x' is not granted tool 'y' (see ...)`) quotes that `source`
+  when one is set, else a generic "its BROKER_TOOLS grant". Judgement calls:
+  - **The factory's current hint wording (`roles/<name>/role.conf`,
+    `kits/coordinator/broker.conf`) is not reproduced automatically.** It
+    could be restored exactly by having the factory's `start-broker.sh`
+    write a `source` per grant, but that script is out of scope here (it
+    lives in `ai-code-factory`, a separate lane owns it). Until it's
+    updated, every factory deny message shows the generic hint instead of
+    the old path - a wording change only; grants, auth and the audit record
+    are unaffected. This is the "documented fallback" the task allowed in
+    place of reproducing the old text.
+  - **Grants file: `STATE/grants.json` if present, else `STATE/roles.json`**
+    (`core/auth.py:grants_path`), same format either way. The factory's
+    `scripts/start-broker.sh` keeps writing `roles.json` unchanged and the
+    fallback picks it up; a future deployment (or a later factory change)
+    can write `grants.json` instead, including the `source` form above,
+    without a flag day.
+  - **Audit field: `principal` is canonical, `role` stays as a duplicate
+    alias with the same value.** `ai-code-factory`'s `scripts/analytics.py`
+    reads `role`; dropping it would silently break that consumer's reports.
+    Both keys are written on every record until that script reads
+    `principal` instead.
+  - **Origin allowlist defaults to empty, not wide-open.** `BROKER_ALLOWED_ORIGINS`
+    (comma-separated) gates any request that carries an `Origin` header,
+    answering 403 before the body is read; a request with no `Origin`
+    (every CLI-driven MCP client seen so far) is unaffected. Defaulting to
+    empty means an unconfigured deployment refuses every Origin-bearing
+    request rather than accepting any - DNS-rebinding protection the MCP
+    spec recommends for HTTP transports is opt-in-to-relax, not opt-in-to-add.
+  - **Bind host stays `0.0.0.0` by default.** `BROKER_BIND_HOST` is now
+    readable from the environment, but the default is unchanged so sbx's
+    port-publishing keeps working without every deployment having to set it.
+
 ## 2026-10-17
 
 - **Ref names are secret-scanned: `check_branch_name` (`tools/git.py`) now

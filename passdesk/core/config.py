@@ -18,7 +18,19 @@ STATE = Path(os.environ.get("BROKER_STATE", "/nonexistent"))
 # policy.toml sits beside the passdesk package (see Dockerfile).
 POLICY_PATH = Path(os.environ.get("BROKER_POLICY", Path(__file__).resolve().parents[2] / "policy.toml"))
 PORT = int(os.environ.get("BROKER_PORT", "8765"))
+# Default "0.0.0.0" keeps today's deployments (e.g. sbx port publishing)
+# working; set narrower (e.g. "127.0.0.1") when nothing outside the host
+# needs to reach the broker directly.
+BIND_HOST = os.environ.get("BROKER_BIND_HOST", "0.0.0.0")
 MIRRORS = Path(os.environ.get("BROKER_MIRRORS", Path.home() / "mirrors"))
+
+# Comma-separated Origin allowlist for DNS-rebinding protection (MCP spec).
+# A request with no Origin header (the normal case for CLI-driven agent
+# clients) is unaffected; a request whose Origin isn't in this list is
+# refused with 403. Empty by default, so any Origin-bearing request is
+# refused until a deployment opts specific origins in.
+ALLOWED_ORIGINS = frozenset(
+    o.strip() for o in os.environ.get("BROKER_ALLOWED_ORIGINS", "").split(",") if o.strip())
 
 # Credentials the sbx egress proxy cannot inject (see the package docstring and
 # CLAUDE.md's "Credentials" section). Written by scripts/start-broker.sh, read
