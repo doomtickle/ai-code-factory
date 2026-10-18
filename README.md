@@ -730,7 +730,7 @@ hasn't dispatched any jobs yet just shows an empty report.
   - `broker/audit.jsonl`: every broker call, with the calling role
   - Server errors: `dispatch/dispatch.log` and `broker/broker.log`
 - **Why state is outside the repo:** the broker re-reads its tool grants
-  (`broker/roles.json`) and token hashes on every call. Inside the repo they would
+  (`broker/grants.json`) and token hashes on every call. Inside the repo they would
   be one merged developer branch away from being changed when the factory works
   on its own repo, and the broker writes into the project's `.factory/`. Only the broker sandbox and
   the dispatch bridge see the state folder. `factory start` moves state from the

@@ -34,7 +34,7 @@ from pathlib import Path
 TS_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 _WORD_RE = re.compile(r"[A-Za-z]+")
 _CONTROL_CHARS_RE = re.compile(r"[\x00-\x1f\x7f-\x9f]")
-_IDENTIFIER_FIELDS = ("job_id", "role", "task", "model")
+_IDENTIFIER_FIELDS = ("job_id", "role", "principal", "task", "model")
 
 
 def parse_ts(ts) -> datetime | None:
@@ -148,7 +148,19 @@ def load_broker_calls(broker_audit: Path) -> tuple[list[dict], int]:
     # "decision") before the call runs, in addition to the normal
     # allow/deny/error record once it finishes; skip it so those two tools
     # aren't counted twice.
-    return [r for r in records if "role" in r and "tool" in r and "event" not in r], malformed
+    calls = []
+    for r in records:
+        if "tool" not in r or "event" in r:
+            continue
+        # "principal" is the canonical field as of passdesk-broker's
+        # decouple-identity change; "role" is kept as a duplicate alias there,
+        # but fall back to it for audit lines written before that change.
+        role = r.get("principal") or r.get("role")
+        if role is None:
+            continue
+        r["role"] = role
+        calls.append(r)
+    return calls, malformed
 
 
 def load_sessions(sessions_dir: Path) -> tuple[dict, int]:

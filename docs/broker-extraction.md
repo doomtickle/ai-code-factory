@@ -14,12 +14,12 @@ plan, recorded here so the reasoning survives.
 
 | Area | Today | Why it blocks reuse |
 |---|---|---|
-| Identity | "Roles", with token hashes and `roles.json` grants written by `scripts/start-broker.sh` from `role.conf`; the Coordinator is special-cased in `core/protocol.py` (`grant_hint`) | Other deployments have agents, users and CI jobs, not factory roles |
+| Identity | "Roles", with token hashes and `grants.json` grants (object form, `{"tools": [...], "source": "..."}`) written by `scripts/start-broker.sh` from `role.conf`/`kits/coordinator/broker.conf`; `core/protocol.py`'s `grant_hint` is generic, reading the `source` the factory sets (see Phase 1, done) | Other deployments have agents, users and CI jobs, not factory roles |
 | File exchange | Tools read from and write to `WORKSPACE/.factory/{incoming,outgoing,npm-mirror,wheels}`, relying on sbx sharing the project folder with the broker; one broker serves one project (`start-broker.sh`, "bound to") | Agents elsewhere don't share a filesystem with the broker |
 | Credentials | GitHub works because the sbx proxy injects the token; Jira, Gemini and the private npm registry use the keychain → stdin → file exception (CLAUDE.md) | Needs secret managers and short-lived, narrowly scoped tokens |
 | Policy | One TOML baked into the image plus a local overlay, shared by every caller; its hosts are copied by hand into `kits/broker/spec.yaml` | Needs per-caller policy, schema validation, and an egress allowlist generated from the policy |
 | Deployment | `broker/run.sh` restart loop on an sbx base image; `start-broker.sh` does sbx run, port publishing and `sbx mcp add` | Needs to run in plain Docker or Kubernetes, with sbx as one adapter |
-| Audit | Local JSONL with fsync; the caller field is named `role` (`scripts/analytics.py` reads it) | Needs a documented schema, pluggable sinks, tamper evidence |
+| Audit | Local JSONL with fsync; the canonical caller field is `principal`, with `role` kept as a duplicate alias (`scripts/analytics.py` reads `principal`, falling back to `role` for older lines) | Needs a documented schema, pluggable sinks, tamper evidence |
 | Transport | Standard-library HTTP server, bearer token, no TLS, listening on all interfaces inside the VM | Fine behind sbx's loopback port; not on a network |
 
 ## Phase 0: refactor in place (done)
@@ -31,7 +31,7 @@ before, apart from the removed `npm_ci`.
   - `core/`: `config`, `errors`, `policy`, `filters`, `audit`, `workspace`, `net`, `registry`, `auth`, `protocol`. It knows no tool.
   - `tools/`: `web`, `git` (with GitHub PRs), `gemini`, `jira`, `npm`, `pip`. Each module registers its tools with `core.registry.register`. Import order in `tools/__init__.py` sets the `tools/list` order.
 - Settings live in `core/config.py` and are read as `config.NAME` at call time, so tests can point them at temp dirs.
-- Inside the broker the caller is a *principal* (`auth.authenticate`, `auth.principal_tools`). Agent-facing messages still say "role". The audit field is still `role`, because analytics reads it.
+- Inside the broker the caller is a *principal* (`auth.authenticate`, `auth.principal_tools`). The audit field is `principal`, with `role` kept as a duplicate alias (see Phase 1, done) until `scripts/analytics.py` no longer needs it.
 - `npm_ci` is gone. It installed into the project folder, which CLAUDE.md forbids, and nothing granted it. `npm_fetch` plus `factory-test` replaces it.
 - `broker/tools.txt` lists the tool names, and `scripts/lib/roles.sh` reads its known-tools list from that file. Host scripts run on the system Python (3.9), which can't import the broker (3.11+, `tomllib`), so a manifest stands in. `tests/test_registry.py` fails if the manifest drifts from the registry.
 - `broker/test_server.py` is split into `broker/tests/`, one file per area. The run command is unchanged (README, Operating).
@@ -42,8 +42,18 @@ Left for later phases: `grant_hint` (factory wiring in core), the `role` audit f
 
 All changes stay in this repo, and the factory keeps working throughout.
 
-1. **Principals and grants.** A versioned grants file replaces bare `roles.json`: principal → tools, plus optional per-principal policy overrides (e.g. a reviewer may fetch but not push). `start-broker.sh` writes the new format. The broker accepts the old one during a deprecation window.
-2. **Grant hints out of core.** Each grant can carry a `source` string, which the deny message quotes. The factory sets `roles/<name>/role.conf` or `kits/coordinator/broker.conf`, and `grant_hint` goes away.
+1. **Principals and grants (done, passdesk-broker#7 "decouple-identity").** The
+   broker reads `STATE/grants.json` if present, else `STATE/roles.json` (same
+   format, for deployments that still write that name). A grant is a bare
+   list of tool names, or an object `{"tools": [...], "source": "..."}`.
+   `scripts/start-broker.sh` writes `grants.json` in the object form and
+   removes a stale `roles.json`.
+2. **Grant hints out of core (done, passdesk-broker#7).** Each grant can
+   carry a `source` string, which the deny message quotes ("see
+   `<source>`"); with none, it falls back to a generic "its BROKER_TOOLS
+   grant" hint. `grant_hint` in `core/protocol.py` no longer hardcodes
+   factory paths - `start-broker.sh` sets `source` to `roles/<name>/role.conf`
+   or `kits/coordinator/broker.conf`.
 3. **File exchange behind one interface.** Tools ask an exchange object for "a place to put a bundle for this caller" or "the bundle this caller handed me". Two backends:
    - *Shared mount*: today's `.factory/` behavior, for sbx.
    - *In-protocol transfer*: bundles and tarballs move as MCP blob content, with size limits and hashes. This is what lets the broker work with agents that share no filesystem with it.
@@ -58,7 +68,12 @@ All changes stay in this repo, and the factory keeps working throughout.
    - A JSON schema for `policy.toml`, checked at load time (bad keys fail the image build, not a tool call).
    - `broker policy validate`.
    - `broker egress-hosts`, which prints every host the policy can reach, so `kits/broker/spec.yaml` is generated or checked instead of synced by hand.
-6. **Audit schema.** A documented event format with a version field. The caller field moves to `principal`, with `role` kept as an alias until `scripts/analytics.py` reads both. Sinks: file (today), syslog, webhook, OpenTelemetry. Each record carries the previous record's hash, so edits and deletions show.
+6. **Audit schema (partly done, passdesk-broker#7).** The caller field moved
+   to `principal`, with `role` kept as a duplicate alias until
+   `scripts/analytics.py` no longer needs it (it now reads `principal`,
+   falling back to `role` for older lines). Still outstanding: a documented
+   event format with a version field, pluggable sinks (syslog, webhook,
+   OpenTelemetry), and a hash chain over records so edits and deletions show.
 
 ## Phase 2: package it
 
@@ -77,6 +92,15 @@ All changes stay in this repo, and the factory keeps working throughout.
 2. **Adapters:**
    - *sbx*: today's `start-broker.sh` logic (token minting into `sbx secret`, `sbx mcp add` per principal, credential delivery), moved into the broker repo.
    - *Generic*: setup docs for MCP clients (Claude Code, Codex, Cursor, others), each tested.
+
+   **Partly done (passdesk-broker#8 "decouple-deploy"):** the pieces a
+   non-sbx deployment needs to override are now plain settings rather than
+   hardcoded paths - `BROKER_BIND_HOST`, `BROKER_ALLOWED_ORIGINS` and
+   `BROKER_EXCHANGE_DIR` (env, see `core/config.py`), and `ARG
+   INSTALL_DIR=/opt/factory-broker` (Dockerfile; `run.sh` resolves its own
+   directory instead of hardcoding it). `start-broker.sh` itself still lives
+   in this repo and keeps every default (`0.0.0.0`, empty origins allowlist,
+   `.factory`, `/opt/factory-broker`), so this needed no change here.
 3. **The factory consumes the broker** as an image pinned by digest, per CLAUDE.md's pinning rule. It keeps only its role → principal mapping and the sbx adapter configuration. `broker/tools.txt` is generated from the pinned image's tool list at build time.
 
 ## Phase 3: extension points
