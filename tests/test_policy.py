@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 
 from passdesk import tools  # noqa: F401 - registers every tool
-from passdesk.core import policy
+from passdesk.core import config, policy
 from passdesk.core.errors import Denied
 from passdesk.tools import git
 
@@ -44,6 +44,22 @@ class PolicyTests(Base):
         for bad in ["main", "release/1.0", "feature/x"]:
             with self.assertRaises(Denied, msg=bad):
                 git.check_push_branch(bad, POLICY)
+
+    def test_push_branch_prefix_falls_back_to_config_default_when_unset(self):
+        # A policy that omits push_branch_prefix entirely (not one that sets
+        # it to ""): check_push_branch then falls back to
+        # config.DEFAULT_PUSH_BRANCH_PREFIX, today "factory/" (BROKER_PUSH_PREFIX).
+        no_prefix = {**POLICY, "git": {k: v for k, v in POLICY["git"].items() if k != "push_branch_prefix"}}
+        git.check_push_branch("factory/feature", no_prefix)
+        with self.assertRaises(Denied):
+            git.check_push_branch("other/feature", no_prefix)
+
+        old = config.DEFAULT_PUSH_BRANCH_PREFIX
+        config.DEFAULT_PUSH_BRANCH_PREFIX = "agents/"
+        self.addCleanup(setattr, config, "DEFAULT_PUSH_BRANCH_PREFIX", old)
+        git.check_push_branch("agents/feature", no_prefix)
+        with self.assertRaises(Denied):
+            git.check_push_branch("factory/feature", no_prefix)
 
     def test_repo_allowlist(self):
         git.check_repo("acme/widgets", POLICY)

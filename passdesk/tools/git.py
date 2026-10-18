@@ -50,7 +50,7 @@ def check_push_branch(branch: str, policy: dict) -> str:
     for pat in git.get("protected_branches", []):
         if fnmatch.fnmatchcase(branch, pat):
             raise Denied(f"branch {branch} is protected ({pat})")
-    prefix = git.get("push_branch_prefix", "")
+    prefix = git.get("push_branch_prefix", config.DEFAULT_PUSH_BRANCH_PREFIX)
     if prefix and not branch.startswith(prefix):
         raise Denied(f"agents may only push branches starting with {prefix!r}")
     return branch
@@ -158,7 +158,7 @@ def tool_git_push(args: dict, policy: dict) -> str:
         heads = git("bundle", "list-heads", str(bundle), cwd=mirror).stdout
         if not re.search(rf"\srefs/heads/{re.escape(branch)}$", heads, re.M):
             raise Denied(f"bundle does not contain refs/heads/{branch}")
-        incoming = f"refs/factory/{branch}"
+        incoming = f"{config.REF_NAMESPACE}/{branch}"
         git("fetch", "--no-tags", str(bundle), f"+refs/heads/{branch}:{incoming}", cwd=mirror)
 
         rng = f"refs/remotes/origin/{base}..{incoming}"
@@ -224,8 +224,8 @@ def tool_github_create_pr(args: dict, policy: dict) -> str:
             pr = json.load(resp)
     except urllib.error.HTTPError as e:
         detail = sanitize(e.read().decode("utf-8", "replace"), 2000)
-        hint = ("\nHint: the GitHub credential is supplied by the deployment (with sbx: "
-                "sbx secret set github --sandbox factory-broker)") if e.code in (401, 403, 404) else ""
+        sbx = " (with sbx: sbx secret set github --sandbox factory-broker)" if config.DEPLOYMENT == "sbx" else ""
+        hint = f"\nHint: the GitHub credential is supplied by the deployment{sbx}" if e.code in (401, 403, 404) else ""
         return f"GitHub API returned HTTP {e.code}:\n" + untrusted(f"GitHub API ({repo})", detail) + hint
     return f"Opened PR #{pr['number']}: {pr['html_url']}"
 

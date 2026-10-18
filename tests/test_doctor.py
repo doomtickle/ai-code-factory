@@ -360,6 +360,28 @@ class LiveChecks(DoctorBase):
         self.assertFails(report, "does not answer")
         self.assertFails(report, "cannot reach api.github.com")
 
+    def test_github_token_hints_drop_sbx_command_in_standalone_deployment(self):
+        self.policy()
+        pol = doctor.policy_mod.load_policy(self.policy_path)
+
+        def fake_http(answer):
+            def http(url, headers=None, data=None, timeout=10):
+                return (401, b"") if data is not None else answer
+            return http
+
+        old = config.DEPLOYMENT
+        self.addCleanup(setattr, config, "DEPLOYMENT", old)
+        # (200, b"{}"): no token attached (WARN); (401, b""): token rejected (FAIL).
+        # Both fix lines name the sbx re-attach command only when DEPLOYMENT=sbx.
+        for answer, level in [((200, b"{}"), doctor.WARN), ((401, b""), doctor.FAIL)]:
+            for deployment, expect_sbx in [("sbx", True), ("standalone", False)]:
+                config.DEPLOYMENT = deployment
+                report = doctor.Report()
+                doctor.check_live(report, pol, "http://127.0.0.1:1/mcp", http=fake_http(answer))
+                fixes = [line for _, lvl, _, fix in report.items if lvl == level for line in fix]
+                self.assertEqual(any("sbx secret set github" in line for line in fixes), expect_sbx,
+                                 (deployment, answer, fixes))
+
 
 class CliTests(DoctorBase):
     def test_egress_hosts_flag_and_exit_codes(self):

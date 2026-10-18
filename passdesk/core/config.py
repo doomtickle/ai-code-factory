@@ -7,6 +7,7 @@ import NAME`), so tests can point them at temporary directories.
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 
 SERVER_NAME = "passdesk"
@@ -24,6 +25,12 @@ PORT = int(os.environ.get("BROKER_PORT", "8765"))
 BIND_HOST = os.environ.get("BROKER_BIND_HOST", "0.0.0.0")
 MIRRORS = Path(os.environ.get("BROKER_MIRRORS", Path.home() / "mirrors"))
 
+# "sbx" (default): the deployment this repo documents and tests (Passdesk as
+# its own sbx sandbox, built by the AI Code Factory; see README "Deploying
+# with Docker Sandboxes"). "standalone": any other deployment. Tools and the
+# doctor use this to show (or suppress) hints that name the sbx CLI.
+DEPLOYMENT = os.environ.get("BROKER_DEPLOYMENT", "sbx")
+
 # Comma-separated Origin allowlist for DNS-rebinding protection (MCP spec).
 # A request with no Origin header (the normal case for CLI-driven agent
 # clients) is unaffected; a request whose Origin isn't in this list is
@@ -36,10 +43,13 @@ ALLOWED_ORIGINS = frozenset(
 # CLAUDE.md's "Credentials" section). Written by scripts/start-broker.sh, read
 # fresh on every call so rotating the host keychain entry and re-running that
 # script rotates the credential without restarting the broker.
-JIRA_SECRET_PATH = Path(os.environ.get("BROKER_JIRA_SECRET", "/etc/factory-broker/secrets/jira"))
-GEMINI_SECRET_PATH = Path(os.environ.get("BROKER_GEMINI_SECRET", "/etc/factory-broker/secrets/gemini"))
-NPM_REGISTRY_SECRET_PATH = Path(os.environ.get("BROKER_NPM_REGISTRY_SECRET",
-                                               "/etc/factory-broker/secrets/npm-registry"))
+# SECRETS_DIR is only where the three paths below default to; each is still
+# independently overridable (BROKER_JIRA_SECRET, etc.) for a deployment that
+# wants one of them somewhere else entirely.
+SECRETS_DIR = os.environ.get("BROKER_SECRETS_DIR", "/etc/factory-broker/secrets")
+JIRA_SECRET_PATH = Path(os.environ.get("BROKER_JIRA_SECRET", f"{SECRETS_DIR}/jira"))
+GEMINI_SECRET_PATH = Path(os.environ.get("BROKER_GEMINI_SECRET", f"{SECRETS_DIR}/gemini"))
+NPM_REGISTRY_SECRET_PATH = Path(os.environ.get("BROKER_NPM_REGISTRY_SECRET", f"{SECRETS_DIR}/npm-registry"))
 
 # Plugin modules to import at start-up (comma-separated; see core/plugins.py).
 PLUGINS = os.environ.get("PASSDESK_PLUGINS", "")
@@ -52,3 +62,33 @@ MAX_OUTPUT_CHARS = 20_000
 # Overridable for deployments that don't want the ".factory" name; the
 # default is what every existing deployment and test already expects.
 EXCHANGE_DIR = os.environ.get("BROKER_EXCHANGE_DIR", ".factory")
+
+# Ref namespace git_push stages an incoming branch under, in the broker's own
+# bare mirror, while it verifies and awaits approval (tools/git.py); never
+# pushed itself. Must sit under "refs/" so it can never collide with
+# "refs/heads/..." or "refs/remotes/...".
+REF_NAMESPACE = os.environ.get("BROKER_REF_NAMESPACE", "refs/factory")
+
+# Fallback for [git].push_branch_prefix when a deployment's policy.toml
+# doesn't set it at all (every policy.toml this repo ships does, so this
+# only matters for a deployment's own from-scratch policy).
+DEFAULT_PUSH_BRANCH_PREFIX = os.environ.get("BROKER_PUSH_PREFIX", "factory/")
+
+_REF_NAMESPACE_RE = re.compile(r"^refs/[A-Za-z0-9][A-Za-z0-9._/-]*$")
+
+
+def validate() -> None:
+    """Fail fast on an invalid environment setting, before the server binds
+    a port (see core/protocol.py's main()). Raises ValueError with a message
+    naming the offending variable; module attributes are read at call time
+    (not captured at def time) so a test can set config.NAME and call this
+    directly, the same way other modules read config.NAME at call time."""
+    if DEPLOYMENT not in ("sbx", "standalone"):
+        raise ValueError(f'BROKER_DEPLOYMENT={DEPLOYMENT!r} must be "sbx" or "standalone"')
+    ns = REF_NAMESPACE
+    if not _REF_NAMESPACE_RE.match(ns) or ".." in ns or "//" in ns or ns.endswith(("/", ".")):
+        raise ValueError(f'BROKER_REF_NAMESPACE={ns!r} must be a ref path under "refs/" '
+                         '(e.g. "refs/factory"): no "..", no trailing slash, no empty component')
+    secrets_dir = SECRETS_DIR
+    if ".." in Path(secrets_dir).parts:
+        raise ValueError(f'BROKER_SECRETS_DIR={secrets_dir!r} must not contain a ".." path component')

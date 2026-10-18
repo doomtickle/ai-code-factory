@@ -261,5 +261,28 @@ class OriginTests(Base):
         self.assertEqual(code, 200)
 
 
+class MainStartupTests(Base):
+    """main() validates config before touching anything else, with a clear
+    one-line error (no traceback) on an invalid environment setting."""
+
+    def test_exits_clearly_on_invalid_deployment_setting(self):
+        with mock.patch.object(config, "DEPLOYMENT", "production"):
+            with self.assertRaises(SystemExit) as cm:
+                protocol.main()
+        self.assertIn("BROKER_DEPLOYMENT", str(cm.exception))
+
+    def test_exits_clearly_on_invalid_ref_namespace(self):
+        with mock.patch.object(config, "REF_NAMESPACE", "heads/factory"):
+            with self.assertRaises(SystemExit) as cm:
+                protocol.main()
+        self.assertIn("BROKER_REF_NAMESPACE", str(cm.exception))
+
+    def test_exits_clearly_on_secrets_dir_path_traversal(self):
+        with mock.patch.object(config, "SECRETS_DIR", "/etc/factory-broker/../secrets"):
+            with self.assertRaises(SystemExit) as cm:
+                protocol.main()
+        self.assertIn("BROKER_SECRETS_DIR", str(cm.exception))
+
+
 if __name__ == "__main__":
     unittest.main()

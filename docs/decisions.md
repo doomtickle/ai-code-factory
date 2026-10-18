@@ -4,6 +4,38 @@ Dated entries, for the user to review. Newest first.
 
 ## 2026-10-18
 
+- **Paths and names made configurable (doomtickle/passdesk-ops#36, plan task
+  W1.1).** `BROKER_SECRETS_DIR` (default `/etc/factory-broker/secrets`) is a
+  new base for the three per-secret path defaults; `BROKER_JIRA_SECRET` etc.
+  still override individually on top of it, unchanged otherwise.
+  `BROKER_REF_NAMESPACE` (default `refs/factory`) replaces the hard-coded
+  `refs/factory/` prefix `git_push` stages an incoming branch under in its
+  mirror. `BROKER_PUSH_PREFIX` (default `factory/`) is a new fallback for
+  `[git].push_branch_prefix`, used only when a policy omits the key (every
+  `policy.toml` this repo ships sets it, so this is inert today). Judgement
+  calls:
+  - **`BROKER_PUSH_PREFIX` is a code-level fallback, not a second way to set
+    the policy value.** `push_branch_prefix` itself stays policy (baked into
+    the image, overridable only via `policy.local.toml` at build time, per
+    CLAUDE.md's "Policy is baked into the image" rule); the env var only
+    changes what `check_push_branch` falls back to when a deployment's own
+    from-scratch policy doesn't mention the key, so a standalone deployment
+    doesn't have to write a policy file just to rename the convention.
+  - **`BROKER_DEPLOYMENT` (`sbx` default, or `standalone`) gates wording,
+    not behavior.** It only selects whether the `sbx secret set github
+    --sandbox factory-broker` hint appears in `git.py`'s and `doctor.py`'s
+    GitHub-credential error/fix text; every check still runs the same way
+    either value is set.
+  - **Validation lives in `config.validate()`, called once from
+    `protocol.main()` before the directory/policy checks already there**,
+    not at module import: tests already override `config.NAME` attributes
+    directly after import (see `core/config.py`'s own docstring), so
+    import-time validation would run against stale values in that pattern.
+  - **Secrets refactor stayed minimal on purpose.** Another lane is building
+    `core/credentials.py` (secret providers) concurrently; this task only
+    added `SECRETS_DIR` as a shared default for the three existing path
+    variables, with no change to how or where the files are read.
+
 - **Identity/protocol layer de-factory-ized (doomtickle/passdesk-ops#36),
   per `docs/broker-extraction.md` (ai-code-factory) Phase 1 items 1, 2 and
   6.** `grant_hint`'s hard-coded `coordinator` special case is gone; a grant

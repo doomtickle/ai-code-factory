@@ -82,6 +82,30 @@ class GitFlowTests(Base):
         self.assert_no_canary()
         self.assertEqual(pushed, self.sh("git", "rev-parse", "factory/feature", cwd=self.ws))
 
+    def test_ref_namespace_is_overridable(self):
+        old_ns = config.REF_NAMESPACE
+        config.REF_NAMESPACE = "refs/my-gateway"
+        self.addCleanup(setattr, config, "REF_NAMESPACE", old_ns)
+
+        out = git.tool_git_fetch({"repo": "acme/widgets", "branch": "main"}, POLICY)
+        self.sh(*out.splitlines()[-1].split(), cwd=self.ws)
+        self.sh("git", "checkout", "-q", "-b", "factory/feature", "refs/remotes/origin/main", cwd=self.ws)
+        (self.ws / "feature.txt").write_text("new feature\n")
+        self.sh("git", "add", "feature.txt", cwd=self.ws)
+        self.sh("git", "commit", "-q", "-m", "add feature", cwd=self.ws)
+        (self.ws / ".factory/outgoing").mkdir(parents=True, exist_ok=True)
+        self.sh("git", "bundle", "create", "-q", ".factory/outgoing/f.bundle",
+                "refs/remotes/origin/main..factory/feature", cwd=self.ws)
+        self.canary.unlink(missing_ok=True)
+
+        out = git.tool_git_push({"repo": "acme/widgets", "branch": "factory/feature", "bundle": "f.bundle"}, POLICY)
+        self.assertIn("Pushed 1 commit(s)", out)
+        mirror = git.ensure_mirror("acme/widgets")
+        staged = git.git("rev-parse", "refs/my-gateway/factory/feature", cwd=mirror).stdout.strip()
+        self.assertEqual(staged, self.sh("git", "rev-parse", "factory/feature", cwd=self.ws))
+        with self.assertRaises(RuntimeError):
+            git.git("rev-parse", "--verify", "refs/factory/factory/feature", cwd=mirror)
+
     def test_push_blocks_secret_in_diff(self):
         git.tool_git_fetch({"repo": "acme/widgets", "branch": "main"}, POLICY)
         self.sh("git", "fetch", "-q", ".factory/incoming/acme__widgets__main.bundle",
