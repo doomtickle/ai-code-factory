@@ -22,10 +22,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from . import tools as _tools  # noqa: F401 - registers every tool
-from .core import config
+from .core import auth, config
 from .core.registry import TOOLS
 
-NAME_RE = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
+NAME_RE = re.compile(r"[a-z][a-z0-9_-]{0,63}")
 SOURCE = "passdesk principal"
 
 
@@ -42,7 +42,7 @@ class Principal:
 
 
 def validate_name(name: str) -> str:
-    if not NAME_RE.match(name):
+    if not NAME_RE.fullmatch(name):
         raise PrincipalError(
             f"invalid principal name {name!r}: must start with a lowercase letter and contain only "
             "lowercase letters, digits, '_' or '-' (max 64 characters)")
@@ -93,12 +93,20 @@ def _atomic_write(path: Path, data: bytes, mode: int) -> None:
 
 
 def _load_grants() -> dict:
+    """The grants currently in effect, read the same way the server resolves
+    them (auth.grants_path(): grants.json if present, else the older
+    roles.json), so a deployment that has only ever run start-broker.sh
+    (grants.json never written) seeds from its roles.json instead of
+    looking empty - add() writing a "full" grants.json from an empty
+    baseline would otherwise make every other principal's grant invisible
+    the moment grants.json starts existing."""
+    path = auth.grants_path()
     try:
-        grants = json.loads(_grants_path().read_text())
+        grants = json.loads(path.read_text())
     except FileNotFoundError:
         return {}
     except (OSError, json.JSONDecodeError) as e:
-        raise PrincipalError(f"{_grants_path()}: cannot read grants.json: {e}") from e
+        raise PrincipalError(f"{path}: cannot read grants: {e}") from e
     return grants if isinstance(grants, dict) else {}
 
 
@@ -127,7 +135,13 @@ def add(name: str, tool_names: list[str]) -> str:
     token = secrets.token_hex(32)  # 256 bits, matches the factory's `openssl rand -hex 32`
     _atomic_write(token_path, (token_digest(token) + "\n").encode(), 0o600)
     grants[name] = {"tools": wanted, "source": SOURCE}
-    _save_grants(grants)
+    try:
+        _save_grants(grants)
+    except BaseException:
+        # Don't leave a token file with no matching grant: a retried add()
+        # must see the principal as not existing at all.
+        token_path.unlink(missing_ok=True)
+        raise
     return token
 
 
@@ -139,9 +153,7 @@ def list_principals() -> list[Principal]:
     names |= set(grants)
     result = []
     for name in sorted(names):
-        grant = grants.get(name, [])
-        tool_list = grant.get("tools", []) if isinstance(grant, dict) else grant
-        tool_list = sorted(tool_list) if isinstance(tool_list, list) else []
+        tool_list = sorted(auth.grant_tools(grants.get(name, [])))
         result.append(Principal(name=name, tools=tool_list, has_token=(_tokens_dir() / f"{name}.sha256").exists()))
     return result
 

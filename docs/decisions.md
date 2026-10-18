@@ -10,14 +10,32 @@ Dated entries, for the user to review. Newest first.
   `tokens/<name>.sha256` and an object-form grant to `grants.json` — the
   same files and formats `ai-code-factory/scripts/start-broker.sh` writes,
   so either tool can manage what the other wrote. Judgement calls:
-  - **Writes only `grants.json`, never the legacy `roles.json`.** The CLI
-    is a second, independent writer of this state; `roles.json` is called
-    a "transition shim" to be dropped (see the entry below), so new code
-    doesn't need to maintain it. `core.auth.grants_path()` already falls
-    back to `roles.json` only when `grants.json` is absent, so a deployment
-    that has only ever run `start-broker.sh` keeps working unchanged until
-    the CLI's first `add`, at which point `grants.json` becomes the file in
-    effect — consistent with how `start-broker.sh` itself resolves the two.
+  - **Writes only `grants.json`, never the legacy `roles.json`, but reads
+    for the duplicate check and as the read-modify-write baseline via
+    `core.auth.grants_path()`** (`grants.json` if present, else the older
+    `roles.json`), not a `grants.json`-only read. Without this, a
+    deployment that has only ever run `start-broker.sh` (so only
+    `roles.json` exists) would see `add` start from an empty baseline: the
+    first CLI `add` would write a `grants.json` containing only the new
+    principal, and since `grants_path()` prefers `grants.json` once it
+    exists, every grant `start-broker.sh` had written to `roles.json`
+    would stop taking effect from that point on. Reading through
+    `grants_path()` carries those entries into the new `grants.json`
+    instead.
+  - **This CLI is for a standalone/non-factory deployment, or for a
+    principal the factory doesn't manage, not for day-to-day use against a
+    factory-managed deployment.** In an `ai-code-factory` deployment,
+    `scripts/start-broker.sh` rebuilds `grants.json` from scratch on every
+    factory start (`grants='{}'`, then one entry per role with
+    `BROKER_TOOLS` — a full overwrite, not a read-modify-write); the fix
+    above stops the CLI's own `add`/`revoke` from stripping grants, but it
+    does not stop the factory's own next start from resetting `grants.json`
+    to exactly what `roles/*/role.conf` says, discarding any principal the
+    CLI added in between (the token file under `tokens/` survives, since
+    `start-broker.sh` never deletes those, but the principal loses its
+    grant and every call is denied). Making `start-broker.sh` read-modify-write
+    or otherwise aware of CLI-managed principals is a separate follow-up,
+    not done here.
   - **`add` refuses to overwrite an existing principal** (token file or
     grants entry) rather than rotating it, so a bare retry can't silently
     invalidate a token already handed to an agent; the caller must

@@ -4,6 +4,7 @@ core.auth (and ai-code-factory's scripts/start-broker.sh) read and write."""
 import json
 import stat
 import unittest
+from unittest import mock
 
 from passdesk import principal
 from passdesk.core import auth, config
@@ -100,6 +101,25 @@ class AddTests(PrincipalBase):
         principal.add("alice", ["npm_fetch", "git_fetch", "npm_fetch"])
         self.assertEqual(self.grants()["alice"]["tools"], ["git_fetch", "npm_fetch"])
 
+    def test_seeds_from_roles_json_when_grants_json_is_missing(self):
+        # A deployment that has only ever run start-broker.sh (pre-grants.json):
+        # add() must not make bob's grant disappear just by creating grants.json.
+        (config.STATE / "tokens").mkdir(parents=True)
+        (config.STATE / "roles.json").write_text(
+            json.dumps({"bob": {"tools": ["npm_fetch"], "source": "roles/bob/role.conf"}}))
+        principal.add("alice", ["git_fetch"])
+        grants = self.grants()
+        self.assertEqual(grants["alice"], {"tools": ["git_fetch"], "source": principal.SOURCE})
+        self.assertEqual(grants["bob"], {"tools": ["npm_fetch"], "source": "roles/bob/role.conf"})
+        self.assertEqual(auth.principal_tools("bob"), {"npm_fetch"})
+
+    def test_removes_token_file_if_grants_write_fails(self):
+        with mock.patch.object(principal, "_save_grants", side_effect=OSError("disk full")), \
+                self.assertRaises(OSError):
+            principal.add("alice", ["git_fetch"])
+        self.assertFalse(self.token_hash_path("alice").exists())
+        self.assertNotIn("alice", self.grants())
+
 
 class InvalidNameTests(PrincipalBase):
     def test_rejects_empty_name(self):
@@ -108,21 +128,24 @@ class InvalidNameTests(PrincipalBase):
 
     def test_rejects_path_traversal(self):
         for bad in ("../escape", "..", ".", "a/b", "a\0b"):
-            with self.subTest(bad=bad):
-                with self.assertRaises(principal.PrincipalError):
-                    principal.add(bad, ["git_fetch"])
+            with self.subTest(bad=bad), self.assertRaises(principal.PrincipalError):
+                principal.add(bad, ["git_fetch"])
 
     def test_rejects_uppercase_and_symbols(self):
         for bad in ("Alice", "alice!", "alice.bob", " alice", "alice "):
-            with self.subTest(bad=bad):
-                with self.assertRaises(principal.PrincipalError):
-                    principal.add(bad, ["git_fetch"])
+            with self.subTest(bad=bad), self.assertRaises(principal.PrincipalError):
+                principal.add(bad, ["git_fetch"])
 
     def test_rejects_leading_digit_or_dash(self):
         for bad in ("1alice", "-alice", "_alice"):
-            with self.subTest(bad=bad):
-                with self.assertRaises(principal.PrincipalError):
-                    principal.add(bad, ["git_fetch"])
+            with self.subTest(bad=bad), self.assertRaises(principal.PrincipalError):
+                principal.add(bad, ["git_fetch"])
+
+    def test_rejects_trailing_newline(self):
+        # `$` in NAME_RE matches just before a trailing "\n", not only at the
+        # true end of string; fullmatch (not match) is what actually rejects it.
+        with self.assertRaises(principal.PrincipalError):
+            principal.add("alice\n", ["git_fetch"])
 
     def test_accepts_digits_underscore_dash_after_first_char(self):
         principal.add("alice-2_lane", ["git_fetch"])
@@ -179,6 +202,20 @@ class ListTests(PrincipalBase):
         (config.STATE / "grants.json").write_text(json.dumps({"legacy": ["git_fetch"]}))
         [p] = principal.list_principals()
         self.assertEqual(p.tools, ["git_fetch"])
+
+    def test_list_tolerates_malformed_grants_without_raising(self):
+        # Mixed/invalid shapes must read as "no grant", not raise - matches
+        # auth.grant_tools()'s own deny-by-default treatment of these.
+        (config.STATE / "tokens").mkdir(parents=True)
+        (config.STATE / "grants.json").write_text(json.dumps({
+            "mixed_types": [1, "git_fetch", None],
+            "not_a_list": "git_fetch",
+            "null_grant": None,
+        }))
+        people = {p.name: p.tools for p in principal.list_principals()}
+        self.assertEqual(people["mixed_types"], [])
+        self.assertEqual(people["not_a_list"], [])
+        self.assertEqual(people["null_grant"], [])
 
 
 class RevokeTests(PrincipalBase):

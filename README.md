@@ -135,7 +135,8 @@ to that path before the broker's first call that needs it.
 
 A principal is whatever a token was minted for (see `passdesk/core/auth.py`).
 `ai-code-factory`'s `scripts/start-broker.sh` mints one per role automatically;
-for any other deployment, or to add or remove one by hand, use the CLI:
+for a standalone (non-factory) deployment, or for a principal the factory
+doesn't manage, use the CLI instead:
 
 ```
 python3 -m passdesk principal add <name> --tools TOOL [TOOL ...]
@@ -159,6 +160,16 @@ with a lowercase letter and contain only lowercase letters, digits, `_` or
 or a token, and flags a principal missing a token or a grant (its calls
 would fail). `revoke` removes both the token hash and the grant; a token
 already handed to an agent stops authenticating immediately.
+
+**Do not use this CLI to manage a factory-managed deployment's own roles.**
+In an `ai-code-factory` deployment, `scripts/start-broker.sh` owns
+`grants.json` and rebuilds it from scratch (not a read-modify-write) on
+every factory start, from `roles/*/role.conf`; a principal the CLI adds in
+between factory starts loses its grant (though not its token file) the
+next time the factory starts the broker. Use the CLI for a standalone
+deployment, or for a principal the factory doesn't manage at all; for a
+factory role, change `roles/<role>/role.conf` instead and let
+`start-broker.sh` apply it.
 
 ## Checking a deployment
 

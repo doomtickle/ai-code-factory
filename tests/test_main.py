@@ -34,7 +34,7 @@ class AddCommandTests(CliBase):
         self.assertIsNone(reason)
 
     def test_add_accepts_multiple_tools(self):
-        code, out, _ = self.run_cli("principal", "add", "alice", "--tools", "git_fetch", "npm_fetch")
+        code, _out, _ = self.run_cli("principal", "add", "alice", "--tools", "git_fetch", "npm_fetch")
         self.assertEqual(code, 0)
         self.assertEqual(auth.principal_tools("alice"), {"git_fetch", "npm_fetch"})
 
@@ -89,7 +89,7 @@ class RevokeCommandTests(CliBase):
         self.assertEqual(out, "")
 
     def test_revoke_unknown_principal_fails(self):
-        code, out, err = self.run_cli("principal", "revoke", "nobody")
+        code, _out, err = self.run_cli("principal", "revoke", "nobody")
         self.assertEqual(code, 1)
         self.assertIn("no such principal", err)
 
