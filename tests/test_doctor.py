@@ -202,6 +202,28 @@ class ConfigChecks(DoctorBase):
         self.assertEqual([text for sec, lvl, text, _ in report.items if sec == "Config" and lvl == doctor.FAIL], [])
 
 
+class EgressGuardPolicyChecks(DoctorBase):
+    def test_bad_allowlist_entry_fails_in_either_mode(self):
+        self.policy(GOOD_POLICY + '\n[egress_guard]\nallow_hosts = ["*.cursor.sh"]\n')
+        for deployment in ("sbx", "standalone"):
+            with mock.patch.object(config, "DEPLOYMENT", deployment), mock.patch.object(config, "BIND_HOST", "127.0.0.1"):
+                report = self.run_doctor()
+            self.assertFails(report, "exact DNS names only")
+
+    def test_standalone_lists_the_allowlist_and_warns_when_empty(self):
+        self.policy(GOOD_POLICY + '\n[egress_guard]\nallow_hosts = ["api.anthropic.com"]\n')
+        with mock.patch.object(config, "DEPLOYMENT", "standalone"), mock.patch.object(config, "BIND_HOST", "127.0.0.1"):
+            report = self.run_doctor()
+            self.assertTrue(any("egress guard forwards CONNECT to port 443 on 1 host(s): api.anthropic.com" in m
+                                for m in report.messages(doctor.INFO)))
+            self.policy(GOOD_POLICY + "\n[egress_guard]\nallow_hosts = []\n")
+            report = self.run_doctor()
+            self.assertWarns(report, "[egress_guard].allow_hosts is empty")
+            self.policy(GOOD_POLICY)  # no table at all: this deployment doesn't run the guard; nothing to say
+            report = self.run_doctor()
+        self.assertFalse(any("egress guard" in t.lower() for t in self.all_text(report)))
+
+
 class EgressChecks(DoctorBase):
     def test_egress_hosts_cover_every_tool_and_the_policy(self):
         self.policy()

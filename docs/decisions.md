@@ -4,6 +4,53 @@ Dated entries, for the user to review. Newest first.
 
 ## 2026-10-18
 
+- **Egress guard: `python3 -m passdesk egress-guard` (doomtickle/passdesk-ops#57,
+  Phase 3a W3.3).** A CONNECT-only allowlist proxy (`passdesk/egress_guard.py`,
+  stdlib `socketserver`/`selectors`) for an agent container's model traffic
+  in a standalone deployment, shipped in the Passdesk image so there is one
+  pin. It accepts `CONNECT host:443` for exact hosts in
+  `[egress_guard].allow_hosts`, resolves the name itself, refuses any
+  non-global-unicast address, connects to the exact address it checked, and
+  relays bytes without inspecting them. Judgement calls:
+  - **The allowlist is a policy table, not a flag.** It is baked into the
+    image like every other policy, overridable through `policy.local.toml`
+    at build time and never from the workspace or the command line; the
+    doctor validates it in both modes. Entries are bare host names; `:443`
+    is implied and a `host:port` entry refuses to start, so there is one
+    form to get right.
+  - **Default hosts:** Claude Code's `api.anthropic.com` plus the three
+    subscription sign-in hosts (`platform.claude.com`, `claude.ai`,
+    `claude.com`), since the quickstart audience signs in with a Pro/Max
+    subscription, and Codex CLI's `chatgpt.com`, `auth.openai.com`,
+    `api.openai.com` (W0 Q1). None of the optional telemetry, update or
+    package hosts: an agent that can CONNECT to `registry.npmjs.org` can
+    fetch packages around Passdesk. Cursor is host-only (owner decision),
+    so no wildcards exist at all.
+  - **"Global unicast" is `ipaddress.is_global` minus multicast
+    (which Python counts as global), minus every IPv6 form that embeds an
+    IPv4 address (v4-mapped, 6to4, Teredo), since those reach the embedded
+    address through whatever tunnel exists.** A name with one bad address
+    among good ones is refused outright rather than filtered, because a
+    resolver that returns a private address for a public name is itself
+    the attack.
+  - **No second lookup.** `connect()` takes the `(family, sockaddr)` pairs
+    `resolve()` checked and never the name; a test makes `getaddrinfo`
+    raise after resolution and the tunnel still works.
+  - **Reads are unbuffered** (`rbufsize = 0`), so bytes a client sends right
+    after its headers are relayed, not swallowed by a read-ahead buffer.
+    Costs one syscall per header byte, on an 8 KiB-capped read.
+  - **Limits:** request read 10 s and 8 KiB (1 KiB request line), upstream
+    connect 10 s, idle tunnel 600 s (model responses can pause; a shorter
+    limit would cut long generations), 64 concurrent connections, then
+    503. All are module constants, with `--max-connections` on the CLI.
+  - **Logging:** one stderr line per refusal (status, reason, target,
+    client) and per tunnel (host, address, client); never a byte of
+    payload. The guard writes no audit record: it is not a tool call, and
+    its container log is the record.
+  - **No HTTP/2, no `Proxy-Authorization`, no plain `GET` proxying.** The
+    clients from Q1 use plain CONNECT through `HTTPS_PROXY`; anything else
+    is attack surface.
+
 - **`credentials.get` takes an `on_unusable` callback (doomtickle/passdesk-ops#53,
   follow-up on W1.3).** `check_secrets`'s and `check_standalone`'s fallback
   calls to `credentials.get()` could reach `_Unusable` (a directory where a

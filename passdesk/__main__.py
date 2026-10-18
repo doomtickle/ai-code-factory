@@ -3,12 +3,17 @@
     python3 -m passdesk principal add <name> --tools TOOL [TOOL ...]
     python3 -m passdesk principal list
     python3 -m passdesk principal revoke <name>
+    python3 -m passdesk egress-guard [--bind HOST] [--port PORT] [--max-connections N]
 
-Mints and manages the principals a running broker authenticates: tokens in
-BROKER_STATE/tokens/<name>.sha256 and grants in BROKER_STATE/grants.json -
-uses the same files and formats scripts/start-broker.sh writes (in a
-factory deployment, start-broker.sh owns grants.json and rebuilds it on
-every start). See passdesk/principal.py for the on-disk formats.
+`principal` mints and manages the principals a running broker
+authenticates: tokens in BROKER_STATE/tokens/<name>.sha256 and grants in
+BROKER_STATE/grants.json - uses the same files and formats
+scripts/start-broker.sh writes (in a factory deployment, start-broker.sh
+owns grants.json and rebuilds it on every start). See passdesk/principal.py
+for the on-disk formats.
+
+`egress-guard` runs the CONNECT allowlist proxy an agent container's model
+traffic goes through in a standalone deployment (passdesk/egress_guard.py).
 """
 
 from __future__ import annotations
@@ -16,7 +21,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-from . import principal
+from . import egress_guard, principal
 
 
 def _add(args: argparse.Namespace) -> int:
@@ -72,6 +77,8 @@ def main(argv: list[str] | None = None) -> int:
     revoke_parser = principal_sub.add_parser("revoke", help="remove a principal's token and grant")
     revoke_parser.add_argument("name", help="principal name")
     revoke_parser.set_defaults(func=_revoke)
+
+    egress_guard.add_parser(sub)
 
     args = parser.parse_args(argv)
     return args.func(args)
