@@ -65,16 +65,24 @@ EXCHANGE_DIR = os.environ.get("BROKER_EXCHANGE_DIR", ".factory")
 
 # Ref namespace git_push stages an incoming branch under, in the broker's own
 # bare mirror, while it verifies and awaits approval (tools/git.py); never
-# pushed itself. Must sit under "refs/" so it can never collide with
-# "refs/heads/..." or "refs/remotes/...".
+# pushed itself. Must sit under "refs/" but not equal to or under a namespace
+# git (or GitHub) already treats specially -- refs/heads, refs/tags,
+# refs/remotes, refs/notes, refs/stash -- since e.g. "refs/remotes/origin"
+# would land an unverified, pending-approval commit where git_fetch's bundle
+# creation and anything else that walks refs/remotes sees it as origin's own
+# ref.
 REF_NAMESPACE = os.environ.get("BROKER_REF_NAMESPACE", "refs/factory")
 
 # Fallback for [git].push_branch_prefix when a deployment's policy.toml
 # doesn't set it at all (every policy.toml this repo ships does, so this
-# only matters for a deployment's own from-scratch policy).
+# only matters for a deployment's own from-scratch policy). Deliberately
+# fail-closed (unlike upstream, which falls back to "" there): see
+# docs/decisions.md.
 DEFAULT_PUSH_BRANCH_PREFIX = os.environ.get("BROKER_PUSH_PREFIX", "factory/")
 
 _REF_NAMESPACE_RE = re.compile(r"^refs/[A-Za-z0-9][A-Za-z0-9._/-]*$")
+_RESERVED_REF_PREFIXES = ("refs/heads", "refs/tags", "refs/remotes", "refs/notes", "refs/stash")
+_PUSH_PREFIX_RE = re.compile(r"^[A-Za-z0-9._/-]*$")
 
 
 def validate() -> None:
@@ -89,6 +97,16 @@ def validate() -> None:
     if not _REF_NAMESPACE_RE.match(ns) or ".." in ns or "//" in ns or ns.endswith(("/", ".")):
         raise ValueError(f'BROKER_REF_NAMESPACE={ns!r} must be a ref path under "refs/" '
                          '(e.g. "refs/factory"): no "..", no trailing slash, no empty component')
+    if ns in _RESERVED_REF_PREFIXES or any(ns.startswith(p + "/") for p in _RESERVED_REF_PREFIXES):
+        raise ValueError(f'BROKER_REF_NAMESPACE={ns!r} must not be, or sit under, a namespace git/GitHub '
+                         f"already use ({', '.join(_RESERVED_REF_PREFIXES)})")
+    for component in ns.split("/"):
+        if component.startswith(".") or component.endswith(".lock"):
+            raise ValueError(f'BROKER_REF_NAMESPACE={ns!r}: ref component {component!r} must not start '
+                             'with "." or end with ".lock" (see git check-ref-format)')
     secrets_dir = SECRETS_DIR
-    if ".." in Path(secrets_dir).parts:
-        raise ValueError(f'BROKER_SECRETS_DIR={secrets_dir!r} must not contain a ".." path component')
+    if not Path(secrets_dir).is_absolute() or ".." in Path(secrets_dir).parts:
+        raise ValueError(f'BROKER_SECRETS_DIR={secrets_dir!r} must be an absolute path with no ".." component')
+    if not _PUSH_PREFIX_RE.match(DEFAULT_PUSH_BRANCH_PREFIX):
+        raise ValueError(f'BROKER_PUSH_PREFIX={DEFAULT_PUSH_BRANCH_PREFIX!r} must contain only ref-safe '
+                         'characters (letters, digits, "." "_" "-" "/"), no whitespace or control characters')

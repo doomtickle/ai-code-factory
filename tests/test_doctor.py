@@ -150,11 +150,37 @@ class PolicyChecks(DoctorBase):
         self.assertWarns(report, "protected_branches is empty")
         self.assertWarns(report, "push_branch_prefix is empty")
 
+    def test_push_branch_prefix_missing_key_warns_about_the_fallback(self):
+        self.policy(GOOD_POLICY.replace('push_branch_prefix = "factory/"\n', ""))
+        report = doctor.Report()
+        doctor.check_policy(report, self.policy_path)
+        self.assertWarns(report, "push_branch_prefix is not set")
+        self.assertWarns(report, "BROKER_PUSH_PREFIX")
+
     def test_credentialed_host_in_web_allowlist_warns(self):
         self.policy(GOOD_POLICY.replace('"docs.python.org",', '"docs.python.org", "api.github.com",'))
         report = doctor.Report()
         doctor.check_policy(report, self.policy_path)
         self.assertWarns(report, "api.github.com, which web_fetch refuses anyway")
+
+
+class ConfigChecks(DoctorBase):
+    """doctor.run() validates the environment, not just the policy file."""
+
+    def test_run_reports_a_bad_env_setting_as_a_config_failure(self):
+        self.policy()
+        old = config.REF_NAMESPACE
+        self.addCleanup(setattr, config, "REF_NAMESPACE", old)
+        config.REF_NAMESPACE = "refs/heads/factory"
+        report = self.run_doctor()
+        self.assertFails(report, "BROKER_REF_NAMESPACE")
+        self.assertTrue(any(sec == "Config" and lvl == doctor.FAIL and "BROKER_REF_NAMESPACE" in text
+                            for sec, lvl, text, _ in report.items))
+
+    def test_run_is_silent_on_config_when_the_environment_is_valid(self):
+        self.policy()
+        report = self.run_doctor()
+        self.assertEqual([text for sec, lvl, text, _ in report.items if sec == "Config" and lvl == doctor.FAIL], [])
 
 
 class EgressChecks(DoctorBase):

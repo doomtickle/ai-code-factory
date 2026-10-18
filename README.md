@@ -96,22 +96,25 @@ CI and test fixtures exercise, not because it's the only one.
 | `BROKER_ALLOWED_ORIGINS` | `` (empty) | Comma-separated Origin allowlist for the MCP spec's DNS-rebinding protection. A request with no `Origin` header (the normal case for a CLI-driven agent client) is unaffected; a request whose `Origin` isn't in this list gets HTTP 403. Empty means every Origin-bearing request is refused until a deployment opts specific origins in. |
 | `BROKER_MIRRORS` | `~/mirrors` | Where git tools keep their bare mirror clones. |
 | `BROKER_EXCHANGE_DIR` | `.factory` | Name of the workspace subdirectory `git_fetch`, `npm_fetch` and `pip_download` use to hand files to the agent's own sandbox. Must be a single path component: not empty, no `/` or NUL, not `.` or `..`, not absolute; the broker refuses to start the exchange directory otherwise. |
-| `BROKER_SECRETS_DIR` | `/etc/factory-broker/secrets` | Directory the three credential files below default into. Must not contain a `..` path component; the broker refuses to start otherwise. |
+| `BROKER_SECRETS_DIR` | `/etc/factory-broker/secrets` | Directory the three credential files below default into. Must be an absolute path with no `..` component; the broker refuses to start otherwise. |
 | `BROKER_JIRA_SECRET` | `$BROKER_SECRETS_DIR/jira` | File holding the Jira credential (`email:token`); see "Configuring credentials". |
 | `BROKER_GEMINI_SECRET` | `$BROKER_SECRETS_DIR/gemini` | File holding the Gemini API key. |
 | `BROKER_NPM_REGISTRY_SECRET` | `$BROKER_SECRETS_DIR/npm-registry` | File holding the private npm registry credential. |
-| `BROKER_REF_NAMESPACE` | `refs/factory` | Ref namespace `git_push` stages an incoming branch under in its own bare mirror while it verifies the push and awaits approval (never pushed itself; see `tools/git.py`). Must be a ref path under `refs/` (no `..`, no trailing slash, no empty component); the broker refuses to start otherwise. |
-| `BROKER_PUSH_PREFIX` | `factory/` | Fallback for policy's `[git].push_branch_prefix` when a deployment's own `policy.toml` doesn't set it at all (every `policy.toml` this repo ships does, so this only matters for a deployment's own from-scratch policy). |
+| `BROKER_REF_NAMESPACE` | `refs/factory` | Ref namespace `git_push` stages an incoming branch under in its own bare mirror while it verifies the push and awaits approval (never pushed itself; see `tools/git.py`). Must be a ref path under `refs/` (no `..`, no trailing slash, no empty component), must not be, or sit under, a namespace git/GitHub already use (`refs/heads`, `refs/tags`, `refs/remotes`, `refs/notes`, `refs/stash`), and no component may start with `.` or end in `.lock` (`git check-ref-format`); the broker refuses to start otherwise. |
+| `BROKER_PUSH_PREFIX` | `factory/` | Fallback for policy's `[git].push_branch_prefix` when a deployment's own `policy.toml` doesn't set it at all (every `policy.toml` this repo ships does, so this only matters for a deployment's own from-scratch policy). Deliberately fails closed here (unlike upstream, which falls back to `""` — any unprotected branch — when the key is absent); the doctor warns when `[git].push_branch_prefix` is missing from policy as well as when it's set to `""`. Must contain only ref-safe characters, no whitespace or control characters. |
 | `BROKER_DEPLOYMENT` | `sbx` | `sbx` (default) or `standalone`. Selects whether `git_push`/`github_create_pr` error hints and the doctor's live GitHub checks name the sbx CLI (`sbx secret set ...`) or stay generic; any other value refuses to start. |
 | `PASSDESK_PLUGINS` | `` (empty) | Comma-separated plugin modules to import at start-up (e.g. the commercial `passdesk-pro` approval hook). |
 
 `BROKER_WORKSPACE` and `BROKER_STATE` are required in practice (there is
 nothing at `/nonexistent`); every other variable above has a usable default.
-`BROKER_DEPLOYMENT`, `BROKER_REF_NAMESPACE` and `BROKER_SECRETS_DIR` are
-checked for an invalid value (an unknown deployment name, a ref namespace
-not under `refs/`, a `..` in the secrets directory) before the server binds
-its port, with a one-line error naming the variable; nothing silently takes
-a bad value.
+`BROKER_DEPLOYMENT`, `BROKER_REF_NAMESPACE`, `BROKER_SECRETS_DIR` and
+`BROKER_PUSH_PREFIX` are checked for an invalid value (an unknown deployment
+name, a ref namespace that isn't under `refs/` or collides with one git
+already uses, a secrets directory that isn't absolute or contains `..`, a
+push prefix with whitespace or non-ref characters) by `config.validate()`,
+called both before the server binds its port and by `python3 -m
+passdesk.doctor`, with a one-line error naming the variable; nothing silently
+takes a bad value.
 Callers authenticate with a bearer token checked against a SHA-256 hash in
 `BROKER_STATE/tokens/<principal>.sha256`, and are granted only the tools
 listed for them in `BROKER_STATE/roles.json` — minting both is the

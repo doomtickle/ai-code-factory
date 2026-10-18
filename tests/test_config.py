@@ -59,7 +59,7 @@ class EnvDefaultsAndOverridesTests(unittest.TestCase):
 
 class ValidateTests(unittest.TestCase):
     def setUp(self):
-        for name in ("DEPLOYMENT", "REF_NAMESPACE", "SECRETS_DIR"):
+        for name in ("DEPLOYMENT", "REF_NAMESPACE", "SECRETS_DIR", "DEFAULT_PUSH_BRANCH_PREFIX"):
             self.addCleanup(setattr, config, name, getattr(config, name))
 
     def test_defaults_are_valid(self):
@@ -82,6 +82,31 @@ class ValidateTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "BROKER_REF_NAMESPACE", msg=bad):
                 config.validate()
 
+    def test_rejects_ref_namespace_equal_to_or_under_a_reserved_namespace(self):
+        for bad in ["refs/heads", "refs/heads/factory", "refs/tags", "refs/tags/v1",
+                    "refs/remotes", "refs/remotes/origin", "refs/notes", "refs/notes/commits",
+                    "refs/stash", "refs/stash/foo"]:
+            config.REF_NAMESPACE = bad
+            with self.assertRaisesRegex(ValueError, "BROKER_REF_NAMESPACE", msg=bad):
+                config.validate()
+
+    def test_ref_namespace_sibling_of_reserved_name_is_not_rejected(self):
+        # "refs/headsx" is not "refs/heads" and not under it -- no false positive.
+        config.REF_NAMESPACE = "refs/headsx"
+        config.validate()
+
+    def test_rejects_ref_namespace_component_starting_with_dot(self):
+        for bad in ["refs/.hidden", "refs/a/.hidden"]:
+            config.REF_NAMESPACE = bad
+            with self.assertRaisesRegex(ValueError, "BROKER_REF_NAMESPACE", msg=bad):
+                config.validate()
+
+    def test_rejects_ref_namespace_component_ending_in_dot_lock(self):
+        for bad in ["refs/a.lock", "refs/a/b.lock"]:
+            config.REF_NAMESPACE = bad
+            with self.assertRaisesRegex(ValueError, "BROKER_REF_NAMESPACE", msg=bad):
+                config.validate()
+
     def test_accepts_custom_ref_namespace(self):
         config.REF_NAMESPACE = "refs/my-gateway"
         config.validate()
@@ -91,8 +116,29 @@ class ValidateTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "BROKER_SECRETS_DIR"):
             config.validate()
 
+    def test_rejects_empty_secrets_dir(self):
+        config.SECRETS_DIR = ""
+        with self.assertRaisesRegex(ValueError, "BROKER_SECRETS_DIR"):
+            config.validate()
+
+    def test_rejects_relative_secrets_dir(self):
+        for bad in ["secrets", "./secrets", "run/secrets"]:
+            config.SECRETS_DIR = bad
+            with self.assertRaisesRegex(ValueError, "BROKER_SECRETS_DIR", msg=bad):
+                config.validate()
+
     def test_accepts_custom_secrets_dir(self):
         config.SECRETS_DIR = "/run/secrets"
+        config.validate()
+
+    def test_rejects_push_prefix_with_whitespace_or_control_chars(self):
+        for bad in ["factory /", "factory\t/", "factory\n/", "fac tory/"]:
+            config.DEFAULT_PUSH_BRANCH_PREFIX = bad
+            with self.assertRaisesRegex(ValueError, "BROKER_PUSH_PREFIX", msg=bad):
+                config.validate()
+
+    def test_accepts_empty_push_prefix(self):
+        config.DEFAULT_PUSH_BRANCH_PREFIX = ""
         config.validate()
 
 

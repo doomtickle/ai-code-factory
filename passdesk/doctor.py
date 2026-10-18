@@ -191,9 +191,15 @@ def _check_policy_shape(report: Report, pol: dict) -> None:
     elif not prot:
         report.warn("[git].protected_branches is empty: agents could push to main",
                     'the default is ["main", "master", "release/*"]')
+    prefix_key_present = "push_branch_prefix" in git
     prefix = git.get("push_branch_prefix", config.DEFAULT_PUSH_BRANCH_PREFIX)
     if not isinstance(prefix, str):
         report.fail("[git].push_branch_prefix must be a string")
+    elif not prefix_key_present:
+        report.warn(f"[git].push_branch_prefix is not set: falling back to BROKER_PUSH_PREFIX "
+                    f"(currently {config.DEFAULT_PUSH_BRANCH_PREFIX!r})",
+                    "set [git].push_branch_prefix explicitly in policy.toml, "
+                    "or set BROKER_PUSH_PREFIX to the fallback this deployment wants")
     elif prefix == "":
         report.warn("[git].push_branch_prefix is empty: agents may push any unprotected branch",
                     f'set a prefix such as {config.DEFAULT_PUSH_BRANCH_PREFIX!r} so agent branches are recognizable')
@@ -675,6 +681,11 @@ def check_live(report: Report, pol: dict | None, url: str, http=_http) -> None:
 def run(policy_path: Path | None = None, kits: list[Path] | None = None, live: bool = False,
         url: str = "", http=_http) -> Report:
     report = Report()
+    report.section("Config")
+    try:
+        config.validate()
+    except ValueError as e:
+        report.fail(str(e))
     pol = check_policy(report, policy_path)
     if pol is not None:
         check_egress(report, pol, kits or [])
