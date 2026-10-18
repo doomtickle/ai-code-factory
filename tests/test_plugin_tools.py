@@ -119,6 +119,9 @@ class DeclarationTests(PluginToolBase):
         self.assertInvalid(make_module(tools={"acme_x": self.tool(properties={"Bad": {"type": "string"}})}),
                            "argument name")
         self.assertInvalid(make_module(tools={"acme_x": self.tool(required=("missing",))}), "required")
+        for reserved in ("tool", "principal"):
+            self.assertInvalid(make_module(tools={"acme_x": self.tool(properties={reserved: {"type": "string"}})}),
+                               "reserved")
         self.assertInvalid(make_module(tools={"acme_x": self.tool(writes_externally="yes")}), "writes_externally")
         self.assertInvalid(make_module(tools={"acme_x": self.tool(hosts=("https://x.example.com",))}), "hosts")
 
@@ -294,6 +297,15 @@ class CallTests(PluginToolBase):
         lines = [json.loads(line) for line in (config.STATE / "audit.jsonl").read_text().splitlines()]
         self.assertEqual(lines[0].get("event"), "intent")
         self.assertEqual(lines[-1]["decision"], "allow")
+
+    def test_an_argument_cannot_stand_in_for_the_cards_tool_name(self):
+        # Declarations refuse an argument named "tool"; even a handler
+        # registered without that check can't rename the card.
+        cards = []
+        approvals.set_hook(cards.append)
+        run = registry.guard("acme_deploy", PluginTool(handler=echo, description="d", writes_externally=True))
+        run({"tool": "something_else", "text": "x"}, {})
+        self.assertEqual(cards[0]["tool"], "acme_deploy")
 
     def test_a_held_write_that_is_declined_never_runs(self):
         def decline(card):

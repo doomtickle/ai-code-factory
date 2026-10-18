@@ -73,7 +73,8 @@ doctor reports it):
 - Every tool name is `<namespace>_<words>` in lowercase with `_`, at most 64
   characters, so a plugin can never shadow or replace a core tool.
 - Arguments are `string` or `boolean`, each with an optional `description`
-  and nothing else. Other schema keywords would be advertised to the agent
+  and nothing else. `tool` and `principal` are reserved argument names: the
+  gateway sets those fields on an approval card. Other schema keywords would be advertised to the agent
   but not enforced, so they're refused.
 - At most 32 tools per plugin.
 

@@ -79,6 +79,8 @@ _MAX_NAME = 64
 _MAX_TOOLS = 32
 _MAX_DESCRIPTION = 1000
 _ARG_TYPES = {"string", "boolean"}
+# Card fields the gateway sets on an approval card; an argument can't take their place.
+_RESERVED_ARGS = {"tool", "principal"}
 # Namespaces a plugin may not use: the prefixes of core tools (and any core
 # tool registered later), plus names that read as the gateway itself.
 _RESERVED = {"git", "github", "web", "gemini", "jira", "npm", "pip",
@@ -137,6 +139,8 @@ def _check_tool(where: str, namespace: str, name: object, spec: object) -> None:
     for arg, schema in spec.properties.items():
         if not isinstance(arg, str) or not _ARG_RE.fullmatch(arg):
             raise PluginToolError(f"{where}: argument name {arg!r} must be lowercase letters, digits and _")
+        if arg in _RESERVED_ARGS:
+            raise PluginToolError(f"{where}: argument name {arg!r} is reserved (the approval card sets it)")
         if not isinstance(schema, dict) or schema.get("type") not in _ARG_TYPES \
                 or set(schema) - {"type", "description"} \
                 or not isinstance(schema.get("description", ""), str):
@@ -182,7 +186,8 @@ def guard(name: str, spec: PluginTool) -> Handler:
             if isinstance(val, str):
                 filters.block_outbound_secrets(f"argument {key!r}", val)
         if spec.writes_externally:
-            approvals.require({"tool": name, **args})
+            # The gateway's own fields last, so no argument can stand in for them.
+            approvals.require({**args, "tool": name})
         try:
             out = spec.handler(dict(args), policy)
         except Denied as e:

@@ -18,8 +18,10 @@ Dated entries, for the user to review. Newest first.
   - **Every plugin tool runs behind `registry.guard`,** which the plugin
     can't skip. It secret-scans every string argument before the handler
     runs. It sends a `writes_externally` tool through the approval point
-    with the card `{"tool", <arguments>, "principal"}` (Pro holds it if
-    `[approvals] tools` lists it) and gives it an `intent` audit record. It
+    with the card `{<arguments>, "tool", "principal"}`, the gateway's
+    fields set last and `tool`/`principal` refused as argument names, so an
+    agent can't rename the card and slip past Pro's `[approvals] tools`
+    match (found in the security review) and gives it an `intent` audit record. It
     cleans the result and wraps it as untrusted, and it cleans a `Denied`
     message too, since a plugin's refusal may quote a remote service.
     Grants, argument checks and audit records are the protocol layer's, as
