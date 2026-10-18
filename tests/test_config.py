@@ -76,6 +76,13 @@ class ValidateTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "BROKER_DEPLOYMENT"):
             config.validate()
 
+    def test_rejects_ref_namespace_with_a_trailing_newline(self):
+        # re.match's "$" matches just before a trailing newline, so a naive
+        # `.match(pattern + "$")` check would accept "refs/factory\n".
+        config.REF_NAMESPACE = "refs/factory\n"
+        with self.assertRaisesRegex(ValueError, "BROKER_REF_NAMESPACE"):
+            config.validate()
+
     def test_rejects_ref_namespace_not_under_refs(self):
         for bad in ["factory", "refs", "refs/", "refs/../heads", "refs//factory", "refs/factory/", "heads/factory"]:
             config.REF_NAMESPACE = bad
@@ -132,7 +139,7 @@ class ValidateTests(unittest.TestCase):
         config.validate()
 
     def test_rejects_push_prefix_with_whitespace_or_control_chars(self):
-        for bad in ["factory /", "factory\t/", "factory\n/", "fac tory/"]:
+        for bad in ["factory /", "factory\t/", "factory\n/", "fac tory/", "factory/\n"]:
             config.DEFAULT_PUSH_BRANCH_PREFIX = bad
             with self.assertRaisesRegex(ValueError, "BROKER_PUSH_PREFIX", msg=bad):
                 config.validate()

@@ -70,9 +70,6 @@ MAX_SECRET_BYTES = 64 * 1024
 # would quote the whole value in the ValueError it raises.
 _CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
 
-# The deployment's secrets directory. Read only through secrets_dir(), so
-# making it configurable is a change to that one function.
-SECRETS_DIR = Path("/etc/factory-broker/secrets")
 DOCKER_SECRETS_DIR = Path("/run/secrets")
 
 # Names the deployment's egress proxy injects, so the gateway never holds them.
@@ -80,7 +77,10 @@ PROXY_INJECTED = frozenset({"github"})
 
 
 def secrets_dir() -> Path:
-    return SECRETS_DIR
+    """The deployment's secrets directory (BROKER_SECRETS_DIR), read fresh on
+    every call so a test (or a future reload) can repoint it without this
+    module needing its own copy."""
+    return Path(config.SECRETS_DIR)
 
 
 def check_name(name: str) -> None:
@@ -94,13 +94,14 @@ def _inside(path: str, root: Path) -> bool:
 
 
 def _fd_path(fd: int, fallback: str) -> str:
-    """The resolved path of the file open on `fd`, from /proc; `fallback` where /proc is unavailable."""
+    """The path the kernel resolved `fd` to, from /proc/self/fd; `fallback` where /proc is
+    unavailable. os.readlink's result is the kernel's own resolution of the descriptor, not a
+    second filesystem walk, so it cannot be redirected by a symlink swap made after the open."""
     link = f"/proc/self/fd/{fd}"
     try:
-        os.readlink(link)
+        return os.readlink(link)
     except OSError:
         return fallback
-    return os.path.realpath(link)
 
 
 def read_secret_file(path: Path) -> str | None:

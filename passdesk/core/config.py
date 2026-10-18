@@ -98,7 +98,7 @@ def validate() -> None:
     if DEPLOYMENT not in ("sbx", "standalone"):
         raise ValueError(f'BROKER_DEPLOYMENT={DEPLOYMENT!r} must be "sbx" or "standalone"')
     ns = REF_NAMESPACE
-    if not _REF_NAMESPACE_RE.match(ns) or ".." in ns or "//" in ns or ns.endswith(("/", ".")):
+    if not _REF_NAMESPACE_RE.fullmatch(ns) or ".." in ns or "//" in ns or ns.endswith(("/", ".")):
         raise ValueError(f'BROKER_REF_NAMESPACE={ns!r} must be a ref path under "refs/" '
                          '(e.g. "refs/factory"): no "..", no trailing slash, no empty component')
     if ns in _RESERVED_REF_PREFIXES or any(ns.startswith(p + "/") for p in _RESERVED_REF_PREFIXES):
@@ -111,6 +111,6 @@ def validate() -> None:
     secrets_dir = SECRETS_DIR
     if not Path(secrets_dir).is_absolute() or ".." in Path(secrets_dir).parts:
         raise ValueError(f'BROKER_SECRETS_DIR={secrets_dir!r} must be an absolute path with no ".." component')
-    if not _PUSH_PREFIX_RE.match(DEFAULT_PUSH_BRANCH_PREFIX):
+    if not _PUSH_PREFIX_RE.fullmatch(DEFAULT_PUSH_BRANCH_PREFIX):
         raise ValueError(f'BROKER_PUSH_PREFIX={DEFAULT_PUSH_BRANCH_PREFIX!r} must contain only ref-safe '
                          'characters (letters, digits, "." "_" "-" "/"), no whitespace or control characters')
