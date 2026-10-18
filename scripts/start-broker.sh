@@ -47,6 +47,11 @@ printf '%s\n' "$PROJECT" > "$STATE/project"
 # request). Written in object form ({"tools": [...], "source": "..."}) so a
 # denied principal's error message can point at the file that grants it.
 grants='{}'
+# Transition shim: a broker still on a pin before grants.json landed reads
+# only the old bare-list roles.json ({"principal": ["tool", ...]}); without
+# it every call is denied. Drop this (and roles_bare below) once that pin has
+# settled.
+roles_bare='{}'
 broker_roles=""
 for role in $(list_roles); do
   validate_role "$role"
@@ -56,6 +61,8 @@ for role in $(list_roles); do
   # shellcheck disable=SC2086 # split the tool list into jq arguments
   grants="$(printf '%s' "$grants" | jq --arg r "$role" --arg src "roles/$role/role.conf" \
     '.[$r] = {tools: $ARGS.positional, source: $src}' --args $tools)"
+  # shellcheck disable=SC2086 # split the tool list into jq arguments
+  roles_bare="$(printf '%s' "$roles_bare" | jq --arg r "$role" '.[$r] = $ARGS.positional' --args $tools)"
 done
 
 # The Coordinator is a broker pseudo-role (kits/coordinator/broker.conf): it
@@ -71,11 +78,13 @@ if [ -n "$coordinator_tools" ]; then
   # shellcheck disable=SC2086 # split the tool list into jq arguments
   grants="$(printf '%s' "$grants" | jq --arg r "coordinator" --arg src "kits/coordinator/broker.conf" \
     '.[$r] = {tools: $ARGS.positional, source: $src}' --args $coordinator_tools)"
+  # shellcheck disable=SC2086 # split the tool list into jq arguments
+  roles_bare="$(printf '%s' "$roles_bare" | jq --arg r "coordinator" '.[$r] = $ARGS.positional' --args $coordinator_tools)"
 fi
 printf '%s\n' "$grants" > "$STATE/grants.json.tmp" && mv "$STATE/grants.json.tmp" "$STATE/grants.json"
-# roles.json is the older name (still read if grants.json is absent); drop
-# any stale copy so it can't be mistaken for the current grants.
-rm -f "$STATE/roles.json"
+# roles.json is the older name; a broker still on a pin before grants.json
+# landed reads only this file (see the transition shim comment above).
+printf '%s\n' "$roles_bare" > "$STATE/roles.json.tmp" && mv "$STATE/roles.json.tmp" "$STATE/roles.json"
 
 # One token per broker role. Minted once and kept: the sbx daemon caches header
 # secrets, so a new value only reaches the gateway after `sbx daemon restart`

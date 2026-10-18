@@ -36,7 +36,7 @@ before, apart from the removed `npm_ci`.
 - `broker/tools.txt` lists the tool names, and `scripts/lib/roles.sh` reads its known-tools list from that file. Host scripts run on the system Python (3.9), which can't import the broker (3.11+, `tomllib`), so a manifest stands in. `tests/test_registry.py` fails if the manifest drifts from the registry.
 - `broker/test_server.py` is split into `broker/tests/`, one file per area. The run command is unchanged (README, Operating).
 
-Left for later phases: `grant_hint` (factory wiring in core), the `role` audit field, and the `.factory/` exchange directories in `core/workspace.py`.
+Left for later phases: the in-protocol transfer backend in `core/workspace.py` (the `.factory/` exchange directory's shared-mount backend is done, including a configurable name; see Phase 1 item 3).
 
 ## Phase 1: make it generic
 
@@ -46,8 +46,10 @@ All changes stay in this repo, and the factory keeps working throughout.
    broker reads `STATE/grants.json` if present, else `STATE/roles.json` (same
    format, for deployments that still write that name). A grant is a bare
    list of tool names, or an object `{"tools": [...], "source": "..."}`.
-   `scripts/start-broker.sh` writes `grants.json` in the object form and
-   removes a stale `roles.json`.
+   `scripts/start-broker.sh` writes `grants.json` in the object form, plus a
+   `roles.json` in the old bare-list form as a transition shim for a broker
+   still on a pin before `grants.json` landed (to drop once that pin has
+   settled).
 2. **Grant hints out of core (done, passdesk-broker#7).** Each grant can
    carry a `source` string, which the deny message quotes ("see
    `<source>`"); with none, it falls back to a generic "its BROKER_TOOLS
