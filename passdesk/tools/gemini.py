@@ -24,9 +24,8 @@ def tool_gemini_flash_query(args: dict, policy: dict) -> str:
     block_outbound_secrets("prompt", prompt)
     api_key = read_secret_file(config.GEMINI_SECRET_PATH)
     if not api_key:
-        raise Denied("no Gemini API key found for the broker sandbox; store one in the host "
-                     "keychain (service \"factory-gemini\") and run scripts/start-broker.sh "
-                     "again - see README, Enabling Gemini Flash queries")
+        raise Denied("no Gemini API key found; the deployment must deliver one to "
+                     "BROKER_GEMINI_SECRET's path - see README, Configuring credentials")
     model = gemini.get("model", "gemini-2.5-flash")
     payload = json.dumps({"contents": [{"parts": [{"text": prompt}]}]}).encode()
     req = urllib.request.Request(
@@ -39,9 +38,8 @@ def tool_gemini_flash_query(args: dict, policy: dict) -> str:
             result = json.load(resp)
     except urllib.error.HTTPError as e:
         detail = sanitize(e.read().decode("utf-8", "replace"), 2000)
-        hint = ("\nHint: the broker sandbox's Gemini API key may be missing or invalid; check "
-                "the \"factory-gemini\" host keychain entry and run scripts/start-broker.sh "
-                "again") if e.code in (401, 403) else ""
+        hint = ("\nHint: the Gemini API key delivered to this deployment may be missing or "
+                "invalid; see README, Configuring credentials") if e.code in (401, 403) else ""
         return f"Gemini API returned HTTP {e.code}:\n" + untrusted(f"Gemini ({model})", detail) + hint
     parts = []
     for cand in result.get("candidates", []):

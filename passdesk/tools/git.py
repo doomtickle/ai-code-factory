@@ -101,7 +101,7 @@ def tool_git_fetch(args: dict, policy: dict) -> str:
             with factory_dir("incoming") as incoming:
                 install_file(incoming, name, bundle)
         sha = git("rev-parse", f"refs/remotes/origin/{branch}", cwd=mirror).stdout.strip()
-    rel = f".factory/incoming/{name}"
+    rel = f"{config.EXCHANGE_DIR}/incoming/{name}"
     return (f"Fetched {repo}@{branch} ({sha}) into {rel}.\n"
             f"Import it in your sandbox with:\n"
             f"  git fetch {rel} refs/remotes/origin/{branch}:refs/remotes/origin/{branch}")
@@ -135,8 +135,9 @@ def tool_git_push(args: dict, policy: dict) -> str:
     branch = check_push_branch(args["branch"], policy)
     base = check_branch_name(args.get("base") or policy["git"].get("default_base", "main"))
     fname = args["bundle"]
+    outgoing = f"{config.EXCHANGE_DIR}/outgoing"
     if "/" in fname or not fname.endswith(".bundle"):
-        raise Denied("bundle must be a file name ending in .bundle inside .factory/outgoing/")
+        raise Denied(f"bundle must be a file name ending in .bundle inside {outgoing}/")
     limits = policy.get("filters", {})
     max_bundle = int(limits.get("max_bundle_bytes", 100_000_000))
     max_diff = int(limits.get("max_diff_bytes", 2_000_000))
@@ -145,8 +146,8 @@ def tool_git_push(args: dict, policy: dict) -> str:
         # One read of the agent's file, as a regular file within the cap; every
         # git command below runs on this private copy, so it can't be swapped.
         bundle = tmp / "push.bundle"
-        copy_workspace_file(f".factory/outgoing/{fname}", bundle, max_bundle,
-                            hint=f"bundle only the new commits (git bundle create .factory/outgoing/{fname} "
+        copy_workspace_file(f"{outgoing}/{fname}", bundle, max_bundle,
+                            hint=f"bundle only the new commits (git bundle create {outgoing}/{fname} "
                                  f"origin/{base}..{branch}) or push the work in smaller pieces")
         mirror = ensure_mirror(repo)
         git("fetch", "--no-tags", "origin", f"+refs/heads/{base}:refs/remotes/origin/{base}", cwd=mirror)
@@ -223,24 +224,24 @@ def tool_github_create_pr(args: dict, policy: dict) -> str:
             pr = json.load(resp)
     except urllib.error.HTTPError as e:
         detail = sanitize(e.read().decode("utf-8", "replace"), 2000)
-        hint = ("\nHint: a GitHub token must be stored for the broker sandbox: "
-                "sbx secret set github --sandbox factory-broker") if e.code in (401, 403, 404) else ""
+        hint = ("\nHint: the GitHub credential is supplied by the deployment (with sbx: "
+                "sbx secret set github --sandbox factory-broker)") if e.code in (401, 403, 404) else ""
         return f"GitHub API returned HTTP {e.code}:\n" + untrusted(f"GitHub API ({repo})", detail) + hint
     return f"Opened PR #{pr['number']}: {pr['html_url']}"
 
 
 register({
-    "git_fetch": (tool_git_fetch, "Fetch a branch of an allowlisted GitHub repo. Writes a git bundle to "
-                  ".factory/incoming/ and returns the command to import it.",
+    "git_fetch": (tool_git_fetch, f"Fetch a branch of an allowlisted GitHub repo. Writes a git bundle to "
+                  f"{config.EXCHANGE_DIR}/incoming/ and returns the command to import it.",
                   {"repo": {"type": "string", "description": "owner/name"},
                    "branch": {"type": "string"}}, ["repo", "branch"]),
     "git_push": (tool_git_push, "Push a branch to an allowlisted GitHub repo. First run "
-                 "`git bundle create .factory/outgoing/<name>.bundle origin/<base>..<branch>` "
+                 f"`git bundle create {config.EXCHANGE_DIR}/outgoing/<name>.bundle origin/<base>..<branch>` "
                  "(or the whole branch). Diff, commit messages and the branch name are secret-scanned; "
                  "protected branches are refused and force-pushes are impossible.",
                  {"repo": {"type": "string", "description": "owner/name"},
                   "branch": {"type": "string", "description": "branch to push; must use the allowed prefix"},
-                  "bundle": {"type": "string", "description": "file name inside .factory/outgoing/"},
+                  "bundle": {"type": "string", "description": f"file name inside {config.EXCHANGE_DIR}/outgoing/"},
                   "base": {"type": "string", "description": "branch the work is based on (default from policy)"}},
                  ["repo", "branch", "bundle"]),
     "github_create_pr": (tool_github_create_pr, "Open a pull request on an allowlisted GitHub repo. "

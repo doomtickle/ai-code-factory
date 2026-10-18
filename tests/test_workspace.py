@@ -26,6 +26,24 @@ class WorkspaceTests(Base):
             pass
         self.assertEqual((config.WORKSPACE / ".factory/.gitignore").read_text(), "*\n")
 
+    def test_exchange_dir_name_is_overridable(self):
+        old = config.EXCHANGE_DIR
+        config.EXCHANGE_DIR = ".exchange"
+        self.addCleanup(setattr, config, "EXCHANGE_DIR", old)
+        with workspace.factory_dir("incoming"):
+            pass
+        self.assertTrue((config.WORKSPACE / ".exchange/incoming").is_dir())
+        self.assertFalse((config.WORKSPACE / ".factory").exists())
+
+    def test_exchange_dir_name_is_validated(self):
+        for bad in ("..", "/etc/factory-broker/secrets", "a/b"):
+            old = config.EXCHANGE_DIR
+            config.EXCHANGE_DIR = bad
+            self.addCleanup(setattr, config, "EXCHANGE_DIR", old)
+            with self.assertRaisesRegex(Denied, "BROKER_EXCHANGE_DIR", msg=bad):
+                with workspace.factory_dir("incoming"):
+                    pass
+
     def outside(self) -> Path:
         d = Path(self.tmp.name) / "outside"
         d.mkdir(exist_ok=True)

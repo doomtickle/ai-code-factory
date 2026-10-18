@@ -19,9 +19,9 @@ def merge_policy(base: dict, local: dict) -> dict:
 
 
 def load_policy(path: Path | None = None) -> dict:
-    """policy.toml plus, if present, policy.local.toml beside it: this machine's
-    own settings (private registry, Jira site) from the factory config folder,
-    baked into the image next to policy.toml (see Dockerfile)."""
+    """policy.toml plus, if present, policy.local.toml beside it: this
+    deployment's own settings (private registry, Jira site), baked into the
+    image next to policy.toml as a build-time overlay (see Dockerfile)."""
     path = path or config.POLICY_PATH
     with open(path, "rb") as f:
         policy = tomllib.load(f)

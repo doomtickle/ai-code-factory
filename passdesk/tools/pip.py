@@ -95,14 +95,15 @@ def tool_pip_download(args: dict, policy: dict) -> str:
             for whl in sorted(wheels.iterdir()):
                 if whl.is_file() and not whl.is_symlink() and whl.name.endswith(".whl"):
                     install_file(dest, whl.name, whl)
-    return (f"Downloaded {len(pins)} wheel(s) to .factory/wheels (binary wheels only, hash-checked, "
+    wheels_rel = f"{config.EXCHANGE_DIR}/wheels"
+    return (f"Downloaded {len(pins)} wheel(s) to {wheels_rel} (binary wheels only, hash-checked, "
             f"no code executed).\n"
             f"Install them offline in your sandbox with:\n"
-            f"  uv venv && uv pip install --offline --no-index --find-links .factory/wheels -r {rel_req}")
+            f"  uv venv && uv pip install --offline --no-index --find-links {wheels_rel} -r {rel_req}")
 
 
 register({
-    "pip_download": (tool_pip_download, "Download binary wheels for a fully pinned requirements file into "
-                     ".factory/wheels/ (no code runs). Returns the offline install command.",
+    "pip_download": (tool_pip_download, f"Download binary wheels for a fully pinned requirements file into "
+                     f"{config.EXCHANGE_DIR}/wheels/ (no code runs). Returns the offline install command.",
                      {"requirements": {"type": "string", "description": "path (default requirements.txt)"}}, []),
 })

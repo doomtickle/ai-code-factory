@@ -1,4 +1,10 @@
-# Passdesk quickstart
+# Passdesk quickstart: Docker Sandboxes (sbx) + Claude Code
+
+> **This is one deployment, not the only one.** This guide covers Passdesk
+> deployed with Docker Sandboxes (sbx) and Claude Code agents, via the AI
+> Code Factory. Passdesk itself is deployment-neutral (see the main
+> [README](../README.md)); a standalone, plain-Docker quickstart for other
+> MCP clients is planned but not written yet.
 
 By the end of this page you will have Claude Code agents, each in its own
 Docker Sandboxes microVM, that can fetch and push code, open draft pull

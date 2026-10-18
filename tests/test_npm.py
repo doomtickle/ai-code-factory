@@ -164,7 +164,7 @@ class NpmFetchTests(Base):
         self.standard_lock()
         out = self.fetch()
         self.assertIn("1 download(s) failed", out)
-        self.assertIn("factory-npm-registry", out)
+        self.assertIn("BROKER_NPM_REGISTRY_SECRET", out)
         self.assertTrue((self.mirror() / "left-pad-1.3.0.tgz").is_file())
         self.assertFalse((self.mirror() / "@corp-design-system-9.7.4.tgz").exists())
         self.assertFalse(any(url.startswith(PRIVATE_REG) for url, _ in self.sent))
@@ -181,7 +181,7 @@ class NpmFetchTests(Base):
         with mock.patch("passdesk.core.net.NO_REDIRECT_OPENER.open", side_effect=deny_private):
             out = npm.tool_npm_fetch({}, NPM_POLICY)
         self.assertIn("HTTP 401", out)
-        self.assertIn("factory-npm-registry", out)
+        self.assertIn("Configuring credentials", out)
         self.assertNotIn("corp-token", out)
 
     def test_second_run_skips_verified_files_and_replaces_tampered_ones(self):
@@ -338,7 +338,7 @@ class NpmFetchTests(Base):
         with mock.patch("passdesk.core.net.NO_REDIRECT_OPENER.open", side_effect=deny):
             out = npm.tool_npm_fetch({}, NPM_POLICY)
         self.assertIn(f"HTTP 403 from {PRIV_URL} (credential attached): the credential was rejected - check "
-                      "the \"factory-npm-registry\" keychain entry", out)
+                      "the private npm registry credential delivered to this deployment", out)
 
     def test_unreachable_host_is_reported_with_its_name(self):
         self.redirect_private_to_storage()

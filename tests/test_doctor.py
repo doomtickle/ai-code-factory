@@ -232,6 +232,20 @@ class StateWorkspaceSecretChecks(DoctorBase):
         doctor.check_workspace(report)
         self.assertFails(report, ".factory is a symlink")
 
+    def test_workspace_honors_the_configured_exchange_dir_name(self):
+        old = config.EXCHANGE_DIR
+        config.EXCHANGE_DIR = ".exchange"
+        self.addCleanup(setattr, config, "EXCHANGE_DIR", old)
+        report = doctor.Report()
+        doctor.check_workspace(report)
+        self.assertTrue(any(".exchange/ does not exist yet" in m for m in report.messages(doctor.INFO)))
+        real = self.root / "elsewhere"
+        real.mkdir()
+        os.symlink(real, config.WORKSPACE / ".exchange")
+        report = doctor.Report()
+        doctor.check_workspace(report)
+        self.assertFails(report, ".exchange is a symlink")
+
     def test_secrets(self):
         self.policy()
         pol = doctor.policy_mod.load_policy(self.policy_path)

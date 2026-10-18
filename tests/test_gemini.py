@@ -36,7 +36,7 @@ class GeminiTests(Base):
         with mock.patch("passdesk.core.net.NO_REDIRECT_OPENER.open", side_effect=fake_http_error(401, b"denied")):
             out = gemini.tool_gemini_flash_query({"prompt": "hi"}, POLICY)
         self.assertIn("HTTP 401", out)
-        self.assertIn("factory-gemini", out)
+        self.assertIn("Configuring credentials", out)
 
     def test_http_error_body_is_wrapped_untrusted(self):
         with mock.patch("passdesk.core.net.NO_REDIRECT_OPENER.open", side_effect=fake_http_error(500, b"oops")):

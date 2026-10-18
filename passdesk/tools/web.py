@@ -19,7 +19,7 @@ from ..core.filters import (
 from ..core.policy import host_allowed
 from ..core.registry import register
 
-# Hosts the egress proxy or the broker itself attaches credentials to.
+# Hosts the deployment's egress proxy or the broker itself attaches credentials to.
 # web_fetch is a plain, unauthenticated GET - letting it reach one of these
 # would be an authenticated read that skips the dedicated tool's own
 # allowlist (e.g. [git].repos), so this is checked before [web].allow_hosts
@@ -63,7 +63,7 @@ def tool_web_fetch(args: dict, policy: dict) -> str:
         host = parsed.hostname or ""
         tool = credentialed_host_tool(host, policy)
         if tool:
-            raise Denied(f"host {host} is where the egress proxy or the broker attaches credentials; "
+            raise Denied(f"host {host} is where the deployment's egress proxy or the broker attaches credentials; "
                          f"use {tool} instead of web_fetch (this refusal cannot be overridden by adding "
                          "the host to policy.toml [web].allow_hosts)")
         if not host_allowed(host, allow):
