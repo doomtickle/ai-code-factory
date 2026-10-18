@@ -19,6 +19,7 @@ POLICY = {
 
 FAKE_GH = "ghp_" + "a" * 36
 FAKE_ANT = "sk-ant-api03-" + "b" * 30
+FAKE_AWS = "AKIA" + "C" * 16
 
 TEST_CLOUD_ID = "3f2a9c1e-5b7d-4e8a-9c21-7d4e5f6a8b90"
 JIRA_POLICY = {**POLICY, "jira": {"site": "example.atlassian.net", "cloud_id": TEST_CLOUD_ID,

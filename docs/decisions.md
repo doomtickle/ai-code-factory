@@ -4,6 +4,35 @@ Dated entries, for the user to review. Newest first.
 
 ## 2026-10-17
 
+- **Ref names are secret-scanned: `check_branch_name` (`tools/git.py`) now
+  calls `block_outbound_secrets` on every branch name an agent supplies**,
+  closing the follow-up left by the card-redaction entry below
+  (doomtickle/passdesk-ops#2). A credential in a branch name is refused the
+  same way one in a PR title or body is, instead of being held for approval
+  with a `[REDACTED:...]` marker and then published to GitHub verbatim.
+  Judgement calls:
+  - **Scanned in `check_branch_name`, not only `check_push_branch`.** The
+    issue asked for the push branch and the PR head; those both go through
+    `check_push_branch`, which calls `check_branch_name`, so either place
+    covers them. The general function also covers `git_fetch`'s branch and
+    the `base` argument of `git_push` and `github_create_pr`, which are sent
+    to GitHub as ref names in a fetch. Refusing a fetch of a branch that
+    already exists under a credential-looking name costs nothing we want,
+    and one choke point is easier to reason about than three.
+  - **Refuse, don't redact or rename.** Redaction on the card never changed
+    what was pushed, and silently renaming the branch would make the agent's
+    local branch and the remote disagree. `Denied` tells the agent exactly
+    which pattern matched so it can rename and retry.
+  - Branch names allow `_`, so `factory/ghp_...` really was pushable; the
+    tests cover each `SECRET_PATTERNS` entry whose alphabet fits a ref name
+    (GitHub, AWS, Anthropic, Slack, Google), on the push branch, PR head and
+    both `base` arguments, and check that the approval hook is never reached.
+  - With this, every agent-supplied string on an approval card (branch, head,
+    base, title, body; file names via the per-commit patch scan) is refused
+    before `require` is called. The redaction in `require`, and the
+    card-id collision it could cause, are now defense in depth rather than
+    the first line; `docs/pro-approvals.md` says so.
+
 - **Cloudflare Web Analytics beacon script on passdesk.dev carries no
   Subresource Integrity hash.** The marketing site (`passdesk/` repo, GitHub
   Pages) loads the beacon from `https://static.cloudflareinsights.com/beacon.min.js`
@@ -50,10 +79,11 @@ Dated entries, for the user to review. Newest first.
     most for `git_push`'s `branch` field: `github_create_pr`'s title and
     body are already refused outright by `block_outbound_secrets` before
     `require` is ever called (`tools/git.py:206-207`), but a push's branch
-    name is never secret-scanned (`check_push_branch`, `tools/git.py:42-51`)
-    — a branch named `factory/ghp_...` would be published to GitHub exactly
-    as typed if approved. Blocking secrets in branch names the same way is
-    a separate backlog follow-up, not done here.
+    name was not secret-scanned at the time (`check_push_branch`,
+    `tools/git.py:42-51`) — a branch named `factory/ghp_...` would have been
+    published to GitHub exactly as typed if approved. Blocking secrets in
+    branch names the same way was left as a follow-up; it is done in the
+    entry above (same day, doomtickle/passdesk-ops#2).
   - **Two writes whose cards differ only in the redacted substring get the
     same card id** (`passdesk_pro/approvals.py`'s `card_id` hashes whatever
     card it's given, which is the redacted one), so one decision could cover
@@ -61,7 +91,7 @@ Dated entries, for the user to review. Newest first.
     is still pinned by `head` and `bundle_sha256`, neither of which
     redaction touches (a hex digest matches no `SECRET_PATTERNS` entry), and
     closing this gap means blocking secrets in branch names outright (the
-    follow-up above), not redacting harder.
+    follow-up above, since done), not redacting harder.
 
 - **CI (`.github/workflows/test.yml`).** Builds the Dockerfile with empty
   `factory-config`/`plugins` build contexts and runs `python3 -m unittest -v`
