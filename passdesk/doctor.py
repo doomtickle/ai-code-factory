@@ -13,17 +13,19 @@ checkout too; the environment variables config.py reads say where things
 are. A deployment's own doctor (e.g. the AI Code Factory's `factory doctor`)
 covers the platform: sbx, Docker, KVM. This one covers the gateway.
 
-With BROKER_DEPLOYMENT=standalone, the sbx kit checks (--kit, which compares
-the policy's egress hosts against an sbx kit's network allowlist) are
-replaced by check_standalone: a GitHub credential present through
-core/credentials.py, a TLS note once that lands (W3.2), and the exchange
-directory's writability.
+With BROKER_DEPLOYMENT=standalone, the sbx kit comparison (--kit, which
+checks the policy's egress hosts against an sbx kit's network allowlist) is
+replaced by check_standalone: how many hosts the policy can reach (no kit to
+compare against, so --kit itself is flagged as ignored), a GitHub credential
+present through core/credentials.py, a TLS note once that lands (W3.2), and
+the exchange directory's writability.
 """
 
 from __future__ import annotations
 
 import argparse
 import importlib
+import ipaddress
 import json
 import os
 import re
@@ -72,7 +74,26 @@ _EXCHANGE_DIRS = ("incoming", "outgoing", "npm-mirror", "wheels")
 # (never read by the gateway); in standalone mode check_standalone checks it
 # through credentials.get(), the only place that distinction matters.
 _GITHUB_TOOLS = {"git_fetch", "git_push", "github_create_pr"}
-_LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost"}
+
+
+def _is_loopback(host: str) -> bool:
+    if host.lower() == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False  # not a literal IP (a hostname, say); treat as non-loopback
+
+
+def _proxy_blocks_other_providers(order: list[str]) -> bool:
+    """True if "proxy" is checked before some other provider in `order`. A
+    PROXY_INJECTED name (today just "github") then never reaches that other
+    provider: `credentials.get` stops at `proxy`'s INJECTED regardless of
+    what the other provider holds."""
+    if "proxy" not in order:
+        return False
+    idx = order.index("proxy")
+    return any(order.index(p) > idx for p in order if p != "proxy")
 
 
 def _github_token_hint(action: str) -> str:
@@ -534,35 +555,63 @@ def check_workspace(report: Report) -> None:
 
 # --- standalone ---------------------------------------------------------------------
 
-def check_standalone(report: Report, granted: set[str]) -> None:
+def check_standalone(report: Report, granted: set[str], pol: dict | None = None,
+                      kits: list[Path] | None = None, order_error: "credentials.CredentialError | None" = None) -> None:
     """What replaces the sbx kit checks (check_egress) when
     BROKER_DEPLOYMENT=standalone: there is no sbx kit, no egress proxy to
     inject GitHub's token, and no sbx-managed exchange directory permissions.
-    Not run in sbx mode (see run())."""
+    Not run in sbx mode (see run()).
+
+    `order_error`, when given, is a CredentialError `run()` already hit
+    computing `credentials.provider_order()` for every credential this run
+    checks; reported once there (Credentials section) instead of again here.
+    """
     report.section("Standalone")
 
+    needed = egress_hosts(pol or {})
+    report.info(f"{len(needed)} host(s) reachable under this policy; list them with --egress-hosts")
+    if kits:
+        report.warn("--kit is ignored in standalone mode: there is no sbx kit to compare the policy's "
+                     "egress hosts against",
+                     "drop --kit; standalone has no kit-level network allowlist to check against")
+
     wanted = bool(_GITHUB_TOOLS & granted)
-    try:
-        token = credentials.get("github")
-    except credentials.CredentialError as e:
-        report.fail(str(e))
+    if order_error is not None:
+        pass  # already reported once, in the Credentials section
     else:
-        order = ", ".join(credentials.provider_order()) or "(none configured)"
-        if token is not None:
-            report.ok(f"github credential present (checked providers: {order})")
-        elif wanted:
-            report.warn(f"no github credential (checked providers: {order}); "
-                        f"{', '.join(sorted(_GITHUB_TOOLS & granted))} return DENIED until it is delivered",
-                        "deliver a fine-grained GitHub token through one of those providers "
-                        "(README, Configuring credentials)")
+        reasons: list[str] = []
+        try:
+            token = credentials.get("github", on_unusable=lambda name, provider, reason: reasons.append(reason))
+        except credentials.CredentialError as e:
+            report.fail(str(e))
         else:
-            report.info(f"no github credential (not needed: no granted tool uses it; checked providers: {order})")
+            for reason in reasons:
+                report.warn(reason)
+            order = credentials.provider_order()
+            order_text = ", ".join(order) or "(none configured)"
+            if token is not None:
+                report.ok(f"github credential present (checked providers: {order_text})")
+            elif wanted:
+                if _proxy_blocks_other_providers(order):
+                    report.warn(f"no github credential (checked providers: {order_text}); \"proxy\" runs "
+                                "before the other provider(s), so a token delivered through file or "
+                                "env-file is never read -- github is treated as proxy-injected",
+                                "set PASSDESK_CREDENTIAL_PROVIDERS to an order without \"proxy\" "
+                                "(README, Configuring credentials) so a file- or env-file-delivered "
+                                "token is used")
+                else:
+                    report.warn(f"no github credential (checked providers: {order_text}); "
+                                f"{', '.join(sorted(_GITHUB_TOOLS & granted))} return DENIED until it is delivered",
+                                "deliver a fine-grained GitHub token through one of those providers "
+                                "(README, Configuring credentials)")
+            else:
+                report.info(f"no github credential (not needed: no granted tool uses it; checked providers: {order_text})")
 
     # TLS (doomtickle/passdesk-ops#53: W3.2 "Standalone image and compose
     # quickstart" has not landed yet -- there is no BROKER_TLS_CERT/KEY to
     # check). Flag the gap only when it would matter (bound off loopback);
     # this is a deliberate stub, not a check, until W3.2 lands.
-    if config.BIND_HOST not in _LOOPBACK_HOSTS:
+    if not _is_loopback(config.BIND_HOST):
         report.info(f"bound to {config.BIND_HOST} (off loopback); TLS cert/key checks are not implemented yet "
                     "(doomtickle/passdesk-ops Phase 3 plan, task W3.2) -- terminate TLS in front of the broker, "
                     "or narrow BROKER_BIND_HOST to a loopback address, until then")
@@ -570,20 +619,46 @@ def check_standalone(report: Report, granted: set[str]) -> None:
     ws = config.WORKSPACE
     if ws.is_dir():
         exchange = ws / config.EXCHANGE_DIR
-        target = exchange if exchange.is_dir() else ws
-        if not os.access(target, os.W_OK):
-            report.fail(f"{target} is not writable: git_fetch, npm_fetch and pip_download cannot hand "
-                        "files to the agent sandbox",
-                        f"make {target} writable by the user the broker runs as")
+        try:
+            st = os.lstat(exchange)
+            is_symlink, is_dir = stat.S_ISLNK(st.st_mode), stat.S_ISDIR(st.st_mode)
+        except FileNotFoundError:
+            is_symlink, is_dir = False, False
+        if is_symlink:
+            pass  # check_workspace already failed this; nothing more to check here
         else:
-            report.ok(f"{target} is writable")
+            target = exchange if is_dir else ws
+            if not os.access(target, os.W_OK):
+                report.fail(f"{target} is not writable: git_fetch, npm_fetch and pip_download cannot hand "
+                            "files to the agent sandbox",
+                            f"make {target} writable by the user the broker runs as")
+            else:
+                report.ok(f"{target} is writable")
+            if is_dir:
+                for sub in ("incoming", "outgoing"):
+                    p = exchange / sub
+                    try:
+                        sub_st = os.lstat(p)
+                    except FileNotFoundError:
+                        continue
+                    if stat.S_ISLNK(sub_st.st_mode) or not stat.S_ISDIR(sub_st.st_mode):
+                        continue  # check_workspace already failed this
+                    if not os.access(p, os.W_OK):
+                        report.fail(f"{p} is not writable: git_fetch, npm_fetch and pip_download cannot "
+                                    "hand files to the agent sandbox",
+                                    f"make {p} writable by the user the broker runs as")
+                    else:
+                        report.ok(f"{p} is writable")
     # else: check_workspace already reported the missing/invalid workspace.
 
 
 # --- credentials --------------------------------------------------------------------
 
-def check_secrets(report: Report, pol: dict | None, granted: set[str]) -> None:
+def check_secrets(report: Report, pol: dict | None, granted: set[str],
+                   order_error: "credentials.CredentialError | None" = None) -> None:
     report.section("Credentials")
+    if order_error is not None:
+        report.fail(str(order_error))
     paths = {"jira": config.JIRA_SECRET_PATH, "gemini": config.GEMINI_SECRET_PATH,
              "npm-registry": config.NPM_REGISTRY_SECRET_PATH}
     pk = (pol or {}).get("packages") if isinstance((pol or {}).get("packages"), dict) else {}
@@ -604,12 +679,21 @@ def check_secrets(report: Report, pol: dict | None, granted: set[str]) -> None:
             # the Docker secret and PASSDESK_SECRET_<NAME>_FILE paths, either of
             # which can hold the only copy; only report absence once none of
             # them do.
+            if order_error is not None:
+                continue  # already reported once, above
+            reasons: list[str] = []
             try:
-                present = credentials.get(name) is not None
+                value = credentials.get(name, on_unusable=lambda n, p, reason: reasons.append(reason))
             except credentials.CredentialError as e:
                 report.fail(str(e))
                 continue
-            if present:
+            for reason in reasons:
+                report.warn(reason)
+            if value is not None and name == "jira" and not _JIRA_SECRET_RE.match(value):
+                report.fail("the jira credential is not in the form you@example.com:TOKEN",
+                            "have the deployment re-deliver it in that form")
+                continue
+            if value is not None:
                 extra = "" if wanted else " (no granted tool uses it)"
                 report.ok(f"{name} credential present{extra}")
             elif wanted:
@@ -762,9 +846,16 @@ def run(policy_path: Path | None = None, kits: list[Path] | None = None, live: b
         check_egress(report, pol, kits or [])
     granted = check_state(report)
     check_workspace(report)
+    # Every credential check below shares one provider list; look it up once
+    # so a bad PASSDESK_CREDENTIAL_PROVIDERS is reported once, not per credential.
+    try:
+        credentials.provider_order()
+        order_error = None
+    except credentials.CredentialError as e:
+        order_error = e
     if config.DEPLOYMENT == "standalone":
-        check_standalone(report, granted)
-    check_secrets(report, pol, granted)
+        check_standalone(report, granted, pol, kits or [], order_error)
+    check_secrets(report, pol, granted, order_error)
     check_plugins(report)
     if live:
         check_live(report, pol, url or f"http://127.0.0.1:{config.PORT}/mcp", http)

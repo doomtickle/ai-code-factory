@@ -393,6 +393,29 @@ class StateWorkspaceSecretChecks(DoctorBase):
         doctor.check_secrets(report, pol, granted={"jira_my_issues", "npm_fetch"})
         self.assertFalse(any("super-secret-token" in t for t in self.all_text(report)))
 
+    def test_secrets_checks_jira_format_on_a_value_found_via_the_fallback(self):
+        # Before, the format check only ran against the configured path; a
+        # bad-shaped value delivered only as a Docker secret (or via
+        # PASSDESK_SECRET_JIRA_FILE) was reported "present" uncritically.
+        self.policy()
+        pol = doctor.policy_mod.load_policy(self.policy_path)
+        config.JIRA_SECRET_PATH.parent.mkdir(parents=True)
+        self.write_secret(credentials.DOCKER_SECRETS_DIR / "jira", "not-the-right-shape")
+        report = doctor.Report()
+        doctor.check_secrets(report, pol, granted={"jira_my_issues", "npm_fetch"})
+        self.assertFails(report, "not in the form you@example.com:TOKEN")
+        self.assertFalse(any("jira credential present" in m for m in report.messages(doctor.OK)))
+
+    def test_secrets_unusable_fallback_credential_warns_without_auditing(self):
+        self.policy()
+        pol = doctor.policy_mod.load_policy(self.policy_path)
+        config.JIRA_SECRET_PATH.parent.mkdir(parents=True)
+        (credentials.DOCKER_SECRETS_DIR / "jira").mkdir(parents=True)  # a directory: refused as unusable
+        report = doctor.Report()
+        doctor.check_secrets(report, pol, granted={"jira_my_issues", "npm_fetch"})
+        self.assertWarns(report, "is not a regular file")
+        self.assertFalse((config.STATE / "audit.jsonl").exists())
+
 
 class StandaloneChecks(DoctorBase):
     """BROKER_DEPLOYMENT=standalone: check_standalone replaces the sbx kit
@@ -479,6 +502,114 @@ class StandaloneChecks(DoctorBase):
         report = doctor.Report()
         doctor.check_standalone(report, granted=set())
         self.assertEqual(report.messages(doctor.FAIL), [])
+
+    def test_symlinked_exchange_dir_is_skipped_not_reported_writable(self):
+        # check_workspace already fails a symlinked .factory/; check_standalone
+        # must not also call it writable (os.lstat, not .is_dir(), which follows
+        # the link).
+        real = self.root / "elsewhere"
+        real.mkdir()
+        os.symlink(real, config.WORKSPACE / config.EXCHANGE_DIR)
+        report = doctor.Report()
+        doctor.check_standalone(report, granted=set())
+        self.assertEqual(report.messages(doctor.FAIL), [])
+        self.assertFalse(any("is writable" in m for m in report.messages(doctor.OK)))
+
+    def test_incoming_and_outgoing_writability_are_checked(self):
+        exchange = config.WORKSPACE / config.EXCHANGE_DIR
+        (exchange / "incoming").mkdir(parents=True)
+        (exchange / "outgoing").mkdir(parents=True)
+        report = doctor.Report()
+        doctor.check_standalone(report, granted=set())
+        oks = report.messages(doctor.OK)
+        self.assertTrue(any(str(exchange / "incoming") in m for m in oks))
+        self.assertTrue(any(str(exchange / "outgoing") in m for m in oks))
+
+    @unittest.skipIf(hasattr(os, "geteuid") and os.geteuid() == 0, "root ignores mode bits")
+    def test_outgoing_not_writable_fails(self):
+        exchange = config.WORKSPACE / config.EXCHANGE_DIR
+        outgoing = exchange / "outgoing"
+        outgoing.mkdir(parents=True)
+        os.chmod(outgoing, 0o500)
+        try:
+            report = doctor.Report()
+            doctor.check_standalone(report, granted=set())
+            self.assertFails(report, f"{outgoing} is not writable")
+        finally:
+            os.chmod(outgoing, 0o700)
+
+    def test_symlinked_incoming_is_skipped(self):
+        exchange = config.WORKSPACE / config.EXCHANGE_DIR
+        exchange.mkdir()
+        real = self.root / "elsewhere"
+        real.mkdir()
+        os.symlink(real, exchange / "incoming")
+        report = doctor.Report()
+        doctor.check_standalone(report, granted=set())
+        self.assertEqual(report.messages(doctor.FAIL), [])
+        self.assertFalse(any("incoming" in m for m in report.messages(doctor.OK)))
+
+    def test_egress_info_line_and_kit_ignored_warning(self):
+        self.policy()
+        pol = doctor.policy_mod.load_policy(self.policy_path)
+        report = doctor.Report()
+        doctor.check_standalone(report, granted=set(), pol=pol)
+        self.assertTrue(any("host(s) reachable under this policy" in m for m in report.messages(doctor.INFO)))
+        self.assertEqual(report.messages(doctor.WARN), [])
+        report = doctor.Report()
+        doctor.check_standalone(report, granted=set(), pol=pol, kits=[self.root / "spec.yaml"])
+        self.assertWarns(report, "--kit is ignored in standalone mode")
+
+    def test_run_warns_when_kit_passed_in_standalone(self):
+        self.policy()
+        self.state()
+        kit = self.root / "spec.yaml"
+        kit.write_text(KIT)
+        report = self.run_doctor(kits=[kit])
+        self.assertWarns(report, "--kit is ignored in standalone mode")
+
+    def test_github_hint_names_proxy_under_the_default_order(self):
+        # Default order "proxy,file,env-file": proxy answers "github" first,
+        # so a token delivered via file/env-file is never read.
+        report = doctor.Report()
+        doctor.check_standalone(report, granted={"git_fetch"})
+        self.assertWarns(report, "proxy")
+        self.assertTrue(any("PASSDESK_CREDENTIAL_PROVIDERS" in t for t in self.all_text(report)))
+
+    def test_github_hint_is_generic_once_proxy_no_longer_precedes_other_providers(self):
+        config.CREDENTIAL_PROVIDERS = "file,env-file"  # no proxy at all
+        report = doctor.Report()
+        doctor.check_standalone(report, granted={"git_fetch"})
+        self.assertWarns(report, "no github credential")
+        self.assertFalse(any("proxy" in m for m in report.messages(doctor.WARN)))
+
+    def test_loopback_detection_covers_ipv6_and_localhost(self):
+        for host in ("::1", "localhost"):
+            config.BIND_HOST = host
+            report = doctor.Report()
+            doctor.check_standalone(report, granted=set())
+            self.assertFalse(any("TLS" in m for m in report.messages(doctor.INFO)), host)
+
+    def test_unusable_credential_file_warns_without_auditing(self):
+        # A docker-secret directory (not a regular file) for github: refused
+        # by read_secret_file as "unusable." The doctor must show the reason
+        # as a warning and must not write it to the audit log (doctor.py:7,
+        # "it changes nothing").
+        config.CREDENTIAL_PROVIDERS = "file,env-file"
+        (credentials.DOCKER_SECRETS_DIR / "github").mkdir(parents=True)
+        report = doctor.Report()
+        doctor.check_standalone(report, granted={"git_fetch"})
+        self.assertWarns(report, "is not a regular file")
+        self.assertFalse((config.STATE / "audit.jsonl").exists())
+
+    def test_bad_provider_order_is_reported_once_not_per_credential(self):
+        config.CREDENTIAL_PROVIDERS = "vault"
+        config.JIRA_SECRET_PATH.parent.mkdir(parents=True)  # "inside the sandbox": every credential is checked
+        self.policy()
+        self.state(grants={"developer": ["git_fetch", "jira_my_issues", "gemini_flash_query", "npm_fetch"]})
+        report = self.run_doctor()
+        fails = [m for m in report.messages(doctor.FAIL) if "unknown credential provider 'vault'" in m]
+        self.assertEqual(len(fails), 1, report.messages(doctor.FAIL))
 
 
 class SbxModeUnaffected(DoctorBase):

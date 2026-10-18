@@ -360,6 +360,44 @@ class PluginProviderTests(CredentialTestBase):
         self.assertIsNone(credentials.get("gemini"))
 
 
+class OnUnusableTests(CredentialTestBase):
+    """`get`'s `on_unusable` parameter (doomtickle/passdesk-ops#53): a
+    read-only caller like the doctor must see why a credential was refused
+    without the lookup writing to the audit log."""
+
+    def test_default_still_audits(self):
+        self.write_secret(self.docker / "gemini", "x")
+        config.GEMINI_SECRET_PATH.mkdir(parents=True)  # a directory: refused as unusable
+        self.assertEqual(credentials.get("gemini"), "x")
+        self.assertIn("is not a regular file", self.audit_log())
+
+    def test_custom_callback_runs_instead_of_the_audit_write(self):
+        self.write_secret(self.docker / "gemini", "x")
+        config.GEMINI_SECRET_PATH.mkdir(parents=True)
+        seen = []
+        value = credentials.get("gemini", on_unusable=lambda name, provider, reason: seen.append((name, provider, reason)))
+        self.assertEqual(value, "x")
+        self.assertEqual(len(seen), 1)
+        name, provider, reason = seen[0]
+        self.assertEqual((name, provider), ("gemini", "file"))
+        self.assertIn("is not a regular file", reason)
+        self.assertEqual(self.audit_log(), "")  # nothing written: the callback took it instead
+
+    def test_custom_callback_also_catches_the_control_character_refusal(self):
+        self.write_secret(config.GEMINI_SECRET_PATH, f"{FIXTURE_VALUE}\x00")
+        seen = []
+        value = credentials.get("gemini", on_unusable=lambda name, provider, reason: seen.append(reason))
+        self.assertIsNone(value)
+        self.assertEqual(seen, ["the value contains control characters"])
+        self.assertEqual(self.audit_log(), "")
+
+    def test_custom_callback_never_sees_the_value(self):
+        self.write_secret(config.GEMINI_SECRET_PATH, FIXTURE_VALUE + "\x00")
+        seen = []
+        credentials.get("gemini", on_unusable=lambda name, provider, reason: seen.append(reason))
+        self.assertFalse(any(FIXTURE_VALUE in r for r in seen))
+
+
 class NoLeakTests(CredentialTestBase):
     def test_reprs_hold_no_value(self):
         self.write_secret(config.GEMINI_SECRET_PATH, FIXTURE_VALUE)

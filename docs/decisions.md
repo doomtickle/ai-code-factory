@@ -4,6 +4,44 @@ Dated entries, for the user to review. Newest first.
 
 ## 2026-10-18
 
+- **`credentials.get` takes an `on_unusable` callback (doomtickle/passdesk-ops#53,
+  follow-up on W1.3).** `check_secrets`'s and `check_standalone`'s fallback
+  calls to `credentials.get()` could reach `_Unusable` (a directory where a
+  credential file belongs, a control character in a value) and, through the
+  default `_unusable`, write a `credential_unusable` row to the audit log --
+  breaking the doctor's "it changes nothing" promise (`doctor.py:7`) and
+  hiding the reason from the operator (the doctor only ever saw "no `name`
+  credential"). `get(name, on_unusable=...)` now takes the refusal callback
+  as a parameter, default unchanged (`_unusable`, today's audit write); the
+  doctor passes one that collects `reason` into a list and shows each as a
+  `warn` instead. Kept minimal and generic rather than doctor-specific:
+  - `on_unusable(credential_name, provider, reason)` matches `_unusable`'s
+    own signature, so the default value doubles as the callback's type.
+  - Only the `file` provider's own multi-path fallback (secrets-dir path,
+    then the Docker secret) needed to learn about the parameter -- it is
+    the only built-in that catches `_Unusable` and keeps looking rather than
+    letting it propagate to `get`'s own handler, which already reads
+    `on_unusable` uniformly for every provider.
+  - `reason` strings never carry a secret value today (paths and fixed
+    messages only; see `read_secret_file`'s docstring), so passing them to
+    an alternate sink needed no new redaction.
+  Also in `doctor.py`, three related gaps the same read fixed or exposed:
+  the GitHub fix-hint under the default provider order
+  (`proxy,file,env-file`) told an operator to deliver a token through
+  `file`/`env-file`, which `proxy` running first makes unreachable for
+  "github" regardless -- the hint now checks `provider_order()` and, when
+  `proxy` precedes another provider, names dropping `proxy` from
+  `PASSDESK_CREDENTIAL_PROVIDERS` instead; a bad
+  `PASSDESK_CREDENTIAL_PROVIDERS` is looked up once in `run()` and threaded
+  into `check_standalone`/`check_secrets` as `order_error` so it is reported
+  once, not once per credential checked; and `check_standalone`'s exchange
+  directory check now reads `os.lstat` (as `check_workspace` already did)
+  instead of the symlink-following `Path.is_dir()`, so a symlinked
+  `.factory/` -- which `check_workspace` already fails -- no longer also
+  gets an incongruous "is writable" `OK` from `check_standalone`; the same
+  check now covers `incoming/`/`outgoing/` under the exchange directory,
+  not just the exchange directory itself.
+
 - **Doctor checks for standalone mode (doomtickle/passdesk-ops#53, plan task
   W1.3).** With `BROKER_DEPLOYMENT=standalone`, `doctor.run()` no longer
   calls `check_egress` (the sbx-kit `--kit` comparison makes no sense
