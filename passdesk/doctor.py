@@ -64,6 +64,15 @@ _SECRET_TOOLS = {"jira": {"jira_my_issues", "jira_get_issue"}, "gemini": {"gemin
 _EXCHANGE_DIRS = ("incoming", "outgoing", "npm-mirror", "wheels")
 
 
+def _github_token_hint(action: str) -> str:
+    """`action`, with the sbx re-attach command appended only for
+    BROKER_DEPLOYMENT=sbx (the default); a standalone deployment gets the
+    same text with no sbx-specific command."""
+    if config.DEPLOYMENT == "sbx":
+        return f"{action} (with sbx: sbx secret set github --sandbox factory-broker)"
+    return action
+
+
 class Report:
     """The findings, in order, for printing or asserting on."""
 
@@ -182,12 +191,18 @@ def _check_policy_shape(report: Report, pol: dict) -> None:
     elif not prot:
         report.warn("[git].protected_branches is empty: agents could push to main",
                     'the default is ["main", "master", "release/*"]')
-    prefix = git.get("push_branch_prefix", "")
+    prefix_key_present = "push_branch_prefix" in git
+    prefix = git.get("push_branch_prefix", config.DEFAULT_PUSH_BRANCH_PREFIX)
     if not isinstance(prefix, str):
         report.fail("[git].push_branch_prefix must be a string")
+    elif not prefix_key_present:
+        report.warn(f"[git].push_branch_prefix is not set: falling back to BROKER_PUSH_PREFIX "
+                    f"(currently {config.DEFAULT_PUSH_BRANCH_PREFIX!r})",
+                    "set [git].push_branch_prefix explicitly in policy.toml, "
+                    "or set BROKER_PUSH_PREFIX to the fallback this deployment wants")
     elif prefix == "":
         report.warn("[git].push_branch_prefix is empty: agents may push any unprotected branch",
-                    'set a prefix such as "factory/" so agent branches are recognizable')
+                    f'set a prefix such as {config.DEFAULT_PUSH_BRANCH_PREFIX!r} so agent branches are recognizable')
     elif re.search(r"\s", prefix):
         report.fail("[git].push_branch_prefix contains whitespace")
     base = git.get("default_base", "main")
@@ -647,8 +662,7 @@ def check_live(report: Report, pol: dict | None, url: str, http=_http) -> None:
             else:
                 report.warn(f"{repo} is reachable but no token was attached (public repo, unauthenticated): "
                             "pushes and pull requests will fail",
-                            "the deployment's egress proxy must attach a fine-grained token "
-                            "(with sbx: sbx secret set github --sandbox factory-broker)",
+                            _github_token_hint("the deployment's egress proxy must attach a fine-grained token"),
                             "(from a host, outside that deployment, this warning is expected: only its "
                             "proxy attaches the token)")
         elif code == 404:
@@ -657,8 +671,7 @@ def check_live(report: Report, pol: dict | None, url: str, http=_http) -> None:
                         "attached, so private repos show 404")
         elif code in (401, 403):
             report.fail(f"GitHub rejects the token for {repo} (HTTP {code})",
-                        "the deployment must re-attach the token (with sbx: sbx secret set github "
-                        "--sandbox factory-broker)")
+                        _github_token_hint("the deployment must re-attach the token"))
         else:
             report.warn(f"GitHub answered HTTP {code} for {repo}")
 
@@ -668,6 +681,11 @@ def check_live(report: Report, pol: dict | None, url: str, http=_http) -> None:
 def run(policy_path: Path | None = None, kits: list[Path] | None = None, live: bool = False,
         url: str = "", http=_http) -> Report:
     report = Report()
+    report.section("Config")
+    try:
+        config.validate()
+    except ValueError as e:
+        report.fail(str(e))
     pol = check_policy(report, policy_path)
     if pol is not None:
         check_egress(report, pol, kits or [])

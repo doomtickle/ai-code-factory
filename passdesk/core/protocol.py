@@ -169,6 +169,10 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main() -> None:
+    try:
+        config.validate()
+    except ValueError as e:
+        sys.exit(str(e))
     for p, what in ((config.WORKSPACE, "BROKER_WORKSPACE"), (config.STATE, "BROKER_STATE")):
         if not p.is_dir():
             sys.exit(f"{what} must be an existing directory (got {p})")

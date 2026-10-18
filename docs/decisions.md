@@ -55,6 +55,63 @@ Dated entries, for the user to review. Newest first.
     this CLI is for an operator running one command at a time, not
     concurrent automation.
 
+- **Paths and names made configurable (doomtickle/passdesk-ops#36, plan task
+  W1.1).** `BROKER_SECRETS_DIR` (default `/etc/factory-broker/secrets`) is a
+  new base for the three per-secret path defaults; `BROKER_JIRA_SECRET` etc.
+  still override individually on top of it, unchanged otherwise.
+  `BROKER_REF_NAMESPACE` (default `refs/factory`) replaces the hard-coded
+  `refs/factory/` prefix `git_push` stages an incoming branch under in its
+  mirror. `BROKER_PUSH_PREFIX` (default `factory/`) is a new fallback for
+  `[git].push_branch_prefix`, used only when a policy omits the key (every
+  `policy.toml` this repo ships sets it, so this only matters for a
+  deployment's own from-scratch policy). Judgement calls:
+  - **`BROKER_PUSH_PREFIX` is a code-level fallback, not a second way to set
+    the policy value.** `push_branch_prefix` itself stays policy (baked into
+    the image, overridable only via `policy.local.toml` at build time, per
+    CLAUDE.md's "Policy is baked into the image" rule); the env var only
+    changes what `check_push_branch` falls back to when a deployment's own
+    from-scratch policy doesn't mention the key, so a standalone deployment
+    doesn't have to write a policy file just to rename the convention.
+  - **The fallback's default (`factory/`) is a deliberate behaviour change
+    from upstream, not a neutral port.** Upstream falls back to `""` (any
+    unprotected branch) when `[git].push_branch_prefix` is absent; this repo
+    fails closed instead, since an absent key is far more likely to be an
+    oversight in a from-scratch policy than an intentional "no prefix"
+    choice. The doctor (`doctor.py`'s `_check_policy_shape`) now warns on a
+    *missing* key (naming the `BROKER_PUSH_PREFIX` fallback in effect) as
+    well as on a key present but set to `""`, so neither case is silent.
+  - **`BROKER_DEPLOYMENT` (`sbx` default, or `standalone`) gates wording,
+    not behavior.** It only selects whether the `sbx secret set github
+    --sandbox factory-broker` hint appears in `git.py`'s and `doctor.py`'s
+    GitHub-credential error/fix text; every check still runs the same way
+    either value is set.
+  - **Validation lives in `config.validate()`, called from
+    `protocol.main()` before the directory/policy checks already there, and
+    from `doctor.py`'s `run()`**, not at module import: tests already
+    override `config.NAME` attributes directly after import (see
+    `core/config.py`'s own docstring), so import-time validation would run
+    against stale values in that pattern.
+  - **Secrets refactor stayed minimal on purpose.** Another lane is building
+    `core/credentials.py` (secret providers) concurrently; this task only
+    added `SECRETS_DIR` as a shared default for the three existing path
+    variables, with no change to how or where the files are read.
+  - **`BROKER_REF_NAMESPACE` must not be, or sit under, `refs/heads`,
+    `refs/tags`, `refs/remotes`, `refs/notes` or `refs/stash`, not just
+    "under `refs/`".** A namespace like `refs/remotes/origin` would still
+    match `^refs/...`, but `git_fetch`'s bundle creation (and anything else
+    that walks `refs/remotes`) would then see an unverified,
+    pending-approval push as origin's own ref. `config.validate()` also
+    checks each `/`-separated component against `git check-ref-format`'s
+    two cheapest rules (no leading `.`, no trailing `.lock`) rather than
+    reimplementing the full command; the existing whole-string checks
+    (no `..`, no `//`, no trailing `/` or `.`) are unchanged.
+  - **`BROKER_SECRETS_DIR` must be absolute, not just free of `..`.** A
+    relative or empty value would resolve each secret path (e.g.
+    `BROKER_SECRETS_DIR=` making `JIRA_SECRET_PATH` resolve to `/jira`)
+    against whatever the broker's current working directory happens to be
+    at call time, which is not a directory this security boundary should
+    depend on.
+
 - **Identity/protocol layer de-factory-ized (doomtickle/passdesk-ops#36),
   per `docs/broker-extraction.md` (ai-code-factory) Phase 1 items 1, 2 and
   6.** `grant_hint`'s hard-coded `coordinator` special case is gone; a grant

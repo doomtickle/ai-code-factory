@@ -4,6 +4,7 @@ import unittest
 from unittest import mock
 
 from passdesk import tools  # noqa: F401 - registers every tool
+from passdesk.core import config
 from passdesk.core.errors import Denied
 from passdesk.tools import git, web
 
@@ -53,6 +54,15 @@ class ToolGuardTests(Base):
         self.assertIn("UNTRUSTED CONTENT", out)
         self.assertIn("Not Found", out)
         self.assertIn("sbx secret set github", out)
+
+    def test_github_create_pr_error_hint_drops_sbx_command_in_standalone_deployment(self):
+        old = config.DEPLOYMENT
+        config.DEPLOYMENT = "standalone"
+        self.addCleanup(setattr, config, "DEPLOYMENT", old)
+        with mock.patch("urllib.request.urlopen", side_effect=fake_http_error(404, b"Not Found")):
+            out = git.tool_github_create_pr({"repo": "acme/widgets", "head": "factory/x", "title": "t"}, POLICY)
+        self.assertIn("Hint: the GitHub credential is supplied by the deployment", out)
+        self.assertNotIn("sbx secret set github", out)
 
     def test_web_fetch_blocks_credentialed_hosts_even_when_allowlisted(self):
         # An operator adding one of these to [web].allow_hosts must not let

@@ -150,11 +150,37 @@ class PolicyChecks(DoctorBase):
         self.assertWarns(report, "protected_branches is empty")
         self.assertWarns(report, "push_branch_prefix is empty")
 
+    def test_push_branch_prefix_missing_key_warns_about_the_fallback(self):
+        self.policy(GOOD_POLICY.replace('push_branch_prefix = "factory/"\n', ""))
+        report = doctor.Report()
+        doctor.check_policy(report, self.policy_path)
+        self.assertWarns(report, "push_branch_prefix is not set")
+        self.assertWarns(report, "BROKER_PUSH_PREFIX")
+
     def test_credentialed_host_in_web_allowlist_warns(self):
         self.policy(GOOD_POLICY.replace('"docs.python.org",', '"docs.python.org", "api.github.com",'))
         report = doctor.Report()
         doctor.check_policy(report, self.policy_path)
         self.assertWarns(report, "api.github.com, which web_fetch refuses anyway")
+
+
+class ConfigChecks(DoctorBase):
+    """doctor.run() validates the environment, not just the policy file."""
+
+    def test_run_reports_a_bad_env_setting_as_a_config_failure(self):
+        self.policy()
+        old = config.REF_NAMESPACE
+        self.addCleanup(setattr, config, "REF_NAMESPACE", old)
+        config.REF_NAMESPACE = "refs/heads/factory"
+        report = self.run_doctor()
+        self.assertFails(report, "BROKER_REF_NAMESPACE")
+        self.assertTrue(any(sec == "Config" and lvl == doctor.FAIL and "BROKER_REF_NAMESPACE" in text
+                            for sec, lvl, text, _ in report.items))
+
+    def test_run_is_silent_on_config_when_the_environment_is_valid(self):
+        self.policy()
+        report = self.run_doctor()
+        self.assertEqual([text for sec, lvl, text, _ in report.items if sec == "Config" and lvl == doctor.FAIL], [])
 
 
 class EgressChecks(DoctorBase):
@@ -359,6 +385,28 @@ class LiveChecks(DoctorBase):
         doctor.check_live(report, pol, "http://127.0.0.1:1/mcp", http=down)
         self.assertFails(report, "does not answer")
         self.assertFails(report, "cannot reach api.github.com")
+
+    def test_github_token_hints_drop_sbx_command_in_standalone_deployment(self):
+        self.policy()
+        pol = doctor.policy_mod.load_policy(self.policy_path)
+
+        def fake_http(answer):
+            def http(url, headers=None, data=None, timeout=10):
+                return (401, b"") if data is not None else answer
+            return http
+
+        old = config.DEPLOYMENT
+        self.addCleanup(setattr, config, "DEPLOYMENT", old)
+        # (200, b"{}"): no token attached (WARN); (401, b""): token rejected (FAIL).
+        # Both fix lines name the sbx re-attach command only when DEPLOYMENT=sbx.
+        for answer, level in [((200, b"{}"), doctor.WARN), ((401, b""), doctor.FAIL)]:
+            for deployment, expect_sbx in [("sbx", True), ("standalone", False)]:
+                config.DEPLOYMENT = deployment
+                report = doctor.Report()
+                doctor.check_live(report, pol, "http://127.0.0.1:1/mcp", http=fake_http(answer))
+                fixes = [line for _, lvl, _, fix in report.items if lvl == level for line in fix]
+                self.assertEqual(any("sbx secret set github" in line for line in fixes), expect_sbx,
+                                 (deployment, answer, fixes))
 
 
 class CliTests(DoctorBase):

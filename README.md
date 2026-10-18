@@ -92,15 +92,29 @@ CI and test fixtures exercise, not because it's the only one.
 | `BROKER_STATE` | `/nonexistent` | Where tokens, grants (`roles.json`) and the audit log live. |
 | `BROKER_POLICY` | `policy.toml` beside the package | The policy file to load (plus `policy.local.toml` beside it, if present, merged table by table). |
 | `BROKER_PORT` | `8765` | The port the MCP server listens on. |
+| `BROKER_BIND_HOST` | `0.0.0.0` | Interface the MCP server binds. Narrow it (e.g. `127.0.0.1`) when nothing outside the host needs to reach the broker directly; the sbx deployment below relies on the default for its port publishing. |
+| `BROKER_ALLOWED_ORIGINS` | `` (empty) | Comma-separated Origin allowlist for the MCP spec's DNS-rebinding protection. A request with no `Origin` header (the normal case for a CLI-driven agent client) is unaffected; a request whose `Origin` isn't in this list gets HTTP 403. Empty means every Origin-bearing request is refused until a deployment opts specific origins in. |
 | `BROKER_MIRRORS` | `~/mirrors` | Where git tools keep their bare mirror clones. |
 | `BROKER_EXCHANGE_DIR` | `.factory` | Name of the workspace subdirectory `git_fetch`, `npm_fetch` and `pip_download` use to hand files to the agent's own sandbox. Must be a single path component: not empty, no `/` or NUL, not `.` or `..`, not absolute; the broker refuses to start the exchange directory otherwise. |
-| `BROKER_JIRA_SECRET` | `/etc/factory-broker/secrets/jira` | File holding the Jira credential (`email:token`); see "Configuring credentials". |
-| `BROKER_GEMINI_SECRET` | `/etc/factory-broker/secrets/gemini` | File holding the Gemini API key. |
-| `BROKER_NPM_REGISTRY_SECRET` | `/etc/factory-broker/secrets/npm-registry` | File holding the private npm registry credential. |
+| `BROKER_SECRETS_DIR` | `/etc/factory-broker/secrets` | Directory the three credential files below default into. Must be an absolute path with no `..` component; the broker refuses to start otherwise. |
+| `BROKER_JIRA_SECRET` | `$BROKER_SECRETS_DIR/jira` | File holding the Jira credential (`email:token`); see "Configuring credentials". |
+| `BROKER_GEMINI_SECRET` | `$BROKER_SECRETS_DIR/gemini` | File holding the Gemini API key. |
+| `BROKER_NPM_REGISTRY_SECRET` | `$BROKER_SECRETS_DIR/npm-registry` | File holding the private npm registry credential. |
+| `BROKER_REF_NAMESPACE` | `refs/factory` | Ref namespace `git_push` stages an incoming branch under in its own bare mirror while it verifies the push and awaits approval (never pushed itself; see `tools/git.py`). Must be a ref path under `refs/` (no `..`, no trailing slash, no empty component), must not be, or sit under, a namespace git/GitHub already use (`refs/heads`, `refs/tags`, `refs/remotes`, `refs/notes`, `refs/stash`), and no component may start with `.` or end in `.lock` (`git check-ref-format`); the broker refuses to start otherwise. |
+| `BROKER_PUSH_PREFIX` | `factory/` | Fallback for policy's `[git].push_branch_prefix` when a deployment's own `policy.toml` doesn't set it at all (every `policy.toml` this repo ships does, so this only matters for a deployment's own from-scratch policy). Deliberately fails closed here (unlike upstream, which falls back to `""` — any unprotected branch — when the key is absent); the doctor warns when `[git].push_branch_prefix` is missing from policy as well as when it's set to `""`. Must contain only ref-safe characters, no whitespace or control characters. |
+| `BROKER_DEPLOYMENT` | `sbx` | `sbx` (default) or `standalone`. Selects whether `git_push`/`github_create_pr` error hints and the doctor's live GitHub checks name the sbx CLI (`sbx secret set ...`) or stay generic; any other value refuses to start. |
 | `PASSDESK_PLUGINS` | `` (empty) | Comma-separated plugin modules to import at start-up (e.g. the commercial `passdesk-pro` approval hook). |
 
 `BROKER_WORKSPACE` and `BROKER_STATE` are required in practice (there is
 nothing at `/nonexistent`); every other variable above has a usable default.
+`BROKER_DEPLOYMENT`, `BROKER_REF_NAMESPACE`, `BROKER_SECRETS_DIR` and
+`BROKER_PUSH_PREFIX` are checked for an invalid value (an unknown deployment
+name, a ref namespace that isn't under `refs/` or collides with one git
+already uses, a secrets directory that isn't absolute or contains `..`, a
+push prefix with whitespace or non-ref characters) by `config.validate()`,
+called both before the server binds its port and by `python3 -m
+passdesk.doctor`, with a one-line error naming the variable; nothing silently
+takes a bad value.
 Callers authenticate with a bearer token checked against a SHA-256 hash in
 `BROKER_STATE/tokens/<principal>.sha256`, and are granted only the tools
 listed for them in `BROKER_STATE/roles.json` — minting both is the
@@ -119,15 +133,18 @@ directly.
 
 GitHub needs no file: the deployment's egress proxy attaches the token to
 Passdesk's outbound request, so Passdesk's own process never sees it (with
-sbx: `sbx secret set github --sandbox factory-broker`).
+sbx: `sbx secret set github --sandbox factory-broker`; this hint, and the
+doctor's live GitHub checks, name that command only when `BROKER_DEPLOYMENT`
+is `sbx`, the default — set it to `standalone` outside that deployment).
 
 Jira, Gemini and a private npm registry credential are read from files
 instead (see CLAUDE.md's "Credentials" rule for why), fresh on every call,
 at the paths in the table above (`BROKER_JIRA_SECRET`,
-`BROKER_GEMINI_SECRET`, `BROKER_NPM_REGISTRY_SECRET`). Deliver each file
-with mode 0600 or tighter, owned by the user the broker runs as; rotating
-the file rotates the credential without restarting the broker. With sbx +
-the AI Code Factory, these are stored in the host keychain and delivered by
+`BROKER_GEMINI_SECRET`, `BROKER_NPM_REGISTRY_SECRET`, all three defaulting
+under `BROKER_SECRETS_DIR`). Deliver each file with mode 0600 or tighter,
+owned by the user the broker runs as; rotating the file rotates the
+credential without restarting the broker. With sbx + the AI Code Factory,
+these are stored in the host keychain and delivered by
 `scripts/start-broker.sh`; any other deployment just needs to write the file
 to that path before the broker's first call that needs it.
 
@@ -224,9 +241,10 @@ stays disabled until the owner adds the
 
 ## Deploying with Docker Sandboxes (sbx)
 
-The Dockerfile's default `INSTALL_DIR` (`/opt/factory-broker`) and the
-secret paths above assume this deployment: Passdesk runs as its own sbx
-sandbox, built by the AI Code Factory from this repo's `Dockerfile`, with
+The Dockerfile's default `INSTALL_DIR` (`/opt/factory-broker`), the secret
+paths above and the default `BROKER_DEPLOYMENT=sbx` all assume this
+deployment: Passdesk runs as its own sbx sandbox, built by the AI Code
+Factory from this repo's `Dockerfile`, with
 its policy overlay passed as the `factory-config` build context and its
 secrets delivered to `/etc/factory-broker/secrets/` by
 `scripts/start-broker.sh` (which also sets `BROKER_WORKSPACE` and
