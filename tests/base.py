@@ -1,13 +1,15 @@
 """Shared fixtures for the broker tests."""
 
 import io
+import os
 import tempfile
 import unittest
 import urllib.error
 from pathlib import Path
+from unittest import mock
 
 from passdesk import tools  # noqa: F401 - registers every tool
-from passdesk.core import config
+from passdesk.core import config, credentials
 
 POLICY = {
     "web": {"allow_hosts": ["docs.python.org", "*.example.com"], "max_bytes": 1000},
@@ -60,6 +62,16 @@ class Base(unittest.TestCase):
         config.JIRA_SECRET_PATH = root / "secrets" / "jira"
         config.GEMINI_SECRET_PATH = root / "secrets" / "gemini"
         config.NPM_REGISTRY_SECRET_PATH = root / "secrets" / "npm-registry"
+        # Likewise the secrets directory, Docker secrets and any env-file
+        # variable from the environment the tests run in.
+        for name in ("SECRETS_DIR", "DOCKER_SECRETS_DIR"):
+            self.addCleanup(setattr, credentials, name, getattr(credentials, name))
+        credentials.SECRETS_DIR = root / "secrets"
+        credentials.DOCKER_SECRETS_DIR = root / "run-secrets"
+        env = mock.patch.dict(os.environ, {k: v for k, v in os.environ.items()
+                                           if not k.startswith("PASSDESK_SECRET_")}, clear=True)
+        env.start()
+        self.addCleanup(env.stop)
 
     def tearDown(self):
         self.tmp.cleanup()

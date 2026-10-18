@@ -4,16 +4,6 @@ from __future__ import annotations
 
 import urllib.error
 import urllib.request
-from pathlib import Path
-
-
-def read_secret_file(path: Path) -> str | None:
-    """Read a credential written by scripts/start-broker.sh, or None if absent/empty."""
-    try:
-        value = path.read_text().strip()
-    except OSError:
-        return None
-    return value or None
 
 
 class RefuseRedirects(urllib.request.HTTPRedirectHandler):

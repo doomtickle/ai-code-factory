@@ -8,7 +8,7 @@ import sys
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import approvals, auth, config, plugins, policy
+from . import approvals, auth, config, credentials, plugins, policy
 from .audit import audit, summarize_args
 from .auth import authenticate, principal_tools
 from .errors import Denied
@@ -179,6 +179,10 @@ def main() -> None:
     policy.load_policy()  # fail fast on a broken policy file
     config.MIRRORS.mkdir(parents=True, exist_ok=True)
     plugins.load()  # a named plugin that fails to import stops the server
+    try:
+        credentials.provider_order()  # fail fast on a provider list naming an unknown provider
+    except credentials.CredentialError as e:
+        sys.exit(str(e))
     audit({"event": "start", "version": config.SERVER_VERSION, "workspace": str(config.WORKSPACE),
            "approvals": approvals.hook_installed()})
     ThreadingHTTPServer((config.BIND_HOST, config.PORT), Handler).serve_forever()

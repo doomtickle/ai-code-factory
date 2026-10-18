@@ -15,7 +15,7 @@ Design rules:
     "Credentials"): Jira, Gemini and the private npm registry, which a proxy
     cannot reach. Those are delivered as files outside the workspace and
     BROKER_STATE by the deployment, from wherever it keeps secrets, and are
-    read fresh from disk on every call.
+    read fresh from disk on every call through core/credentials.py.
 
 Layout: core/ is the gateway itself (protocol, auth and grants, policy,
 filtering, audit) and knows no tool; tools/ holds one module per capability,

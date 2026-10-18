@@ -1,10 +1,11 @@
 """Plugins: modules named in PASSDESK_PLUGINS, imported once at start-up.
 
 A plugin module may define `activate() -> bool`, called once after import
-to register what it provides (today: an approval hook via
-core.approvals.set_hook); importing alone has no side effects. Nothing is
-loaded unless named, so a gateway without the variable behaves exactly as
-the core alone. Modules are found on PYTHONPATH; the image puts its optional
+to register what it provides (an approval hook via
+core.approvals.set_hook, credential providers via
+core.credentials.register_provider); importing alone has no side effects.
+Nothing is loaded unless named, so a gateway without the variable behaves
+exactly as the core alone. Modules are found on PYTHONPATH; the image puts its optional
 `plugins` build context there.
 """
 

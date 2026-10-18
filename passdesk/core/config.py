@@ -54,6 +54,10 @@ NPM_REGISTRY_SECRET_PATH = Path(os.environ.get("BROKER_NPM_REGISTRY_SECRET", f"{
 # Plugin modules to import at start-up (comma-separated; see core/plugins.py).
 PLUGINS = os.environ.get("PASSDESK_PLUGINS", "")
 
+# Credential providers in lookup order (comma-separated; see core/credentials.py).
+# The default reproduces the gateway's behaviour before providers existed.
+CREDENTIAL_PROVIDERS = os.environ.get("PASSDESK_CREDENTIAL_PROVIDERS", "proxy,file,env-file")
+
 MAX_REQUEST_BYTES = 1_000_000
 MAX_OUTPUT_CHARS = 20_000
 
