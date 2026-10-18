@@ -43,9 +43,10 @@ ALLOWED_ORIGINS = frozenset(
 # CLAUDE.md's "Credentials" section). Written by scripts/start-broker.sh, read
 # fresh on every call so rotating the host keychain entry and re-running that
 # script rotates the credential without restarting the broker.
-# SECRETS_DIR is only where the three paths below default to; each is still
-# independently overridable (BROKER_JIRA_SECRET, etc.) for a deployment that
-# wants one of them somewhere else entirely.
+# SECRETS_DIR is where the three paths below default to, and also where
+# credentials.secrets_dir() looks up any other credential name; each of the
+# three is still independently overridable (BROKER_JIRA_SECRET, etc.) for a
+# deployment that wants one of them somewhere else entirely.
 SECRETS_DIR = os.environ.get("BROKER_SECRETS_DIR", "/etc/factory-broker/secrets")
 JIRA_SECRET_PATH = Path(os.environ.get("BROKER_JIRA_SECRET", f"{SECRETS_DIR}/jira"))
 GEMINI_SECRET_PATH = Path(os.environ.get("BROKER_GEMINI_SECRET", f"{SECRETS_DIR}/gemini"))
