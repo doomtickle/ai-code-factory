@@ -1,6 +1,7 @@
 """Entry point for the broker (the passdesk package beside this file).
 
-Launched by run.sh inside the broker sandbox.
+A deployment launches this however it runs the process (e.g. run.sh under
+sbx, a container entrypoint elsewhere).
 """
 
 from passdesk import tools  # noqa: F401 - registers every tool

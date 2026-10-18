@@ -46,19 +46,34 @@ class ProtocolTests(Base):
         self.assertEqual(names("documenter"), set())
         self.assertEqual(names("unknown-role"), set())
 
-    def test_role_cannot_call_tools_outside_its_list(self):
+    def test_grant_may_be_an_object_with_a_tools_list_and_a_source(self):
+        (config.STATE / "roles.json").write_text(json.dumps(
+            {"developer": {"tools": ["web_fetch"], "source": "custom.conf"}}))
+        self.assertEqual(auth.principal_tools("developer"), {"web_fetch"})
+        res = self.call("developer", "web_fetch", {"url": "https://evil.com"})
+        self.assertTrue(res["isError"])  # policy denies the host, but the grant let the call through
+        self.assertNotIn("is not granted tool", res["content"][0]["text"])
+
+    def test_grants_json_takes_priority_over_roles_json(self):
+        (config.STATE / "grants.json").write_text(json.dumps({"developer": ["web_fetch"]}))
+        # roles.json (from setUp) still grants npm_fetch; grants.json must win.
+        self.assertEqual(auth.principal_tools("developer"), {"web_fetch"})
+
+    def test_principal_cannot_call_tools_outside_its_grant(self):
         res = self.call("researcher", "npm_fetch", {})
         self.assertTrue(res["isError"])
-        self.assertIn("researcher role may not use npm_fetch", res["content"][0]["text"])
-        self.assertIn("roles/researcher/role.conf", res["content"][0]["text"])
+        text = res["content"][0]["text"]
+        self.assertIn("principal 'researcher' is not granted tool 'npm_fetch'", text)
+        self.assertIn("BROKER_TOOLS", text)  # no source set for researcher: generic hint
 
-    def test_coordinator_deny_message_points_at_broker_conf_not_role_conf(self):
+    def test_deny_message_quotes_a_grants_file_source_when_one_is_set(self):
+        (config.STATE / "roles.json").write_text(json.dumps(
+            {"coordinator": {"tools": [], "source": "kits/coordinator/broker.conf"}}))
         res = self.call("coordinator", "jira_my_issues", {})
         self.assertTrue(res["isError"])
         text = res["content"][0]["text"]
-        self.assertIn("coordinator role may not use jira_my_issues", text)
+        self.assertIn("principal 'coordinator' is not granted tool 'jira_my_issues'", text)
         self.assertIn("kits/coordinator/broker.conf", text)
-        self.assertNotIn("roles/coordinator/role.conf", text)
 
     def test_rpc_and_audit(self):
         self.assertIsNone(protocol.handle_rpc({"jsonrpc": "2.0", "method": "notifications/initialized"}, "developer"))
@@ -70,6 +85,8 @@ class ProtocolTests(Base):
         self.call("researcher", "git_push", {})
         entries = [json.loads(l) for l in (config.STATE / "audit.jsonl").read_text().splitlines()]
         self.assertEqual([e["decision"] for e in entries], ["deny", "deny", "deny"])
+        self.assertEqual([e["principal"] for e in entries], ["developer", "developer", "researcher"])
+        # "role" is kept as a duplicate alias for the factory's scripts/analytics.py.
         self.assertEqual([e["role"] for e in entries], ["developer", "developer", "researcher"])
 
     def test_non_object_params_return_invalid_params_error_instead_of_crashing(self):
@@ -106,6 +123,7 @@ class ProtocolTests(Base):
         intents = [e for e in events if e.get("event") == "intent"]
         self.assertEqual(len(intents), 1)
         self.assertEqual(intents[0]["tool"], "git_push")
+        self.assertEqual(intents[0]["principal"], "developer")
         self.assertEqual(intents[0]["role"], "developer")
         # The intent record landed before the final allow/deny/error record.
         self.assertNotIn("decision", intents[0])
@@ -176,6 +194,52 @@ class ContentLengthTests(Base):
         code, body = self.post({"Authorization": "Bearer dev-token", "Content-Length": str(len(payload))}, payload)
         self.assertEqual(code, 200)
         self.assertEqual(body["result"], {})
+
+
+class OriginTests(Base):
+    """do_POST's Origin allowlist (DNS-rebinding protection)."""
+
+    def setUp(self):
+        super().setUp()
+        (config.STATE / "tokens").mkdir()
+        (config.STATE / "tokens" / "developer.sha256").write_text(hashlib.sha256(b"dev-token").hexdigest() + "\n")
+        (config.STATE / "roles.json").write_text(json.dumps({"developer": []}))
+        config.POLICY_PATH = Path(__file__).parents[1] / "policy.toml"
+        self.payload = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "ping"}).encode()
+
+    def post(self, headers: dict, body: bytes) -> tuple[int, dict | None]:
+        handler = protocol.Handler.__new__(protocol.Handler)
+        handler.headers = email.message_from_string("".join(f"{k}: {v}\r\n" for k, v in headers.items()))
+        handler.rfile = io.BytesIO(body)
+        handler.path = "/mcp"
+        handler.client_address = ("127.0.0.1", 0)
+        sent = []
+        handler._send = lambda code, body=None: sent.append((code, body))
+        handler.do_POST()
+        return sent[0]
+
+    def test_no_origin_header_is_unaffected(self):
+        code, body = self.post({"Authorization": "Bearer dev-token", "Content-Length": str(len(self.payload))},
+                                self.payload)
+        self.assertEqual(code, 200)
+
+    def test_origin_not_in_the_empty_default_allowlist_is_refused(self):
+        code, body = self.post({"Authorization": "Bearer dev-token", "Content-Length": str(len(self.payload)),
+                                "Origin": "https://evil.example"}, self.payload)
+        self.assertEqual(code, 403)
+
+    def test_origin_check_runs_before_the_body_is_read(self):
+        # Content-Length lies about the body, which do_POST would otherwise
+        # reject while trying to read it - the Origin check must short-circuit first.
+        code, body = self.post({"Authorization": "Bearer dev-token", "Content-Length": "999999",
+                                "Origin": "https://evil.example"}, b"")
+        self.assertEqual(code, 403)
+
+    def test_origin_in_the_allowlist_is_accepted(self):
+        with mock.patch.object(config, "ALLOWED_ORIGINS", frozenset({"https://ok.example"})):
+            code, body = self.post({"Authorization": "Bearer dev-token", "Content-Length": str(len(self.payload)),
+                                    "Origin": "https://ok.example"}, self.payload)
+        self.assertEqual(code, 200)
 
 
 if __name__ == "__main__":

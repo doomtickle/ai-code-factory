@@ -8,7 +8,7 @@ import sys
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import approvals, config, plugins, policy
+from . import approvals, auth, config, plugins, policy
 from .audit import audit, summarize_args
 from .auth import authenticate, principal_tools
 from .errors import Denied
@@ -17,16 +17,14 @@ from .registry import TOOLS, tool_list
 
 
 def grant_hint(principal: str) -> str:
-    """Where a principal's BROKER_TOOLS grant lives, for error messages.
+    """Where a principal's grant lives, for deny messages.
 
-    Factory wiring: the Coordinator is a broker pseudo-role with no
-    roles/<name>/ directory of its own (see scripts/lib/roles.sh,
-    coordinator_broker_tools). Moves to the sbx adapter when the broker is
-    extracted (docs/broker-extraction.md, Phase 2).
+    A grant may carry a `source` string (see auth.grant_source) that the
+    deployment sets to point at wherever it keeps that principal's grant
+    configured. With none, the hint falls back to the generic BROKER_TOOLS
+    mechanism.
     """
-    if principal == "coordinator":
-        return "kits/coordinator/broker.conf"
-    return f"roles/{principal}/role.conf"
+    return auth.grant_source(principal) or "its BROKER_TOOLS grant"
 
 
 # Tools whose effect lands outside the broker, not just in its own state or
@@ -39,8 +37,10 @@ _WRITES_EXTERNALLY = {"git_push", "github_create_pr"}
 
 def call_tool(name: str, args: object, principal: str) -> tuple[str, bool]:
     started = time.monotonic()
-    # "role" is the audit log's field name for the principal (scripts/analytics.py reads it).
-    record = {"role": principal, "tool": name}
+    # "principal" is the canonical field; "role" is kept as a duplicate alias
+    # with the same value for the factory's scripts/analytics.py until that
+    # consumer reads "principal" instead.
+    record = {"principal": principal, "role": principal, "tool": name}
     try:
         # Argument shape/type checks live inside the try so a malformed call
         # (e.g. "arguments" not a JSON object) still gets an audit record and
@@ -51,7 +51,7 @@ def call_tool(name: str, args: object, principal: str) -> tuple[str, bool]:
         if name not in TOOLS:
             raise Denied(f"unknown tool {name!r}")
         if name not in principal_tools(principal):
-            raise Denied(f"the {principal} role may not use {name} ({grant_hint(principal)} BROKER_TOOLS)")
+            raise Denied(f"principal {principal!r} is not granted tool {name!r} (see {grant_hint(principal)})")
         fn, _, props, required = TOOLS[name]
         for key in required:
             if key not in args:
@@ -130,6 +130,15 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         if self.path.rstrip("/") != "/mcp":
             return self._send(404)
+        origin = self.headers.get("Origin")
+        if origin and origin not in config.ALLOWED_ORIGINS:
+            # DNS-rebinding protection (MCP spec, "Security Warning" for HTTP
+            # transports): a request carrying an Origin header is from a
+            # browser context, not a normal CLI-driven agent client, so it
+            # must match an explicit allowlist. Checked before the body is
+            # even read.
+            audit({"event": "origin-rejected", "client": self.client_address[0], "origin": origin})
+            return self._send(403, {"error": "origin not allowed"})
         principal, problem = authenticate(self.headers.get("Authorization"))
         if principal is None:
             audit({"event": "auth-failure", "client": self.client_address[0], "reason": problem})
@@ -168,4 +177,4 @@ def main() -> None:
     plugins.load()  # a named plugin that fails to import stops the server
     audit({"event": "start", "version": config.SERVER_VERSION, "workspace": str(config.WORKSPACE),
            "approvals": approvals.hook_installed()})
-    ThreadingHTTPServer(("0.0.0.0", config.PORT), Handler).serve_forever()
+    ThreadingHTTPServer((config.BIND_HOST, config.PORT), Handler).serve_forever()

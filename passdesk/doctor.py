@@ -29,7 +29,7 @@ import urllib.request
 from pathlib import Path
 
 from . import tools  # noqa: F401 - registers every tool
-from .core import config
+from .core import auth, config
 from .core import policy as policy_mod
 from .core.errors import Denied
 from .core.net import NO_REDIRECT_OPENER
@@ -407,7 +407,7 @@ def check_state(report: Report) -> set[str]:
             report.fail("tokens/ holds no valid token hash: no caller can authenticate",
                         "run the deployment's start script (it mints tokens/<principal>.sha256)")
 
-    grants_path = state / "roles.json"
+    grants_path = auth.grants_path()
     grants: dict = {}
     if not grants_path.is_file():
         report.fail("roles.json is missing: every call is denied for lack of a grant",
