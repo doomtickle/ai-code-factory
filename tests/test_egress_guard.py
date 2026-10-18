@@ -8,6 +8,7 @@ import io
 import socket
 import socketserver
 import threading
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -207,6 +208,7 @@ class RequestRefusalTests(GuardBase):
         headers = b"".join(b"X-Pad-%d: %s\r\n" % (i, b"p" * 500) for i in range(20))
         _, status = self.open(b"CONNECT model.example:443 HTTP/1.1\r\n" + headers + b"\r\n")
         self.assertEqual(status, "HTTP/1.1 400 Refused")
+        self.assertIn("deny 400 headers too long", self.log.getvalue())
 
     def test_slow_client_is_cut_off(self):
         with mock.patch.object(guard, "READ_TIMEOUT", 0.3):
@@ -220,17 +222,22 @@ class RequestRefusalTests(GuardBase):
             sock = socket.create_connection(self.guard.server_address, timeout=5)
             self.addCleanup(sock.close)
             sock.settimeout(0.1)
-            data = b""
+            started = time.monotonic()
+            sent = 0
             for byte in b"CONNECT model.example:443 HTTP/1.1\r\nX-Slow: " + b"y" * 100:
                 try:
                     sock.sendall(bytes([byte]))
-                    data = sock.recv(1, socket.MSG_PEEK)  # nothing until the 408
+                    sent += 1
+                    sock.recv(1, socket.MSG_PEEK)  # nothing until the 408
                 except TimeoutError:
                     continue
                 break
             sock.settimeout(5)
             data = sock.recv(200)
         self.assertTrue(data.startswith(b"HTTP/1.1 408"), data)
+        # ... and it came while the client was still dripping, not after it ran out of bytes.
+        self.assertLess(time.monotonic() - started, 3)
+        self.assertLess(sent, 100)
 
     def test_client_closing_early_is_400(self):
         sock = socket.create_connection(self.guard.server_address, timeout=5)
