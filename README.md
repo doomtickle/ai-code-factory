@@ -103,9 +103,9 @@ CI and test fixtures exercise, not because it's the only one.
 | `BROKER_NPM_REGISTRY_SECRET` | `$BROKER_SECRETS_DIR/npm-registry` | File holding the private npm registry credential. |
 | `BROKER_REF_NAMESPACE` | `refs/factory` | Ref namespace `git_push` stages an incoming branch under in its own bare mirror while it verifies the push and awaits approval (never pushed itself; see `tools/git.py`). Must be a ref path under `refs/` (no `..`, no trailing slash, no empty component), must not be, or sit under, a namespace git/GitHub already use (`refs/heads`, `refs/tags`, `refs/remotes`, `refs/notes`, `refs/stash`), and no component may start with `.` or end in `.lock` (`git check-ref-format`); the broker refuses to start otherwise. |
 | `BROKER_PUSH_PREFIX` | `factory/` | Fallback for policy's `[git].push_branch_prefix` when a deployment's own `policy.toml` doesn't set it at all (every `policy.toml` this repo ships does, so this only matters for a deployment's own from-scratch policy). Deliberately fails closed here (unlike upstream, which falls back to `""` — any unprotected branch — when the key is absent); the doctor warns when `[git].push_branch_prefix` is missing from policy as well as when it's set to `""`. Must contain only ref-safe characters, no whitespace or control characters. |
-| `BROKER_DEPLOYMENT` | `sbx` | `sbx` (default) or `standalone`. Selects whether `git_push`/`github_create_pr` error hints and the doctor's live GitHub checks name the sbx CLI (`sbx secret set ...`) or stay generic; any other value refuses to start. |
+| `BROKER_DEPLOYMENT` | `sbx` | `sbx` (default) or `standalone`. Selects whether `git_push`/`github_create_pr` error hints and the doctor's live GitHub checks name the sbx CLI (`sbx secret set ...`) or stay generic, and the default of `PASSDESK_CREDENTIAL_PROVIDERS` (`standalone` leaves out `proxy`, so the gateway reads its own GitHub token); any other value refuses to start. |
 | `PASSDESK_PLUGINS` | `` (empty) | Comma-separated plugin modules to import at start-up (e.g. the commercial `passdesk-pro` approval hook). |
-| `PASSDESK_CREDENTIAL_PROVIDERS` | `proxy,file,env-file` | Credential providers in lookup order; see "Configuring credentials". A name that isn't a provider stops the server at start-up. |
+| `PASSDESK_CREDENTIAL_PROVIDERS` | `proxy,file,env-file` (`file,env-file` when `BROKER_DEPLOYMENT=standalone`) | Credential providers in lookup order; see "Configuring credentials". A name that isn't a provider stops the server at start-up. |
 | `PASSDESK_SECRET_<NAME>_FILE` | unset | Path of a file holding credential `<NAME>` (upper-cased, `-` as `_`: `PASSDESK_SECRET_NPM_REGISTRY_FILE`). Holds a path, never the secret. |
 
 `BROKER_WORKSPACE` and `BROKER_STATE` are required in practice (there is
@@ -134,11 +134,37 @@ directly.
 
 ## Configuring credentials
 
-GitHub needs no file: the deployment's egress proxy attaches the token to
-Passdesk's outbound request, so Passdesk's own process never sees it (with
-sbx: `sbx secret set github --sandbox factory-broker`; this hint, and the
+With sbx, GitHub needs no file: the deployment's egress proxy attaches the
+token to Passdesk's outbound request, so Passdesk's own process never sees
+it (`sbx secret set github --sandbox factory-broker`; this hint, and the
 doctor's live GitHub checks, name that command only when `BROKER_DEPLOYMENT`
 is `sbx`, the default — set it to `standalone` outside that deployment).
+
+A standalone deployment (`BROKER_DEPLOYMENT=standalone`) has no such proxy,
+so Passdesk holds the GitHub token itself: deliver it like the credentials
+below, as `github` (`$BROKER_SECRETS_DIR/github`, `/run/secrets/github` or
+`PASSDESK_SECRET_GITHUB_FILE`). Use a fine-grained personal access token
+limited to the repositories in `[git].repos`, with only **Contents** and
+**Pull requests** read and write. Passdesk refuses a value that isn't
+20-255 letters, digits and underscores (every GitHub token format), and
+then:
+
+- `git_fetch` and `git_push` give it to git only through
+  `GIT_CONFIG_COUNT`/`GIT_CONFIG_KEY_n`/`GIT_CONFIG_VALUE_n` in that one git
+  process's environment: an `http.https://github.com/.extraHeader` of
+  `Authorization: Basic base64("x-access-token:<token>")`, so git sends it
+  to no other host. It is never on a command line or written to disk; git
+  runs with `http.followRedirects=false`, no credential helper, and every
+  `GIT_TRACE*`/`GIT_CURL_VERBOSE` switch removed from its environment.
+- `github_create_pr` sends `Authorization: Bearer <token>` to
+  `api.github.com` and refuses redirects, like every authenticated call.
+- Once read, the token and its encoded form are redacted (as
+  `[REDACTED:live-credential]`) from tool output, errors, the audit log and
+  approval cards, and a PR title or body containing it is refused.
+
+The token is still read fresh on every call. With `sbx`, a `github` file is
+ignored (the `proxy` provider answers first) unless
+`PASSDESK_CREDENTIAL_PROVIDERS` is set to leave `proxy` out.
 
 Jira, Gemini and a private npm registry credential are read from files
 instead (see CLAUDE.md's "Credentials" rule for why), fresh on every call,
@@ -151,13 +177,14 @@ these are stored in the host keychain and delivered by
 `scripts/start-broker.sh`; any other deployment just needs to write the file
 to that path before the broker's first call that needs it.
 
-Every credential is looked up by name (`jira`, `gemini`, `npm-registry`;
-`github` is the proxy's) through `passdesk/core/credentials.py`, which asks
+Every credential is looked up by name (`jira`, `gemini`, `npm-registry`,
+`github`) through `passdesk/core/credentials.py`, which asks
 each provider in `PASSDESK_CREDENTIAL_PROVIDERS` in turn and takes the
 first value found:
 
 1. `proxy`: names the egress proxy injects (`github`). The lookup stops
-   there with no value, so Passdesk never holds them.
+   there with no value, so Passdesk never holds them. Not in the default
+   list when `BROKER_DEPLOYMENT=standalone`.
 2. `file`: the path above for the credential (or
    `/etc/factory-broker/secrets/<name>` for any other name), then the Docker
    secret `/run/secrets/<name>`.

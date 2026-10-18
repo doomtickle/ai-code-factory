@@ -1,21 +1,34 @@
 """git_fetch, git_push, github_create_pr. Network git runs only in the
-broker's private mirrors; code crosses into the workspace as git bundles."""
+broker's private mirrors; code crosses into the workspace as git bundles.
+
+GitHub credential: with sbx the egress proxy attaches the token and the
+gateway never sees it (credentials.get("github") returns None). Where the
+deployment delivers a `github` credential instead (standalone), github_token()
+returns it; git gets it only through GIT_CONFIG_* variables in the one
+child's environment (an extraHeader scoped to GITHUB_GIT_URL, never argv or
+disk), the API call sends it as a Bearer header, neither follows a redirect,
+and the value and its encoded form are redacted from everything the gateway
+returns, audits or shows on an approval card (filters.remember_secret).
+"""
 
 from __future__ import annotations
 
+import base64
 import fnmatch
 import hashlib
 import json
+import os
 import re
 import subprocess
 import urllib.error
 import urllib.request
 from pathlib import Path
 
-from ..core import config
+from ..core import config, credentials, filters
 from ..core.approvals import require as require_approval
 from ..core.errors import Denied
 from ..core.filters import block_outbound_secrets, find_secrets, sanitize, untrusted
+from ..core.net import NO_REDIRECT_OPENER
 from ..core.registry import register
 from ..core.workspace import copy_workspace_file, factory_dir, install_file, private_tempdir, run, run_capped, tool_lock
 
@@ -58,9 +71,72 @@ def check_push_branch(branch: str, policy: dict) -> str:
 
 _GIT_HARDENING = ("-c", "core.hooksPath=/dev/null", "-c", "protocol.ext.allow=never", "-c", "core.fsmonitor=false")
 
+# The only URL prefix git sends the gateway's token to (ensure_mirror's
+# remotes are all under it), and the API endpoint the PR call uses.
+GITHUB_GIT_URL = "https://github.com/"
+GITHUB_API = "https://api.github.com"
+# Every GitHub token format (ghp_, github_pat_, ghs_, gho_, ...) is letters,
+# digits and "_". Anything else is refused before it reaches a header or a
+# git config value, and the length floor keeps redaction meaningful.
+_TOKEN_RE = re.compile(r"[A-Za-z0-9_]{20,255}")
+# Variables that would make git (or curl under it) write request headers to
+# stderr or a file, or add config we didn't choose. Removed from the child's
+# environment when it carries the token.
+_UNSAFE_ENV_PREFIXES = ("GIT_TRACE", "GIT_CURL_VERBOSE", "GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_")
+_UNSAFE_ENV = ("GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT", "GIT_CONFIG")
 
-def git(*args: str, cwd: Path, timeout: int = 300, check: bool = True) -> subprocess.CompletedProcess:
-    cp = run(["git", *_GIT_HARDENING, *args], cwd=cwd, timeout=timeout)
+
+def git_basic_auth(token: str) -> str:
+    """The Authorization value git sends: Basic x-access-token:<token>, the
+    form GitHub documents for every token type over HTTPS (and the one
+    actions/checkout uses)."""
+    return "Basic " + base64.b64encode(f"x-access-token:{token}".encode()).decode()
+
+
+def github_token() -> str | None:
+    """The gateway's own GitHub token, or None if it holds none (the egress
+    proxy supplies it, or nothing does). Read fresh on every call; once read,
+    the value and the header form git sends are redacted everywhere."""
+    token = credentials.get("github")
+    if token is None:
+        return None
+    if not _TOKEN_RE.fullmatch(token):
+        raise Denied("the github credential is not a GitHub token (expected 20-255 letters, digits or "
+                     "underscores); deliver a fine-grained token - see README, Configuring credentials")
+    filters.remember_secret(token, git_basic_auth(token).removeprefix("Basic "))
+    return token
+
+
+def git_auth_env() -> dict | None:
+    """Environment changes that give one git child the token, or None (no
+    change at all) when the gateway holds none.
+
+    The token travels only as GIT_CONFIG_COUNT/KEY/VALUE in that child's
+    environment: an http.extraHeader scoped to GITHUB_GIT_URL, so git sends
+    it to no other host. Redirects are refused (git would otherwise follow
+    the first one), no credential helper runs, and every trace or verbose
+    switch that would echo headers is removed.
+    """
+    token = github_token()
+    if token is None:
+        return None
+    env: dict = {k: None for k in os.environ if k.startswith(_UNSAFE_ENV_PREFIXES) or k in _UNSAFE_ENV}
+    pairs = [(f"http.{GITHUB_GIT_URL}.extraHeader", f"Authorization: {git_basic_auth(token)}"),
+             ("http.followRedirects", "false"),
+             ("credential.helper", "")]
+    env["GIT_CONFIG_COUNT"] = str(len(pairs))
+    for i, (key, value) in enumerate(pairs):
+        env[f"GIT_CONFIG_KEY_{i}"] = key
+        env[f"GIT_CONFIG_VALUE_{i}"] = value
+    return env
+
+
+def git(*args: str, cwd: Path, timeout: int = 300, check: bool = True,
+        auth: bool = False) -> subprocess.CompletedProcess:
+    """Run git in a broker-owned repository. auth=True for a command that
+    talks to GitHub: it carries the gateway's token if there is one."""
+    cp = run(["git", *_GIT_HARDENING, *args], cwd=cwd, timeout=timeout,
+             extra_env=git_auth_env() if auth else None)
     if check and cp.returncode != 0:
         raise RuntimeError(f"git {args[0]} failed:\n" +
                            untrusted(f"git {args[0]}", sanitize(cp.stderr.strip(), 2000)))
@@ -93,7 +169,8 @@ def tool_git_fetch(args: dict, policy: dict) -> str:
     branch = check_branch_name(args["branch"])
     with tool_lock:
         mirror = ensure_mirror(repo)
-        git("fetch", "--no-tags", "origin", f"+refs/heads/{branch}:refs/remotes/origin/{branch}", cwd=mirror)
+        git("fetch", "--no-tags", "origin", f"+refs/heads/{branch}:refs/remotes/origin/{branch}", cwd=mirror,
+            auth=True)
         name = f"{repo.replace('/', '__')}__{branch.replace('/', '__')}.bundle"
         with private_tempdir() as tmp:
             bundle = tmp / name
@@ -150,7 +227,8 @@ def tool_git_push(args: dict, policy: dict) -> str:
                             hint=f"bundle only the new commits (git bundle create {outgoing}/{fname} "
                                  f"origin/{base}..{branch}) or push the work in smaller pieces")
         mirror = ensure_mirror(repo)
-        git("fetch", "--no-tags", "origin", f"+refs/heads/{base}:refs/remotes/origin/{base}", cwd=mirror)
+        git("fetch", "--no-tags", "origin", f"+refs/heads/{base}:refs/remotes/origin/{base}", cwd=mirror,
+            auth=True)
         verify = git("bundle", "verify", str(bundle), cwd=mirror, check=False)
         if verify.returncode != 0:
             raise Denied("bundle is invalid or its prerequisites are not on "
@@ -197,7 +275,8 @@ def tool_git_push(args: dict, policy: dict) -> str:
         mirror = ensure_mirror(repo)
         if git("rev-parse", incoming, cwd=mirror).stdout.strip() != sha:
             raise Denied(f"{branch} changed in the broker's mirror while awaiting approval; retry the push")
-        push = git("push", "--porcelain", "origin", f"{incoming}:refs/heads/{branch}", cwd=mirror, check=False)
+        push = git("push", "--porcelain", "origin", f"{incoming}:refs/heads/{branch}", cwd=mirror, check=False,
+                   auth=True)
     if push.returncode != 0:
         body = sanitize(push.stderr + push.stdout, 3000)
         return "Push rejected by GitHub:\n" + untrusted(f"git push {repo}:{branch}", body)
@@ -215,17 +294,27 @@ def tool_github_create_pr(args: dict, policy: dict) -> str:
     require_approval({"tool": "github_create_pr", "repo": repo, "head": head, "base": base,
                       "title": title, "body": body[:2000], "draft": draft})
     payload = json.dumps({"title": title, "body": body, "head": head, "base": base, "draft": draft}).encode()
-    req = urllib.request.Request(
-        f"https://api.github.com/repos/{repo}/pulls", data=payload, method="POST",
-        headers={"Accept": "application/vnd.github+json", "Content-Type": "application/json",
-                 "X-GitHub-Api-Version": "2022-11-28", "User-Agent": config.USER_AGENT})
+    headers = {"Accept": "application/vnd.github+json", "Content-Type": "application/json",
+               "X-GitHub-Api-Version": "2022-11-28", "User-Agent": config.USER_AGENT}
+    # Read after approval, so a long wait still uses the current token.
+    token = github_token()
+    if token is not None:
+        headers["Authorization"] = f"Bearer {token}"
+    req = urllib.request.Request(f"{GITHUB_API}/repos/{repo}/pulls", data=payload, method="POST", headers=headers)
+    # With no token the egress proxy authenticates the request, as before.
+    open_url = NO_REDIRECT_OPENER.open if token is not None else urllib.request.urlopen
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
+        with open_url(req, timeout=30) as resp:
             pr = json.load(resp)
     except urllib.error.HTTPError as e:
         detail = sanitize(e.read().decode("utf-8", "replace"), 2000)
-        sbx = " (with sbx: sbx secret set github --sandbox factory-broker)" if config.DEPLOYMENT == "sbx" else ""
-        hint = f"\nHint: the GitHub credential is supplied by the deployment{sbx}" if e.code in (401, 403, 404) else ""
+        if token is not None:
+            fix = (f"the gateway's github credential must be a token with Contents and Pull requests "
+                   f"read/write access to {repo}")
+        else:
+            sbx = " (with sbx: sbx secret set github --sandbox factory-broker)" if config.DEPLOYMENT == "sbx" else ""
+            fix = f"the GitHub credential is supplied by the deployment{sbx}"
+        hint = f"\nHint: {fix}" if e.code in (401, 403, 404) else ""
         return f"GitHub API returned HTTP {e.code}:\n" + untrusted(f"GitHub API ({repo})", detail) + hint
     return f"Opened PR #{pr['number']}: {pr['html_url']}"
 

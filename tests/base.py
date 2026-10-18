@@ -9,7 +9,7 @@ from pathlib import Path
 from unittest import mock
 
 from passdesk import tools  # noqa: F401 - registers every tool
-from passdesk.core import config, credentials
+from passdesk.core import config, credentials, filters
 
 POLICY = {
     "web": {"allow_hosts": ["docs.python.org", "*.example.com"], "max_bytes": 1000},
@@ -72,6 +72,9 @@ class Base(unittest.TestCase):
                                            if not k.startswith("PASSDESK_SECRET_")}, clear=True)
         env.start()
         self.addCleanup(env.stop)
+        # Live credential values a test made the filters remember.
+        self.addCleanup(setattr, filters, "_live_sorted", filters._live_sorted)
+        self.addCleanup(setattr, filters, "_live", list(filters._live))
 
     def tearDown(self):
         self.tmp.cleanup()

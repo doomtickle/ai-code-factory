@@ -1,7 +1,8 @@
 """Credentials: `get(name)` returns a secret, or None, from an ordered list
 of providers.
 
-Built in, in their default order (PASSDESK_CREDENTIAL_PROVIDERS):
+Built in, in their default order (PASSDESK_CREDENTIAL_PROVIDERS; with
+BROKER_DEPLOYMENT=standalone the default leaves out `proxy`, see config.py):
 
   * `proxy`: names the deployment's egress proxy injects itself (today
     `github`, injected by the sbx proxy). Lookup stops here and returns

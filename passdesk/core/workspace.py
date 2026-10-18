@@ -276,10 +276,16 @@ def private_tempdir() -> Iterator[Path]:
 
 
 def _env(extra_env: dict | None = None) -> dict:
+    """The child's environment: the broker's own, git hardening, then
+    extra_env (a None value there removes the variable)."""
     env = dict(os.environ)
     env.update({"GIT_TERMINAL_PROMPT": "0", "GIT_CONFIG_NOSYSTEM": "1",
                 "GIT_CONFIG_GLOBAL": "/dev/null", "HOME": str(Path.home())})
-    env.update(extra_env or {})
+    for key, value in (extra_env or {}).items():
+        if value is None:
+            env.pop(key, None)
+        else:
+            env[key] = value
     return env
 
 

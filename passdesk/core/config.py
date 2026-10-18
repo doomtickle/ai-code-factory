@@ -55,8 +55,13 @@ NPM_REGISTRY_SECRET_PATH = Path(os.environ.get("BROKER_NPM_REGISTRY_SECRET", f"{
 PLUGINS = os.environ.get("PASSDESK_PLUGINS", "")
 
 # Credential providers in lookup order (comma-separated; see core/credentials.py).
-# The default reproduces the gateway's behaviour before providers existed.
-CREDENTIAL_PROVIDERS = os.environ.get("PASSDESK_CREDENTIAL_PROVIDERS", "proxy,file,env-file")
+# With sbx the default reproduces the gateway's behaviour before providers
+# existed (the egress proxy injects the GitHub token). A standalone
+# deployment has no such proxy, so its default leaves `proxy` out and the
+# gateway reads the `github` credential like any other. An explicit
+# setting always wins.
+CREDENTIAL_PROVIDERS = os.environ.get("PASSDESK_CREDENTIAL_PROVIDERS",
+                                      "file,env-file" if DEPLOYMENT == "standalone" else "proxy,file,env-file")
 
 MAX_REQUEST_BYTES = 1_000_000
 MAX_OUTPUT_CHARS = 20_000
