@@ -8,7 +8,7 @@ set -euo pipefail
 # Each role authenticates with its own bearer token, minted once: the value goes
 # only into the sbx secret store (the gateway sends it as that role's header),
 # the broker sees only its SHA-256 in tokens/<role>.sha256 and maps it back to
-# the role. roles.json tells the broker which tools each role may use. Both live
+# the role. grants.json tells the broker which tools each role may use. Both live
 # in the broker state dir (FACTORY_BROKER_STATE, outside the repo), which is
 # shared into the broker sandbox only, never into an agent sandbox.
 
@@ -43,8 +43,15 @@ if sandbox_exists "$BROKER_SANDBOX" && [ -f "$STATE/project" ] \
 fi
 printf '%s\n' "$PROJECT" > "$STATE/project"
 
-# Per-role tool grants, from roles/*/role.conf (the broker re-reads this per request).
+# Per-role tool grants, from roles/*/role.conf (the broker re-reads this per
+# request). Written in object form ({"tools": [...], "source": "..."}) so a
+# denied principal's error message can point at the file that grants it.
 grants='{}'
+# Transition shim: a broker still on a pin before grants.json landed reads
+# only the old bare-list roles.json ({"principal": ["tool", ...]}); without
+# it every call is denied. Drop this (and roles_bare below) once that pin has
+# settled.
+roles_bare='{}'
 broker_roles=""
 for role in $(list_roles); do
   validate_role "$role"
@@ -52,7 +59,10 @@ for role in $(list_roles); do
   [ -n "$tools" ] || continue
   broker_roles="$broker_roles $role"
   # shellcheck disable=SC2086 # split the tool list into jq arguments
-  grants="$(printf '%s' "$grants" | jq --arg r "$role" '.[$r] = $ARGS.positional' --args $tools)"
+  grants="$(printf '%s' "$grants" | jq --arg r "$role" --arg src "roles/$role/role.conf" \
+    '.[$r] = {tools: $ARGS.positional, source: $src}' --args $tools)"
+  # shellcheck disable=SC2086 # split the tool list into jq arguments
+  roles_bare="$(printf '%s' "$roles_bare" | jq --arg r "$role" '.[$r] = $ARGS.positional' --args $tools)"
 done
 
 # The Coordinator is a broker pseudo-role (kits/coordinator/broker.conf): it
@@ -66,9 +76,15 @@ if [ -n "$coordinator_tools" ]; then
   done
   broker_roles="$broker_roles coordinator"
   # shellcheck disable=SC2086 # split the tool list into jq arguments
-  grants="$(printf '%s' "$grants" | jq --arg r "coordinator" '.[$r] = $ARGS.positional' --args $coordinator_tools)"
+  grants="$(printf '%s' "$grants" | jq --arg r "coordinator" --arg src "kits/coordinator/broker.conf" \
+    '.[$r] = {tools: $ARGS.positional, source: $src}' --args $coordinator_tools)"
+  # shellcheck disable=SC2086 # split the tool list into jq arguments
+  roles_bare="$(printf '%s' "$roles_bare" | jq --arg r "coordinator" '.[$r] = $ARGS.positional' --args $coordinator_tools)"
 fi
-printf '%s\n' "$grants" > "$STATE/roles.json.tmp" && mv "$STATE/roles.json.tmp" "$STATE/roles.json"
+printf '%s\n' "$grants" > "$STATE/grants.json.tmp" && mv "$STATE/grants.json.tmp" "$STATE/grants.json"
+# roles.json is the older name; a broker still on a pin before grants.json
+# landed reads only this file (see the transition shim comment above).
+printf '%s\n' "$roles_bare" > "$STATE/roles.json.tmp" && mv "$STATE/roles.json.tmp" "$STATE/roles.json"
 
 # One token per broker role. Minted once and kept: the sbx daemon caches header
 # secrets, so a new value only reaches the gateway after `sbx daemon restart`

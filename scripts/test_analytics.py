@@ -169,6 +169,24 @@ class LoadingTests(Base):
         self.assertEqual(len(calls), 1)
         self.assertEqual(calls[0]["tool"], "npm_ci")
 
+    def test_load_broker_calls_prefers_principal_over_role(self):
+        path = self.write_jsonl("broker/audit.jsonl", [
+            {"ts": ts(datetime.now(timezone.utc)), "principal": "developer", "role": "developer",
+             "tool": "npm_ci", "decision": "allow", "ms": 50},
+        ])
+        calls, _ = a.load_broker_calls(path)
+        self.assertEqual(calls[0]["role"], "developer")
+
+    def test_load_broker_calls_falls_back_to_role_for_old_audit_lines(self):
+        # Pre-decouple-identity audit lines have no "principal" field at all.
+        path = self.write_jsonl("broker/audit.jsonl", [
+            {"ts": ts(datetime.now(timezone.utc)), "role": "developer",
+             "tool": "npm_ci", "decision": "allow", "ms": 50},
+        ])
+        calls, _ = a.load_broker_calls(path)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0]["role"], "developer")
+
     def test_load_broker_calls_does_not_double_count_intent_records(self):
         # protocol.py writes an {"event": "intent", "role":..., "tool":...}
         # record before git_push/github_create_pr run, then the normal
