@@ -59,6 +59,18 @@ class ProtocolTests(Base):
         # roles.json (from setUp) still grants npm_fetch; grants.json must win.
         self.assertEqual(auth.principal_tools("developer"), {"web_fetch"})
 
+    def test_malformed_grant_shapes_deny_instead_of_crashing(self):
+        for bad_grant in [{"tools": None}, "web_fetch", {"tools": ["web_fetch", 5]}, 5, None]:
+            (config.STATE / "roles.json").write_text(json.dumps({"developer": bad_grant}))
+            self.assertEqual(auth.principal_tools("developer"), set())
+            res = protocol.handle_rpc({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}, "developer")["result"]
+            self.assertEqual(res["tools"], [])
+
+    def test_invalid_grants_json_denies_everything_and_does_not_fall_back_to_roles_json(self):
+        # roles.json (from setUp) grants developer every tool; grants.json exists but is broken.
+        (config.STATE / "grants.json").write_text("not json")
+        self.assertEqual(auth.principal_tools("developer"), set())
+
     def test_principal_cannot_call_tools_outside_its_grant(self):
         res = self.call("researcher", "npm_fetch", {})
         self.assertTrue(res["isError"])
@@ -74,6 +86,13 @@ class ProtocolTests(Base):
         text = res["content"][0]["text"]
         self.assertIn("principal 'coordinator' is not granted tool 'jira_my_issues'", text)
         self.assertIn("kits/coordinator/broker.conf", text)
+
+    def test_deny_message_falls_back_to_generic_hint_when_source_is_not_a_string(self):
+        (config.STATE / "roles.json").write_text(json.dumps(
+            {"coordinator": {"tools": [], "source": 5}}))
+        res = self.call("coordinator", "jira_my_issues", {})
+        text = res["content"][0]["text"]
+        self.assertIn("BROKER_TOOLS", text)
 
     def test_rpc_and_audit(self):
         self.assertIsNone(protocol.handle_rpc({"jsonrpc": "2.0", "method": "notifications/initialized"}, "developer"))
@@ -219,26 +238,26 @@ class OriginTests(Base):
         return sent[0]
 
     def test_no_origin_header_is_unaffected(self):
-        code, body = self.post({"Authorization": "Bearer dev-token", "Content-Length": str(len(self.payload))},
-                                self.payload)
+        code, _ = self.post({"Authorization": "Bearer dev-token", "Content-Length": str(len(self.payload))},
+                             self.payload)
         self.assertEqual(code, 200)
 
     def test_origin_not_in_the_empty_default_allowlist_is_refused(self):
-        code, body = self.post({"Authorization": "Bearer dev-token", "Content-Length": str(len(self.payload)),
-                                "Origin": "https://evil.example"}, self.payload)
+        code, _ = self.post({"Authorization": "Bearer dev-token", "Content-Length": str(len(self.payload)),
+                             "Origin": "https://evil.example"}, self.payload)
         self.assertEqual(code, 403)
 
     def test_origin_check_runs_before_the_body_is_read(self):
         # Content-Length lies about the body, which do_POST would otherwise
         # reject while trying to read it - the Origin check must short-circuit first.
-        code, body = self.post({"Authorization": "Bearer dev-token", "Content-Length": "999999",
-                                "Origin": "https://evil.example"}, b"")
+        code, _ = self.post({"Authorization": "Bearer dev-token", "Content-Length": "999999",
+                             "Origin": "https://evil.example"}, b"")
         self.assertEqual(code, 403)
 
     def test_origin_in_the_allowlist_is_accepted(self):
         with mock.patch.object(config, "ALLOWED_ORIGINS", frozenset({"https://ok.example"})):
-            code, body = self.post({"Authorization": "Bearer dev-token", "Content-Length": str(len(self.payload)),
-                                    "Origin": "https://ok.example"}, self.payload)
+            code, _ = self.post({"Authorization": "Bearer dev-token", "Content-Length": str(len(self.payload)),
+                                 "Origin": "https://ok.example"}, self.payload)
         self.assertEqual(code, 200)
 
 

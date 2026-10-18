@@ -410,29 +410,32 @@ def check_state(report: Report) -> set[str]:
     grants_path = auth.grants_path()
     grants: dict = {}
     if not grants_path.is_file():
-        report.fail("roles.json is missing: every call is denied for lack of a grant",
+        report.fail(f"{grants_path.name} is missing: every call is denied for lack of a grant",
                     "the deployment's start script writes it from each principal's tool list")
     else:
         try:
             grants = json.loads(grants_path.read_text())
-            if not isinstance(grants, dict) or not all(_is_str_list(v) for v in grants.values()):
-                raise ValueError("expected {\"principal\": [\"tool\", ...]}")
+            if not isinstance(grants, dict) or not all(auth.is_valid_grant(v) for v in grants.values()):
+                raise ValueError('expected {"principal": ["tool", ...]} or '
+                                  '{"principal": {"tools": ["tool", ...], "source": "..."}}')
         except (OSError, ValueError) as e:
-            report.fail(f"roles.json is invalid: {e}")
+            report.fail(f"{grants_path.name} is invalid: {e}")
             grants = {}
-        for principal, tool_list in grants.items():
+        for principal, grant in grants.items():
+            tool_list = auth.grant_tools(grant)
             unknown = [t for t in tool_list if t not in TOOLS]
             if unknown:
-                report.fail(f"roles.json grants {principal} unknown tool(s): {', '.join(unknown)}",
+                report.fail(f"{grants_path.name} grants {principal} unknown tool(s): {', '.join(unknown)}",
                             f"known tools: {', '.join(TOOLS)}")
             granted.update(t for t in tool_list if t in TOOLS)
             if principal not in principals_with_token:
                 report.warn(f"{principal} has a grant but no token in tokens/: its calls fail with 401",
                             "re-run the deployment's start script")
         for principal in sorted(principals_with_token - set(grants)):
-            report.warn(f"{principal} has a token but no grant in roles.json: every call it makes is denied")
+            report.warn(f"{principal} has a token but no grant in {grants_path.name}: every call it makes is denied")
         if grants:
-            report.ok(f"grants: " + "; ".join(f"{p}: {', '.join(t) or '(none)'}" for p, t in sorted(grants.items())))
+            report.ok("grants: " + "; ".join(
+                f"{p}: {', '.join(auth.grant_tools(g)) or '(none)'}" for p, g in sorted(grants.items())))
 
     audit = state / "audit.jsonl"
     if not os.access(state, os.W_OK):

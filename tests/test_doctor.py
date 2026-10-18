@@ -214,6 +214,32 @@ class StateWorkspaceSecretChecks(DoctorBase):
         self.assertWarns(report, "last line is not valid JSON")
         self.assertWarns(report, "broker.log is not empty")
 
+    def test_grants_bare_list_and_object_form_both_accepted(self):
+        self.state(tokens=("developer", "researcher"), grants={
+            "developer": {"tools": ["git_push", "npm_fetch"], "source": "kits/developer/broker.conf"},
+            "researcher": ["web_fetch"],
+        })
+        report = doctor.Report()
+        granted = doctor.check_state(report)
+        self.assertNoFailures(report)
+        self.assertEqual(granted, {"git_push", "npm_fetch", "web_fetch"})
+        self.assertTrue(any("git_push, npm_fetch" in m for m in report.messages(doctor.OK)))
+
+    def test_grants_object_form_with_malformed_tools_is_rejected(self):
+        self.state(tokens=("developer",), grants={"developer": {"tools": None, "source": "x"}})
+        report = doctor.Report()
+        granted = doctor.check_state(report)
+        self.assertFails(report, "roles.json is invalid")
+        self.assertEqual(granted, set())
+
+    def test_grants_path_name_is_reported_when_using_grants_json(self):
+        (config.STATE / "tokens").mkdir(exist_ok=True)
+        (config.STATE / "tokens" / "developer.sha256").write_text("a" * 64 + "\n")
+        (config.STATE / "grants.json").write_text("not json")
+        report = doctor.Report()
+        doctor.check_state(report)
+        self.assertFails(report, "grants.json is invalid")
+
     def test_workspace_symlinks_are_refused(self):
         report = doctor.Report()
         doctor.check_workspace(report)
