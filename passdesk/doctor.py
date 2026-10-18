@@ -7,11 +7,11 @@ grants, audit log), the workspace's exchange directory, the credential files,
 and, with --live, asks the running broker and GitHub. It changes nothing:
 every check is a read, and the only network traffic is the two --live probes.
 
-Designed to run inside the broker sandbox (where the credentials and the
-baked-in policy are) but works on a host against a checkout too; the
-environment variables config.py reads say where things are. A deployment's
-own doctor (e.g. `factory doctor`) covers the platform: sbx, Docker, KVM.
-This one covers the gateway.
+Designed to run wherever the broker itself runs (its container, where the
+credentials and the baked-in policy are) but works on a host against a
+checkout too; the environment variables config.py reads say where things
+are. A deployment's own doctor (e.g. the AI Code Factory's `factory doctor`)
+covers the platform: sbx, Docker, KVM. This one covers the gateway.
 """
 
 from __future__ import annotations
@@ -44,7 +44,7 @@ _REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 _UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 _PROJECT_KEY_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
-# email:token, as README "Enabling Jira" says to store it.
+# email:token, as README "Configuring credentials" says to store it.
 _JIRA_SECRET_RE = re.compile(r"^[^\s:@]+@[^\s:@]+\.[^\s:@]+:\S+$")
 
 # Hosts each tool contacts, beyond [web].allow_hosts. A deployment's egress
@@ -263,7 +263,7 @@ def check_policy(report: Report, path: Path | None = None) -> dict | None:
         pol = policy_mod.load_policy(path)
     except FileNotFoundError as e:
         report.fail(f"policy file not found: {e.filename}",
-                    "set BROKER_POLICY to the policy.toml to check, or run inside the broker sandbox")
+                    "set BROKER_POLICY to the policy.toml to check, or run this from where the broker runs")
         return None
     except Exception as e:  # noqa: BLE001 - tomllib errors vary; the message is what matters
         report.fail(f"policy does not parse: {e}", f"fix {path}" + (f" or {local}" if local.is_file() else ""))
@@ -377,7 +377,7 @@ def check_state(report: Report) -> set[str]:
     granted: set[str] = set()
     if not state.is_dir():
         report.fail(f"state directory does not exist: {state}",
-                    "set BROKER_STATE, or run inside the broker sandbox where the deployment mounted it")
+                    "set BROKER_STATE, or run this from where the deployment mounted it")
         return granted
     report.ok(f"state directory: {state}")
     if _mode_too_open(state):
@@ -476,18 +476,19 @@ def check_workspace(report: Report) -> None:
                     "set BROKER_WORKSPACE to the project folder the deployment shares with the broker")
         return
     report.ok(f"workspace: {ws}")
-    exchange = ws / ".factory"
+    name = config.EXCHANGE_DIR
+    exchange = ws / name
     try:
         st = os.lstat(exchange)
     except FileNotFoundError:
-        report.info(".factory/ does not exist yet; the first fetch or mirror creates it")
+        report.info(f"{name}/ does not exist yet; the first fetch or mirror creates it")
         return
     if stat.S_ISLNK(st.st_mode):
-        report.fail(".factory is a symlink; every tool that uses the exchange directory refuses it",
+        report.fail(f"{name} is a symlink; every tool that uses the exchange directory refuses it",
                     f"remove the link and let the broker create a real directory: rm {exchange}")
         return
     if not stat.S_ISDIR(st.st_mode):
-        report.fail(".factory exists but is not a directory", f"move it aside: {exchange}")
+        report.fail(f"{name} exists but is not a directory", f"move it aside: {exchange}")
         return
     for sub in _EXCHANGE_DIRS:
         p = exchange / sub
@@ -496,10 +497,10 @@ def check_workspace(report: Report) -> None:
         except FileNotFoundError:
             continue
         if stat.S_ISLNK(st.st_mode):
-            report.fail(f".factory/{sub} is a symlink; the broker refuses it", f"rm {p}")
+            report.fail(f"{name}/{sub} is a symlink; the broker refuses it", f"rm {p}")
         elif not stat.S_ISDIR(st.st_mode):
-            report.fail(f".factory/{sub} is not a directory", f"move it aside: {p}")
-    report.ok(".factory/ exchange directory is a real directory with no symlinked entries")
+            report.fail(f"{name}/{sub} is not a directory", f"move it aside: {p}")
+    report.ok(f"{name}/ exchange directory is a real directory with no symlinked entries")
 
 
 # --- credentials --------------------------------------------------------------------
@@ -511,10 +512,10 @@ def check_secrets(report: Report, pol: dict | None, granted: set[str]) -> None:
     pk = (pol or {}).get("packages") if isinstance((pol or {}).get("packages"), dict) else {}
     private_registry = bool(pk.get("npm_private_registry")) if isinstance(pk.get("npm_private_registry", ""), str) else False
     if not any(p.parent.is_dir() for p in paths.values()):
-        # Running on a host: the credential files exist only inside the
-        # broker's own sandbox, so their absence here says nothing.
-        report.info(f"credential files live inside the broker sandbox ({config.JIRA_SECRET_PATH.parent}); "
-                    "not visible from here", "run the doctor inside the broker sandbox to check them")
+        # Running on a host: the credential files exist only where the
+        # broker itself runs, so their absence here says nothing.
+        report.info(f"credential files live alongside the running broker ({config.JIRA_SECRET_PATH.parent}); "
+                    "not visible from here", "run the doctor from where the broker runs to check them")
         return
     for name, path in paths.items():
         tools_using = _SECRET_TOOLS[name]
@@ -525,8 +526,7 @@ def check_secrets(report: Report, pol: dict | None, granted: set[str]) -> None:
             if wanted:
                 report.warn(f"no {name} credential at {path}; {', '.join(sorted(tools_using & granted))} "
                             f"return DENIED until it is delivered",
-                            "store it in the host keychain and re-run the deployment's start script "
-                            "(README: Enabling Jira / Gemini / a private npm registry)")
+                            "have the deployment deliver it to that path again (README, Configuring credentials)")
             else:
                 report.info(f"no {name} credential (not needed: no granted tool uses it)")
             continue
@@ -546,7 +546,7 @@ def check_secrets(report: Report, pol: dict | None, granted: set[str]) -> None:
             continue
         if name == "jira" and not _JIRA_SECRET_RE.match(value):
             report.fail("the jira credential is not in the form you@example.com:TOKEN",
-                        "store it in the keychain as email:token and re-run the deployment's start script")
+                        "have the deployment re-deliver it in that form")
             continue
         extra = "" if wanted else " (no granted tool uses it)"
         report.ok(f"{name} credential present{extra}")
@@ -628,7 +628,8 @@ def check_live(report: Report, pol: dict | None, url: str, http=_http) -> None:
             code, body = http(api, headers={"Accept": "application/vnd.github+json"})
         except (urllib.error.URLError, OSError, ValueError) as e:
             report.fail(f"cannot reach api.github.com to check {repo}: {getattr(e, 'reason', e)}",
-                        "is api.github.com in the egress allowlist? run this inside the broker sandbox")
+                        "is api.github.com in the deployment's egress allowlist? run this from where the "
+                        "broker runs")
             return
         if code == 200:
             try:
@@ -643,14 +644,18 @@ def check_live(report: Report, pol: dict | None, url: str, http=_http) -> None:
             else:
                 report.warn(f"{repo} is reachable but no token was attached (public repo, unauthenticated): "
                             "pushes and pull requests will fail",
-                            "store a fine-grained token for the broker sandbox: sbx secret set github --sandbox factory-broker",
-                            "(from a host, outside the sandbox, this warning is expected: only the sandbox's proxy attaches it)")
+                            "the deployment's egress proxy must attach a fine-grained token "
+                            "(with sbx: sbx secret set github --sandbox factory-broker)",
+                            "(from a host, outside that deployment, this warning is expected: only its "
+                            "proxy attaches the token)")
         elif code == 404:
             report.fail(f"GitHub returns 404 for {repo}: it does not exist, or the token has no access to it",
-                        "check the owner/name; outside the broker sandbox no token is attached, so private repos show 404")
+                        "check the owner/name; outside the deployment where the broker runs no token is "
+                        "attached, so private repos show 404")
         elif code in (401, 403):
             report.fail(f"GitHub rejects the token for {repo} (HTTP {code})",
-                        "re-store the token for the broker sandbox: sbx secret set github --sandbox factory-broker")
+                        "the deployment must re-attach the token (with sbx: sbx secret set github "
+                        "--sandbox factory-broker)")
         else:
             report.warn(f"GitHub answered HTTP {code} for {repo}")
 

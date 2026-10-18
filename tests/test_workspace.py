@@ -26,6 +26,15 @@ class WorkspaceTests(Base):
             pass
         self.assertEqual((config.WORKSPACE / ".factory/.gitignore").read_text(), "*\n")
 
+    def test_exchange_dir_name_is_overridable(self):
+        old = config.EXCHANGE_DIR
+        config.EXCHANGE_DIR = ".exchange"
+        self.addCleanup(setattr, config, "EXCHANGE_DIR", old)
+        with workspace.factory_dir("incoming"):
+            pass
+        self.assertTrue((config.WORKSPACE / ".exchange/incoming").is_dir())
+        self.assertFalse((config.WORKSPACE / ".factory").exists())
+
     def outside(self) -> Path:
         d = Path(self.tmp.name) / "outside"
         d.mkdir(exist_ok=True)

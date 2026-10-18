@@ -6,24 +6,29 @@
 # and replace the digest with the top-level "Digest:" value.
 FROM docker/sandbox-templates:shell-docker@sha256:1560168ac5fb9ce23d413c878349334c5845c07e264cd675d7867f0c78ad1761
 
+# Where the broker's files live in the image. Overridable (--build-arg
+# INSTALL_DIR=...) for a deployment that doesn't want this path; the default
+# is what the AI Code Factory and every existing deployment already expect.
+ARG INSTALL_DIR=/opt/factory-broker
+
 USER root
-COPY server.py policy.toml run.sh /opt/factory-broker/
-COPY passdesk /opt/factory-broker/passdesk
+COPY server.py policy.toml run.sh ${INSTALL_DIR}/
+COPY passdesk ${INSTALL_DIR}/passdesk
 # A consumer's local policy overlay (empty if none; passed as the
 # factory-config build context, see ai-code-factory's scripts/00-build-templates.sh).
-COPY --from=factory-config policy.toml /opt/factory-broker/policy.local.toml
+COPY --from=factory-config policy.toml ${INSTALL_DIR}/policy.local.toml
 # Optional plugin packages (e.g. a deployment's commercial add-on), passed as
 # the "plugins" build context: an empty directory when there are none. They
 # sit on PYTHONPATH but load only when PASSDESK_PLUGINS names them
 # (passdesk/core/plugins.py).
-COPY --from=plugins / /opt/factory-broker/plugins/
-ENV PYTHONPATH=/opt/factory-broker/plugins
+COPY --from=plugins / ${INSTALL_DIR}/plugins/
+ENV PYTHONPATH=${INSTALL_DIR}/plugins
 # Read-only for everyone; the server runs with PYTHONDONTWRITEBYTECODE (run.sh)
 # since it can't write __pycache__ here anyway. The check imports every tool
 # and parses the baked-in policy.
-RUN find /opt/factory-broker -type d -exec chmod 0555 {} + \
- && find /opt/factory-broker -type f -exec chmod 0444 {} + && chmod 0555 /opt/factory-broker/run.sh \
- && cd /opt/factory-broker \
+RUN find ${INSTALL_DIR} -type d -exec chmod 0555 {} + \
+ && find ${INSTALL_DIR} -type f -exec chmod 0444 {} + && chmod 0555 ${INSTALL_DIR}/run.sh \
+ && cd ${INSTALL_DIR} \
  && PYTHONDONTWRITEBYTECODE=1 python3 -c "import passdesk.tools; from passdesk.core import policy; policy.load_policy()" \
  && for t in git python3 npm setsid pgrep; do command -v "$t" >/dev/null || { echo "missing: $t" >&2; exit 1; }; done
 

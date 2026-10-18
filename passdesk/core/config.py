@@ -34,3 +34,9 @@ PLUGINS = os.environ.get("PASSDESK_PLUGINS", "")
 
 MAX_REQUEST_BYTES = 1_000_000
 MAX_OUTPUT_CHARS = 20_000
+
+# Name of the workspace directory git_fetch/npm_fetch/pip_download use to
+# hand files to the agent's own sandbox (see core/workspace.py's factory_dir).
+# Overridable for deployments that don't want the ".factory" name; the
+# default is what every existing deployment and test already expects.
+EXCHANGE_DIR = os.environ.get("BROKER_EXCHANGE_DIR", ".factory")

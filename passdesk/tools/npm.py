@@ -23,12 +23,14 @@ from ..core.workspace import (atomic_write, factory_dir, file_in_dir, open_works
 
 # --------------------------------------------------------------------------
 # npm_fetch: the tarballs a lockfile pins, downloaded into an offline mirror in
-# .factory/npm-mirror/. No package manager and nothing from the packages runs
-# here: the lockfile is parsed as data, every URL must be a plain tarball URL
-# on an allowed registry, and every download must match the lockfile's hash.
-# Roles then install offline in their own sandbox with factory-test
-# (templates/agent/factory-test), never into the project folder, which is
-# shared with the host and its own platform's node_modules.
+# the exchange directory's npm-mirror/ (config.EXCHANGE_DIR, default
+# ".factory"). No package manager and nothing from the packages runs here:
+# the lockfile is parsed as data, every URL must be a plain tarball URL on an
+# allowed registry, and every download must match the lockfile's hash. Roles
+# then install offline from that mirror in their own sandbox, never into the
+# project folder, which is shared with the host and its own platform's
+# node_modules. (The AI Code Factory does this with its `factory-test`
+# wrapper; other deployments supply their own equivalent.)
 
 NPM_PUBLIC_REGISTRY = "https://registry.npmjs.org/"
 # Yarn v1 lockfiles record registry.yarnpkg.com, which serves the npm
@@ -196,8 +198,8 @@ def npm_open(item: dict, auth: str | None, policy: dict):
                 why = {401: "the credential was rejected" if with_auth else "authentication required",
                        403: "the credential was rejected" if with_auth else "access denied",
                        404: "not found"}.get(e.code, "")
-                hint = (" - check the \"factory-npm-registry\" keychain entry (README, Enabling a private npm "
-                        "registry)" if with_auth and e.code in (401, 403) else "")
+                hint = (" - check the private npm registry credential delivered to this deployment "
+                        "(README, Configuring credentials)" if with_auth and e.code in (401, 403) else "")
                 raise NpmFetchError(f"HTTP {e.code} from {redact_url(url)} ({cred})"
                                     f"{': ' + why if why else ''}{hint}") from None
             if not location:
@@ -210,7 +212,7 @@ def npm_open(item: dict, auth: str | None, policy: dict):
             if not target.startswith(registry) and not host_allowed(t.hostname, pk.get("npm_redirect_hosts", [])):
                 raise Denied(f"HTTP {e.code} redirect from {redact_url(url)} to {redact_url(target)}: "
                              f"host {t.hostname} is not in [packages].npm_redirect_hosts; add it there and to "
-                             "the broker kit (README, Enabling a private npm registry)") from None
+                             "the deployment's egress allowlist (README, Configuring credentials)") from None
             url = target
         except urllib.error.URLError as e:
             raise NpmFetchError(f"could not reach {urllib.parse.urlsplit(url).hostname} ({cred}): "
@@ -252,9 +254,9 @@ def tool_npm_fetch(args: dict, policy: dict) -> str:
         failures, total = [], 0
         auth = npm_registry_auth()
         if not auth:
-            failures = [f"{i['label']}: no credential for the private npm registry; store one in the host "
-                        "keychain (service \"factory-npm-registry\") and run scripts/start-broker.sh again - "
-                        "see README, Enabling a private npm registry" for i in missing if i["private"]]
+            failures = [f"{i['label']}: no credential for the private npm registry; the deployment must "
+                        "deliver one to BROKER_NPM_REGISTRY_SECRET's path - see README, Configuring credentials"
+                        for i in missing if i["private"]]
         with ThreadPoolExecutor(max_workers=_NPM_DOWNLOAD_WORKERS) as pool:
             futures = {pool.submit(npm_download, i, dest, auth, policy): i
                        for i in missing if auth or not i["private"]}
@@ -267,20 +269,22 @@ def tool_npm_fetch(args: dict, policy: dict) -> str:
                 except (NpmFetchError, OSError) as e:
                     failures.append(f"{label}: {sanitize(str(e), 500)}")
     rel = proj.relative_to(config.WORKSPACE.resolve())
+    mirror_rel = f"{config.EXCHANGE_DIR}/npm-mirror"
     summary = (f"{len(items)} package(s) from {rel / lock_name}: {len(missing) - len(failures)} downloaded "
-               f"({total / 1e6:.1f} MB), {len(items) - len(missing)} already in .factory/npm-mirror.")
+               f"({total / 1e6:.1f} MB), {len(items) - len(missing)} already in {mirror_rel}.")
     if failures:
         shown = "\n".join(f"  {f}" for f in failures[:20])
         more = f"\n  ... and {len(failures) - 20} more" if len(failures) > 20 else ""
         return f"npm_fetch incomplete: {len(failures)} download(s) failed.\n{shown}{more}\n{summary}"
     return (f"{summary}\nEvery tarball matches its lockfile hash; nothing was executed.\n"
-            f"Install and run tests in your sandbox (a local copy; the project folder is left alone), e.g.\n"
+            f"Install and run tests in your sandbox (a local copy; the project folder is left alone), e.g. "
+            f"with the AI Code Factory's factory-test:\n"
             f"  factory-test{'' if str(rel) == '.' else f' -C {rel}'} -q -- npx vitest run")
 
 
 register({
-    "npm_fetch": (tool_npm_fetch, "Download every tarball a yarn.lock (v1) or package-lock.json pins into "
-                  ".factory/npm-mirror/, each checked against policy and its lockfile hash (no code runs). "
-                  "Then install and run tests in your sandbox with `factory-test -- <command>`.",
+    "npm_fetch": (tool_npm_fetch, f"Download every tarball a yarn.lock (v1) or package-lock.json pins into "
+                  f"{config.EXCHANGE_DIR}/npm-mirror/, each checked against policy and its lockfile hash (no "
+                  "code runs). Then install and run tests offline in your own sandbox.",
                   {"path": {"type": "string", "description": "directory with the lockfile (default .)"}}, []),
 })

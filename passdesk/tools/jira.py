@@ -32,10 +32,9 @@ _CLOUD_ID_RE = re.compile(
 def jira_auth_header() -> str:
     value = read_secret_file(config.JIRA_SECRET_PATH)  # "email:token"
     if not value:
-        raise Denied("no Jira credential found for the broker sandbox; store a scoped API "
-                     "token in the host keychain (service \"factory-jira\", value "
-                     "\"email:token\") and run scripts/start-broker.sh again - see README, "
-                     "Enabling Jira")
+        raise Denied("no Jira credential found; the deployment must deliver a scoped API token "
+                     "(value \"email:token\") to BROKER_JIRA_SECRET's path - see README, "
+                     "Configuring credentials")
     return "Basic " + base64.b64encode(value.encode()).decode()
 
 
@@ -50,12 +49,11 @@ def jira_call(path: str, params: dict, policy: dict) -> tuple[dict | None, str |
     cloud_id = jira.get("cloud_id", "")
     if not cloud_id:
         raise Denied(f"[jira].site and cloud_id are not set; get the cloudId from "
-                     f"https://{site}/_edge/tenant_info, set both in policy.toml in the factory "
-                     "config folder (~/.config/ai-code-factory/), then rebuild and restart the broker "
-                     "- see README, Enabling Jira")
+                     f"https://{site}/_edge/tenant_info, set both in the deployment's policy.toml overlay, "
+                     "then rebuild and restart the broker - see README, Configuring credentials")
     if not _CLOUD_ID_RE.match(cloud_id):
         raise Denied("[jira].cloud_id is not a valid UUID; get it from "
-                     f"https://{site}/_edge/tenant_info and fix it in the factory config folder's policy.toml")
+                     f"https://{site}/_edge/tenant_info and fix it in the deployment's policy.toml overlay")
     auth = jira_auth_header()
     url = f"https://api.atlassian.com/ex/jira/{cloud_id}{path}"
     if params:
@@ -69,8 +67,8 @@ def jira_call(path: str, params: dict, policy: dict) -> tuple[dict | None, str |
     except urllib.error.HTTPError as e:
         detail = sanitize(e.read().decode("utf-8", "replace"), 2000)
         hint = ("\nHint: check the Atlassian API token and its scopes (read:jira-work, "
-                "read:jira-user) stored for the broker sandbox; see README, Enabling "
-                "Jira") if e.code in (401, 403) else ""
+                "read:jira-user) delivered to this deployment; see README, Configuring "
+                "credentials") if e.code in (401, 403) else ""
         return None, f"Jira API returned HTTP {e.code}:\n" + untrusted(f"Jira API ({site})", detail) + hint
 
 
