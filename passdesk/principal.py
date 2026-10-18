@@ -23,7 +23,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from . import tools as _tools  # noqa: F401 - registers every tool
-from .core import auth, config
+from .core import auth, config, plugins
 from .core.registry import TOOLS
 
 NAME_RE = re.compile(r"[a-z][a-z0-9_-]{0,63}")
@@ -53,9 +53,18 @@ def validate_name(name: str) -> str:
 def validate_tools(tool_names: list[str]) -> list[str]:
     if not tool_names:
         raise PrincipalError("at least one --tools name is required")
-    unknown = sorted({t for t in tool_names if t not in TOOLS})
+    known = set(TOOLS)
+    unknown = sorted({t for t in tool_names if t not in known})
     if unknown:
-        raise PrincipalError(f"unknown tool(s): {', '.join(unknown)} (known tools: {', '.join(sorted(TOOLS))})")
+        # Tools the plugins in PASSDESK_PLUGINS declare count too; they are
+        # registered only when the server starts, so read the declarations.
+        declared, problems = plugins.declared_tools()
+        known |= set(declared)
+        unknown = sorted({t for t in tool_names if t not in known})
+        if unknown:
+            hint = "".join(f"; plugin {p} {why}" for p, why in problems)
+            raise PrincipalError(f"unknown tool(s): {', '.join(unknown)} "
+                                 f"(known tools: {', '.join(sorted(known))}){hint}")
     return sorted(set(tool_names))
 
 
