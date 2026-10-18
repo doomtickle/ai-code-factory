@@ -556,7 +556,7 @@ def check_workspace(report: Report) -> None:
 # --- standalone ---------------------------------------------------------------------
 
 def check_standalone(report: Report, granted: set[str], pol: dict | None = None,
-                      kits: list[Path] | None = None, order_error: "credentials.CredentialError | None" = None) -> None:
+                      kits: list[Path] | None = None, order_error: credentials.CredentialError | None = None) -> None:
     """What replaces the sbx kit checks (check_egress) when
     BROKER_DEPLOYMENT=standalone: there is no sbx kit, no egress proxy to
     inject GitHub's token, and no sbx-managed exchange directory permissions.
@@ -655,7 +655,7 @@ def check_standalone(report: Report, granted: set[str], pol: dict | None = None,
 # --- credentials --------------------------------------------------------------------
 
 def check_secrets(report: Report, pol: dict | None, granted: set[str],
-                   order_error: "credentials.CredentialError | None" = None) -> None:
+                   order_error: credentials.CredentialError | None = None) -> None:
     report.section("Credentials")
     if order_error is not None:
         report.fail(str(order_error))
@@ -683,7 +683,7 @@ def check_secrets(report: Report, pol: dict | None, granted: set[str],
                 continue  # already reported once, above
             reasons: list[str] = []
             try:
-                value = credentials.get(name, on_unusable=lambda n, p, reason: reasons.append(reason))
+                value = credentials.get(name, on_unusable=lambda n, p, reason, r=reasons: r.append(reason))
             except credentials.CredentialError as e:
                 report.fail(str(e))
                 continue
