@@ -4,6 +4,47 @@ Dated entries, for the user to review. Newest first.
 
 ## 2026-10-18
 
+- **Optional TLS on the MCP listener, and standalone refuses a non-loopback
+  bind without it (doomtickle/passdesk-ops#56, Phase 3a W3.2).**
+  `BROKER_TLS_CERT`/`BROKER_TLS_KEY` wrap the listener with the stdlib `ssl`
+  module (`protocol.make_server`, TLS 1.2+); `config.validate()` refuses a
+  `BROKER_BIND_HOST` that isn't loopback when `BROKER_DEPLOYMENT=standalone`,
+  no TLS pair is set and `BROKER_INSECURE_BIND` isn't exactly `1`. The
+  doctor's W1.3 TLS stub became `check_tls`. Judgement calls:
+  - **The refusal applies only to standalone.** The issue offered "or the
+    factory sets the flag in the same change set". sbx's default bind is
+    `0.0.0.0` with no TLS, serving the sandbox's own port publishing; making
+    the factory set `BROKER_INSECURE_BIND=1` would have needed a factory
+    change and a pin bump for no gain in that deployment. `test_tls.py`
+    pins that `sbx` + `0.0.0.0` + no TLS still validates.
+  - **`BROKER_INSECURE_BIND` is exactly `"1"`.** `true`, `yes` and `0` are
+    all off, so a stray value can't switch the check off by accident.
+  - **"Loopback" means a loopback IP literal, or a name every address of
+    which is loopback** (`config.is_loopback`; `localhost` qualifies via
+    `getaddrinfo`, which reads `/etc/hosts`). An empty bind host (every
+    interface) and an unresolvable name are not loopback. The doctor's
+    own `_is_loopback`, which took `localhost` on trust, is replaced by it.
+  - **The handshake runs in the connection's thread, not in `accept()`.**
+    `wrap_socket(..., do_handshake_on_connect=False)` plus `do_handshake()`
+    in `Handler.setup()` under a 10-second timeout; otherwise one client
+    that connects and never speaks would hold the serving thread and every
+    other connection with it. A failed handshake is one stderr line
+    (`Server.handle_error`), not a traceback.
+  - **The context is built before the port is bound**, so a bad pair never
+    takes the port; the exit message names both paths (an `OSError` from
+    `load_cert_chain` leaves the path out) and never key material.
+  - **A TLS file inside the agent workspace is refused at start-up**
+    (resolved path, so a symlink into it counts), as credential files
+    already are: the key must not be something the agent can write.
+  - **No expiry check in the doctor.** The stdlib has no public certificate
+    parser short of a connection; `--live` now probes `https://` trusting
+    `BROKER_TLS_CERT`, which fails on an expired certificate anyway. The
+    `--live` probe trusts that file alone; the GitHub calls keep the system
+    store.
+  - **The recipe is a self-signed EC P-256 certificate with SANs for
+    `passdesk`, `localhost` and `127.0.0.1`**, the names the compose
+    quickstart and the doctor use. No ACME (plan: W3.2).
+
 - **`credentials.get` takes an `on_unusable` callback (doomtickle/passdesk-ops#53,
   follow-up on W1.3).** `check_secrets`'s and `check_standalone`'s fallback
   calls to `credentials.get()` could reach `_Unusable` (a directory where a

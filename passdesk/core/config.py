@@ -6,8 +6,10 @@ import NAME`), so tests can point them at temporary directories.
 
 from __future__ import annotations
 
+import ipaddress
 import os
 import re
+import socket
 from pathlib import Path
 
 SERVER_NAME = "passdesk"
@@ -23,6 +25,14 @@ PORT = int(os.environ.get("BROKER_PORT", "8765"))
 # working; set narrower (e.g. "127.0.0.1") when nothing outside the host
 # needs to reach the broker directly.
 BIND_HOST = os.environ.get("BROKER_BIND_HOST", "0.0.0.0")
+# Optional TLS for the MCP listener (stdlib ssl, TLS 1.2+): paths of a PEM
+# certificate (chain) and its private key, both or neither. See README, "TLS".
+TLS_CERT = os.environ.get("BROKER_TLS_CERT", "")
+TLS_KEY = os.environ.get("BROKER_TLS_KEY", "")
+# "1" (exactly) lets a standalone deployment bind off loopback without TLS,
+# for a network nothing else can reach (a compose stack's internal network).
+# Any other value is off. Not consulted in sbx mode (see validate()).
+INSECURE_BIND = os.environ.get("BROKER_INSECURE_BIND", "") == "1"
 MIRRORS = Path(os.environ.get("BROKER_MIRRORS", Path.home() / "mirrors"))
 
 # "sbx" (default): the deployment this repo documents and tests (Passdesk as
@@ -95,6 +105,31 @@ _RESERVED_REF_PREFIXES = ("refs/heads", "refs/tags", "refs/remotes", "refs/notes
 _PUSH_PREFIX_RE = re.compile(r"^[A-Za-z0-9._/-]*$")
 
 
+def is_loopback(host: str) -> bool:
+    """True when `host` is reachable only from this machine: a loopback IP
+    literal, or a name every address of which is loopback ("localhost").
+    "" (every interface) and a name that doesn't resolve are not."""
+    if not host:
+        return False
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        pass
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except OSError:
+        return False
+    return bool(infos) and all(ipaddress.ip_address(info[4][0]).is_loopback for info in infos)
+
+
+def _inside_workspace(path: str) -> bool:
+    try:
+        Path(path).resolve().relative_to(WORKSPACE.resolve())
+    except ValueError:
+        return False
+    return True
+
+
 def validate() -> None:
     """Fail fast on an invalid environment setting, before the server binds
     a port (see core/protocol.py's main()). Raises ValueError with a message
@@ -120,3 +155,20 @@ def validate() -> None:
     if not _PUSH_PREFIX_RE.fullmatch(DEFAULT_PUSH_BRANCH_PREFIX):
         raise ValueError(f'BROKER_PUSH_PREFIX={DEFAULT_PUSH_BRANCH_PREFIX!r} must contain only ref-safe '
                          'characters (letters, digits, "." "_" "-" "/"), no whitespace or control characters')
+    if bool(TLS_CERT) != bool(TLS_KEY):
+        raise ValueError("BROKER_TLS_CERT and BROKER_TLS_KEY must be set together (both or neither)")
+    for what, path in (("BROKER_TLS_CERT", TLS_CERT), ("BROKER_TLS_KEY", TLS_KEY)):
+        if path and _inside_workspace(path):
+            # The workspace is the agent's; the key (and the certificate it
+            # must match) must never come from there.
+            raise ValueError(f"{what}={path!r} is inside the agent workspace ({WORKSPACE}); keep TLS files "
+                             "outside it")
+    # A standalone deployment serving a non-loopback address in the clear
+    # would send every principal's bearer token over the network in plain
+    # text; refuse unless the deployment says its network is private. sbx
+    # is exempt: its default bind (0.0.0.0) serves only the sandbox's own
+    # port publishing, with no TLS, and must keep starting as it always has.
+    if DEPLOYMENT == "standalone" and not TLS_CERT and not INSECURE_BIND and not is_loopback(BIND_HOST):
+        raise ValueError(f"BROKER_BIND_HOST={BIND_HOST!r} is not a loopback address and no TLS is configured: "
+                         "set BROKER_TLS_CERT and BROKER_TLS_KEY (README, \"TLS\"), bind 127.0.0.1, or set "
+                         "BROKER_INSECURE_BIND=1 only if nothing outside a private network can reach the port")
