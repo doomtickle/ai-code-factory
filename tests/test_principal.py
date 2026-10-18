@@ -255,6 +255,36 @@ class RevokeTests(PrincipalBase):
         principal.revoke("ghost")
         self.assertNotIn("ghost", self.grants())
 
+    def test_revoke_from_roles_json_state_with_multiple_principals(self):
+        # A deployment with only roles.json (bob and carol); bob has a token.
+        # revoke("bob") should remove bob's token and grant, write grants.json
+        # with carol still present, and bob should no longer authenticate.
+        (config.STATE / "tokens").mkdir(parents=True, exist_ok=True)
+        (config.STATE / "tokens" / "bob.sha256").write_text("a" * 64 + "\n")
+        (config.STATE / "roles.json").write_text(json.dumps({
+            "bob": {"tools": ["git_fetch"], "source": "roles/bob/role.conf"},
+            "carol": {"tools": ["npm_fetch"], "source": "roles/carol/role.conf"}
+        }))
+
+        # Revoke bob
+        principal.revoke("bob")
+
+        # Bob's token is gone
+        self.assertFalse(self.token_hash_path("bob").exists())
+
+        # grants.json was created with carol's grant but not bob's
+        grants = self.grants()
+        self.assertNotIn("bob", grants)
+        self.assertEqual(grants["carol"], {"tools": ["npm_fetch"], "source": "roles/carol/role.conf"})
+
+        # Carol still authenticates with her tools
+        self.assertEqual(auth.principal_tools("carol"), {"npm_fetch"})
+
+        # Bob no longer authenticates
+        got, reason = auth.authenticate("Bearer a" * 64)
+        self.assertIsNone(got)
+        self.assertIsNotNone(reason)
+
 
 class AtomicWriteTests(PrincipalBase):
     def test_grants_json_has_no_partial_file_left_behind(self):

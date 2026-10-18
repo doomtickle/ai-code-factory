@@ -1,6 +1,7 @@
 """Mint and manage the principals a deployment's tokens/ and grants.json
-name - the same on-disk state core.auth reads and ai-code-factory's
-scripts/start-broker.sh writes, so either can manage what the other wrote.
+name - uses the same files and formats scripts/start-broker.sh writes
+(in a factory deployment, start-broker.sh owns grants.json and rebuilds it
+on every start; see passdesk/__main__.py).
 
 A principal's token hash lives at STATE/tokens/<name>.sha256 (its SHA-256
 hex digest, newline-terminated - see core.auth.authenticate); its grant

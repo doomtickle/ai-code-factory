@@ -7,9 +7,10 @@ Dated entries, for the user to review. Newest first.
 - **Principal CLI added (doomtickle/passdesk-ops#36, plan task W1.2):
   `python3 -m passdesk principal add|list|revoke` (`passdesk/__main__.py`,
   `passdesk/principal.py`).** Mints a token, writes its SHA-256 hash to
-  `tokens/<name>.sha256` and an object-form grant to `grants.json` — the
-  same files and formats `ai-code-factory/scripts/start-broker.sh` writes,
-  so either tool can manage what the other wrote. Judgement calls:
+  `tokens/<name>.sha256` and an object-form grant to `grants.json` — uses
+  the same files and formats `ai-code-factory/scripts/start-broker.sh` writes
+  (in a factory deployment, `start-broker.sh` owns `grants.json` and rebuilds
+  it on every start). Judgement calls:
   - **Writes only `grants.json`, never the legacy `roles.json`, but reads
     for the duplicate check and as the read-modify-write baseline via
     `core.auth.grants_path()`** (`grants.json` if present, else the older

@@ -6,9 +6,9 @@
 
 Mints and manages the principals a running broker authenticates: tokens in
 BROKER_STATE/tokens/<name>.sha256 and grants in BROKER_STATE/grants.json -
-the same files ai-code-factory's scripts/start-broker.sh writes, so either
-one can manage what the other wrote. See passdesk/principal.py for the
-on-disk formats.
+uses the same files and formats scripts/start-broker.sh writes (in a
+factory deployment, start-broker.sh owns grants.json and rebuilds it on
+every start). See passdesk/principal.py for the on-disk formats.
 """
 
 from __future__ import annotations

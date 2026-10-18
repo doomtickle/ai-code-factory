@@ -147,8 +147,9 @@ python3 -m passdesk principal revoke <name>
 `add` mints a fresh token, writes its SHA-256 hash to
 `BROKER_STATE/tokens/<name>.sha256` and the tool grant to
 `BROKER_STATE/grants.json` (mode 0600; `BROKER_STATE` and its `tokens/`
-directory are created mode 0700 if missing) — the same files and formats
-`start-broker.sh` writes, so either one can manage what the other wrote.
+directory are created mode 0700 if missing) — uses the same files and formats
+`start-broker.sh` writes (in a factory deployment, `start-broker.sh` owns
+`grants.json` and rebuilds it on every start).
 The token itself is printed to stdout exactly once and is never written to
 disk or logged; capture it immediately (e.g. `token=$(python3 -m passdesk
 principal add alice --tools git_fetch)`), there is no way to recover it
