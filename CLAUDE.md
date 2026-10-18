@@ -17,7 +17,13 @@ boundary.
 - Real credentials (GitHub, Jira, Gemini, a private package registry) must be
   injected out-of-band, never passed into an agent sandbox in plaintext.
   - GitHub works when the deployment's egress proxy injects the token
-    directly; Passdesk itself never needs to see it.
+    directly (sbx); Passdesk itself never needs to see it. A deployment
+    with no such proxy (`BROKER_DEPLOYMENT=standalone`) delivers a
+    fine-grained `github` token the same way as the file-read credentials
+    below (owner decision, `docs/decisions.md`); Passdesk hands it to git
+    only through `GIT_CONFIG_*` variables in one child's environment
+    (scoped to `https://github.com/`, never argv or disk), never follows a
+    redirect with it, and redacts it from everything it returns or records.
   - Credentials nothing can proxy-inject (currently Jira, Gemini, and a
     read-only token for a private npm registry) are read from files inside
     Passdesk's own sandbox (`/etc/factory-broker/secrets/`, a Docker secret

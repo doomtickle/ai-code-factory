@@ -2,6 +2,7 @@
 the startup validation in config.validate()."""
 
 import importlib
+import os
 import unittest
 from unittest import mock
 
@@ -50,6 +51,19 @@ class EnvDefaultsAndOverridesTests(unittest.TestCase):
         self.assertEqual(config.DEFAULT_PUSH_BRANCH_PREFIX, "agents/")
         self.assertEqual(config.DEPLOYMENT, "standalone")
         config.validate()
+
+    def test_credential_provider_default_depends_on_deployment(self):
+        with mock.patch.dict("os.environ"):
+            os.environ.pop("PASSDESK_CREDENTIAL_PROVIDERS", None)
+            for deployment, expected in (("sbx", "proxy,file,env-file"), ("standalone", "file,env-file")):
+                os.environ["BROKER_DEPLOYMENT"] = deployment
+                importlib.reload(config)
+                self.assertEqual(config.CREDENTIAL_PROVIDERS, expected)
+            # An explicit setting always wins, in either deployment.
+            os.environ["PASSDESK_CREDENTIAL_PROVIDERS"] = "proxy,file"
+            importlib.reload(config)
+            self.assertEqual(config.CREDENTIAL_PROVIDERS, "proxy,file")
+        self.addCleanup(importlib.reload, config)
 
     def test_bind_host_and_allowed_origins_overridable(self):
         self.reload_under({"BROKER_BIND_HOST": "127.0.0.1", "BROKER_ALLOWED_ORIGINS": "https://a.example, https://b.example"})

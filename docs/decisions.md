@@ -55,15 +55,17 @@ Dated entries, for the user to review. Newest first.
   `check_standalone`); this narrows the prior entry below ("`BROKER_DEPLOYMENT`
   gates wording, not behavior") to cover only the GitHub-hint text, since the
   doctor's checks themselves now do differ by deployment. Judgement calls:
-  - **The GitHub check reports "absent" by default even in standalone
-    mode**, because the default `PASSDESK_CREDENTIAL_PROVIDERS` order
-    (`proxy,file,env-file`) still asks `proxy` first, which returns
-    `credentials.INJECTED` for `github` unconditionally (W2.2, "standalone
-    mode drops `proxy` from the list," hasn't landed). The check calls the
-    public `credentials.get("github")`/`provider_order()` faithfully rather
-    than special-casing `DEPLOYMENT` itself; a deployment that wants the
-    check to see a file- or env-file-delivered token must already set
-    `PASSDESK_CREDENTIAL_PROVIDERS` without `proxy`.
+  - **The GitHub check reports the real file-based credential's
+    presence/absence**, because standalone's default
+    `PASSDESK_CREDENTIAL_PROVIDERS` order is `file,env-file` (W2.2, landed):
+    `proxy` is left out by default, so `credentials.get("github")` reaches
+    the `file`/`env-file` providers instead of returning
+    `credentials.INJECTED` unconditionally. The check calls the public
+    `credentials.get("github")`/`provider_order()` faithfully rather than
+    special-casing `DEPLOYMENT` itself; the "proxy runs first" fix-hint
+    (naming dropping `proxy` from `PASSDESK_CREDENTIAL_PROVIDERS`) now only
+    fires when a deployment's own setting explicitly puts `proxy` back in
+    front of `file`/`env-file`.
   - **Also fixed, in both modes: `check_secrets` only looked at the three
     configured paths** (`BROKER_JIRA_SECRET` etc.), so it reported "no
     credential" when the only copy was a Docker secret
@@ -81,6 +83,61 @@ Dated entries, for the user to review. Newest first.
     not folded into the shared `check_workspace`/`check_egress`, so sbx
     mode's output is untouched by their addition rather than merely
     "usually unchanged."
+
+- **In standalone mode the gateway holds the GitHub token
+  (doomtickle/passdesk-ops#54, Phase 3a W2.2).** Owner decision (Phase 3a
+  owner decisions in passdesk-ops/decisions.md): with no egress proxy to
+  inject it, the gateway reads a `github` credential through
+  `credentials.get` like Jira's; users get fine-grained tokens limited to
+  chosen repos with Contents and Pull requests write only. The gateway is
+  still outside every agent sandbox, so credentials still never enter one.
+  With sbx nothing changes: `proxy` answers `github` first, and every code
+  path with no token (git environment, `urllib.request.urlopen`, hints) is
+  exactly what it was. Judgement calls:
+  - **Standalone's default provider order leaves out `proxy`**
+    (`file,env-file`); an explicit `PASSDESK_CREDENTIAL_PROVIDERS` always
+    wins. The alternative, a separate switch for "gateway holds GitHub",
+    would be one more setting to get wrong; standalone already means "no
+    sbx proxy". Changed in `core/config.py` only (plus one docstring line in
+    `credentials.py`).
+  - **git gets `Authorization: Basic base64("x-access-token:<token>")`, not
+    Bearer.** Basic with `x-access-token` is the form GitHub documents for
+    git over HTTPS with every token type (classic, fine-grained, App
+    installation) and the one actions/checkout uses; GitHub's acceptance of
+    Bearer on the git smart-HTTP endpoints is not something we could verify
+    offline. The REST API call uses `Bearer`, as GitHub documents for it.
+  - **The header is `http.https://github.com/.extraHeader`, passed only as
+    `GIT_CONFIG_COUNT`/`KEY_n`/`VALUE_n` in the child's environment**, so it
+    is never in argv (`/proc/<pid>/cmdline` is world-readable) or a config
+    file, and git sends it to no other host. The environment
+    (`/proc/<pid>/environ`) is readable only by the gateway's own user,
+    which holds the token anyway. Only the three commands that talk to
+    GitHub (`git_fetch`'s fetch, `git_push`'s base fetch and push) get it.
+  - **git runs with `http.followRedirects=false` and `credential.helper=`
+    (empty) when it carries the token**, matching "authenticated requests
+    never follow redirects". Cost: a renamed repository's old URL (GitHub
+    answers with a redirect) now fails instead of following; the error says
+    302/301 and the fix is the new name in `[git].repos`.
+  - **Trace switches are removed, not just turned off.** Every inherited
+    `GIT_TRACE*`, `GIT_CURL_VERBOSE` (honoured whatever its value) and
+    inherited `GIT_CONFIG_PARAMETERS`/`GIT_CONFIG_KEY_n`/`VALUE_n` are
+    dropped from that child's environment (`workspace.run`'s `extra_env`
+    now treats a None value as "unset"). A test sets `GIT_TRACE_CURL=1` and
+    `GIT_TRACE_REDACT=0` and checks git's raw output holds no header.
+  - **Redaction knows the live value.** `filters.remember_secret` keeps the
+    exact token and the base64 header value (newest 32 values, so a rotated
+    token stays redacted for a while); `redact()` replaces them before the
+    patterns run, and `find_secrets()` reports them as `live-credential`, so
+    every existing path (`sanitize` on git stderr and API errors, the audit
+    log's `summarize_args`, approval cards, outbound PR text) covers a token
+    that matches no pattern. The value is remembered when it is read, so
+    anything git or GitHub could echo comes after. It lives in
+    `tools/git.py` for now; doing it in `credentials.get` would cover Jira,
+    Gemini and npm too (left for a follow-up, to keep this change out of
+    `credentials.py`).
+  - **A `github` value that isn't 20-255 of `[A-Za-z0-9_]` is refused**
+    (Denied, without the value): every GitHub token format fits, and it
+    rules out anything that could break out of a header or config value.
 
 - **Credentials come from ordered providers (`core/credentials.py`,
   doomtickle/passdesk-ops#36, Phase 3 plan W2.1).** `get(name)` asks

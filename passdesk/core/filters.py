@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import re
 import secrets
+import threading
 
 from . import config
 from .errors import Denied
@@ -27,11 +28,48 @@ _ANSI_RE = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)
 _CTRL_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
 
 
+# Exact values of credentials the gateway itself holds and has used (with
+# the encoded forms it sent them in), so they are caught even when they
+# match none of the patterns above. Only the most recent few are kept, so
+# a rotated credential's old value is still caught for a while.
+_LIVE_MAX = 32
+_live: list[str] = []  # oldest first
+_live_sorted: tuple[str, ...] = ()  # the same values, longest first
+_live_lock = threading.Lock()
+
+
+def remember_secret(*values: str) -> None:
+    """Treat each value as a secret from now on: redact() replaces it and
+    find_secrets() reports it, whatever it looks like. Values shorter than
+    8 characters are ignored (replacing them would mangle ordinary text;
+    callers that hold a credential check its length themselves)."""
+    global _live_sorted
+    with _live_lock:
+        for value in values:
+            if len(value) < 8:
+                continue
+            if value in _live:
+                _live.remove(value)
+            _live.append(value)
+        del _live[:-_LIVE_MAX]
+        # Longest first, so a value containing another is replaced whole.
+        _live_sorted = tuple(sorted(_live, key=len, reverse=True))
+
+
+def _live_values() -> tuple[str, ...]:
+    return _live_sorted
+
+
 def find_secrets(text: str) -> list[str]:
-    return sorted({kind for kind, rx in SECRET_PATTERNS if rx.search(text)})
+    found = {kind for kind, rx in SECRET_PATTERNS if rx.search(text)}
+    if any(v in text for v in _live_values()):
+        found.add("live-credential")
+    return sorted(found)
 
 
 def redact(text: str) -> str:
+    for value in _live_values():
+        text = text.replace(value, "[REDACTED:live-credential]")
     for kind, rx in SECRET_PATTERNS:
         text = rx.sub(f"[REDACTED:{kind}]", text)
     return text
