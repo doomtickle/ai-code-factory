@@ -131,6 +131,47 @@ the AI Code Factory, these are stored in the host keychain and delivered by
 `scripts/start-broker.sh`; any other deployment just needs to write the file
 to that path before the broker's first call that needs it.
 
+## Managing principals
+
+A principal is whatever a token was minted for (see `passdesk/core/auth.py`).
+`ai-code-factory`'s `scripts/start-broker.sh` mints one per role automatically;
+for a standalone (non-factory) deployment, or for a principal the factory
+doesn't manage, use the CLI instead:
+
+```
+python3 -m passdesk principal add <name> --tools TOOL [TOOL ...]
+python3 -m passdesk principal list
+python3 -m passdesk principal revoke <name>
+```
+
+`add` mints a fresh token, writes its SHA-256 hash to
+`BROKER_STATE/tokens/<name>.sha256` and the tool grant to
+`BROKER_STATE/grants.json` (mode 0600; `BROKER_STATE` and its `tokens/`
+directory are created mode 0700 if missing) — uses the same files and formats
+`start-broker.sh` writes (in a factory deployment, `start-broker.sh` owns
+`grants.json` and rebuilds it on every start).
+The token itself is printed to stdout exactly once and is never written to
+disk or logged; capture it immediately (e.g. `token=$(python3 -m passdesk
+principal add alice --tools git_fetch)`), there is no way to recover it
+afterwards short of `revoke` and `add` again. A principal name must start
+with a lowercase letter and contain only lowercase letters, digits, `_` or
+`-`; `--tools` accepts only names in the running registry (`tools.txt`).
+
+`list` prints each existing principal and its granted tools, never a hash
+or a token, and flags a principal missing a token or a grant (its calls
+would fail). `revoke` removes both the token hash and the grant; a token
+already handed to an agent stops authenticating immediately.
+
+**Do not use this CLI to manage a factory-managed deployment's own roles.**
+In an `ai-code-factory` deployment, `scripts/start-broker.sh` owns
+`grants.json` and rebuilds it from scratch (not a read-modify-write) on
+every factory start, from `roles/*/role.conf`; a principal the CLI adds in
+between factory starts loses its grant (though not its token file) the
+next time the factory starts the broker. Use the CLI for a standalone
+deployment, or for a principal the factory doesn't manage at all; for a
+factory role, change `roles/<role>/role.conf` instead and let
+`start-broker.sh` apply it.
+
 ## Checking a deployment
 
 ```

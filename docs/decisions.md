@@ -4,6 +4,57 @@ Dated entries, for the user to review. Newest first.
 
 ## 2026-10-18
 
+- **Principal CLI added (doomtickle/passdesk-ops#36, plan task W1.2):
+  `python3 -m passdesk principal add|list|revoke` (`passdesk/__main__.py`,
+  `passdesk/principal.py`).** Mints a token, writes its SHA-256 hash to
+  `tokens/<name>.sha256` and an object-form grant to `grants.json` — uses
+  the same files and formats `ai-code-factory/scripts/start-broker.sh` writes
+  (in a factory deployment, `start-broker.sh` owns `grants.json` and rebuilds
+  it on every start). Judgement calls:
+  - **Writes only `grants.json`, never the legacy `roles.json`, but reads
+    for the duplicate check and as the read-modify-write baseline via
+    `core.auth.grants_path()`** (`grants.json` if present, else the older
+    `roles.json`), not a `grants.json`-only read. Without this, a
+    deployment that has only ever run `start-broker.sh` (so only
+    `roles.json` exists) would see `add` start from an empty baseline: the
+    first CLI `add` would write a `grants.json` containing only the new
+    principal, and since `grants_path()` prefers `grants.json` once it
+    exists, every grant `start-broker.sh` had written to `roles.json`
+    would stop taking effect from that point on. Reading through
+    `grants_path()` carries those entries into the new `grants.json`
+    instead.
+  - **This CLI is for a standalone/non-factory deployment, or for a
+    principal the factory doesn't manage, not for day-to-day use against a
+    factory-managed deployment.** In an `ai-code-factory` deployment,
+    `scripts/start-broker.sh` rebuilds `grants.json` from scratch on every
+    factory start (`grants='{}'`, then one entry per role with
+    `BROKER_TOOLS` — a full overwrite, not a read-modify-write); the fix
+    above stops the CLI's own `add`/`revoke` from stripping grants, but it
+    does not stop the factory's own next start from resetting `grants.json`
+    to exactly what `roles/*/role.conf` says, discarding any principal the
+    CLI added in between (the token file under `tokens/` survives, since
+    `start-broker.sh` never deletes those, but the principal loses its
+    grant and every call is denied). Making `start-broker.sh` read-modify-write
+    or otherwise aware of CLI-managed principals is a separate follow-up,
+    not done here.
+  - **`add` refuses to overwrite an existing principal** (token file or
+    grants entry) rather than rotating it, so a bare retry can't silently
+    invalidate a token already handed to an agent; the caller must
+    `revoke` first. `revoke` is all-or-nothing (removes whatever of the
+    token/grant pair exists) rather than requiring both to be present,
+    since a hand-edited or partially-migrated state may have only one.
+  - **Principal name charset is `^[a-z][a-z0-9_-]{0,63}$`**, stricter than
+    strictly necessary to block path traversal (no `.`, `/` or NUL) -
+    chosen to match the factory's own role-name convention
+    (`ai-code-factory/scripts/lib/roles.sh:valid_role_name`) rather than
+    inventing a separate rule two tools would need to agree on by
+    coincidence.
+  - **No locking across concurrent CLI invocations.** `add`/`revoke` do a
+    read-modify-write of `grants.json` with no file lock, matching
+    `start-broker.sh`'s own non-atomic read-modify-write of the same file;
+    this CLI is for an operator running one command at a time, not
+    concurrent automation.
+
 - **Identity/protocol layer de-factory-ized (doomtickle/passdesk-ops#36),
   per `docs/broker-extraction.md` (ai-code-factory) Phase 1 items 1, 2 and
   6.** `grant_hint`'s hard-coded `coordinator` special case is gone; a grant
