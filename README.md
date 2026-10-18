@@ -103,7 +103,7 @@ CI and test fixtures exercise, not because it's the only one.
 | `BROKER_NPM_REGISTRY_SECRET` | `$BROKER_SECRETS_DIR/npm-registry` | File holding the private npm registry credential. |
 | `BROKER_REF_NAMESPACE` | `refs/factory` | Ref namespace `git_push` stages an incoming branch under in its own bare mirror while it verifies the push and awaits approval (never pushed itself; see `tools/git.py`). Must be a ref path under `refs/` (no `..`, no trailing slash, no empty component), must not be, or sit under, a namespace git/GitHub already use (`refs/heads`, `refs/tags`, `refs/remotes`, `refs/notes`, `refs/stash`), and no component may start with `.` or end in `.lock` (`git check-ref-format`); the broker refuses to start otherwise. |
 | `BROKER_PUSH_PREFIX` | `factory/` | Fallback for policy's `[git].push_branch_prefix` when a deployment's own `policy.toml` doesn't set it at all (every `policy.toml` this repo ships does, so this only matters for a deployment's own from-scratch policy). Deliberately fails closed here (unlike upstream, which falls back to `""` — any unprotected branch — when the key is absent); the doctor warns when `[git].push_branch_prefix` is missing from policy as well as when it's set to `""`. Must contain only ref-safe characters, no whitespace or control characters. |
-| `BROKER_DEPLOYMENT` | `sbx` | `sbx` (default) or `standalone`. Selects whether `git_push`/`github_create_pr` error hints and the doctor's live GitHub checks name the sbx CLI (`sbx secret set ...`) or stay generic; any other value refuses to start. |
+| `BROKER_DEPLOYMENT` | `sbx` | `sbx` (default) or `standalone`. Selects whether `git_push`/`github_create_pr` error hints and the doctor's live GitHub checks name the sbx CLI (`sbx secret set ...`) or stay generic; any other value refuses to start. Also selects which checks `python3 -m passdesk.doctor` runs: see "Checking a deployment". |
 | `PASSDESK_PLUGINS` | `` (empty) | Comma-separated plugin modules to import at start-up (e.g. the commercial `passdesk-pro` approval hook). |
 | `PASSDESK_CREDENTIAL_PROVIDERS` | `proxy,file,env-file` | Credential providers in lookup order; see "Configuring credentials". A name that isn't a provider stops the server at start-up. |
 | `PASSDESK_SECRET_<NAME>_FILE` | unset | Path of a file holding credential `<NAME>` (upper-cased, `-` as `_`: `PASSDESK_SECRET_NPM_REGISTRY_FILE`). Holds a path, never the secret. |
@@ -233,15 +233,26 @@ nothing and prints a fix for each problem: the policy's shape (every table
 and key the tools read), hosts in `[web].allow_hosts` that the
 credentialed-host denylist makes dead, the tokens and grants in the state
 directory, the audit log, the exchange directory (`BROKER_EXCHANGE_DIR`),
-the credential files' presence, mode and format, and, with `--live`,
-whether the gateway answers and whether the GitHub token can read and push
-each repo in `[git].repos`. `--kit <spec.yaml>` (repeatable) checks an sbx
-kit's network allowlist against every host the policy can reach (other
-deployments check their own egress policy by hand, or write their own
-reader for `--egress-hosts`' output); `--egress-hosts` prints that host
-list for tooling that keeps the allowlist in sync. `--json` prints the same
-report as one JSON object for scripts. `ai-code-factory`'s `factory doctor`
-runs it for you.
+the credential files' presence, mode and format (through
+`core/credentials.py`, so a credential delivered only as a Docker secret or
+through `PASSDESK_SECRET_<NAME>_FILE` is found even when nothing sits at the
+configured path), and, with `--live`, whether the gateway answers and
+whether the GitHub token can read and push each repo in `[git].repos`.
+
+With `BROKER_DEPLOYMENT=sbx` (the default), `--kit <spec.yaml>` (repeatable)
+also checks an sbx kit's network allowlist against every host the policy
+can reach; `--egress-hosts` prints that host list for tooling that keeps the
+allowlist in sync. With `BROKER_DEPLOYMENT=standalone`, there is no sbx kit,
+so the doctor skips that check and instead checks: a GitHub credential is
+present (through `core/credentials.py`, never printed; today this still
+reports absent by default, since the default provider order keeps `proxy`
+first — see "Configuring credentials" — until a deployment's
+`PASSDESK_CREDENTIAL_PROVIDERS` drops it), the exchange directory is
+writable, and (a stub until TLS itself ships) a note when the broker is
+bound off loopback (`BROKER_BIND_HOST`) with no TLS check yet to back it.
+
+`--json` prints the same report as one JSON object for scripts.
+`ai-code-factory`'s `factory doctor` runs it for you (in `sbx` mode).
 
 ## Running the tests
 

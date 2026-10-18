@@ -4,6 +4,46 @@ Dated entries, for the user to review. Newest first.
 
 ## 2026-10-18
 
+- **Doctor checks for standalone mode (doomtickle/passdesk-ops#53, plan task
+  W1.3).** With `BROKER_DEPLOYMENT=standalone`, `doctor.run()` no longer
+  calls `check_egress` (the sbx-kit `--kit` comparison makes no sense
+  without an sbx kit) and instead calls a new `check_standalone`: a GitHub
+  credential is present through `core/credentials.py` (never printed; just
+  present/absent and the provider list checked), the exchange directory is
+  writable, and — since TLS itself (plan task W3.2) hasn't landed — a stub
+  `info` line when `BROKER_BIND_HOST` is off loopback, naming W3.2 rather
+  than inventing a `BROKER_TLS_CERT`/`BROKER_TLS_KEY` pair to check against.
+  sbx mode is unchanged (still runs `check_egress`, never runs
+  `check_standalone`); this narrows the prior entry below ("`BROKER_DEPLOYMENT`
+  gates wording, not behavior") to cover only the GitHub-hint text, since the
+  doctor's checks themselves now do differ by deployment. Judgement calls:
+  - **The GitHub check reports "absent" by default even in standalone
+    mode**, because the default `PASSDESK_CREDENTIAL_PROVIDERS` order
+    (`proxy,file,env-file`) still asks `proxy` first, which returns
+    `credentials.INJECTED` for `github` unconditionally (W2.2, "standalone
+    mode drops `proxy` from the list," hasn't landed). The check calls the
+    public `credentials.get("github")`/`provider_order()` faithfully rather
+    than special-casing `DEPLOYMENT` itself; a deployment that wants the
+    check to see a file- or env-file-delivered token must already set
+    `PASSDESK_CREDENTIAL_PROVIDERS` without `proxy`.
+  - **Also fixed, in both modes: `check_secrets` only looked at the three
+    configured paths** (`BROKER_JIRA_SECRET` etc.), so it reported "no
+    credential" when the only copy was a Docker secret
+    (`/run/secrets/<name>`) or behind `PASSDESK_SECRET_<NAME>_FILE`. It now
+    calls `credentials.get(name)` once the configured path itself is
+    missing, before reporting absence, and reports a `CredentialError`'s
+    message (never a value) instead of letting it propagate. The file-level
+    checks that only make sense for the configured path itself (regular
+    file, loose permissions, "is empty", the jira `email:token` format) are
+    unchanged and still run first when that path exists, so sbx mode's
+    report for every case already covered by `tests/test_doctor.py`'s
+    `test_secrets` is pinned identical; `SbxModeUnaffected` in the same file
+    pins the healthy-deployment report's section order and OK lines too.
+  - **The exchange-writability and TLS-stub checks are standalone-only**,
+    not folded into the shared `check_workspace`/`check_egress`, so sbx
+    mode's output is untouched by their addition rather than merely
+    "usually unchanged."
+
 - **Credentials come from ordered providers (`core/credentials.py`,
   doomtickle/passdesk-ops#36, Phase 3 plan W2.1).** `get(name)` asks
   `proxy`, `file` (the configured path or `/etc/factory-broker/secrets/<name>`,

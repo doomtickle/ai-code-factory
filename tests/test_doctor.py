@@ -7,9 +7,10 @@ import unittest
 import urllib.error
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
+from unittest import mock
 
 from passdesk import doctor
-from passdesk.core import config
+from passdesk.core import config, credentials
 
 from .base import Base
 
@@ -87,6 +88,24 @@ class DoctorBase(Base):
 
     def assertNoFailures(self, report):
         self.assertEqual(report.messages(doctor.FAIL), [])
+
+    def all_text(self, report):
+        """Every piece of text the report would print: findings and fix lines."""
+        out = []
+        for _, _, text, fix in report.items:
+            out.append(text)
+            out.extend(fix)
+        return out
+
+    def ordered_sections(self, report):
+        """Section headings in the order `render` would print them (consecutive
+        duplicates collapsed, as `render` only prints a heading when the
+        section changes)."""
+        out = []
+        for sec, _, _, _ in report.items:
+            if not out or out[-1] != sec:
+                out.append(sec)
+        return out
 
 
 class PolicyChecks(DoctorBase):
@@ -327,6 +346,174 @@ class StateWorkspaceSecretChecks(DoctorBase):
         doctor.check_secrets(report, pol, granted={"jira_my_issues", "npm_fetch"})
         self.assertNoFailures(report)
         self.assertIn("jira credential present", report.messages(doctor.OK))
+
+    def test_secrets_finds_a_docker_secret_when_the_configured_path_is_missing(self):
+        # The gap this fixes: before, check_secrets only looked at the three
+        # configured paths, so a credential delivered only as a Docker secret
+        # (or via PASSDESK_SECRET_<NAME>_FILE) was reported absent.
+        self.policy()
+        pol = doctor.policy_mod.load_policy(self.policy_path)
+        config.JIRA_SECRET_PATH.parent.mkdir(parents=True)  # "inside the sandbox"
+        self.write_secret(credentials.DOCKER_SECRETS_DIR / "jira", "me@example.com:tok")
+        report = doctor.Report()
+        doctor.check_secrets(report, pol, granted={"jira_my_issues", "npm_fetch"})
+        self.assertNoFailures(report)
+        self.assertFalse(any("no jira credential" in m for m in report.messages(doctor.WARN)))
+        self.assertIn("jira credential present", report.messages(doctor.OK))
+
+    def test_secrets_finds_an_env_file_secret_when_the_configured_path_is_missing(self):
+        self.policy()
+        pol = doctor.policy_mod.load_policy(self.policy_path)
+        config.JIRA_SECRET_PATH.parent.mkdir(parents=True)
+        other = self.root / "elsewhere" / "jira"
+        self.write_secret(other, "me@example.com:tok")
+        with mock.patch.dict(os.environ, {"PASSDESK_SECRET_JIRA_FILE": str(other)}):
+            report = doctor.Report()
+            doctor.check_secrets(report, pol, granted={"jira_my_issues", "npm_fetch"})
+        self.assertNoFailures(report)
+        self.assertIn("jira credential present", report.messages(doctor.OK))
+
+    def test_secrets_reports_a_credential_error_without_raising(self):
+        self.policy()
+        pol = doctor.policy_mod.load_policy(self.policy_path)
+        config.JIRA_SECRET_PATH.parent.mkdir(parents=True)
+        old = config.CREDENTIAL_PROVIDERS
+        self.addCleanup(setattr, config, "CREDENTIAL_PROVIDERS", old)
+        config.CREDENTIAL_PROVIDERS = "vault"
+        report = doctor.Report()
+        doctor.check_secrets(report, pol, granted={"jira_my_issues", "npm_fetch"})
+        self.assertFails(report, "unknown credential provider 'vault'")
+
+    def test_secrets_never_prints_the_value(self):
+        self.policy()
+        pol = doctor.policy_mod.load_policy(self.policy_path)
+        config.JIRA_SECRET_PATH.parent.mkdir(parents=True)
+        self.write_secret(credentials.DOCKER_SECRETS_DIR / "jira", "me@example.com:super-secret-token")
+        report = doctor.Report()
+        doctor.check_secrets(report, pol, granted={"jira_my_issues", "npm_fetch"})
+        self.assertFalse(any("super-secret-token" in t for t in self.all_text(report)))
+
+
+class StandaloneChecks(DoctorBase):
+    """BROKER_DEPLOYMENT=standalone: check_standalone replaces the sbx kit
+    checks (doomtickle/passdesk-ops#53)."""
+
+    def setUp(self):
+        super().setUp()
+        self.addCleanup(setattr, config, "DEPLOYMENT", config.DEPLOYMENT)
+        config.DEPLOYMENT = "standalone"
+        self.addCleanup(setattr, config, "CREDENTIAL_PROVIDERS", config.CREDENTIAL_PROVIDERS)
+        self.addCleanup(setattr, config, "BIND_HOST", config.BIND_HOST)
+        config.BIND_HOST = "127.0.0.1"  # off by default in these tests; the TLS tests set it explicitly
+
+    def test_run_uses_standalone_checks_instead_of_egress(self):
+        self.policy()
+        self.state()
+        report = self.run_doctor()
+        sections = [sec for sec, _, _, _ in report.items]
+        self.assertNotIn("Egress", sections)
+        self.assertIn("Standalone", sections)
+
+    def test_github_credential_absent_warns_when_wanted(self):
+        # Default providers ("proxy,file,env-file"): proxy still owns "github"
+        # until W2.2 drops it for standalone, so this is "absent" today even
+        # with files in place -- matching what credentials.get("github") returns.
+        report = doctor.Report()
+        doctor.check_standalone(report, granted={"git_fetch"})
+        self.assertWarns(report, "no github credential")
+
+    def test_github_credential_absent_and_not_wanted_is_only_info(self):
+        report = doctor.Report()
+        doctor.check_standalone(report, granted=set())
+        self.assertTrue(any("no github credential (not needed" in m for m in report.messages(doctor.INFO)))
+        self.assertNoFailures(report)
+        self.assertEqual(report.messages(doctor.WARN), [])
+
+    def test_github_credential_present_once_proxy_is_dropped(self):
+        config.CREDENTIAL_PROVIDERS = "file,env-file"
+        self.write_secret(credentials.secrets_dir() / "github", "ghp_" + "a" * 36)
+        report = doctor.Report()
+        doctor.check_standalone(report, granted={"git_fetch", "git_push"})
+        self.assertTrue(any("github credential present" in m for m in report.messages(doctor.OK)))
+        self.assertFalse(any("ghp_" in t for t in self.all_text(report)))
+
+    def test_github_credential_error_is_reported_without_raising(self):
+        config.CREDENTIAL_PROVIDERS = "proxy,vault"
+        report = doctor.Report()
+        doctor.check_standalone(report, granted={"git_push"})
+        self.assertFails(report, "unknown credential provider 'vault'")
+
+    def test_tls_note_only_fires_off_loopback(self):
+        config.BIND_HOST = "127.0.0.1"
+        report = doctor.Report()
+        doctor.check_standalone(report, granted=set())
+        self.assertFalse(any("TLS" in m for m in report.messages(doctor.INFO)))
+        config.BIND_HOST = "0.0.0.0"
+        report = doctor.Report()
+        doctor.check_standalone(report, granted=set())
+        self.assertTrue(any("TLS cert/key checks are not implemented" in m for m in report.messages(doctor.INFO)))
+
+    def test_exchange_directory_writable(self):
+        report = doctor.Report()
+        doctor.check_standalone(report, granted=set())
+        self.assertTrue(any("is writable" in m for m in report.messages(doctor.OK)))
+        self.assertNoFailures(report)
+
+    @unittest.skipIf(hasattr(os, "geteuid") and os.geteuid() == 0, "root ignores mode bits")
+    def test_exchange_directory_not_writable_fails(self):
+        exchange = config.WORKSPACE / config.EXCHANGE_DIR
+        exchange.mkdir()
+        os.chmod(exchange, 0o500)
+        try:
+            report = doctor.Report()
+            doctor.check_standalone(report, granted=set())
+            self.assertFails(report, "is not writable")
+        finally:
+            os.chmod(exchange, 0o700)
+
+    def test_missing_workspace_is_silently_skipped(self):
+        # check_workspace already reports the missing workspace; check_standalone
+        # must not also raise or double-report it.
+        import shutil
+        shutil.rmtree(config.WORKSPACE)
+        report = doctor.Report()
+        doctor.check_standalone(report, granted=set())
+        self.assertEqual(report.messages(doctor.FAIL), [])
+
+
+class SbxModeUnaffected(DoctorBase):
+    """sbx mode (BROKER_DEPLOYMENT=sbx, the default) must keep running the
+    sbx kit checks and must never run check_standalone; pins today's shape
+    for a healthy deployment (doomtickle/passdesk-ops#53)."""
+
+    def test_sbx_mode_runs_egress_not_standalone(self):
+        self.assertEqual(config.DEPLOYMENT, "sbx")
+        self.policy()
+        self.state()
+        report = self.run_doctor()
+        sections = [sec for sec, _, _, _ in report.items]
+        self.assertIn("Egress", sections)
+        self.assertNotIn("Standalone", sections)
+
+    def test_sbx_mode_pinned_report_for_a_healthy_deployment(self):
+        self.policy()
+        self.state(grants={"developer": ["git_fetch", "git_push", "github_create_pr", "npm_fetch",
+                                         "jira_my_issues", "gemini_flash_query"]})
+        self.write_secret(config.JIRA_SECRET_PATH, "me@example.com:tok")
+        self.write_secret(config.GEMINI_SECRET_PATH, "gem-key")
+        self.write_secret(config.NPM_REGISTRY_SECRET_PATH, "npm-tok")
+        os.chmod(config.JIRA_SECRET_PATH, 0o600)
+        os.chmod(config.GEMINI_SECRET_PATH, 0o600)
+        os.chmod(config.NPM_REGISTRY_SECRET_PATH, 0o600)
+        report = self.run_doctor()
+        self.assertEqual(report.messages(doctor.FAIL), [])
+        self.assertEqual(report.messages(doctor.WARN), [])
+        self.assertEqual(
+            self.ordered_sections(report),
+            ["Policy", "Egress", "State", "Workspace", "Credentials", "Plugins"])
+        self.assertIn("jira credential present", report.messages(doctor.OK))
+        self.assertIn("gemini credential present", report.messages(doctor.OK))
+        self.assertIn("npm-registry credential present", report.messages(doctor.OK))
 
 
 class _Unauthorized(BaseHTTPRequestHandler):

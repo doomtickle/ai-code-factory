@@ -12,6 +12,12 @@ credentials and the baked-in policy are) but works on a host against a
 checkout too; the environment variables config.py reads say where things
 are. A deployment's own doctor (e.g. the AI Code Factory's `factory doctor`)
 covers the platform: sbx, Docker, KVM. This one covers the gateway.
+
+With BROKER_DEPLOYMENT=standalone, the sbx kit checks (--kit, which compares
+the policy's egress hosts against an sbx kit's network allowlist) are
+replaced by check_standalone: a GitHub credential present through
+core/credentials.py, a TLS note once that lands (W3.2), and the exchange
+directory's writability.
 """
 
 from __future__ import annotations
@@ -29,7 +35,7 @@ import urllib.request
 from pathlib import Path
 
 from . import tools  # noqa: F401 - registers every tool
-from .core import auth, config
+from .core import auth, config, credentials
 from .core import policy as policy_mod
 from .core.errors import Denied
 from .core.net import NO_REDIRECT_OPENER
@@ -62,6 +68,11 @@ _TOOL_HOSTS = {
 _SECRET_TOOLS = {"jira": {"jira_my_issues", "jira_get_issue"}, "gemini": {"gemini_flash_query"},
                  "npm-registry": {"npm_fetch"}}
 _EXCHANGE_DIRS = ("incoming", "outgoing", "npm-mirror", "wheels")
+# Tools that need the "github" credential. In sbx mode this is proxy-injected
+# (never read by the gateway); in standalone mode check_standalone checks it
+# through credentials.get(), the only place that distinction matters.
+_GITHUB_TOOLS = {"git_fetch", "git_push", "github_create_pr"}
+_LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost"}
 
 
 def _github_token_hint(action: str) -> str:
@@ -521,6 +532,54 @@ def check_workspace(report: Report) -> None:
     report.ok(f"{name}/ exchange directory is a real directory with no symlinked entries")
 
 
+# --- standalone ---------------------------------------------------------------------
+
+def check_standalone(report: Report, granted: set[str]) -> None:
+    """What replaces the sbx kit checks (check_egress) when
+    BROKER_DEPLOYMENT=standalone: there is no sbx kit, no egress proxy to
+    inject GitHub's token, and no sbx-managed exchange directory permissions.
+    Not run in sbx mode (see run())."""
+    report.section("Standalone")
+
+    wanted = bool(_GITHUB_TOOLS & granted)
+    try:
+        token = credentials.get("github")
+    except credentials.CredentialError as e:
+        report.fail(str(e))
+    else:
+        order = ", ".join(credentials.provider_order()) or "(none configured)"
+        if token is not None:
+            report.ok(f"github credential present (checked providers: {order})")
+        elif wanted:
+            report.warn(f"no github credential (checked providers: {order}); "
+                        f"{', '.join(sorted(_GITHUB_TOOLS & granted))} return DENIED until it is delivered",
+                        "deliver a fine-grained GitHub token through one of those providers "
+                        "(README, Configuring credentials)")
+        else:
+            report.info(f"no github credential (not needed: no granted tool uses it; checked providers: {order})")
+
+    # TLS (doomtickle/passdesk-ops#53: W3.2 "Standalone image and compose
+    # quickstart" has not landed yet -- there is no BROKER_TLS_CERT/KEY to
+    # check). Flag the gap only when it would matter (bound off loopback);
+    # this is a deliberate stub, not a check, until W3.2 lands.
+    if config.BIND_HOST not in _LOOPBACK_HOSTS:
+        report.info(f"bound to {config.BIND_HOST} (off loopback); TLS cert/key checks are not implemented yet "
+                    "(doomtickle/passdesk-ops Phase 3 plan, task W3.2) -- terminate TLS in front of the broker, "
+                    "or narrow BROKER_BIND_HOST to a loopback address, until then")
+
+    ws = config.WORKSPACE
+    if ws.is_dir():
+        exchange = ws / config.EXCHANGE_DIR
+        target = exchange if exchange.is_dir() else ws
+        if not os.access(target, os.W_OK):
+            report.fail(f"{target} is not writable: git_fetch, npm_fetch and pip_download cannot hand "
+                        "files to the agent sandbox",
+                        f"make {target} writable by the user the broker runs as")
+        else:
+            report.ok(f"{target} is writable")
+    # else: check_workspace already reported the missing/invalid workspace.
+
+
 # --- credentials --------------------------------------------------------------------
 
 def check_secrets(report: Report, pol: dict | None, granted: set[str]) -> None:
@@ -541,7 +600,19 @@ def check_secrets(report: Report, pol: dict | None, granted: set[str]) -> None:
         try:
             st = os.lstat(path)
         except FileNotFoundError:
-            if wanted:
+            # Nothing at the configured path, but credentials.get() also checks
+            # the Docker secret and PASSDESK_SECRET_<NAME>_FILE paths, either of
+            # which can hold the only copy; only report absence once none of
+            # them do.
+            try:
+                present = credentials.get(name) is not None
+            except credentials.CredentialError as e:
+                report.fail(str(e))
+                continue
+            if present:
+                extra = "" if wanted else " (no granted tool uses it)"
+                report.ok(f"{name} credential present{extra}")
+            elif wanted:
                 report.warn(f"no {name} credential at {path}; {', '.join(sorted(tools_using & granted))} "
                             f"return DENIED until it is delivered",
                             "have the deployment deliver it to that path again (README, Configuring credentials)")
@@ -687,10 +758,12 @@ def run(policy_path: Path | None = None, kits: list[Path] | None = None, live: b
     except ValueError as e:
         report.fail(str(e))
     pol = check_policy(report, policy_path)
-    if pol is not None:
+    if pol is not None and config.DEPLOYMENT != "standalone":
         check_egress(report, pol, kits or [])
     granted = check_state(report)
     check_workspace(report)
+    if config.DEPLOYMENT == "standalone":
+        check_standalone(report, granted)
     check_secrets(report, pol, granted)
     check_plugins(report)
     if live:
