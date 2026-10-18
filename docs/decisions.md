@@ -4,6 +4,84 @@ Dated entries, for the user to review. Newest first.
 
 ## 2026-10-18
 
+- **`credentials.get` takes an `on_unusable` callback (doomtickle/passdesk-ops#53,
+  follow-up on W1.3).** `check_secrets`'s and `check_standalone`'s fallback
+  calls to `credentials.get()` could reach `_Unusable` (a directory where a
+  credential file belongs, a control character in a value) and, through the
+  default `_unusable`, write a `credential_unusable` row to the audit log --
+  breaking the doctor's "it changes nothing" promise (`doctor.py:7`) and
+  hiding the reason from the operator (the doctor only ever saw "no `name`
+  credential"). `get(name, on_unusable=...)` now takes the refusal callback
+  as a parameter, default unchanged (`_unusable`, today's audit write); the
+  doctor passes one that collects `reason` into a list and shows each as a
+  `warn` instead. Kept minimal and generic rather than doctor-specific:
+  - `on_unusable(credential_name, provider, reason)` matches `_unusable`'s
+    own signature, so the default value doubles as the callback's type.
+  - Only the `file` provider's own multi-path fallback (secrets-dir path,
+    then the Docker secret) needed to learn about the parameter -- it is
+    the only built-in that catches `_Unusable` and keeps looking rather than
+    letting it propagate to `get`'s own handler, which already reads
+    `on_unusable` uniformly for every provider.
+  - `reason` strings never carry a secret value today (paths and fixed
+    messages only; see `read_secret_file`'s docstring), so passing them to
+    an alternate sink needed no new redaction.
+  Also in `doctor.py`, three related gaps the same read fixed or exposed:
+  the GitHub fix-hint under the default provider order
+  (`proxy,file,env-file`) told an operator to deliver a token through
+  `file`/`env-file`, which `proxy` running first makes unreachable for
+  "github" regardless -- the hint now checks `provider_order()` and, when
+  `proxy` precedes another provider, names dropping `proxy` from
+  `PASSDESK_CREDENTIAL_PROVIDERS` instead; a bad
+  `PASSDESK_CREDENTIAL_PROVIDERS` is looked up once in `run()` and threaded
+  into `check_standalone`/`check_secrets` as `order_error` so it is reported
+  once, not once per credential checked; and `check_standalone`'s exchange
+  directory check now reads `os.lstat` (as `check_workspace` already did)
+  instead of the symlink-following `Path.is_dir()`, so a symlinked
+  `.factory/` -- which `check_workspace` already fails -- no longer also
+  gets an incongruous "is writable" `OK` from `check_standalone`; the same
+  check now covers `incoming/`/`outgoing/` under the exchange directory,
+  not just the exchange directory itself.
+
+- **Doctor checks for standalone mode (doomtickle/passdesk-ops#53, plan task
+  W1.3).** With `BROKER_DEPLOYMENT=standalone`, `doctor.run()` no longer
+  calls `check_egress` (the sbx-kit `--kit` comparison makes no sense
+  without an sbx kit) and instead calls a new `check_standalone`: a GitHub
+  credential is present through `core/credentials.py` (never printed; just
+  present/absent and the provider list checked), the exchange directory is
+  writable, and — since TLS itself (plan task W3.2) hasn't landed — a stub
+  `info` line when `BROKER_BIND_HOST` is off loopback, naming W3.2 rather
+  than inventing a `BROKER_TLS_CERT`/`BROKER_TLS_KEY` pair to check against.
+  sbx mode is unchanged (still runs `check_egress`, never runs
+  `check_standalone`); this narrows the prior entry below ("`BROKER_DEPLOYMENT`
+  gates wording, not behavior") to cover only the GitHub-hint text, since the
+  doctor's checks themselves now do differ by deployment. Judgement calls:
+  - **The GitHub check reports "absent" by default even in standalone
+    mode**, because the default `PASSDESK_CREDENTIAL_PROVIDERS` order
+    (`proxy,file,env-file`) still asks `proxy` first, which returns
+    `credentials.INJECTED` for `github` unconditionally (W2.2, "standalone
+    mode drops `proxy` from the list," hasn't landed). The check calls the
+    public `credentials.get("github")`/`provider_order()` faithfully rather
+    than special-casing `DEPLOYMENT` itself; a deployment that wants the
+    check to see a file- or env-file-delivered token must already set
+    `PASSDESK_CREDENTIAL_PROVIDERS` without `proxy`.
+  - **Also fixed, in both modes: `check_secrets` only looked at the three
+    configured paths** (`BROKER_JIRA_SECRET` etc.), so it reported "no
+    credential" when the only copy was a Docker secret
+    (`/run/secrets/<name>`) or behind `PASSDESK_SECRET_<NAME>_FILE`. It now
+    calls `credentials.get(name)` once the configured path itself is
+    missing, before reporting absence, and reports a `CredentialError`'s
+    message (never a value) instead of letting it propagate. The file-level
+    checks that only make sense for the configured path itself (regular
+    file, loose permissions, "is empty", the jira `email:token` format) are
+    unchanged and still run first when that path exists, so sbx mode's
+    report for every case already covered by `tests/test_doctor.py`'s
+    `test_secrets` is pinned identical; `SbxModeUnaffected` in the same file
+    pins the healthy-deployment report's section order and OK lines too.
+  - **The exchange-writability and TLS-stub checks are standalone-only**,
+    not folded into the shared `check_workspace`/`check_egress`, so sbx
+    mode's output is untouched by their addition rather than merely
+    "usually unchanged."
+
 - **Credentials come from ordered providers (`core/credentials.py`,
   doomtickle/passdesk-ops#36, Phase 3 plan W2.1).** `get(name)` asks
   `proxy`, `file` (the configured path or `/etc/factory-broker/secrets/<name>`,
