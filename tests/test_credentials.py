@@ -25,7 +25,7 @@ class CredentialTestBase(Base):
         self.addCleanup(setattr, config, "CREDENTIAL_PROVIDERS", config.CREDENTIAL_PROVIDERS)
         config.CREDENTIAL_PROVIDERS = "proxy,file,env-file"
         self.addCleanup(credentials._registered.clear)
-        self.secrets = credentials.SECRETS_DIR
+        self.secrets = Path(config.SECRETS_DIR)
         self.docker = credentials.DOCKER_SECRETS_DIR
 
     def audit_log(self) -> str:
@@ -97,6 +97,18 @@ class FileProviderTests(CredentialTestBase):
     def test_other_names_live_in_the_secrets_directory(self):
         self.write_secret(self.secrets / "approvals-webhook", "https://hooks.example.com/x")
         self.assertEqual(credentials.get("approvals-webhook"), "https://hooks.example.com/x")
+
+    def test_secrets_dir_follows_config_secrets_dir(self):
+        # A name with no dedicated *_SECRET_PATH falls back to secrets_dir() / name,
+        # which must track config.SECRETS_DIR (BROKER_SECRETS_DIR), not a copy of it.
+        self.assertEqual(credentials.secrets_dir(), self.secrets)
+        moved = self.secrets.parent / "moved-secrets"
+        self.write_secret(moved / "approvals-webhook", "https://hooks.example.com/moved")
+        with mock.patch.object(config, "SECRETS_DIR", str(moved)):
+            self.assertEqual(credentials.secrets_dir(), moved)
+            self.assertEqual(credentials.get("approvals-webhook"), "https://hooks.example.com/moved")
+        # config.SECRETS_DIR restored by the mock: the default location applies again.
+        self.assertIsNone(credentials.get("approvals-webhook"))
 
     def test_docker_secret_is_the_fallback(self):
         self.write_secret(self.docker / "jira", "docker@example.com:tok")
@@ -284,6 +296,28 @@ class FileSafetyTests(CredentialTestBase):
         self.write_secret(self.docker / "gemini", "docker-key")
         os.chmod(self.docker / "gemini", 0o444)
         self.assertEqual(credentials.get("gemini"), "docker-key")
+
+
+@unittest.skipUnless(os.path.isdir("/proc/self/fd"), "needs /proc")
+class FdPathTests(CredentialTestBase):
+    """_fd_path trusts the kernel's own resolution of the descriptor (readlink on
+    /proc/self/fd/N) instead of walking the returned path again with realpath, which
+    would reopen a race window between the open and the check."""
+
+    def test_does_not_re_resolve_through_the_filesystem(self):
+        target = self.secrets.parent / "store" / "gemini"
+        self.write_secret(target, "tok")
+        fd = os.open(target, os.O_RDONLY)
+        try:
+            expected = os.readlink(f"/proc/self/fd/{fd}")
+            with mock.patch("os.path.realpath", side_effect=AssertionError("_fd_path must not re-walk the path")):
+                self.assertEqual(credentials._fd_path(fd, "fallback"), expected)
+        finally:
+            os.close(fd)
+
+    def test_falls_back_when_proc_is_unavailable(self):
+        with mock.patch("os.readlink", side_effect=OSError("no /proc")):
+            self.assertEqual(credentials._fd_path(0, "fallback-path"), "fallback-path")
 
 
 class PluginProviderTests(CredentialTestBase):

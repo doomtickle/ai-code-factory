@@ -64,9 +64,9 @@ class Base(unittest.TestCase):
         config.NPM_REGISTRY_SECRET_PATH = root / "secrets" / "npm-registry"
         # Likewise the secrets directory, Docker secrets and any env-file
         # variable from the environment the tests run in.
-        for name in ("SECRETS_DIR", "DOCKER_SECRETS_DIR"):
-            self.addCleanup(setattr, credentials, name, getattr(credentials, name))
-        credentials.SECRETS_DIR = root / "secrets"
+        self.addCleanup(setattr, config, "SECRETS_DIR", config.SECRETS_DIR)
+        self.addCleanup(setattr, credentials, "DOCKER_SECRETS_DIR", credentials.DOCKER_SECRETS_DIR)
+        config.SECRETS_DIR = root / "secrets"
         credentials.DOCKER_SECRETS_DIR = root / "run-secrets"
         env = mock.patch.dict(os.environ, {k: v for k, v in os.environ.items()
                                            if not k.startswith("PASSDESK_SECRET_")}, clear=True)

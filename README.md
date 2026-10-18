@@ -97,7 +97,7 @@ CI and test fixtures exercise, not because it's the only one.
 | `BROKER_ALLOWED_ORIGINS` | `` (empty) | Comma-separated Origin allowlist for the MCP spec's DNS-rebinding protection. A request with no `Origin` header (the normal case for a CLI-driven agent client) is unaffected; a request whose `Origin` isn't in this list gets HTTP 403. Empty means every Origin-bearing request is refused until a deployment opts specific origins in. |
 | `BROKER_MIRRORS` | `~/mirrors` | Where git tools keep their bare mirror clones. |
 | `BROKER_EXCHANGE_DIR` | `.factory` | Name of the workspace subdirectory `git_fetch`, `npm_fetch` and `pip_download` use to hand files to the agent's own sandbox. Must be a single path component: not empty, no `/` or NUL, not `.` or `..`, not absolute; the broker refuses to start the exchange directory otherwise. |
-| `BROKER_SECRETS_DIR` | `/etc/factory-broker/secrets` | Directory the three credential files below default into. Must be an absolute path with no `..` component; the broker refuses to start otherwise. |
+| `BROKER_SECRETS_DIR` | `/etc/factory-broker/secrets` | Directory the three credential files below default into, and also where any other credential name is looked up. Must be an absolute path with no `..` component; the broker refuses to start otherwise. |
 | `BROKER_JIRA_SECRET` | `$BROKER_SECRETS_DIR/jira` | File holding the Jira credential (`email:token`); see "Configuring credentials". |
 | `BROKER_GEMINI_SECRET` | `$BROKER_SECRETS_DIR/gemini` | File holding the Gemini API key. |
 | `BROKER_NPM_REGISTRY_SECRET` | `$BROKER_SECRETS_DIR/npm-registry` | File holding the private npm registry credential. |
@@ -159,7 +159,7 @@ first value found:
 1. `proxy`: names the egress proxy injects (`github`). The lookup stops
    there with no value, so Passdesk never holds them.
 2. `file`: the path above for the credential (or
-   `/etc/factory-broker/secrets/<name>` for any other name), then the Docker
+   `$BROKER_SECRETS_DIR/<name>` for any other name), then the Docker
    secret `/run/secrets/<name>`.
 3. `env-file`: the file named by `PASSDESK_SECRET_<NAME>_FILE`, which must
    be an absolute path.
