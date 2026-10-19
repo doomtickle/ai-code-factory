@@ -289,6 +289,22 @@ developer bundles a branch from its clone into `.factory/outgoing/` in the
 project (the one project folder it can write) and hands the file name to
 `git_push`.
 
+### Letting the reviewer file issues
+
+The reviewer has `github_create_issue`, which stays inert until you list the
+repos it may file in:
+
+1. Add them to `[github].issue_repos` in your local `policy.toml`, e.g.
+   `issue_repos = ["my-org/tracker"]`. List **private** repos only: an issue
+   in a public repo publishes whatever an agent writes. It is a separate list
+   from `[git].repos` on purpose.
+2. Give the GitHub token **Issues: read/write** on those repos, save it again
+   (`factory secret save github`), and run `factory update`.
+
+It only files issues (existing labels, no assignees, no edits or closing),
+and every issue is secret-scanned and audited. To see each one before it is
+filed, add `"github_create_issue"` to `[approvals] tools` (Passdesk Pro).
+
 ### Enabling a private npm registry
 
 `npm_fetch` downloads public packages from registry.npmjs.org without any
@@ -474,7 +490,7 @@ Three roles, split by what each is allowed to do rather than by job title:
 | Role | Does | Project access | Lanes | Broker tools |
 |---|---|---|---|---|
 | developer | implements the change, writes and runs its tests, updates the docs | read-only; works in its own clones, hands back `factory/*` branches | 3 | `npm_fetch`, `pip_download`, `git_fetch`, `git_push`, `github_create_pr` |
-| reviewer | independent check of correctness, tests, security and docs; runs the tests; APPROVED / REVISE | read-only | 2 | `npm_fetch` |
+| reviewer | independent check of correctness, tests, security and docs; runs the tests; APPROVED / REVISE; files issues when asked | read-only | 2 | `npm_fetch`, `github_create_issue` |
 | researcher | looks things up on the web and reports with sources | read-only | 1 | `web_fetch`, `gemini_flash_query` |
 
 **Lanes.** A role with `LANES="3"` runs up to three tasks at once, in lanes
@@ -637,7 +653,7 @@ be a git repository or a folder of them.
 
 **Add a role:**
 ```sh
-factory role new designer                # copies reviewer (read-only; only network tool: npm_fetch)
+factory role new designer                # copies reviewer (read-only; network tools: npm_fetch, github_create_issue)
 factory role new docs-writer developer   # or copy any existing role
 ```
 Edit its `role.conf` and instructions, then run `factory start` again. It creates
