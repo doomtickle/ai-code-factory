@@ -115,6 +115,7 @@ if [ -z "$pid" ]; then
   # env(1), not VAR=value prefixes: DISPATCH_PORT is readonly in this shell.
   nohup env DISPATCH_ROOT="$ROOT" DISPATCH_PROJECT="$PROJECT" DISPATCH_STATE="$STATE" \
     DISPATCH_PORT="$DISPATCH_PORT" DISPATCH_SBX="$(command -v sbx)" \
+    DISPATCH_BROKER_AUDIT="$FACTORY_BROKER_STATE/audit.jsonl" \
     "$PYTHON" "$ROOT/dispatch/server.py" >>"$STATE/dispatch.log" 2>&1 </dev/null &
   pid=$!
   echo "$pid" > "$STATE/pid"

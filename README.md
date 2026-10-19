@@ -185,6 +185,7 @@ Herdr; run `factory start` again to reopen it.
 | `factory start [dir]` | Start the factory for a project (default: current folder) and open Herdr |
 | `factory status` | Project, broker, dispatch bridge, login, roles (with their lanes), sandbox status, and (Passdesk Pro) pending approvals and the oldest one's age |
 | `factory logs <role>` | Follow a role's transcripts, all its lanes (`factory logs developer-lane2` for one lane); `factory logs broker` / `dispatch` for audit logs |
+| `factory packet [<job-id> \| latest \| <lane> \| --list]` | A job's review packet: the task, each branch's commits and diffstat against your checked-out branch, the `factory-test` modes it reported, the broker calls its role made, cost, and the role's report with its APPROVED / REVISE verdict. Written after every job; `--list` shows recent ones |
 | `factory roles` | List roles, their project access, lanes and network tools |
 | `factory role new <name> [like]` | Add a role (copied from `reviewer`, or the role you name) |
 | `factory docs [--print]` | Open these docs, with guides, as a web page in your browser (offline, works before setup); `--print` writes the HTML to stdout instead |
@@ -748,6 +749,7 @@ hasn't dispatched any jobs yet just shows an empty report.
     and context size after the last job)
   - `dispatch/imports/`: bundles being imported from a developer lane (deleted
     once imported)
+  - `dispatch/packets/<job-id>.md`: the job's review packet (`factory packet`)
   - `broker/audit.jsonl`: every broker call, with the calling role
   - Server errors: `dispatch/dispatch.log` and `broker/broker.log`
 - **Why state is outside the repo:** the broker re-reads its tool grants

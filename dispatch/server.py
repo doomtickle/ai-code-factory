@@ -11,8 +11,16 @@ for roles defined in roles/*/role.conf, and all it may do to get there is:
 - for rw roles, after the job: a fixed `git fetch` of the bundle that
   `factory-lane export` streamed out (size-capped) into the host project's
   remote-tracking refs `refs/remotes/factory-<lane>/factory/*`, with hooks and
-  fsmonitor forced off, then `git for-each-ref` to report what arrived. No
-  other git command, and nothing from the sandbox ever picks the host path.
+  fsmonitor forced off, then `git for-each-ref` to report what arrived, and,
+  for the job's review packet, a read-only `git log` and `git diff --stat` of
+  each imported branch against the host's HEAD (same flags, external diff and
+  textconv off). No other git command, and nothing from the sandbox ever
+  picks the host path.
+
+After every job it writes a review packet, <DISPATCH_STATE>/packets/<job>.md:
+the task, the branches (commits and diffstat), the tests the role reported,
+the broker calls its role made meanwhile, cost, and the report. `factory
+packet` prints it.
 
 It also answers the Coordinator's questions about the factory itself
 (factory_docs) from a read-only snapshot of the factory's markdown docs that
@@ -27,6 +35,7 @@ Standard library only; compatible with the macOS system Python (3.9).
 
 from __future__ import annotations
 
+import calendar
 import hashlib
 import hmac
 import json
@@ -81,6 +90,9 @@ GIT_TIMEOUT_SECONDS = 300
 _SESSION_ID = re.compile(r"^[A-Za-z0-9-]{1,80}$")
 # Host git never runs repo-configured hooks or fsmonitor while importing.
 GIT_SAFE = ("-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false")
+# The broker's audit log, for the broker calls a job's role made (review packet).
+BROKER_AUDIT = Path(os.environ.get("DISPATCH_BROKER_AUDIT") or STATE.parent / "broker" / "audit.jsonl")
+MAX_PACKET_LINES = 80  # per packet section: commits, diffstat lines, broker calls
 
 ROLE_PREAMBLE = (
     "You are the {role} in a multi-agent software factory. You received this task "
@@ -299,6 +311,9 @@ class Job:
         # rw roles only: what the post-job import brought into the host project.
         self.branches: list | None = [] if rw else None
         self.import_errors: list | None = [] if rw else None
+        self.session_mode = ""  # how the session was chosen, for the packet
+        self.test_modes: list = []  # "factory-test: mode: ..." lines seen in tool results
+        self.packet: str | None = None  # path of the review packet, once written
         self.proc: subprocess.Popen | None = None
         self.done = threading.Event()
 
@@ -320,6 +335,8 @@ class Job:
             out["branches"] = list(self.branches)
         if self.import_errors is not None:
             out["import_errors"] = list(self.import_errors)
+        if self.packet:
+            out["packet"] = self.packet
         if with_result and self.status != "running":
             out["report"] = sanitize(self.result)
         return out
@@ -419,6 +436,9 @@ def render_event(event: dict, log: Transcript, job: Job) -> None:
                     content = " ".join(c.get("text", "") for c in content if isinstance(c, dict))
                 mark = "✗" if block.get("is_error") else "↳"
                 log.write(f"   {mark} {one_line(content or '', 140)}")
+                for mode in _TEST_MODE.findall(sanitize(str(content or ""), 20_000)):
+                    if mode not in job.test_modes and len(job.test_modes) < 10:
+                        job.test_modes.append(mode)
     elif etype == "result":
         job.session_id = event.get("session_id") or job.session_id
         job.result = str(event.get("result") or "")
@@ -622,6 +642,130 @@ def import_lane(job: Job, log: Transcript) -> None:
                 pass
 
 
+# --------------------------------------------------------------------------
+# Review packet: one markdown file per job in STATE/packets/, with what the user
+# needs to judge the job in one place: the task, the branches it produced
+# (commits and diffstat against the host's checked-out branch), the tests it
+# reported, the broker calls its role made meanwhile, its cost and its report.
+
+_TEST_MODE = re.compile(r"factory-test: mode(?: was)?: [^\n]{1,200}")
+_VERDICT = re.compile(r"\b(APPROVED|REVISE)\b")
+_AUDIT_TS = "%Y-%m-%dT%H:%M:%SZ"
+
+
+def packet_path(job_id: str) -> Path:
+    return STATE / "packets" / f"{job_id}.md"
+
+
+def branch_detail(repo: Path, ref: str) -> list:
+    """Commits and diffstat of an imported branch against the host repo's HEAD.
+    Read-only git with a fixed argv: hooks and fsmonitor off (GIT_SAFE), and
+    external diff drivers and textconv off, since the branch's own
+    .gitattributes could name one."""
+    full = ref if ref.startswith("refs/") else f"refs/remotes/{ref}"
+    lines = []
+    cp = host_git(repo, "log", "--no-color", "--no-decorate", "--format=%h %s",
+                  f"--max-count={MAX_PACKET_LINES}", f"HEAD..{full}")
+    if cp.returncode == 0:
+        commits = cp.stdout.decode("utf-8", "replace").splitlines()
+        more = "+" if len(commits) >= MAX_PACKET_LINES else ""
+        lines.append(f"Commits past HEAD ({len(commits)}{more}):")
+        lines += [f"    {one_line(c, 160)}" for c in commits] or ["    (none: HEAD already has this branch)"]
+    else:
+        lines.append(f"Commits: git log failed: {excerpt(cp.stderr, 300)}")
+    cp = host_git(repo, "diff", "--stat=120", "--no-color", "--no-ext-diff", "--no-textconv",
+                  f"HEAD...{full}")
+    if cp.returncode == 0:
+        stat = cp.stdout.decode("utf-8", "replace").splitlines()
+        lines.append("Diffstat (HEAD...branch):")
+        lines += [f"    {one_line(s, 160)}" for s in stat[:MAX_PACKET_LINES]] or ["    (no changes)"]
+        if len(stat) > MAX_PACKET_LINES:
+            lines.append(f"    ... {len(stat) - MAX_PACKET_LINES} more lines")
+    else:
+        lines.append(f"Diffstat: git diff failed: {excerpt(cp.stderr, 300)}")
+    return lines
+
+
+def broker_calls(role: str, start: float, end: float) -> list:
+    """The broker audit records of this role between start and end (epoch seconds),
+    one line each. Lanes share a role, so parallel lanes' calls show up together.
+    [] when the log is missing or unreadable; bad lines are skipped."""
+    try:
+        if BROKER_AUDIT.stat().st_size > 50_000_000:
+            return ["(the broker audit log is too large to scan)"]
+        text = BROKER_AUDIT.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    lines = []
+    for raw in text.splitlines():
+        try:
+            rec = json.loads(raw)
+        except ValueError:
+            continue
+        if not isinstance(rec, dict) or not rec.get("tool") or rec.get("principal", rec.get("role")) != role:
+            continue
+        try:
+            ts = calendar.timegm(time.strptime(str(rec.get("ts")), _AUDIT_TS))
+        except (TypeError, ValueError):
+            continue
+        if ts < start - 2 or ts > end + 2:
+            continue
+        line = f"{str(rec['ts'])[11:19]}  {one_line(rec['tool'], 40)}  {one_line(rec.get('decision', ''), 20)}"
+        if rec.get("reason"):
+            line += f"  {one_line(rec['reason'], 200)}"
+        lines.append(line)
+    if len(lines) > MAX_PACKET_LINES:
+        lines = lines[:MAX_PACKET_LINES] + [f"... {len(lines) - MAX_PACKET_LINES} more"]
+    return lines
+
+
+def write_packet(job: Job) -> None:
+    """Write STATE/packets/<job id>.md and record its path on the job."""
+    s = job.summary()
+    model = job.model_used or job.model or "default"
+    rows = [("Lane", job.lane),
+            ("Started", f"{time.strftime(_AUDIT_TS, time.gmtime(job.started))}, {s['elapsed_seconds']} s"),
+            ("Model", model + (f", effort {job.effort}" if job.effort else "")),
+            ("Session", job.session_mode or "unknown")]
+    cost = []
+    if "cost_usd" in s:
+        cost.append(f"${s['cost_usd']:.4f} this job")
+    if "session_cost_usd" in s:
+        cost.append(f"${s['session_cost_usd']:.4f} the session so far")
+    if job.context_tokens is not None:
+        cost.append(f"context ~{round(job.context_tokens / 1000)}k tokens")
+    if cost:
+        rows.append(("Cost", ", ".join(cost)))
+    verdicts = _VERDICT.findall(job.result)
+    if verdicts:
+        rows.append(("Verdict", verdicts[-1]))
+    parts = ["\n".join([f"# {job.role} job {job.id}: {job.status}", ""] + [f"- {k}: {v}" for k, v in rows]),
+             "## Task\n\n" + sanitize(job.task, 8000).strip()]
+    if job.branches is not None:
+        lines = []
+        for b in job.branches:
+            repo = PROJECT if b["repo"] == "." else PROJECT / b["repo"]
+            where = "" if b["repo"] == "." else f" in {b['repo']}"
+            lines.append(f"### {b['ref']} at {b['commit']}{where}\n")
+            try:
+                lines += branch_detail(repo, b["ref"])
+            except (OSError, subprocess.SubprocessError) as e:
+                lines.append(f"(could not read the branch: {type(e).__name__}: {one_line(str(e), 200)})")
+            lines.append("")
+        lines += [f"Import error: {err}" for err in job.import_errors or []]
+        parts.append("## Branches\n\n" + ("\n".join(lines).strip() or "(none)"))
+    parts.append("## Tests\n\n" + ("\n".join(f"- {m}" for m in job.test_modes)
+                                   or "(no factory-test run reported)"))
+    calls = broker_calls(job.role, job.started, job.finished or time.time())
+    parts.append(f"## Broker calls by the {job.role} role during the job\n\n"
+                 + ("\n".join(f"- {c}" for c in calls) or "(none)"))
+    parts.append("## Report\n\n" + (sanitize(job.result).strip() or "(no report)"))
+    path = packet_path(job.id)
+    path.parent.mkdir(exist_ok=True)
+    path.write_text("\n\n".join(parts) + "\n", encoding="utf-8")
+    job.packet = str(path)
+
+
 def claude_argv(job: Job, workdir: str, lane_root: str | None, resume: str | None,
                 fresh_id: str | None) -> list:
     argv = [SBX, "exec", "-w", workdir]
@@ -720,6 +864,11 @@ def run_job(job: Job) -> None:
         except Exception as e:  # noqa: BLE001
             job.import_errors.append(one_line(f"import error: {type(e).__name__}: {e}", 2000))
         job.finished = time.time()
+        try:
+            write_packet(job)
+            log.write(f"📄 review packet: factory packet {job.id}")
+        except Exception as e:  # noqa: BLE001 - the packet is a convenience, never the job's verdict
+            log.write(f"   (no review packet: {one_line(f'{type(e).__name__}: {e}', 300)})")
         log.write(f"■ job {job.id} {job.status} after {round(job.finished - job.started)}s")
         audit({"event": "job-end", **job.summary()})
         job.done.set()
@@ -854,6 +1003,7 @@ def tool_delegate(args: dict) -> str:
             else:
                 mode = "fresh session"
         job = Job(role, task, resume, model, start_cost, instructions, effort, lane=lane, rw=rw)
+        job.session_mode = mode
         _jobs[job.id] = job
     threading.Thread(target=run_job, args=(job,), daemon=True).start()
     if wait:
@@ -1083,7 +1233,10 @@ TOOLS = {
                      "lane is the lane that ran it. For roles that edit code, branches lists the "
                      "committed factory/* branches now in the project, as {repo, ref, commit} where ref "
                      "(e.g. factory-developer/factory/x) is a remote-tracking ref in that repo; "
-                     "import_errors lists anything that could not be brought back.",
+                     "import_errors lists anything that could not be brought back. packet is the "
+                     "path, on the user's machine, of the job's review packet (task, branch commits "
+                     "and diffstat, tests, broker calls, cost, report); the user reads it with "
+                     "`factory packet <job_id>`.",
                      {"job_id": {"type": "string"}, "timeout_seconds": {"type": "integer"}}, ["job_id"]),
     "job_status": (tool_job_status, "Show the 20 most recent jobs and their status.", {}, []),
     "cancel_job": (tool_cancel_job, "Stop a running job (other lanes of its role keep running).", {"job_id": {"type": "string"}}, ["job_id"]),
@@ -1183,7 +1336,10 @@ def server_instructions() -> str:
         "factory/<topic>. When their job ends, those committed branches appear in the project "
         "as remote-tracking refs factory-<lane>/factory/<topic> (e.g. "
         "factory-developer/factory/rate-limit; the job result lists them under branches). "
-        "Give the reviewer that exact ref to review, and tell the user the ref to merge.",
+        "Give the reviewer that exact ref to review, and tell the user the ref to merge. Every "
+        "job leaves a review packet on the user's machine (the branch's commits and diffstat, "
+        "tests, broker calls, cost and the report in one file): point the user at "
+        "`factory packet <job_id>` instead of quoting a report at length.",
         "Questions about the factory itself (how to set it up or change it, factory commands, "
         "roles and lanes, broker tools, settings, error messages from factory commands): call "
         "factory_docs and answer from it, not from memory, citing the section. You can't run "
@@ -1265,7 +1421,7 @@ def main() -> None:
     for p, what in ((ROOT / "roles", "DISPATCH_ROOT/roles"), (PROJECT, "DISPATCH_PROJECT"), (STATE, "DISPATCH_STATE")):
         if not p.is_dir():
             sys.exit(f"{what} must be an existing directory (got {p})")
-    for sub in ("logs", "sessions", "imports"):
+    for sub in ("logs", "sessions", "imports", "packets"):
         (STATE / sub).mkdir(exist_ok=True)
     for stale in (STATE / "imports").glob("*.bundle"):  # left by a bridge that died mid-import
         stale.unlink(missing_ok=True)

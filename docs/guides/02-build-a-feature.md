@@ -125,6 +125,20 @@ jq -c 'select(.event == "job-end") | {lane, status, cost_usd, context_tokens, br
 `factory analytics` turns the same log into a cost and performance report
 ([Analytics](../../README.md#analytics)).
 
+Every job also leaves a **review packet** on your machine, one Markdown file
+with everything you need to judge it: the task, each branch's commits and
+diffstat against your checked-out branch, the `factory-test` modes the role
+reported, the broker calls its role made meanwhile, the cost, and the role's
+report (with its APPROVED or REVISE verdict for a review). The job result
+carries its path as `packet`; read it with:
+
+```bash
+factory packet                      # the latest job
+factory packet 20261017-142530-9b1e44
+factory packet developer-lane2      # that lane's latest job
+factory packet --list               # recent jobs
+```
+
 ## REVISE loops
 
 When the reviewer answers REVISE, the Coordinator sends its list back to the

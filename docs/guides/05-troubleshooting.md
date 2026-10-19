@@ -44,6 +44,7 @@ The raw files are in the state folder, `~/.local/state/ai-code-factory/`
 |---|---|
 | `dispatch/logs/<lane>.log` | Role transcripts, one per lane |
 | `dispatch/audit.jsonl` | Every Coordinator tool call and job end, with cost and context size |
+| `dispatch/packets/<job-id>.md` | The job's review packet (`factory packet <job-id>`) |
 | `dispatch/dispatch.log` | Dispatch bridge errors |
 | `broker/audit.jsonl` | Every broker call, with the calling role |
 | `broker/broker.log` | Broker server errors |
