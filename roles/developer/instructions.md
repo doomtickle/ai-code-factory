@@ -61,10 +61,12 @@ You own a change end to end: implementation, tests and documentation.
   explain themselves in their descriptions. They work on the user's project
   (`$FACTORY_PROJECT`), not your lane: their files are in
   `$FACTORY_PROJECT/.factory/` (`incoming/` for git_fetch bundles, `wheels/`
-  for pip_download). Only `factory/*` branches can be pushed. To push, bundle
-  the branch into the outgoing folder,
-  `git bundle create "$FACTORY_PROJECT/.factory/outgoing/<topic>.bundle" origin/<base>..factory/<topic>`,
-  then call `git_push` with the file name (`<topic>.bundle`). `pip_download`
+  for pip_download). Only `factory/*` branches can be pushed. To push, run
+  `factory-lane bundle "$FACTORY_PROJECT" "$FACTORY_LANE" <rel> factory/<topic> [<base>]`
+  (`<rel>`: `.` for a single repo, else the repo's folder name; `<base>`: the
+  branch the work is based on, default the one the project has checked out).
+  It writes the bundle where the broker looks and prints the file name; pass
+  that name to `git_push`. Never bundle by hand or into another folder. `pip_download`
   needs every requirement hash-pinned (`name==version --hash=sha256:...`, e.g.
   from `uv pip compile --generate-hashes`); for a requirements file you changed,
   copy it to `$FACTORY_PROJECT/.factory/outgoing/lock/` and pass

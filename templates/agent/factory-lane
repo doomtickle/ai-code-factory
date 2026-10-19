@@ -3,7 +3,8 @@ set -euo pipefail
 
 # Usage: factory-lane repos   <project>
 #        factory-lane prepare <project> <lane>
-#        factory-lane export  <project> <lane> <rel>
+#        factory-lane export  <project> <lane> <rel> [full]
+#        factory-lane bundle  <project> <lane> <rel> <branch> [<base>]
 #        factory-lane review  <project> <ref> [<rel>]
 #
 # Private git clones ("lanes") of the read-only project, on this sandbox's own
@@ -21,8 +22,16 @@ set -euo pipefail
 #            ${FACTORY_LANES_ROOT:-$HOME/lanes}/<lane> (repo "."), with the
 #            repos of a folder of repos as its subdirectories.
 #   export   Write to stdout a git bundle of the lane repo's factory/* branches,
-#            without what origin (the host) already has. Exit 3 when there is
-#            nothing to export.
+#            without the commits the project's repo already has (its ref tips,
+#            read from the project itself, not from the lane's origin/* refs,
+#            which the role may have moved). With "full", the branches' whole
+#            history, for when the project lacks a prerequisite anyway. Exit 3
+#            when there is nothing to export.
+#   bundle   For the broker's git_push: write <base>..<branch> from the lane
+#            repo to <project>/.factory/outgoing/<name>.bundle and print
+#            <name>.bundle, the file name git_push takes. <branch> must be a
+#            factory/* branch; <base> is a branch name on origin (default:
+#            origin/HEAD, the branch the project has checked out).
 #   review   For read-only roles: clone <project>/<rel> (default ".") into
 #            $HOME/review/, check out <ref> (e.g.
 #            factory-developer/factory/x, or refs/remotes/factory-developer/factory/x)
@@ -34,7 +43,7 @@ set -euo pipefail
 #
 # Baked into the developer and reviewer images (templates/*/Dockerfile).
 
-USAGE="usage: factory-lane repos <project> | prepare <project> <lane> | export <project> <lane> <rel> | review <project> <ref> [<rel>]"
+USAGE="usage: factory-lane repos <project> | prepare <project> <lane> | export <project> <lane> <rel> [full] | bundle <project> <lane> <rel> <branch> [<base>] | review <project> <ref> [<rel>]"
 
 die() { echo "factory-lane: $*" >&2; exit 1; }
 say() { echo "factory-lane: $*" >&2; }
@@ -133,9 +142,23 @@ cmd_prepare() {
   (cd "$lanedir" && pwd -P)
 }
 
+# project_has SRC REPO: the ref tips of the project's repo SRC that the lane
+# repo REPO has, as rev-list exclusions ("^<sha>", one per line). What the
+# project already has is read from the project itself, never from the lane's
+# origin/* refs: the role can move those (importing a git_fetch bundle into
+# origin/main does), and a bundle whose prerequisites the project lacks can't
+# be imported there.
+project_has() {
+  g -C "$1" for-each-ref --format='%(objectname)' refs/heads refs/remotes refs/tags 2>/dev/null \
+    | LC_ALL=C sort -u \
+    | g -C "$2" cat-file --batch-check='%(objectname) %(objecttype)' 2>/dev/null \
+    | awk '$2 == "commit" || $2 == "tag" { print "^" $1 }'
+}
+
 cmd_export() {
-  [ $# -eq 3 ] || die "$USAGE"
-  local project="$1" lane="$2" rel="$3" repo rc
+  [ $# -eq 3 ] || { [ $# -eq 4 ] && [ "$4" = full ]; } || die "$USAGE"
+  local project="$1" lane="$2" rel="$3" mode="${4:-}" repo rc x
+  local -a not=()
   check_project "$project"
   check_lane "$lane"
   check_rel "$project" "$rel"
@@ -148,15 +171,18 @@ cmd_export() {
     say "nothing to export: no factory/* branches in $repo"
     exit 3
   fi
-  if [ -z "$(g -C "$repo" rev-list -n 1 '--branches=factory/*' --not --remotes=origin)" ]; then
-    say "nothing to export: origin already has every factory/* commit in $repo"
+  if [ "$mode" != full ]; then
+    while IFS= read -r x; do not+=("$x"); done < <(project_has "$(source_of "$project" "$rel")" "$repo")
+  fi
+  if [ -z "$(g -C "$repo" rev-list -n 1 '--branches=factory/*' ${not[@]+"${not[@]}"})" ]; then
+    say "nothing to export: the project already has every factory/* commit in $repo"
     exit 3
   fi
   # Global: the EXIT trap runs after this function's locals are gone.
   tmp="$(mktemp -d)"
   trap 'rm -rf "$tmp"' EXIT
   set +e
-  g -C "$repo" bundle create --quiet "$tmp/lane.bundle" '--branches=factory/*' --not --remotes=origin \
+  g -C "$repo" bundle create --quiet "$tmp/lane.bundle" '--branches=factory/*' ${not[@]+"${not[@]}"} \
     >/dev/null 2>"$tmp/err"
   rc=$?
   set -e
@@ -170,6 +196,43 @@ cmd_export() {
   fi
   cat "$tmp/err" >&2
   cat "$tmp/lane.bundle"
+}
+
+cmd_bundle() {
+  [ $# -eq 4 ] || [ $# -eq 5 ] || die "$USAGE"
+  local project="$1" lane="$2" rel="$3" branch="$4" base="${5:-}" repo out name n
+  check_project "$project"
+  check_lane "$lane"
+  check_rel "$project" "$rel"
+  repo="$(target "$(lanes_root)/$lane" "$rel")"
+  [ -e "$repo/.git" ] || die "no lane clone at $repo"
+  [[ "$branch" =~ ^factory/[A-Za-z0-9._/-]+$ ]] \
+    || die "only factory/* branches can be pushed (letters, digits, . _ / -): $branch"
+  case "$branch" in *..*|*/|*//*|*/.*|*.lock) die "invalid branch name: $branch" ;; esac
+  g -C "$repo" show-ref --verify --quiet "refs/heads/$branch" || die "no such branch in $repo: $branch"
+  if [ -z "$base" ]; then
+    base="$(g -C "$repo" symbolic-ref -q --short refs/remotes/origin/HEAD || true)"
+    [ -n "$base" ] || die "the lane has no origin/HEAD; pass the base branch (e.g. main)"
+  else
+    [[ "$base" =~ ^[A-Za-z0-9._/-]+$ ]] || die "invalid base: $base"
+    case "$base" in -*|*..*) die "invalid base: $base" ;; esac
+    case "$base" in origin/*) ;; *) base="origin/$base" ;; esac
+  fi
+  g -C "$repo" rev-parse --verify --quiet "refs/remotes/$base^{commit}" >/dev/null \
+    || die "no such base in $repo: $base (fetch it first, e.g. with the broker's git_fetch)"
+  n="$(g -C "$repo" rev-list --count "refs/remotes/$base..refs/heads/$branch")"
+  [ "$n" -gt 0 ] || die "$branch has no commits beyond $base; nothing to push"
+  # The one project path a writable role may write; the factory creates it.
+  out="$project/.factory/outgoing"
+  [ -d "$out" ] && [ ! -L "$out" ] || die "$out is missing (the factory creates it for roles that may push)"
+  name="${branch#factory/}"
+  [ "$rel" = . ] || name="$rel--$name"
+  name="$(printf '%s' "$name" | tr -c 'A-Za-z0-9._-' '_').bundle"
+  g -C "$repo" bundle create --quiet "$out/$name.tmp" "refs/remotes/$base..refs/heads/$branch" >&2 \
+    || { rm -f "$out/$name.tmp"; die "git bundle create failed in $repo"; }
+  mv -f "$out/$name.tmp" "$out/$name"
+  say "bundled $n commit(s), $base..$branch, into $out/$name"
+  printf '%s\n' "$name"
 }
 
 cmd_review() {
@@ -229,10 +292,11 @@ cmd_review() {
 cmd="$1"
 shift
 case "$cmd" in
-  -h|--help|help) sed -n '4,35p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+  -h|--help|help) sed -n '4,/^# Baked into/p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
   repos) cmd_repos "$@" ;;
   prepare) cmd_prepare "$@" ;;
   export) cmd_export "$@" ;;
+  bundle) cmd_bundle "$@" ;;
   review) cmd_review "$@" ;;
   *) die "$USAGE" ;;
 esac

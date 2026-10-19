@@ -285,9 +285,10 @@ shares settings, keep a copy of the folder somewhere for teammates to copy.
    for every sandbox.
 Agents may only push branches starting with `factory/`. They can never push to
 protected branches (`main`, `master`, `release/*`) and can't force-push. The
-developer bundles a branch from its clone into `.factory/outgoing/` in the
-project (the one project folder it can write) and hands the file name to
-`git_push`.
+developer runs `factory-lane bundle` in its sandbox, which writes the branch
+(only the commits past its base) as a bundle into `.factory/outgoing/` in the
+project (the one project folder it can write) and prints the file name it
+then hands to `git_push`.
 
 ### Letting the reviewer file issues
 
@@ -576,8 +577,12 @@ Nothing writes your working tree outside the git-ignored `.factory/` (the
 developer's `.factory/outgoing/`, the broker's downloads), and nothing writes
 your `.git` except that import: the bridge asks the developer's sandbox for a
 git bundle of the lane's `factory/*` branches (minus what your repository
-already has), then runs one fixed `git fetch` of it into
+already has: the sandbox reads your repository's own ref tips, not its clone's
+`origin/*` refs, which the developer may have moved by importing a `git_fetch`
+bundle), then runs one fixed `git fetch` of it into
 `refs/remotes/factory-<lane>/`, with hooks and `core.fsmonitor` forced off.
+If that fetch still finds a base commit missing, the bridge asks once more for
+the branches' whole history and says so in the lane's transcript.
 No git hook or config from the sandbox can run on your machine. It never prunes, so a branch stays until you
 delete it (`git branch -rd factory-developer/factory/rate-limit`). Work the
 developer didn't commit stays in its lane for the next task there.
@@ -859,7 +864,7 @@ docs/mac-quickstart.html     One-page Mac quickstart
 windows/enable-wsl.ps1       Windows side of that setup: WSL, Ubuntu, nested virtualization
 templates/<image>/           Pinned images: developer, reviewer (+ruff)
 templates/agent/factory-test Runs tests in a sandbox-local copy (baked into developer and reviewer)
-templates/agent/factory-lane Lane clones: prepare, export bundles, check out a branch to review
+templates/agent/factory-lane Lane clones: prepare, export bundles, bundle a branch for git_push, check out a branch to review
 config.example/              Example local settings for ~/.config/ai-code-factory/
 scripts/lib/common.sh        Pinned versions, checksums, names, shared checks
 scripts/lib/roles.sh         Role parsing and validation
