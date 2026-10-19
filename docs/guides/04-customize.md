@@ -16,7 +16,7 @@ affected, after listing what each one loses and asking you.
 
 | You changed | Run |
 |---|---|
-| Per-project notes (`projects/<folder>.md`) | `factory start` |
+| Per-project notes (`projects/<folder>.md`, `projects/<folder>.<role>.md`) | `factory start` |
 | A role's instructions, `MODEL`, `MODELS`, `EFFORT`, `LANES`, `MAX_SESSION_TOKENS`, `MAX_TURNS` | `factory start` |
 | A role's `BROKER_TOOLS` (it already had some) | `factory start` |
 | A new role, or a removed one | `factory start` |
@@ -71,6 +71,13 @@ Added project notes from /Users/you/.config/ai-code-factory/projects/my-api.md t
 
 For a folder of repositories, use the folder's name (`shop.md` for
 `~/code/shop`) and say which notes apply to which repo.
+
+Notes that only one role needs go in `projects/<folder>.<role>.md`, next to the
+shared file: `my-api.developer.md` for the docs style and commit conventions,
+`my-api.reviewer.md` for what to be strict about in this project. `factory
+start` appends each one after the shared notes, to that role alone, under a
+`# This project (my-api), for the developer` heading, so the other roles don't
+carry it in every prompt.
 
 > **Note:** A role's instructions plus your notes must stay under 20,000
 > characters, or the dispatch bridge refuses its tasks with
