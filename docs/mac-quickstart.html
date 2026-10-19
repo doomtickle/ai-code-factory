@@ -196,15 +196,15 @@ source ~/.zshrc</pre><button class="copy" type="button">Copy</button></div>
       <li class="step">
         <h3>Start the factory on a project</h3>
         <div class="step-body">
-          <p>Run it from the project folder: a git repository, or a folder of them. It opens Herdr with a Coordinator tab and one tab per role.</p>
+          <p>Run it from the project folder: a git repository, or a folder of them. It opens Herdr with one Coordinator tab.</p>
           <div class="cmd"><pre>cd ~/code/my-project
 factory start</pre><button class="copy" type="button">Copy</button></div>
           <div class="panes" aria-label="What Herdr shows">
-            <div class="pane"><b>coordinator</b><span>Claude on top, a host shell below</span></div>
-            <div class="pane"><b>developer</b><span>Live transcripts: code, tests, docs on factory/* branches</span></div>
-            <div class="pane"><b>reviewer</b><span>Live transcript: read-only review</span></div>
-            <div class="pane"><b>researcher</b><span>Live transcript: the only role on the web</span></div>
+            <div class="pane"><b>Coordinator (VM)</b><span>Claude on top, a host shell below</span></div>
+            <div class="pane"><b>Watch</b><span>Live, read-only view of every role's lanes: developer, reviewer, researcher</span></div>
+            <div class="pane"><b>Host shell</b><span>A normal terminal, in the project folder</span></div>
           </div>
+          <p class="note"><strong>Per-role tabs instead?</strong> <code>factory start --layout tabs</code> swaps the Watch pane for one tab per role, each tailing that role's live transcript (remembered for next time).</p>
         </div>
       </li>
 
