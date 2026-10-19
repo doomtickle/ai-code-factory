@@ -109,7 +109,7 @@ What the fields tell you:
 | `cost_usd` | What this job cost |
 | `session_cost_usd` | The running total of the lane's session, earlier jobs included |
 | `context_tokens` | How large the lane's session has grown; every later turn re-reads it |
-| `branches` | Committed `factory/*` branches now in your project: repo, ref and commit |
+| `branches` | The `factory/*` branches this job created or moved in your project: repo, ref and commit (earlier jobs' branches stay but aren't listed again) |
 | `import_errors` | Anything that could not be brought back |
 | `packet` | Path of the job's review packet (see below) |
 | `session` | Whether the job continued the lane's session or started fresh, and why |

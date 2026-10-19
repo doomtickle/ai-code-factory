@@ -593,10 +593,26 @@ def fetch_bundle(repo: Path, bundle: Path, namespace: str) -> subprocess.Complet
                         f"+refs/heads/factory/*:{namespace}*")
 
 
+def lane_refs(repo: Path, namespace: str) -> dict:
+    """{short ref: full object id} of the host repo's refs under the lane's namespace."""
+    with _import_lock:
+        cp = host_git(repo, "for-each-ref", "--format=%(refname:short) %(objectname)", namespace)
+    if cp.returncode != 0:
+        raise LaneError(f"listing imported branches failed: {excerpt(cp.stderr)}")
+    refs = {}
+    for line in cp.stdout.decode("utf-8", "replace").splitlines():
+        ref, _, sha = line.strip().rpartition(" ")
+        if ref:
+            refs[ref] = sha
+    return refs
+
+
 def import_lane(job: Job, log: Transcript) -> None:
     """Bring the lane's committed factory/* branches into the host project as
     refs/remotes/factory-<lane>/factory/*, one repo of project_repos at a time.
-    The host repos come from the host's own listing, never from the sandbox."""
+    The host repos come from the host's own listing, never from the sandbox.
+    job.branches gets the refs this job created or moved, not every ref the lane
+    ever brought back (the import never prunes)."""
     repos = project_repos(PROJECT)
     if not repos:
         job.import_errors.append("the project has no git repository to import into")
@@ -610,6 +626,7 @@ def import_lane(job: Job, log: Transcript) -> None:
         try:
             if not export_bundle(job, rel, bundle):
                 continue
+            before = lane_refs(repo, namespace)
             cp = fetch_bundle(repo, bundle, namespace)
             if cp.returncode != 0 and b"prerequisite" in cp.stderr.lower():
                 # The lane left out commits the host turned out not to have (its
@@ -622,19 +639,17 @@ def import_lane(job: Job, log: Transcript) -> None:
                 cp = fetch_bundle(repo, bundle, namespace)
             if cp.returncode != 0:
                 raise LaneError(f"{rel}: importing the bundle failed: {excerpt(cp.stderr)}")
-            with _import_lock:
-                cp = host_git(repo, "for-each-ref",
-                              "--format=%(refname:short) %(objectname:short)", namespace)
-                if cp.returncode != 0:
-                    raise LaneError(f"{rel}: listing imported branches failed: {excerpt(cp.stderr)}")
-            for line in cp.stdout.decode("utf-8", "replace").splitlines():
-                ref, _, commit = line.strip().rpartition(" ")
-                if not ref:
-                    continue
-                branch = {"repo": rel, "ref": one_line(ref, 200), "commit": one_line(commit, 40)}
+            changed = 0
+            for ref, sha in lane_refs(repo, namespace).items():
+                if before.get(ref) == sha:
+                    continue  # an earlier job's branch, untouched by this one
+                changed += 1
+                branch = {"repo": rel, "ref": one_line(ref, 200), "commit": one_line(sha[:7], 40)}
                 job.branches.append(branch)
                 where = "" if rel == "." else f" in {one_line(rel, 100)}"
                 log.write(f"⎇ branch {branch['ref']} at {branch['commit']}{where}")
+            if not changed:
+                log.write(f"   {rel}: the bundle brought no new commits")
         except (LaneError, OSError, subprocess.SubprocessError) as e:
             msg = one_line(str(e), 2000) if isinstance(e, LaneError) else \
                 one_line(f"{rel}: import error: {type(e).__name__}: {e}", 2000)
@@ -653,7 +668,10 @@ def import_lane(job: Job, log: Transcript) -> None:
 # (commits and diffstat against the host's checked-out branch), the tests it
 # reported, the broker calls its role made meanwhile, its cost and its report.
 
-_TEST_MODE = re.compile(r"factory-test: mode(?: was)?: [^\n]{1,200}")
+# Real factory-test output: at a line start, with one of its mode labels. A
+# mention elsewhere (a source comment in a diff, an instruction) doesn't count.
+_TEST_MODE = re.compile(r"^factory-test: mode(?: was)?: "
+                        r"(?:clean install|host node_modules fallback|project files only)[^\n]{0,200}", re.M)
 # The reviewer's report starts with "VERDICT: APPROVED" or "VERDICT: REVISE" (its
 # instructions); a report without that line falls back to the last bare word.
 _VERDICT_LINE = re.compile(r"^\s*VERDICT:\s*(APPROVED|REVISE)\b", re.M)
@@ -1249,7 +1267,7 @@ TOOLS = {
                      "is this job's cost (omitted if unknown), session_cost_usd the role session's "
                      "total so far, and context_tokens the approximate context the session now carries. "
                      "lane is the lane that ran it. For roles that edit code, branches lists the "
-                     "committed factory/* branches now in the project, as {repo, ref, commit} where ref "
+                     "factory/* branches this job created or moved in the project, as {repo, ref, commit} where ref "
                      "(e.g. factory-developer/factory/x) is a remote-tracking ref in that repo; "
                      "import_errors lists anything that could not be brought back. packet is the "
                      "path, on the user's machine, of the job's review packet (task, branch commits "
