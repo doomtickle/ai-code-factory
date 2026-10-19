@@ -71,6 +71,7 @@ ${B}Usage${N}
                              Start the factory for a project (default: this folder)
                              and open it in Herdr; --no-ui skips Herdr and prints
                              how to reach the Coordinator and follow the roles
+  factory chat               Talk to the Coordinator in this terminal
   factory status             What is running, and for which project
   factory stop               Stop the agents, broker and dispatch bridge
   factory logs [name]        Follow a role's work (all its lanes; e.g. developer,
@@ -340,7 +341,7 @@ cmd_start() {
     onboarding_hints
     say ""
     say "Factory running, without Herdr."
-    say "  Talk to the Coordinator:  ${B}sbx run --name $COORDINATOR_SANDBOX${N}"
+    say "  Talk to the Coordinator:  ${B}factory chat${N}"
     say "  Watch every lane:         ${B}factory watch${N}"
     say "  Follow one role's log:    ${B}factory logs <role>${N}  (roles: $(list_roles | tr '\n' ' '))"
     say "  Stop everything:          ${B}factory stop${N}"
@@ -479,6 +480,16 @@ onboarding_hints() {
   if npm_private_registry_needs_token && ! keychain_has factory-npm-registry; then
     warn "npm_fetch can't download private npm packages until a token is stored in the keychain (see README: Enabling a private npm registry)"
   fi
+}
+
+# --- chat --------------------------------------------------------------------------
+# cmd_chat -> open the Coordinator sandbox in this terminal, the same thing
+# 'sbx run --name factory-coordinator' does; 'factory start' creates it.
+cmd_chat() {
+  require_sbx
+  sandbox_exists "$COORDINATOR_SANDBOX" \
+    || die "the coordinator sandbox doesn't exist yet; run 'factory start' first"
+  exec sbx run --name "$COORDINATOR_SANDBOX" "$@"
 }
 
 # --- status ------------------------------------------------------------------------
@@ -1077,6 +1088,7 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
     setup) cmd_setup "$@" ;;
     update|upgrade) cmd_update "$@" ;;
     start|up) cmd_start "$@" ;;
+    chat|coordinator) cmd_chat "$@" ;;
     status) cmd_status "$@" ;;
     stop|down) cmd_stop "$@" ;;
     reset) cmd_reset "$@" ;;

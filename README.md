@@ -177,9 +177,9 @@ To leave the factory running in the background, press **Ctrl+B** then **Q** in
 Herdr; run `factory start` again to reopen it.
 
 **Without Herdr:** `factory start --no-ui` starts everything but the terminal
-layout. Talk to the Coordinator with `sbx run --name factory-coordinator` in
-any terminal (type `/login` there the first time, then `factory start --no-ui`
-again), and watch every lane with `factory watch` in another.
+layout. Talk to the Coordinator with `factory chat` in any terminal (type
+`/login` there the first time, then `factory start --no-ui` again), and watch
+every lane with `factory watch` in another.
 
 ## Commands
 
@@ -188,7 +188,8 @@ again), and watch every lane with `factory watch` in another.
 | `factory doctor` | Check the machine is ready; prints the fix for each problem (setup runs it first). Once the broker exists, it also runs the gateway's own doctor inside it: policy, tokens and grants, audit log, credentials, a live probe, GitHub access per repo, the policy's hosts against the broker kit, and (Passdesk Pro) a warning for any approval that expired with no decision |
 | `factory setup` | One-time setup (safe to re-run) |
 | `factory update [--yes]` | After pulling changes or editing kits, images or policy: pulls the latest factory, rebuilds, recreates only the sandboxes the changes affect (it lists them and what each loses, then asks), and restarts |
-| `factory start [dir] [--no-ui]` | Start the factory for a project (default: current folder) and open Herdr. `--no-ui` (or `FACTORY_NO_UI=1`) skips Herdr: talk to the Coordinator with `sbx run --name factory-coordinator` in any terminal and follow roles with `factory logs <role>` |
+| `factory start [dir] [--no-ui]` | Start the factory for a project (default: current folder) and open Herdr. `--no-ui` (or `FACTORY_NO_UI=1`) skips Herdr: talk to the Coordinator with `factory chat` in any terminal and follow roles with `factory logs <role>` |
+| `factory chat` | Talk to the Coordinator in this terminal (wraps `sbx run --name factory-coordinator`); `factory start` creates the sandbox first |
 | `factory status` | Project, broker, dispatch bridge, login, roles (with their lanes), sandbox status, and (Passdesk Pro) pending approvals and the oldest one's age |
 | `factory logs <role>` | Follow a role's transcripts, all its lanes (`factory logs developer-lane2` for one lane); `factory logs broker` / `dispatch` for audit logs |
 | `factory watch` | Live terminal view of the lanes: one pane per active lane (a job running, or finished in the last ten minutes) with the job's status, elapsed time, model and cost in its title and the transcript rendered for reading (tool calls condensed, results dimmed, text wrapped); idle lanes take one status line each. A digit focuses one lane, `a` shows every lane, `p` shows a lane's latest review packet, `q` quits. `--once` prints one plain-text frame |
