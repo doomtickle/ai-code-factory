@@ -38,7 +38,7 @@ import urllib.request
 from pathlib import Path
 
 from . import tools  # noqa: F401 - registers every tool
-from .core import auth, config, credentials
+from .core import auth, config, credentials, plugins, registry
 from .core import policy as policy_mod
 from .core.errors import Denied
 from .core.net import NO_REDIRECT_OPENER, RefuseRedirects
@@ -325,6 +325,9 @@ def egress_hosts(pol: dict, granted: set[str] | None = None) -> list[str]:
     for tool, tool_hosts in _TOOL_HOSTS.items():
         if granted is None or tool in granted:
             hosts.update(tool_hosts)
+    for tool, spec in plugins.declared_tools()[0].items():
+        if granted is None or tool in granted:
+            hosts.update(spec.hosts)
     if granted is None or "web_fetch" in granted:
         web = pol.get("web") if isinstance(pol.get("web"), dict) else {}
         for h in web.get("allow_hosts", []) if _is_str_list(web.get("allow_hosts", [])) else []:
@@ -460,13 +463,14 @@ def check_state(report: Report) -> set[str]:
         except (OSError, ValueError) as e:
             report.fail(f"{grants_path.name} is invalid: {e}")
             grants = {}
+        known = [*TOOLS, *(t for t in plugins.declared_tools()[0] if t not in TOOLS)]
         for principal, grant in grants.items():
             tool_list = auth.grant_tools(grant)
-            unknown = [t for t in tool_list if t not in TOOLS]
+            unknown = [t for t in tool_list if t not in known]
             if unknown:
                 report.fail(f"{grants_path.name} grants {principal} unknown tool(s): {', '.join(unknown)}",
-                            f"known tools: {', '.join(TOOLS)}")
-            granted.update(t for t in tool_list if t in TOOLS)
+                            f"known tools: {', '.join(known)}")
+            granted.update(t for t in tool_list if t in known)
             if principal not in principals_with_token:
                 report.warn(f"{principal} has a grant but no token in tokens/: its calls fail with 401",
                             "re-run the deployment's start script")
@@ -785,9 +789,18 @@ def check_plugins(report: Report) -> None:
                         "is it under the image's plugins directory (the deployment's plugins folder at build time)?")
             continue
         version = getattr(module, "VERSION", "?")
+        try:
+            declared = registry.plugin_tools(name, module)
+        except registry.PluginToolError as e:
+            report.fail(f"{e}: the gateway refuses to start with this plugin",
+                        "fix the plugin's PASSDESK_TOOLS declaration (docs/plugin-tools.md)")
+            continue
+        if declared is not None:
+            report.ok(f"plugin {name} {version} declares tool(s): {', '.join(declared[1])}")
         lic = getattr(module, "license", None)
         if lic is None or not hasattr(lic, "load"):
-            report.ok(f"plugin {name} {version} imports")
+            if declared is None:
+                report.ok(f"plugin {name} {version} imports")
             continue
         try:
             claims = lic.load()

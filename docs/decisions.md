@@ -44,6 +44,54 @@ Dated entries, for the user to review. Newest first.
   - **The recipe is a self-signed EC P-256 certificate with SANs for
     `passdesk`, `localhost` and `127.0.0.1`**, the names the compose
     quickstart and the doctor use. No ACME (plan: W3.2).
+- **Plugins can add tools, declaratively, behind the gateway's own checks
+  (doomtickle/passdesk-ops#83).** Users should be able to connect the
+  services they use without a core change, so core gains one general hook:
+  a plugin module sets `PASSDESK_TOOL_NAMESPACE` and `PASSDESK_TOOLS` (a dict
+  of `registry.PluginTool`), and `plugins.load()` validates and registers
+  them before `activate()`. Choices:
+  - **Declared, not registered by the plugin.** A module attribute, not a
+    call from `activate()`, so the doctor and `python -m passdesk principal`
+    can read and validate what a plugin offers without activating it. Those
+    two would otherwise call a granted plugin tool "unknown". Core owns
+    registration, so there is no runtime registration API.
+  - **Every plugin tool runs behind `registry.guard`,** which the plugin
+    can't skip. It secret-scans every string argument before the handler
+    runs. It sends a `writes_externally` tool through the approval point
+    with the card `{<arguments>, "tool", "principal"}`, the gateway's
+    fields set last and `tool`/`principal` refused as argument names, so an
+    agent can't rename the card and slip past Pro's `[approvals] tools`
+    match (found in the security review) and gives it an `intent` audit record. It
+    cleans the result and wraps it as untrusted, and it cleans a `Denied`
+    message too, since a plugin's refusal may quote a remote service.
+    Grants, argument checks and audit records are the protocol layer's, as
+    for core tools. Scanning *every* string argument is broader than core
+    tools, which scan named fields. A plugin can't tell the gateway which
+    fields leave the machine, so all of them count.
+  - **Names can't collide with core.** A namespace of 2-16 lowercase
+    characters, never a core tool prefix or a name that reads as the
+    gateway; one plugin per namespace; every tool name is
+    `<namespace>_<words>`. `register()` still refuses any duplicate.
+  - **Only `string` and `boolean` arguments,** with an optional
+    description and nothing else, because those are the types `call_tool`
+    enforces. A schema keyword like `enum` would be advertised but not
+    checked.
+  - **`hosts` is declared for the doctor's egress check only.** The
+    gateway can't confine a plugin's network use in-process. In sbx, the
+    kit allowlist is the backstop, and the doctor now counts declared
+    plugin hosts.
+  - **Trust model, stated plainly in `docs/plugin-tools.md`:** a plugin is
+    operator-installed code in the gateway's process. The guard protects
+    the agent boundary. It doesn't contain a malicious plugin.
+  - Credentials: plugin tools read theirs only through `credentials.get`,
+    under a name of their own (`CLAUDE.md` updated to say so). Until every
+    value `credentials.get` returns is remembered for redaction
+    automatically, the guide tells plugin authors to call
+    `filters.remember_secret`.
+  What would change this: a need for richer argument types (extend
+  `call_tool`'s checks first, then allow them here), or for loading plugins
+  from somewhere other than the image (not planned: policy and code stay
+  baked in).
 - **Standalone image: a second Dockerfile target (doomtickle/passdesk-ops#55,
   Phase 3a W3.1).** `--target standalone` builds Passdesk on
   `python:3.13-slim-bookworm` (pinned by its multi-arch index digest) plus

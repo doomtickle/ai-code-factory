@@ -59,7 +59,10 @@ The package is `passdesk/`:
   write passes through (`approvals.py`), credential lookup
   (`credentials.py`, below) and plugin loading (`plugins.py`;
   `PASSDESK_PLUGINS` names modules, the image's `plugins` build context
-  holds them). Knows no tool. A deployment may install an approval hook
+  holds them). Knows no tool. A plugin may declare tools of its own, which
+  run behind the same grants, argument checks, secret scanning, approvals,
+  cleaning and audit as core tools (`docs/plugin-tools.md`, with an example
+  in `examples/plugins/`). A deployment may install an approval hook
   that holds pushes and pull requests for a person; the design is in
   `docs/pro-approvals.md` and the hook ships in the commercial
   `passdesk-pro` package.
@@ -106,7 +109,7 @@ CI and test fixtures exercise, not because it's the only one.
 | `BROKER_REF_NAMESPACE` | `refs/factory` | Ref namespace `git_push` stages an incoming branch under in its own bare mirror while it verifies the push and awaits approval (never pushed itself; see `tools/git.py`). Must be a ref path under `refs/` (no `..`, no trailing slash, no empty component), must not be, or sit under, a namespace git/GitHub already use (`refs/heads`, `refs/tags`, `refs/remotes`, `refs/notes`, `refs/stash`), and no component may start with `.` or end in `.lock` (`git check-ref-format`); the broker refuses to start otherwise. |
 | `BROKER_PUSH_PREFIX` | `factory/` | Fallback for policy's `[git].push_branch_prefix` when a deployment's own `policy.toml` doesn't set it at all (every `policy.toml` this repo ships does, so this only matters for a deployment's own from-scratch policy). Deliberately fails closed here (unlike upstream, which falls back to `""` — any unprotected branch — when the key is absent); the doctor warns when `[git].push_branch_prefix` is missing from policy as well as when it's set to `""`. Must contain only ref-safe characters, no whitespace or control characters. |
 | `BROKER_DEPLOYMENT` | `sbx` | `sbx` (default) or `standalone`. Selects whether `git_push`/`github_create_pr` error hints and the doctor's live GitHub checks name the sbx CLI (`sbx secret set ...`) or stay generic, and the default of `PASSDESK_CREDENTIAL_PROVIDERS` (`standalone` leaves out `proxy`, so the gateway reads its own GitHub token); any other value refuses to start. Also selects which checks `python3 -m passdesk.doctor` runs: see "Checking a deployment". |
-| `PASSDESK_PLUGINS` | `` (empty) | Comma-separated plugin modules to import at start-up (e.g. the commercial `passdesk-pro` approval hook). |
+| `PASSDESK_PLUGINS` | `` (empty) | Comma-separated plugin modules to import at start-up: integrations that add tools (`docs/plugin-tools.md`), or the commercial `passdesk-pro` approval hook. |
 | `PASSDESK_CREDENTIAL_PROVIDERS` | `proxy,file,env-file` (`file,env-file` when `BROKER_DEPLOYMENT=standalone`) | Credential providers in lookup order; see "Configuring credentials". A name that isn't a provider stops the server at start-up. |
 | `PASSDESK_SECRET_<NAME>_FILE` | unset | Path of a file holding credential `<NAME>` (upper-cased, `-` as `_`: `PASSDESK_SECRET_NPM_REGISTRY_FILE`). Holds a path, never the secret. |
 

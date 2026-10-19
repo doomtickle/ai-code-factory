@@ -14,7 +14,7 @@ from .audit import audit, summarize_args
 from .auth import authenticate, principal_tools
 from .errors import Denied
 from .filters import sanitize
-from .registry import TOOLS, tool_list
+from .registry import TOOLS, WRITES_EXTERNALLY, tool_list
 
 
 def grant_hint(principal: str) -> str:
@@ -32,7 +32,8 @@ def grant_hint(principal: str) -> str:
 # the caller's workspace. Their "intent" is audited before fn() runs, so the
 # attempt is on record even if the push/PR call itself fails partway through
 # or the process is killed mid-call - this is an extra write, not a claim
-# that the log is tamper-evident (that's roadmap).
+# that the log is tamper-evident (that's roadmap). Plugin tools declared
+# writes_externally (registry.WRITES_EXTERNALLY) get the same record.
 _WRITES_EXTERNALLY = {"git_push", "github_create_pr"}
 
 
@@ -64,7 +65,7 @@ def call_tool(name: str, args: object, principal: str) -> tuple[str, bool]:
             if (expected == "string" and not isinstance(val, str)) or \
                (expected == "boolean" and not isinstance(val, bool)):
                 raise Denied(f"argument {key!r} must be a {expected}")
-        if name in _WRITES_EXTERNALLY:
+        if name in _WRITES_EXTERNALLY or name in WRITES_EXTERNALLY:
             try:
                 audit({**record, "event": "intent"})
             except OSError as e:

@@ -36,7 +36,12 @@ boundary.
     without updating this rule. A provider a plugin registers with
     `credentials.register_provider` is bound by the same rule: it never
     takes a value from a plain environment variable, and never logs or
-    returns a value except to the tool that asked for it.
+    returns a value except to the tool that asked for it. A tool a plugin
+    declares (`docs/plugin-tools.md`) may read a credential of its own, under
+    its own name and only through `credentials.get`, on the same terms:
+    delivered as a file, sent only through `core.net.NO_REDIRECT_OPENER`,
+    never returned, logged or put in an error, and never another tool's
+    credential.
 - Passdesk is standard-library Python only (3.11+). A small dependency
   surface is part of its security argument; do not add a third-party
   dependency without re-justifying this rule.
