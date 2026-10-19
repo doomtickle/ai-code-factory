@@ -17,7 +17,7 @@ affected, after listing what each one loses and asking you.
 | You changed | Run |
 |---|---|
 | Per-project notes (`projects/<folder>.md`, `projects/<folder>.<role>.md`) | `factory start` |
-| A role's instructions, `MODEL`, `MODELS`, `EFFORT`, `LANES`, `MAX_SESSION_TOKENS` | `factory start` |
+| A role's instructions, `MODEL`, `MODELS`, `EFFORT`, `LANES`, `MAX_SESSION_TOKENS`, `MAX_TURNS` | `factory start` |
 | A role's `BROKER_TOOLS` (it already had some) | `factory start` |
 | A new role, or a removed one | `factory start` |
 | A role's `TEMPLATE`, `WORKSPACE` or `kit/`, or whether it has any `BROKER_TOOLS` at all | `factory update` |
@@ -96,6 +96,7 @@ The settings you're most likely to change:
 | `EFFORT` | Default reasoning effort: `low`, `medium`, `high` or `xhigh`; empty is the model's default | empty |
 | `LANES` | Tasks the role runs at once, 1 to 8 | `3` |
 | `MAX_SESSION_TOKENS` | A lane whose saved session is larger starts the next task fresh; empty is 100000, `0` is no cap | empty |
+| `MAX_TURNS` | Turns (tool calls and replies) one job may take before it stops as failed, keeping its session; a safety net against a lost job; empty or `0` is no cap | `200` |
 
 For example, to make the reviewer cheaper on a low-risk project, run it on
 Sonnet by default and keep Opus available for hard reviews:
@@ -160,6 +161,7 @@ MODEL="sonnet"
 MODELS="haiku"
 EFFORT=""
 MAX_SESSION_TOKENS=""
+MAX_TURNS="100"
 ```
 
 Replace `roles/docs-writer/instructions.md`. Keep the branch rules from the

@@ -114,6 +114,9 @@ validate_role() {
   m="$(role_get "$r" MAX_SESSION_TOKENS)"
   [ -z "$m" ] || printf '%s' "$m" | grep -Eq '^[0-9]+$' \
     || die "role $r: MAX_SESSION_TOKENS must be a whole number of tokens (or empty)"
+  m="$(role_get "$r" MAX_TURNS)"
+  [ -z "$m" ] || printf '%s' "$m" | grep -Eq '^[0-9]+$' \
+    || die "role $r: MAX_TURNS must be a whole number of turns (or empty)"
 }
 
 # --- Sandbox fingerprints ------------------------------------------------------------

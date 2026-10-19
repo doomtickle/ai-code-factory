@@ -532,14 +532,15 @@ first.
 can run a single task on another model from the role's `MODELS` list, and set
 claude's reasoning `--effort` (`low`, `medium`, `high`, `xhigh`; `EFFORT` in
 `role.conf` sets a role's default). It picks the cheapest setting that will do
-the task, e.g. haiku at low effort for a rename or a doc update, and steps up
+the task, e.g. haiku at low effort for a doc-only change or a push (never for
+code, tests or configuration), and steps up
 (opus, or higher effort) for hard problems or after a cheaper run fell short.
 The bridge accepts only models listed for the role, and each job's result shows
 the model and effort it ran with:
 
 | Role | Default | Coordinator may also pick |
 |---|---|---|
-| developer | `sonnet` | `haiku`, `opus` |
+| developer | `sonnet` | `haiku` (prose and push chores only, never code), `opus` |
 | reviewer | `opus` | `sonnet` (small, low-risk diffs) |
 | researcher | `sonnet` | `opus` (no `haiku`: this role reads untrusted web pages) |
 
@@ -672,7 +673,7 @@ The images also include yarn 1.22.22, so `yarn` scripts and git hooks that
 call `yarn` work. Python projects still use `pip_download` and `uv` directly.
 
 Each role is `roles/<name>/role.conf` (description, image, `WORKSPACE=rw|ro`, `LANES`,
-`BROKER_TOOLS`, `MODEL`, `MODELS`, `EFFORT`, `MAX_SESSION_TOKENS`), `roles/<name>/instructions.md` (passed to every task
+`BROKER_TOOLS`, `MODEL`, `MODELS`, `EFFORT`, `MAX_SESSION_TOKENS`, `MAX_TURNS`), `roles/<name>/instructions.md` (passed to every task
 as part of the system prompt) and `roles/<name>/kit/spec.yaml` (its network policy). Every role
 gets a writable scratch directory in `~/.local/state/ai-code-factory/roles/<name>/` and the project mounted `:ro`.
 `rw` roles also get the project's `.factory/outgoing/` writable (bundles for `git_push`,
@@ -687,7 +688,7 @@ factory role new docs-writer developer   # or copy any existing role
 Edit its `role.conf` and instructions, then run `factory start` again. It creates
 the sandbox and a tab, and the Coordinator sees the new role in `list_roles`.
 
-**Change a role:** edit instructions, `BROKER_TOOLS`, `LANES`, `MODEL`, `MODELS`, `EFFORT` or `MAX_SESSION_TOKENS` and run `factory start`
+**Change a role:** edit instructions, `BROKER_TOOLS`, `LANES`, `MODEL`, `MODELS`, `EFFORT`, `MAX_SESSION_TOKENS` or `MAX_TURNS` and run `factory start`
 again. All of these take effect from the next task:
 `factory start` copies the instructions into the state folder and the bridge
 reads that copy, so a role editing this repo can't change prompts on its own. Kit, image, project access and
