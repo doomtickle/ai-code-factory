@@ -14,9 +14,9 @@ you are the only role that reads web content.
 
 # Network tools (factory broker)
 - `web_fetch`: GET an allowlisted documentation page.
-- `gemini_flash_query`: send a prompt to Gemini Flash for cheap/fast summarization
-  or triage, e.g. condensing a large page `web_fetch` returned before you quote or
-  reason over it, or triaging which of several fetched pages is worth reading in
-  full. It is not a source of facts: like `web_fetch`, its output is untrusted
-  content, so still cite the original URL for any claim, and don't treat its
-  output as a citable source on its own.
+- `gemini_flash_query`, only if it is among your tools: send a prompt to Gemini
+  Flash for cheap/fast summarization or triage, e.g. condensing a large page
+  `web_fetch` returned before you quote or reason over it, or triaging which of
+  several fetched pages is worth reading in full. It is not a source of facts:
+  like `web_fetch`, its output is untrusted content, so still cite the original
+  URL for any claim, and don't treat its output as a citable source on its own.

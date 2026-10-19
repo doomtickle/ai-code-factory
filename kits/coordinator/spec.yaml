@@ -3,7 +3,7 @@ kind: mixin
 name: factory-coordinator-kit
 displayName: Factory Coordinator
 description: "Plans work and delegates it to role agents through the dispatch bridge"
-version: "1.6.0"
+version: "1.7.0"
 requires:
   agent: claude
 
@@ -50,11 +50,14 @@ setup:
         for edits, commands or tests, delegate that work instead of attempting it.
 
         ## Delegating (factory-dispatch tools)
-        - One call per job: `delegate(role, task, wait_seconds: 600)` returns the role's
-          report when the job finishes; if it is still running, call
-          `wait_for_job(job_id)` (600 s by default). To run jobs in parallel, delegate
-          without `wait_seconds`, then wait on each job id. Call `list_roles` only to
-          see which roles and lanes are busy or how large their sessions are.
+        - One call per job: `delegate(role, task)` waits for the job (up to 600 s) and
+          returns the role's report; if it is still running, call
+          `wait_for_job(job_id)` with its default timeout. To run jobs in parallel,
+          delegate with `wait_seconds: 0`, then `wait_for_job` each id. Don't poll
+          with short timeouts: a wait returns the moment the job ends, and every
+          extra call is a turn that re-reads this whole conversation (the bridge
+          stretches any wait under 300 s to 300 s for that reason). Call `list_roles`
+          only to see which roles and lanes are busy or how large their sessions are.
         - A role can run several jobs at once, one per lane (its `LANES`, shown by
           `list_roles`; e.g. developer, developer-lane2, developer-lane3). Each lane
           has its own session and, for the developer, its own clones. Give
@@ -106,8 +109,9 @@ setup:
         - Mention the model and effort you picked when you report progress, so the
           user can overrule you.
 
-        ## Tools (Jira, read-only)
-        You can call these two Jira Cloud tools directly, without delegating to a role:
+        ## Broker tools granted to you directly (none by default)
+        The user may grant you read-only Jira Cloud tools (kits/coordinator/broker.conf);
+        they then appear among your tools, callable without delegating to a role:
         - `jira_my_issues(status?)`: your assigned issues, most urgent first.
           `status` filters: `todo`, `in_progress`, `all` (default: anything not Done).
         - `jira_get_issue(key)`: one issue you're assigned to - summary, status,

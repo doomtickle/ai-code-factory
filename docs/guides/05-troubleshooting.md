@@ -170,16 +170,16 @@ then `factory start` again.
 equivalent ("broker did not become ready"), read `broker/broker.log` in the
 same folder.
 
-### Jira warnings on every start
+### "Jira tools are granted but no token is stored"
 
 ```text
   ! Jira tools are granted but no token is stored in the keychain (see README: Enabling Jira)
 ```
 
-**Cause:** the Coordinator is granted two read-only Jira tools by default
-(`kits/coordinator/broker.conf`).
-**Fix:** nothing, if you don't use Jira: the tools just return DENIED with
-setup hints. To use them, follow [Enabling Jira](../../README.md#enabling-jira).
+**Cause:** `kits/coordinator/broker.conf` grants the Coordinator the read-only
+Jira tools (they are not granted by default), but no Jira token is saved.
+**Fix:** finish [Enabling Jira](../../README.md#enabling-jira), or set
+`BROKER_TOOLS=""` in that file again and run `factory update`.
 
 ## While roles work
 
@@ -207,7 +207,7 @@ applied. Roles are told to report these, not work around them. Common ones:
 | `repo my-org/my-api is not in the broker allowlist (policy.toml [git].repos)` | Add it to `[git].repos` in your local `policy.toml`, then `factory update`. |
 | `agents may only push branches starting with 'factory/'` | Push a `factory/*` branch. Protected branches (`main`, `master`, `release/*`) are always refused. |
 | `commit 3f9c2ab01d4e appears to contain secrets (...)` | Remove the secret from the branch's history (the developer can rewrite its `factory/*` branch), then push again. |
-| `no Gemini API key found for the broker sandbox; ...` | Optional tool: see [Enabling Gemini Flash queries](../../README.md#enabling-gemini-flash-queries). |
+| `no Gemini API key found for the broker sandbox; ...` | Opt-in tool (the researcher is granted it only if you add it to its `BROKER_TOOLS`): see [Enabling Gemini Flash queries](../../README.md#enabling-gemini-flash-queries). |
 
 ### npm_fetch errors
 

@@ -104,10 +104,10 @@ The second start creates the role sandboxes, which pick up the stored login.
 You only do this once per machine: `sbx` keeps the login for every sandbox it
 creates afterwards.
 
-> **Note:** `factory start` may also warn that the Jira tools are granted but no
-> token is stored. The Coordinator is granted two read-only Jira tools by
-> default; if you don't use Jira, you can ignore these warnings. To set Jira up,
-> see [Enabling Jira](../../README.md#enabling-jira).
+> **No Herdr?** `factory start --no-ui` starts everything but the terminal
+> layout. Then open the Coordinator with `sbx run --name factory-coordinator`
+> in any terminal, type `/login` there the first time, and run
+> `factory start --no-ui` again. Follow a role with `factory logs <role>`.
 
 > **Why two starts?** `sbx` gives a sandbox the stored login only when it
 > creates the sandbox, and role panes don't take typed input. So the factory
@@ -196,7 +196,7 @@ Local settings none (see config.example/)
   ✓ broker running (127.0.0.1:18765)
   ✓ dispatch bridge running (pid 48211)
   ✓ Claude login stored
-Coordinator broker tools jira_my_issues jira_get_issue
+Coordinator broker tools none
 Roles developer (3 lanes), researcher (1 lane), reviewer (2 lanes)
 
 Sandboxes

@@ -67,8 +67,10 @@ ${B}Usage${N}
                              apply the security baseline, put 'factory' on your PATH
   factory update [--yes]     Pull the latest factory, rebuild, recreate whatever
                              sandboxes the changes need, and restart
-  factory start [dir]        Start the factory for a project (default: this folder)
-                             and open it in Herdr
+  factory start [dir] [--no-ui]
+                             Start the factory for a project (default: this folder)
+                             and open it in Herdr; --no-ui skips Herdr and prints
+                             how to reach the Coordinator and follow the roles
   factory status             What is running, and for which project
   factory stop               Stop the agents, broker and dispatch bridge
   factory logs [name]        Follow a role's work (all its lanes; e.g. developer,
@@ -298,12 +300,21 @@ $(sed -n 's/^[[:space:]]*-[[:space:]]*"\{0,1\}\([^"[:space:]#]*\).*/\1/p' "$kit"
 
 # --- start -------------------------------------------------------------------------
 cmd_start() {
-  [ $# -le 1 ] || die "usage: factory start [dir]"
-  local target="${1:-.}" project current
+  # --no-ui (or FACTORY_NO_UI=1): everything but Herdr. Talk to the Coordinator
+  # with `sbx run` in any terminal and follow roles with `factory logs`.
+  local target="" project current arg no_ui="${FACTORY_NO_UI:-}"
+  for arg in "$@"; do
+    case "$arg" in
+      --no-ui) no_ui=1 ;;
+      -*) die "usage: factory start [dir] [--no-ui]" ;;
+      *) [ -z "$target" ] || die "usage: factory start [dir] [--no-ui]"; target="$arg" ;;
+    esac
+  done
+  target="${target:-.}"
   [ -d "$target" ] || die "no such directory: $target"
   project="$(cd "$target" && pwd -P)"
   require_sbx
-  require_herdr
+  [ "$no_ui" = 1 ] || require_herdr
   setup_done || die "the factory is not set up yet: run 'factory setup' first"
   case "$project" in
     /mnt/[a-z]/*) is_wsl && warn "$project is on a Windows drive: sandboxes will be slow and file permissions unreliable. Clone it into the Linux filesystem (e.g. ~/code) instead." ;;
@@ -319,7 +330,15 @@ cmd_start() {
     fi
   fi
 
-  if [ "${HERDR_ENV:-}" = "1" ]; then
+  if [ "$no_ui" = 1 ]; then
+    FACTORY_NO_UI=1 "$SCRIPTS/02-launch-factory.sh" "$project"
+    onboarding_hints
+    say ""
+    say "Factory running, without Herdr."
+    say "  Talk to the Coordinator:  ${B}sbx run --name $COORDINATOR_SANDBOX${N}"
+    say "  Follow a role's work:     ${B}factory logs <role>${N}  (roles: $(list_roles | tr '\n' ' '))"
+    say "  Stop everything:          ${B}factory stop${N}"
+  elif [ "${HERDR_ENV:-}" = "1" ]; then
     "$SCRIPTS/02-launch-factory.sh" "$project"
     onboarding_hints
     say ""

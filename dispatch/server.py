@@ -56,6 +56,11 @@ MAX_REQUEST_BYTES = 1_000_000
 MAX_TASK_CHARS = 50_000
 MAX_RESULT_CHARS = 30_000
 MAX_WAIT_SECONDS = 600
+# A wait shorter than this is stretched to it (a wait still returns the moment the
+# job ends). Every poll is a Coordinator turn that re-reads its whole conversation,
+# and the audit log showed it picking 90-240 s waits and polling jobs several
+# times. 0 is still "the status right now, without waiting".
+MIN_WAIT_SECONDS = 300
 # A role's saved session over this many context tokens is not resumed: the next
 # task starts fresh (role.conf MAX_SESSION_TOKENS overrides it; "0" = no cap).
 # Every turn of a resumed session re-reads its whole history, so a large one
@@ -770,7 +775,9 @@ def tool_delegate(args: dict) -> str:
         raise Denied("task is empty")
     if len(task) > MAX_TASK_CHARS:
         raise Denied(f"task exceeds {MAX_TASK_CHARS} characters")
-    wait = args.get("wait_seconds", 0)
+    # Waiting is the default: one call per job. wait_seconds: 0 starts the job and
+    # returns its id at once, for running several roles in parallel.
+    wait = args.get("wait_seconds", MAX_WAIT_SECONDS)
     if not isinstance(wait, int) or isinstance(wait, bool) or wait < 0:
         raise Denied("wait_seconds must be a non-negative integer")
     lanes = roles[role]["lanes"]
@@ -844,7 +851,10 @@ def tool_delegate(args: dict) -> str:
 
 
 def job_report(job: "Job", timeout: int, **extra) -> str:
-    job.done.wait(min(timeout, MAX_WAIT_SECONDS))
+    """The job's summary after waiting for it: not at all for timeout 0, else
+    between MIN_WAIT_SECONDS and MAX_WAIT_SECONDS, returning as soon as it ends."""
+    if timeout:
+        job.done.wait(min(max(timeout, MIN_WAIT_SECONDS), MAX_WAIT_SECONDS))
     summary = {**job.summary(with_result=True), **extra}
     if not job.done.is_set():
         summary["note"] = "still running; call wait_for_job again"
@@ -1038,10 +1048,12 @@ TOOLS = {
                    "(per lane for roles with several lanes). Roles with a saved session show its "
                    "context size and total cost so far.",
                    {}, []),
-    "delegate": (tool_delegate, "Start a task on a role agent in its own sandbox. With wait_seconds (max 600) "
-                 "it waits for the job and returns the same result as wait_for_job, so one call usually "
-                 "covers a whole job; without it, it returns the job id at once (use that to run roles in "
-                 "parallel). The role continues its previous session unless fresh_session is true or the "
+    "delegate": (tool_delegate, "Start a task on a role agent in its own sandbox and wait for it: by "
+                 "default it waits up to 600 s (wait_seconds; a shorter value is stretched to at least "
+                 "300 s, and it returns the moment the job ends) and returns the same result as "
+                 "wait_for_job, so one call covers a whole job. wait_seconds: 0 returns the job id at "
+                 "once, to run several roles in parallel and wait_for_job each. The role continues its "
+                 "previous session unless fresh_session is true or the "
                  "session is over the role's size cap. Write a self-contained task: roles cannot see your "
                  "conversation. model (optional) runs this task on another of the role's allowed models "
                  "(list_roles shows them): a cheaper one for mechanical work, a stronger one for hard "
@@ -1057,8 +1069,10 @@ TOOLS = {
                   "model": {"type": "string"}, "effort": {"type": "string"},
                   "lane": {"type": "integer"}},
                  ["role", "task"]),
-    "wait_for_job": (tool_wait_for_job, "Wait up to timeout_seconds (default and max 600) for a job; "
-                     "returns its status and, when finished, the role's report. model is the job "
+    "wait_for_job": (tool_wait_for_job, "Wait for a job and return its status and, when finished, the "
+                     "role's report. timeout_seconds defaults to 600 (the maximum); a shorter value is "
+                     "stretched to at least 300, since every call costs you a turn, and the wait returns "
+                     "the moment the job ends anyway; 0 returns the status right now. model is the job "
                      "session's main model (omitted until known; subagents may use others), cost_usd "
                      "is this job's cost (omitted if unknown), session_cost_usd the role session's "
                      "total so far, and context_tokens the approximate context the session now carries. "
@@ -1153,7 +1167,7 @@ def server_instructions() -> str:
     lines += [
         "",
         "Delegate self-contained tasks (goal, files, known facts, constraints, what done "
-        "looks like), passing wait_seconds=600 so one call returns the report. Typical "
+        "looks like); delegate waits for the job by default, so one call returns the report. Typical "
         "flow: researcher (only if outside information is needed) -> developer -> "
         "reviewer, sending REVISE feedback back to the developer. Pick each task's model and "
         "effort (delegate's optional model and effort) as the cheapest that will do it well, "
@@ -1173,8 +1187,9 @@ def server_instructions() -> str:
         "machine (the host), e.g. the Host shell pane.",
         "Roles with several lanes run that many tasks at once. Split large work into "
         "independent chunks, each on its own factory/<topic> branch in its own lane "
-        "(delegate without wait_seconds, then wait_for_job each), and send follow-ups for a "
-        "chunk to the lane that wrote it (delegate's lane).",
+        "(delegate with wait_seconds: 0, then wait_for_job each, with the default timeout: "
+        "short polls only cost turns), and send follow-ups for a chunk to the lane that "
+        "wrote it (delegate's lane).",
     ]
     return "\n".join(lines)
 
