@@ -105,9 +105,9 @@ You only do this once per machine: `sbx` keeps the login for every sandbox it
 creates afterwards.
 
 > **No Herdr?** `factory start --no-ui` starts everything but the terminal
-> layout. Then open the Coordinator with `sbx run --name factory-coordinator`
-> in any terminal, type `/login` there the first time, and run
-> `factory start --no-ui` again. Follow a role with `factory logs <role>`.
+> layout. Then open the Coordinator with `factory chat` in any terminal, type
+> `/login` there the first time, and run `factory start --no-ui` again. Follow
+> a role with `factory logs <role>`.
 
 > **Why two starts?** `sbx` gives a sandbox the stored login only when it
 > creates the sandbox, and role panes don't take typed input. So the factory

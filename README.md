@@ -178,9 +178,9 @@ To leave the factory running in the background, press **Ctrl+B** then **Q** in
 Herdr; run `factory start` again to reopen it.
 
 **Without Herdr:** `factory start --no-ui` starts everything but the terminal
-layout. Talk to the Coordinator with `sbx run --name factory-coordinator` in
-any terminal (type `/login` there the first time, then `factory start --no-ui`
-again), and watch every lane with `factory watch` in another.
+layout. Talk to the Coordinator with `factory chat` in any terminal (type
+`/login` there the first time, then `factory start --no-ui` again), and watch
+every lane with `factory watch` in another.
 
 ### Layouts
 
@@ -208,7 +208,8 @@ ignores the layout: there is no Herdr to lay out.
 | `factory doctor` | Check the machine is ready; prints the fix for each problem (setup runs it first). Once the broker exists, it also runs the gateway's own doctor inside it: policy, tokens and grants, audit log, credentials, a live probe, GitHub access per repo, the policy's hosts against the broker kit, and (Passdesk Pro) a warning for any approval that expired with no decision |
 | `factory setup` | One-time setup (safe to re-run) |
 | `factory update [--yes]` | After pulling changes or editing kits, images or policy: pulls the latest factory, rebuilds, recreates only the sandboxes the changes affect (it lists them and what each loses, then asks), and restarts |
-| `factory start [dir] [--no-ui] [--layout watch\|tabs]` | Start the factory for a project (default: current folder) and open Herdr. `--no-ui` (or `FACTORY_NO_UI=1`) skips Herdr: talk to the Coordinator with `sbx run --name factory-coordinator` in any terminal and follow roles with `factory logs <role>`. `--layout` (or `FACTORY_LAYOUT`) picks the coordinator tab's layout and is remembered for next time (see "Layouts") |
+| `factory start [dir] [--no-ui] [--layout watch\|tabs]` | Start the factory for a project (default: current folder) and open Herdr. `--no-ui` (or `FACTORY_NO_UI=1`) skips Herdr: talk to the Coordinator with `factory chat` in any terminal and follow roles with `factory logs <role>`. `--layout` (or `FACTORY_LAYOUT`) picks the coordinator tab's layout and is remembered for next time (see "Layouts") |
+| `factory chat` | Talk to the Coordinator in this terminal (wraps `sbx run --name factory-coordinator`); `factory start` creates the sandbox first |
 | `factory status` | Project, broker, dispatch bridge, login, roles (with their lanes), sandbox status, and (Passdesk Pro) pending approvals and the oldest one's age |
 | `factory logs <role>` | Follow a role's transcripts, all its lanes (`factory logs developer-lane2` for one lane); `factory logs broker` / `dispatch` for audit logs |
 | `factory watch` | Live terminal view of the lanes: one pane per active lane (a job running, or finished in the last ten minutes) with the job's status, elapsed time, model and cost in its title and the transcript rendered for reading (tool calls condensed, results dimmed, text wrapped); idle lanes take one status line each. A digit focuses one lane, `a` shows every lane, `p` shows a lane's latest review packet, `q` quits. `--once` prints one plain-text frame |
@@ -299,18 +300,20 @@ shares settings, keep a copy of the folder somewhere for teammates to copy.
 1. Add the repos agents may use to `[git].repos` in your local `policy.toml`
    (Local settings; for example `"my-org/my-project"`), then run `factory update` to rebuild the broker image and recreate the broker sandbox.
 2. Create a GitHub fine-grained token scoped to those repos (Contents: read/write,
-   Pull requests: read/write) and save it once:
+   Pull requests: read/write, Workflows: read/write) and save it once:
    ```sh
    factory secret save github
    ```
-   It goes into this machine's keychain (`factory-github`), and every broker start
+   GitHub rejects pushes that change `.github/workflows/` files without the Workflows
+   permission. It goes into this machine's keychain (`factory-github`), and every broker start
    registers it as an sbx secret **for the broker sandbox only**, so it survives
    `factory update` and `factory reset`. The same token keeps working until its
    GitHub expiry date; when it expires, create a new one and save it again.
    (Without a keychain: `sbx secret set github --sandbox factory-broker`, which
    has to be repeated whenever the broker sandbox is recreated.) Never store it
    globally (`sbx secret set github` without `--sandbox`): sbx would then inject it
-   for every sandbox.
+   for every sandbox. If a token is missing it, update the token on GitHub and run
+   `factory secret save github` again.
 Agents may only push branches starting with `factory/`. They can never push to
 protected branches (`main`, `master`, `release/*`) and can't force-push. The
 developer runs `factory-lane bundle` in its sandbox, which writes the branch

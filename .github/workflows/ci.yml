@@ -68,6 +68,8 @@ jobs:
         run: bash scripts/test_factory_layout.sh
       - name: factory docs
         run: bash scripts/test_factory_docs.sh
+      - name: factory chat
+        run: bash scripts/test_factory_chat.sh
 
   macos:
     # What a Mac user runs: the system bash (3.2) and the system Python
@@ -104,6 +106,8 @@ jobs:
         run: bash scripts/test_factory_layout.sh
       - name: factory docs
         run: bash scripts/test_factory_docs.sh
+      - name: factory chat
+        run: bash scripts/test_factory_chat.sh
       # factory-lane runs only inside the Linux sandboxes, so it's tested on Linux.
 
   images:
