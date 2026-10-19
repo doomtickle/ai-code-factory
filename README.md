@@ -292,7 +292,7 @@ shares settings, keep a copy of the folder somewhere for teammates to copy.
    has to be repeated whenever the broker sandbox is recreated.) Never store it
    globally (`sbx secret set github` without `--sandbox`): sbx would then inject it
    for every sandbox. If a token is missing it, update the token on GitHub and run
-   `factory secret save github` again, then restart the factory.
+   `factory secret save github` again.
 Agents may only push branches starting with `factory/`. They can never push to
 protected branches (`main`, `master`, `release/*`) and can't force-push. The
 developer runs `factory-lane bundle` in its sandbox, which writes the branch
