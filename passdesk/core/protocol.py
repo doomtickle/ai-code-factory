@@ -4,6 +4,7 @@ grant and argument checks, audit records, and the HTTP server."""
 from __future__ import annotations
 
 import json
+import ssl
 import sys
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -115,6 +116,19 @@ def handle_rpc(msg: dict, principal: str) -> dict | None:
 
 class Handler(BaseHTTPRequestHandler):
     server_version = config.USER_AGENT
+    handshake_timeout = 10  # seconds a TLS client gets to finish its handshake
+
+    def setup(self):
+        # With TLS, the listening socket is wrapped with
+        # do_handshake_on_connect=False, so the handshake happens here, in
+        # this connection's own thread and under a timeout, instead of in
+        # accept() on the serving thread, where one stalled client would
+        # hold up every other connection.
+        if isinstance(self.request, ssl.SSLSocket):
+            self.request.settimeout(self.handshake_timeout)
+            self.request.do_handshake()
+            self.request.settimeout(None)
+        super().setup()
 
     def log_message(self, fmt, *args):  # keep stderr quiet; the audit log is the record
         pass
@@ -169,6 +183,37 @@ class Handler(BaseHTTPRequestHandler):
         self._send(405)
 
 
+class Server(ThreadingHTTPServer):
+    def handle_error(self, request, client_address):
+        # A failed TLS handshake (a plain-HTTP client, a probe) is one line
+        # on stderr, not the default traceback dump.
+        exc = sys.exc_info()[1]
+        if isinstance(exc, (ssl.SSLError, OSError)):
+            print(f"connection from {client_address[0]} dropped: {type(exc).__name__}", file=sys.stderr)
+        else:
+            super().handle_error(request, client_address)
+
+
+def tls_context() -> ssl.SSLContext | None:
+    """The server-side context for BROKER_TLS_CERT/BROKER_TLS_KEY, or None
+    when TLS is off. Raises ssl.SSLError/OSError for files that don't load."""
+    if not config.TLS_CERT:
+        return None
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+    ctx.load_cert_chain(config.TLS_CERT, config.TLS_KEY)
+    return ctx
+
+
+def make_server(bind_host: str = "", port: int | None = None) -> Server:
+    """Bind the MCP listener (TLS-wrapped when configured), not yet serving."""
+    ctx = tls_context()  # before binding: a bad certificate never takes the port
+    server = Server((bind_host or config.BIND_HOST, config.PORT if port is None else port), Handler)
+    if ctx is not None:
+        server.socket = ctx.wrap_socket(server.socket, server_side=True, do_handshake_on_connect=False)
+    return server
+
+
 def main() -> None:
     try:
         config.validate()
@@ -184,6 +229,13 @@ def main() -> None:
         credentials.provider_order()  # fail fast on a provider list naming an unknown provider
     except credentials.CredentialError as e:
         sys.exit(str(e))
+    try:
+        server = make_server()
+    except (ssl.SSLError, OSError) as e:
+        # str(e) is the OpenSSL or OS error, never key material; the paths
+        # are named because OSError from load_cert_chain leaves them out.
+        tls = f" with BROKER_TLS_CERT={config.TLS_CERT} BROKER_TLS_KEY={config.TLS_KEY}" if config.TLS_CERT else ""
+        sys.exit(f"cannot start the listener on {config.BIND_HOST}:{config.PORT}{tls}: {e}")
     audit({"event": "start", "version": config.SERVER_VERSION, "workspace": str(config.WORKSPACE),
-           "approvals": approvals.hook_installed()})
-    ThreadingHTTPServer((config.BIND_HOST, config.PORT), Handler).serve_forever()
+           "approvals": approvals.hook_installed(), "tls": bool(config.TLS_CERT)})
+    server.serve_forever()

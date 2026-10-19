@@ -17,18 +17,19 @@ With BROKER_DEPLOYMENT=standalone, the sbx kit comparison (--kit, which
 checks the policy's egress hosts against an sbx kit's network allowlist) is
 replaced by check_standalone: how many hosts the policy can reach (no kit to
 compare against, so --kit itself is flagged as ignored), a GitHub credential
-present through core/credentials.py, a TLS note once that lands (W3.2), and
-the exchange directory's writability.
+present through core/credentials.py, TLS (check_tls: the files load, or a
+bind off loopback without them is refused unless BROKER_INSECURE_BIND=1),
+and the exchange directory's writability.
 """
 
 from __future__ import annotations
 
 import argparse
 import importlib
-import ipaddress
 import json
 import os
 import re
+import ssl
 import stat
 import sys
 import urllib.error
@@ -40,7 +41,7 @@ from . import tools  # noqa: F401 - registers every tool
 from .core import auth, config, credentials, plugins, registry
 from .core import policy as policy_mod
 from .core.errors import Denied
-from .core.net import NO_REDIRECT_OPENER
+from .core.net import NO_REDIRECT_OPENER, RefuseRedirects
 from .core.registry import TOOLS
 from .tools.git import check_branch_name
 from .tools.web import credentialed_host_tool
@@ -74,15 +75,6 @@ _EXCHANGE_DIRS = ("incoming", "outgoing", "npm-mirror", "wheels")
 # (never read by the gateway); in standalone mode check_standalone checks it
 # through credentials.get(), the only place that distinction matters.
 _GITHUB_TOOLS = {"git_fetch", "git_push", "github_create_pr"}
-
-
-def _is_loopback(host: str) -> bool:
-    if host.lower() == "localhost":
-        return True
-    try:
-        return ipaddress.ip_address(host).is_loopback
-    except ValueError:
-        return False  # not a literal IP (a hostname, say); treat as non-loopback
 
 
 def _proxy_blocks_other_providers(order: list[str]) -> bool:
@@ -557,6 +549,61 @@ def check_workspace(report: Report) -> None:
     report.ok(f"{name}/ exchange directory is a real directory with no symlinked entries")
 
 
+# --- TLS ---------------------------------------------------------------------------
+
+def check_tls(report: Report) -> None:
+    """BROKER_TLS_CERT/BROKER_TLS_KEY (README, "TLS"): both or neither, regular
+    files that OpenSSL loads as a matching pair, the key not readable by
+    others. Without TLS, a bind off loopback is a problem in standalone mode
+    (the server refuses to start) unless BROKER_INSECURE_BIND=1 says the
+    network is private, in which case it is a warning. Quiet on a loopback
+    bind with no TLS: nothing to check."""
+    cert, key = config.TLS_CERT, config.TLS_KEY
+    off_loopback = not config.is_loopback(config.BIND_HOST)
+    if not cert and not key:
+        if not off_loopback:
+            return
+        if config.INSECURE_BIND:
+            report.warn(f"bound to {config.BIND_HOST} (off loopback) without TLS; BROKER_INSECURE_BIND=1 "
+                        "acknowledges it: every principal's bearer token crosses the network in clear text",
+                        "only safe when nothing outside a private network (e.g. a compose stack's internal "
+                        "network) can reach the port; otherwise set BROKER_TLS_CERT and BROKER_TLS_KEY")
+        elif config.DEPLOYMENT == "standalone":
+            report.fail(f"bound to {config.BIND_HOST} (off loopback) without TLS: the server refuses to start",
+                        "set BROKER_TLS_CERT and BROKER_TLS_KEY (README, \"TLS\" has an openssl recipe), bind "
+                        "127.0.0.1, or set BROKER_INSECURE_BIND=1 if nothing outside a private network can "
+                        "reach the port")
+        return
+    if not cert or not key:
+        report.fail("BROKER_TLS_CERT and BROKER_TLS_KEY must be set together (the server refuses to start)",
+                    "set both to the PEM certificate and its private key, or neither")
+        return
+    usable = True
+    for what, path in (("BROKER_TLS_CERT", cert), ("BROKER_TLS_KEY", key)):
+        try:
+            st = os.stat(path)
+        except OSError as e:
+            report.fail(f"{what}={path}: {e.strerror or e}", f"put the PEM file at {path}, readable by the "
+                        "user the broker runs as")
+            usable = False
+            continue
+        if not stat.S_ISREG(st.st_mode):
+            report.fail(f"{what}={path} is not a regular file")
+            usable = False
+        elif what == "BROKER_TLS_KEY" and st.st_mode & 0o077:
+            report.warn(f"{path} is readable by others (mode {stat.S_IMODE(st.st_mode):04o})", f"chmod 0600 {path}")
+    if not usable:
+        return
+    try:
+        ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER).load_cert_chain(cert, key)
+    except (ssl.SSLError, OSError) as e:
+        report.fail(f"TLS certificate and key do not load: {e}",
+                    "check that BROKER_TLS_CERT is a PEM certificate (chain) and BROKER_TLS_KEY its unencrypted "
+                    "private key (README, \"TLS\")")
+        return
+    report.ok(f"TLS on: {cert} and its key load; the MCP URL is https://")
+
+
 # --- standalone ---------------------------------------------------------------------
 
 def check_standalone(report: Report, granted: set[str], pol: dict | None = None,
@@ -611,14 +658,7 @@ def check_standalone(report: Report, granted: set[str], pol: dict | None = None,
             else:
                 report.info(f"no github credential (not needed: no granted tool uses it; checked providers: {order_text})")
 
-    # TLS (doomtickle/passdesk-ops#53: W3.2 "Standalone image and compose
-    # quickstart" has not landed yet -- there is no BROKER_TLS_CERT/KEY to
-    # check). Flag the gap only when it would matter (bound off loopback);
-    # this is a deliberate stub, not a check, until W3.2 lands.
-    if not _is_loopback(config.BIND_HOST):
-        report.info(f"bound to {config.BIND_HOST} (off loopback); TLS cert/key checks are not implemented yet "
-                    "(doomtickle/passdesk-ops Phase 3 plan, task W3.2) -- terminate TLS in front of the broker, "
-                    "or narrow BROKER_BIND_HOST to a loopback address, until then")
+    check_tls(report)
 
     ws = config.WORKSPACE
     if ws.is_dir():
@@ -779,11 +819,17 @@ def check_plugins(report: Report) -> None:
 
 # --- live ---------------------------------------------------------------------------
 
-def _http(url: str, headers: dict | None = None, data: bytes | None = None, timeout: float = 10) -> tuple[int, bytes]:
+def _http(url: str, headers: dict | None = None, data: bytes | None = None, timeout: float = 10,
+          cafile: str | None = None) -> tuple[int, bytes]:
     req = urllib.request.Request(url, data=data, method="POST" if data is not None else "GET",
                                  headers={"User-Agent": config.USER_AGENT, **(headers or {})})
+    # `cafile` (the broker's own BROKER_TLS_CERT, for the --live probe of a
+    # self-signed listener) trusts that certificate alone; every other call
+    # (GitHub) keeps the system trust store.
+    opener = NO_REDIRECT_OPENER if cafile is None else urllib.request.build_opener(
+        RefuseRedirects, urllib.request.HTTPSHandler(context=ssl.create_default_context(cafile=cafile)))
     try:
-        with NO_REDIRECT_OPENER.open(req, timeout=timeout) as resp:
+        with opener.open(req, timeout=timeout) as resp:
             return resp.status, resp.read(65536)
     except urllib.error.HTTPError as e:
         body = e.read(65536) if e.fp else b""
@@ -792,8 +838,9 @@ def _http(url: str, headers: dict | None = None, data: bytes | None = None, time
 
 def check_live(report: Report, pol: dict | None, url: str, http=_http) -> None:
     report.section("Live")
+    probe = {"cafile": config.TLS_CERT} if url.startswith("https://") and config.TLS_CERT else {}
     try:
-        code, _ = http(url, data=b"{}", timeout=5)
+        code, _ = http(url, data=b"{}", timeout=5, **probe)
     except (urllib.error.URLError, OSError, ValueError) as e:
         report.fail(f"the broker does not answer at {url}: {getattr(e, 'reason', e)}",
                     "is it running? the deployment's start script launches it; check broker.log in the state dir")
@@ -868,10 +915,14 @@ def run(policy_path: Path | None = None, kits: list[Path] | None = None, live: b
         order_error = e
     if config.DEPLOYMENT == "standalone":
         check_standalone(report, granted, pol, kits or [], order_error)
+    elif config.TLS_CERT or config.TLS_KEY:
+        report.section("TLS")  # sbx mode: only when a deployment turned it on, so the usual report is unchanged
+        check_tls(report)
     check_secrets(report, pol, granted, order_error)
     check_plugins(report)
     if live:
-        check_live(report, pol, url or f"http://127.0.0.1:{config.PORT}/mcp", http)
+        scheme = "https" if config.TLS_CERT else "http"
+        check_live(report, pol, url or f"{scheme}://127.0.0.1:{config.PORT}/mcp", http)
     return report
 
 

@@ -96,7 +96,9 @@ CI and test fixtures exercise, not because it's the only one.
 | `BROKER_STATE` | `/nonexistent` | Where tokens, grants (`roles.json`) and the audit log live. |
 | `BROKER_POLICY` | `policy.toml` beside the package | The policy file to load (plus `policy.local.toml` beside it, if present, merged table by table). |
 | `BROKER_PORT` | `8765` | The port the MCP server listens on. |
-| `BROKER_BIND_HOST` | `0.0.0.0` | Interface the MCP server binds. Narrow it (e.g. `127.0.0.1`) when nothing outside the host needs to reach the broker directly; the sbx deployment below relies on the default for its port publishing. |
+| `BROKER_BIND_HOST` | `0.0.0.0` | Interface the MCP server binds. Narrow it (e.g. `127.0.0.1`) when nothing outside the host needs to reach the broker directly; the sbx deployment below relies on the default for its port publishing. With `BROKER_DEPLOYMENT=standalone`, a bind that isn't loopback refuses to start unless TLS is on or `BROKER_INSECURE_BIND=1` (see "TLS"). |
+| `BROKER_TLS_CERT`, `BROKER_TLS_KEY` | unset | PEM certificate (chain) and its unencrypted private key, both or neither; see "TLS". With them the MCP URL is `https://`. |
+| `BROKER_INSECURE_BIND` | unset | Exactly `1` lets a standalone deployment bind off loopback with no TLS, for a port nothing outside a private network can reach (a compose stack's internal network sets it). Any other value is off; ignored in `sbx` mode. |
 | `BROKER_ALLOWED_ORIGINS` | `` (empty) | Comma-separated Origin allowlist for the MCP spec's DNS-rebinding protection. A request with no `Origin` header (the normal case for a CLI-driven agent client) is unaffected; a request whose `Origin` isn't in this list gets HTTP 403. Empty means every Origin-bearing request is refused until a deployment opts specific origins in. |
 | `BROKER_MIRRORS` | `~/mirrors` | Where git tools keep their bare mirror clones. |
 | `BROKER_EXCHANGE_DIR` | `.factory` | Name of the workspace subdirectory `git_fetch`, `npm_fetch` and `pip_download` use to hand files to the agent's own sandbox. Must be a single path component: not empty, no `/` or NUL, not `.` or `..`, not absolute; the broker refuses to start the exchange directory otherwise. |
@@ -113,11 +115,14 @@ CI and test fixtures exercise, not because it's the only one.
 
 `BROKER_WORKSPACE` and `BROKER_STATE` are required in practice (there is
 nothing at `/nonexistent`); every other variable above has a usable default.
-`BROKER_DEPLOYMENT`, `BROKER_REF_NAMESPACE`, `BROKER_SECRETS_DIR` and
-`BROKER_PUSH_PREFIX` are checked for an invalid value (an unknown deployment
-name, a ref namespace that isn't under `refs/` or collides with one git
-already uses, a secrets directory that isn't absolute or contains `..`, a
-push prefix with whitespace or non-ref characters) by `config.validate()`,
+`BROKER_DEPLOYMENT`, `BROKER_REF_NAMESPACE`, `BROKER_SECRETS_DIR`,
+`BROKER_PUSH_PREFIX`, the TLS pair and the bind address are checked for an
+invalid value (an unknown deployment name, a ref namespace that isn't under
+`refs/` or collides with one git already uses, a secrets directory that
+isn't absolute or contains `..`, a push prefix with whitespace or non-ref
+characters, one TLS file without the other or inside the workspace, a
+standalone bind off loopback with neither TLS nor `BROKER_INSECURE_BIND=1`)
+by `config.validate()`,
 called both before the server binds its port and by `python3 -m
 passdesk.doctor`, with a one-line error naming the variable; nothing silently
 takes a bad value.
@@ -130,10 +135,51 @@ passdesk.doctor` (below) checks all of this and prints a fix for whatever is
 missing.
 
 **Connecting an MCP client:** once running, Passdesk answers MCP over HTTP
-at `http://<host>:<port>/mcp` and expects `Authorization: Bearer <token>` on
-every call. Point any MCP-capable client at that URL with a minted token;
-`tools.txt` lists every tool name for clients that can't query `tools/list`
-directly.
+at `http://<host>:<port>/mcp` (`https://` with TLS on) and expects
+`Authorization: Bearer <token>` on every call. Point any MCP-capable client
+at that URL with a minted token; `tools.txt` lists every tool name for
+clients that can't query `tools/list` directly.
+
+## TLS
+
+The bearer token on every call is only as private as the wire it crosses.
+On loopback that is the machine itself. Anywhere else, turn TLS on:
+
+```
+BROKER_TLS_CERT=/etc/passdesk/tls/cert.pem
+BROKER_TLS_KEY=/etc/passdesk/tls/key.pem
+```
+
+Passdesk serves `https://` with the stdlib `ssl` module, TLS 1.2 or newer,
+and refuses to start if the pair doesn't load; the handshake runs per
+connection with a 10-second limit, so a stalled client doesn't hold the
+listener. There is no ACME or renewal: bring a certificate from your own CA,
+or mint a self-signed one, valid for the names clients will use (the
+service name, `localhost` and `127.0.0.1` here):
+
+```
+openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -days 825 \
+  -keyout key.pem -out cert.pem -subj /CN=passdesk \
+  -addext "subjectAltName=DNS:passdesk,DNS:localhost,IP:127.0.0.1"
+chmod 0600 key.pem
+```
+
+A client then trusts `cert.pem` (a self-signed certificate is its own CA):
+Python's `ssl.create_default_context(cafile="cert.pem")`, `curl --cacert
+cert.pem`, or `NODE_EXTRA_CA_CERTS=cert.pem` for a Node client such as
+Claude Code. Keep the key out of the agent workspace (the broker refuses a
+path inside it) and readable only by the user the broker runs as; the
+doctor warns otherwise. `python3 -m passdesk.doctor --live` probes
+`https://127.0.0.1:<port>/mcp` trusting `BROKER_TLS_CERT` when TLS is on.
+
+**Standalone mode refuses a non-loopback bind without TLS.** With
+`BROKER_DEPLOYMENT=standalone`, a `BROKER_BIND_HOST` that isn't loopback
+(`0.0.0.0`, `::`, a hostname, or empty) and no TLS pair stops the server at
+start-up with a one-line error. The way out for a port nothing outside a
+private network can reach, such as a `docker compose` stack whose `agents`
+network is `internal: true`, is `BROKER_INSECURE_BIND=1`; the doctor then
+warns instead. The `sbx` deployment is exempt: its default `0.0.0.0` bind
+serves only the sandbox's own port publishing and keeps working unchanged.
 
 ## Configuring credentials
 
@@ -279,9 +325,12 @@ provider order is `file,env-file` — see "Configuring credentials" — so this
 reports the real file- or env-file-delivered credential's presence; the
 "proxy runs first" fix-hint only fires when a deployment's own
 `PASSDESK_CREDENTIAL_PROVIDERS` explicitly puts `proxy` back in front), the
-exchange directory is writable, and (a stub until TLS itself ships) a note
-when the broker is bound off loopback (`BROKER_BIND_HOST`) with no TLS check
-yet to back it.
+exchange directory is writable, and TLS: with `BROKER_TLS_CERT`/`BROKER_TLS_KEY`
+set, that both are regular files OpenSSL loads as a pair and the key isn't
+readable by others; without them, a `BROKER_BIND_HOST` off loopback is a
+problem (the server refuses to start) or, with `BROKER_INSECURE_BIND=1`, a
+warning. In `sbx` mode the TLS files are checked only when set, so the
+usual report is unchanged.
 
 `--json` prints the same report as one JSON object for scripts.
 `ai-code-factory`'s `factory doctor` runs it for you (in `sbx` mode).
