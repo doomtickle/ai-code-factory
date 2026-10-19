@@ -56,8 +56,12 @@ FAKE_SBX = textwrap.dedent(r'''
             sys.exit(3)
         tmp = tempfile.mkdtemp()
         bundle = os.path.join(tmp, "b")
+        # Like the old factory-lane: trust the lane's origin/* refs for what the
+        # host has (so a moved origin/main makes a bundle the host can't import);
+        # "full" is the whole history.
+        rev = [] if args[7:8] == ["full"] else ["--not", "--remotes=origin"]
         cp = subprocess.run(["git", "-C", repo, "bundle", "create", "--quiet", bundle,
-                             "--branches=factory/*", "--not", "--remotes=origin"])
+                             "--branches=factory/*", *rev])
         if cp.returncode != 0:
             sys.exit(3)
         with open(bundle, "rb") as f:
@@ -856,6 +860,30 @@ class ImportTests(Base):
                if '"job-end"' in l][-1]
         self.assertEqual(end["branches"], report["branches"])
         self.assertEqual(len(self.lane_calls("export")), 1)
+
+    def test_missing_prerequisites_retry_with_the_full_history(self):
+        self.make_host(d.PROJECT)
+        self.make_lane(d.PROJECT, "developer", ".", [])
+        clone = self.lanes / "developer"
+        # The role moved origin/main to a commit the host never had (as importing
+        # a git_fetch bundle into origin/main does) and built on it.
+        git("checkout", "-q", "-b", "factory/x", "origin/main", cwd=clone)
+        (clone / "upstream.txt").write_text("upstream")
+        git("add", ".", cwd=clone)
+        git("commit", "-q", "-m", "upstream", cwd=clone)
+        git("update-ref", "refs/remotes/origin/main", "HEAD", cwd=clone)
+        (clone / "x.txt").write_text("x")
+        git("add", ".", cwd=clone)
+        git("commit", "-q", "-m", "x", cwd=clone)
+        sha = git("rev-parse", "HEAD", cwd=clone)
+        report = self.wait(self.delegate("developer", "build"))
+        self.assertEqual(report["import_errors"], [])
+        self.assertEqual([b["ref"] for b in report["branches"]], ["factory-developer/factory/x"])
+        self.assertEqual(git("rev-parse", "refs/remotes/factory-developer/factory/x", cwd=d.PROJECT), sha)
+        self.assertEqual([c[7:] for c in self.lane_calls("export")], [[], ["full"]])
+        self.assertIn("full history", (d.STATE / "logs" / "developer.log").read_text())
+        self.assertFalse(self.marker.exists())
+        self.assertEqual(list((d.STATE / "imports").iterdir()), [])
 
     def test_lane_refs_are_namespaced_per_lane(self):
         self.make_host(d.PROJECT)

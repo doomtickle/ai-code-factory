@@ -499,10 +499,13 @@ def prepare_lane(job: Job, log: Transcript) -> str | None:
     return lane_dir
 
 
-def export_bundle(job: Job, rel: str, dest: Path) -> bool:
+def export_bundle(job: Job, rel: str, dest: Path, full: bool = False) -> bool:
     """Stream `factory-lane export` of one repo into dest. True if a bundle was
-    written, False if the lane has nothing to export; raises LaneError."""
+    written, False if the lane has nothing to export; raises LaneError. full:
+    the branches' whole history instead of only what the host lacks."""
     argv = [SBX, "exec", sandbox_name(job.role), "factory-lane", "export", str(PROJECT), job.lane, rel]
+    if full:
+        argv.append("full")
     written, too_big, timed_out = 0, False, threading.Event()
     fd = os.open(dest, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "wb") as out, subprocess.Popen(
@@ -555,6 +558,16 @@ def host_git(repo: Path, *args: str) -> subprocess.CompletedProcess:
 _import_lock = threading.Lock()  # one git fetch into the host project at a time
 
 
+def fetch_bundle(repo: Path, bundle: Path, namespace: str) -> subprocess.CompletedProcess:
+    """The one fixed fetch of a lane's bundle into the host repo's remote-tracking
+    refs. --no-prune: refs from earlier jobs stay; --no-recurse-submodules: no
+    submodule fetches from the host's configured remotes."""
+    with _import_lock:
+        return host_git(repo, "fetch", "--no-tags", "--no-write-fetch-head", "--quiet",
+                        "--no-prune", "--no-recurse-submodules", str(bundle),
+                        f"+refs/heads/factory/*:{namespace}*")
+
+
 def import_lane(job: Job, log: Transcript) -> None:
     """Bring the lane's committed factory/* branches into the host project as
     refs/remotes/factory-<lane>/factory/*, one repo of project_repos at a time.
@@ -572,14 +585,19 @@ def import_lane(job: Job, log: Transcript) -> None:
         try:
             if not export_bundle(job, rel, bundle):
                 continue
+            cp = fetch_bundle(repo, bundle, namespace)
+            if cp.returncode != 0 and b"prerequisite" in cp.stderr.lower():
+                # The lane left out commits the host turned out not to have (its
+                # view of what the host has was stale, or the host repo changed
+                # since). Once more with the branches' whole history.
+                log.write(f"   {rel}: the project lacks some of the bundle's base commits; "
+                          "exporting the branches with their full history instead")
+                if not export_bundle(job, rel, bundle, full=True):
+                    raise LaneError(f"{rel}: the lane had nothing to export on the second try")
+                cp = fetch_bundle(repo, bundle, namespace)
+            if cp.returncode != 0:
+                raise LaneError(f"{rel}: importing the bundle failed: {excerpt(cp.stderr)}")
             with _import_lock:
-                # --no-prune: refs from earlier jobs stay; --no-recurse-submodules: no
-                # submodule fetches from the host's configured remotes.
-                cp = host_git(repo, "fetch", "--no-tags", "--no-write-fetch-head", "--quiet",
-                              "--no-prune", "--no-recurse-submodules", str(bundle),
-                              f"+refs/heads/factory/*:{namespace}*")
-                if cp.returncode != 0:
-                    raise LaneError(f"{rel}: importing the bundle failed: {excerpt(cp.stderr)}")
                 cp = host_git(repo, "for-each-ref",
                               "--format=%(refname:short) %(objectname:short)", namespace)
                 if cp.returncode != 0:

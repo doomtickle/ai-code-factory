@@ -14,7 +14,12 @@ set -euo pipefail
 #   the last stdout line is the lane dir.
 # - export: exit 3 with no factory/* branches and for a branch already on
 #   origin; otherwise stdout is a bundle that "git fetch" into the source repo
-#   accepts, holding only factory/* refs, whose prerequisites the host has.
+#   accepts, holding only factory/* refs, whose prerequisites the host has,
+#   even after the lane moved its origin/main past the project; "full" has
+#   no prerequisites.
+# - bundle: writes <base>..<branch> into the project's .factory/outgoing and
+#   prints the file name; refuses non-factory branches, unknown branches and
+#   bases, and a branch with nothing past its base.
 # - invalid lane, rel and ref arguments are rejected.
 # - review: checks out a factory ref given in short and in long form.
 # - factory-test: with no mirror above the source dir, it looks in
@@ -153,6 +158,85 @@ run "$LANE" export "$tmp/multi" developer-lane2 a-repo
 assert_eq "export (folder of repos): no factory branches -> exit 3" "$RC" "3"
 run "$LANE" export "$tmp/single" developer-lane9 .
 assert_eq "export: a lane that was never prepared -> exit 3" "$RC:$OUT" "3:"
+
+# The role moved the lane's origin/main past the project (importing a git_fetch
+# bundle into origin/main does that) and built on it. The bundle must leave out
+# only what the project really has, or the project can't import it.
+git -C "$lane" checkout -q -b factory/moved factory/feature
+echo upstream > "$lane/upstream.txt"
+git -C "$lane" add upstream.txt
+git -C "$lane" commit -q -m upstream
+git -C "$lane" update-ref refs/remotes/origin/main HEAD
+echo five > "$lane/file.txt"
+git -C "$lane" commit -q -am five
+set +e
+"$LANE" export "$tmp/single" developer . > "$tmp/lane2.bundle" 2> "$tmp/err"
+RC=$?
+set -e
+assert_eq "export (origin moved past the project): exit 0" "$RC" "0"
+run git -C "$tmp/single" bundle verify "$tmp/lane2.bundle"
+assert_eq "export (origin moved past the project): the project has the bundle's prerequisites" "$RC" "0"
+run git -c core.hooksPath=/dev/null -c core.fsmonitor=false -C "$tmp/single" fetch --no-tags \
+  --no-write-fetch-head --quiet "$tmp/lane2.bundle" '+refs/heads/factory/*:refs/remotes/factory-developer/factory/*'
+assert_eq "export (origin moved past the project): the project imports it" "$RC" "0"
+assert_eq "export (origin moved past the project): the fetched ref is the lane's commit" \
+  "$(git -C "$tmp/single" rev-parse refs/remotes/factory-developer/factory/moved)" \
+  "$(git -C "$lane" rev-parse factory/moved)"
+run "$LANE" export "$tmp/single" developer .
+assert_eq "export: once the project imported everything -> exit 3" "$RC:$OUT" "3:"
+
+set +e
+"$LANE" export "$tmp/single" developer . full > "$tmp/full.bundle" 2> "$tmp/err"
+RC=$?
+set -e
+assert_eq "export full: exit 0 even when the project has everything" "$RC" "0"
+run git -C "$tmp/single" bundle verify "$tmp/full.bundle"
+assert_eq "export full: the bundle verifies" "$RC" "0"
+case "$OUT$ERR" in
+  *requires*) bad "export full: the bundle has no prerequisites" ;;
+  *) ok "export full: the bundle has no prerequisites" ;;
+esac
+run "$LANE" export "$tmp/single" developer . partial
+assert_eq "export: a fourth argument other than 'full' is rejected" "$RC" "1"
+
+# --- bundle ------------------------------------------------------------------
+run "$LANE" bundle "$tmp/single" developer . factory/moved
+assert_eq "bundle: no .factory/outgoing in the project -> exit 1" "$RC" "1"
+assert_contains "bundle: ...and says so" "$ERR" "is missing"
+mkdir -p "$tmp/single/.factory/outgoing"
+run "$LANE" bundle "$tmp/single" developer . factory/moved
+assert_eq "bundle: exit 0 and prints the file name" "$RC:$OUT" "0:moved.bundle"
+assert_contains "bundle: written to the project's .factory/outgoing" \
+  "$(head -c 20 "$tmp/single/.factory/outgoing/moved.bundle")" "# v2 git bundle"
+assert_eq "bundle: holds refs/heads/factory/moved" \
+  "$(git -C "$tmp/single" bundle list-heads "$tmp/single/.factory/outgoing/moved.bundle" | awk '{print $2}')" \
+  "refs/heads/factory/moved"
+# origin/HEAD follows the branch the project has checked out when the lane was
+# prepared: "feature" above.
+assert_contains "bundle: the default base is origin/HEAD" "$ERR" "origin/feature..factory/moved"
+run "$LANE" bundle "$tmp/single" developer . factory/moved main
+assert_eq "bundle: an explicit base branch" "$RC:$OUT" "0:moved.bundle"
+assert_contains "bundle: reports the range" "$ERR" "1 commit(s), origin/main..factory/moved"
+run "$LANE" bundle "$tmp/single" developer . other
+assert_eq "bundle: a branch outside factory/ is refused" "$RC" "1"
+assert_contains "bundle: ...and says why" "$ERR" "only factory/* branches"
+run "$LANE" bundle "$tmp/single" developer . factory/nope
+assert_eq "bundle: an unknown branch -> exit 1" "$RC" "1"
+run "$LANE" bundle "$tmp/single" developer . factory/moved nope
+assert_eq "bundle: an unknown base -> exit 1" "$RC" "1"
+git -C "$lane" checkout -q -b factory/empty origin/main
+run "$LANE" bundle "$tmp/single" developer . factory/empty main
+assert_eq "bundle: a branch with nothing past its base -> exit 1" "$RC" "1"
+assert_contains "bundle: ...and says so" "$ERR" "no commits beyond"
+git -C "$tmp/lanes/developer-lane2/a-repo" checkout -q -b factory/multi-topic origin/main
+echo m > "$tmp/lanes/developer-lane2/a-repo/m.txt"
+git -C "$tmp/lanes/developer-lane2/a-repo" add m.txt
+git -C "$tmp/lanes/developer-lane2/a-repo" commit -q -m m
+mkdir -p "$tmp/multi/.factory/outgoing"
+run "$LANE" bundle "$tmp/multi" developer-lane2 a-repo factory/multi-topic
+assert_eq "bundle (folder of repos): the name carries the repo" "$RC:$OUT" "0:a-repo--multi-topic.bundle"
+run "$LANE" bundle "$tmp/multi" developer-lane2 nope factory/multi-topic
+assert_eq "bundle: an unknown repo -> exit 1" "$RC" "1"
 
 # --- invalid arguments -------------------------------------------------------
 for bad_lane in Developer d "-x" "dev/../x" "dev_1" "a$(printf 'b%.0s' $(seq 41))" "dev

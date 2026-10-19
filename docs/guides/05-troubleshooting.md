@@ -206,6 +206,7 @@ applied. Roles are told to report these, not work around them. Common ones:
 | `host fastify.dev is not in the web allowlist (policy.toml [web].allow_hosts)` | Add the host to `[web].allow_hosts` in your local `policy.toml` and to your local `broker-kit/spec.yaml`, then `factory update` ([Make it yours](04-customize.md)). |
 | `repo my-org/my-api is not in the broker allowlist (policy.toml [git].repos)` | Add it to `[git].repos` in your local `policy.toml`, then `factory update`. |
 | `agents may only push branches starting with 'factory/'` | Push a `factory/*` branch. Protected branches (`main`, `master`, `release/*`) are always refused. |
+| `'.factory/outgoing/x.bundle' does not exist in the workspace` or `factory/x has no commits beyond origin/main` | The developer bundled by hand, into the wrong folder or with the wrong range. It should run `factory-lane bundle "$FACTORY_PROJECT" "$FACTORY_LANE" <rel> factory/x` and pass the printed name to `git_push`. |
 | `commit 3f9c2ab01d4e appears to contain secrets (...)` | Remove the secret from the branch's history (the developer can rewrite its `factory/*` branch), then push again. |
 | `no Gemini API key found for the broker sandbox; ...` | Optional tool: see [Enabling Gemini Flash queries](../../README.md#enabling-gemini-flash-queries). |
 
