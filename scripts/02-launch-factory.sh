@@ -342,7 +342,7 @@ if [ -n "$roles_waiting_for_login" ]; then
 fi
 
 if [ "${FACTORY_NO_UI:-}" = 1 ]; then
-  echo "Factory ready (no UI): talk to the Coordinator with 'sbx run --name $COORDINATOR_SANDBOX'; watch every lane with 'factory watch'."
+  echo "Factory ready (no UI): talk to the Coordinator with 'factory chat'; watch every lane with 'factory watch'."
 else
   hd workspace focus "$ws" >/dev/null
   hd tab focus "$coord_tab" >/dev/null
