@@ -64,6 +64,8 @@ jobs:
         run: bash scripts/test_factory_update.sh
       - name: factory secret
         run: bash scripts/test_factory_secret.sh
+      - name: factory layout
+        run: bash scripts/test_factory_layout.sh
       - name: factory docs
         run: bash scripts/test_factory_docs.sh
 
@@ -98,6 +100,8 @@ jobs:
         run: bash scripts/test_factory_update.sh
       - name: factory secret
         run: bash scripts/test_factory_secret.sh
+      - name: factory layout
+        run: bash scripts/test_factory_layout.sh
       - name: factory docs
         run: bash scripts/test_factory_docs.sh
       # factory-lane runs only inside the Linux sandboxes, so it's tested on Linux.

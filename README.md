@@ -48,7 +48,8 @@ Claude Code running in its own Docker Sandboxes (`sbx`) microVM, laid out in
   works in git clones of it on its sandbox's own disk, one per lane, and hands
   back committed `factory/*` branches. Read-only roles (`WORKSPACE="ro"`)
   just read it. Roles remember earlier tasks (each lane keeps a Claude
-  session). You can watch every role work live in its Herdr tab. Job results show the job's cost, the
+  session). You can watch every role work live, in the `factory watch` pane
+  (default layout) or its own Herdr tab (`tabs` layout). Job results show the job's cost, the
   session's running total and its context size. A session over the role's
   `MAX_SESSION_TOKENS` (100k by default) isn't resumed: the next task starts
   fresh, because every turn of a resumed session re-reads its whole history.
@@ -155,10 +156,10 @@ cd ~/code/my-project
 factory start
 ```
 
-`factory start` runs the whole factory for that folder and opens it in Herdr:
-
-- **coordinator** tab: the Coordinator (top) and a host shell (bottom).
-- one tab per role, showing its live transcripts (all its lanes).
+`factory start` runs the whole factory for that folder and opens it in Herdr,
+in one of two layouts (see "Layouts" below): by default, one **coordinator**
+tab with the Coordinator (top-left), a host shell (bottom-left) and a live
+`factory watch` pane (right).
 
 The folder must be a git repository, or a folder whose subfolders are git
 repositories: the developer works in clones of them, from what is committed
@@ -181,6 +182,25 @@ layout. Talk to the Coordinator with `sbx run --name factory-coordinator` in
 any terminal (type `/login` there the first time, then `factory start --no-ui`
 again), and watch every lane with `factory watch` in another.
 
+### Layouts
+
+`factory start --layout watch|tabs` picks how the coordinator tab looks
+(`FACTORY_LAYOUT` works the same way as an environment variable; the flag
+wins over it). Either way sticks for next time, without retyping it: it is
+saved to `~/.config/ai-code-factory/layout`, read by every later `factory
+start` that doesn't pass `--layout` or set `FACTORY_LAYOUT` itself. Omit both
+and nothing was ever saved, and you get `watch`, the default.
+
+- **watch** (default): the Coordinator (top-left), a host shell (bottom-left)
+  and a `factory watch` pane (right) live for every role's lanes. No per-role
+  tabs.
+- **tabs**: the Coordinator (top) and a host shell (bottom), plus one tab per
+  role showing its live transcripts (all its lanes).
+
+Switching layouts and running `factory start` again cleans up what the other
+layout added (the `factory watch` pane, or the per-role tabs). `--no-ui`
+ignores the layout: there is no Herdr to lay out.
+
 ## Commands
 
 | Command | What it does |
@@ -188,7 +208,7 @@ again), and watch every lane with `factory watch` in another.
 | `factory doctor` | Check the machine is ready; prints the fix for each problem (setup runs it first). Once the broker exists, it also runs the gateway's own doctor inside it: policy, tokens and grants, audit log, credentials, a live probe, GitHub access per repo, the policy's hosts against the broker kit, and (Passdesk Pro) a warning for any approval that expired with no decision |
 | `factory setup` | One-time setup (safe to re-run) |
 | `factory update [--yes]` | After pulling changes or editing kits, images or policy: pulls the latest factory, rebuilds, recreates only the sandboxes the changes affect (it lists them and what each loses, then asks), and restarts |
-| `factory start [dir] [--no-ui]` | Start the factory for a project (default: current folder) and open Herdr. `--no-ui` (or `FACTORY_NO_UI=1`) skips Herdr: talk to the Coordinator with `sbx run --name factory-coordinator` in any terminal and follow roles with `factory logs <role>` |
+| `factory start [dir] [--no-ui] [--layout watch\|tabs]` | Start the factory for a project (default: current folder) and open Herdr. `--no-ui` (or `FACTORY_NO_UI=1`) skips Herdr: talk to the Coordinator with `sbx run --name factory-coordinator` in any terminal and follow roles with `factory logs <role>`. `--layout` (or `FACTORY_LAYOUT`) picks the coordinator tab's layout and is remembered for next time (see "Layouts") |
 | `factory status` | Project, broker, dispatch bridge, login, roles (with their lanes), sandbox status, and (Passdesk Pro) pending approvals and the oldest one's age |
 | `factory logs <role>` | Follow a role's transcripts, all its lanes (`factory logs developer-lane2` for one lane); `factory logs broker` / `dispatch` for audit logs |
 | `factory watch` | Live terminal view of the lanes: one pane per active lane (a job running, or finished in the last ten minutes) with the job's status, elapsed time, model and cost in its title and the transcript rendered for reading (tool calls condensed, results dimmed, text wrapped); idle lanes take one status line each. A digit focuses one lane, `a` shows every lane, `p` shows a lane's latest review packet, `q` quits. `--once` prints one plain-text frame |
@@ -513,7 +533,7 @@ all lanes share the role's one sandbox. The Coordinator gives independent
 chunks to separate lanes, each on its own branch, and sends a follow-up (a
 REVISE, say) back to the lane that did the work. `LANES` is read per task (1
 to 8; empty means 1), so changing it needs no new sandbox; `factory start`
-updates the role's tab. Several lanes share the sandbox's CPU and memory and
+updates the role's tab (`tabs` layout) or `factory watch`'s lane list. Several lanes share the sandbox's CPU and memory and
 your Claude subscription's usage limits, so more lanes isn't always faster.
 
 Models, set per role in `role.conf` `MODEL` (aliases resolve to the newest
@@ -707,7 +727,8 @@ edit that `"model"` value, then run `factory update` to recreate the Coordinator
 with the new setting; recreating it discards its conversation history.
 
 **Remove a role:** delete `roles/<role>/` and run `factory start`. It closes the role's
-tab and removes its broker access, and it prints the `sbx rm` command for the role's
+tab (`tabs` layout; it drops out of `factory watch`'s lane list either way) and removes
+its broker access, and it prints the `sbx rm` command for the role's
 sandbox (sandboxes are never deleted automatically).
 
 ## Broker tools

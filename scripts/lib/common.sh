@@ -75,6 +75,36 @@ case "${XDG_CONFIG_HOME:-}" in
 esac
 readonly FACTORY_CONFIG
 
+# This machine's remembered `factory start --layout` choice. Holds just
+# "watch" or "tabs"; absent is the same as "watch" (resolve_layout's
+# fallback), so nothing here needs it to exist.
+readonly FACTORY_LAYOUT_FILE="$FACTORY_CONFIG/layout"
+
+# resolve_layout FLAG ENV -> "watch" or "tabs": FLAG (factory start's --layout
+# value) if non-empty, else ENV (FACTORY_LAYOUT from the environment) if
+# non-empty, else the value saved in FACTORY_LAYOUT_FILE, else "watch". A
+# non-empty FLAG or ENV is validated (dies, with the command's usage, on
+# anything else) and saved as the new default, so later runs don't need it
+# repeated.
+resolve_layout() {
+  local chosen="${1:-$2}" saved
+  if [ -n "$chosen" ]; then
+    case "$chosen" in
+      watch|tabs) ;;
+      *) die "usage: factory start [dir] [--no-ui] [--layout watch|tabs]" ;;
+    esac
+    mkdir -p "$FACTORY_CONFIG"
+    printf '%s\n' "$chosen" > "$FACTORY_LAYOUT_FILE"
+    printf '%s' "$chosen"
+    return
+  fi
+  saved="$(cat "$FACTORY_LAYOUT_FILE" 2>/dev/null || true)"
+  case "$saved" in
+    watch|tabs) printf '%s' "$saved" ;;
+    *) printf '%s' "watch" ;;
+  esac
+}
+
 # require_state_outside PROJECT -> die if the state dir is inside PROJECT
 # (e.g. XDG_STATE_HOME pointed into it), where agents could edit it.
 require_state_outside() {

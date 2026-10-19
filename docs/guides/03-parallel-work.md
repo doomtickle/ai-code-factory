@@ -70,18 +70,12 @@ lane's state:
 
 ## Watch each lane
 
-The role's Herdr tab follows every lane at once. With several lanes, each chunk
-of output is headed with the lane's log file:
-
-```text
-==> /Users/you/.local/state/ai-code-factory/dispatch/logs/developer-lane2.log <==
-15:01:04  ▶ job 20261017-150104-4d5e6f from the Coordinator
-```
-
-To follow every lane of every role at once, with each active lane in its own
+The default layout's **Watch** pane (`factory watch`, the command behind it)
+follows every lane of every role at once, with each active lane in its own
 pane (a job running, or finished in the last ten minutes; idle lanes take one
 status line each), tool calls condensed to one line and the job's status,
-elapsed time, model and cost in the pane's title:
+elapsed time, model and cost in the pane's title. Run it yourself from any
+terminal the same way:
 
 ```bash
 factory watch
@@ -89,9 +83,19 @@ factory watch
 
 Press a lane's number to read that lane full-screen, `p` for its latest review
 packet, `a` for the grid again (press it on the grid to show every lane, idle
-ones included) and `q` to quit. It reads the same transcripts
-Herdr tails, so it works with or without Herdr. For the raw log of one role or
-lane:
+ones included) and `q` to quit.
+
+With `factory start --layout tabs`, the role's Herdr tab follows every one of
+its lanes at once instead, each chunk of output headed with the lane's log
+file:
+
+```text
+==> /Users/you/.local/state/ai-code-factory/dispatch/logs/developer-lane2.log <==
+15:01:04  ▶ job 20261017-150104-4d5e6f from the Coordinator
+```
+
+`factory watch` reads the same transcripts Herdr tails, so it works in either
+layout, with or without Herdr. For the raw log of one role or lane:
 
 ```bash
 factory logs developer          # every developer lane
