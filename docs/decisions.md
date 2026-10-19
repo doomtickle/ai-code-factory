@@ -44,6 +44,46 @@ Dated entries, for the user to review. Newest first.
   - **The recipe is a self-signed EC P-256 certificate with SANs for
     `passdesk`, `localhost` and `127.0.0.1`**, the names the compose
     quickstart and the doctor use. No ACME (plan: W3.2).
+- **Standalone image: a second Dockerfile target (doomtickle/passdesk-ops#55,
+  Phase 3a W3.1).** `--target standalone` builds Passdesk on
+  `python:3.13-slim-bookworm` (pinned by its multi-arch index digest) plus
+  `git` and `openssl`, installed read-only to `/opt/passdesk`, running as
+  a non-root `passdesk` user with `BROKER_DEPLOYMENT=standalone` and the
+  state/workspace/secrets paths set in the image. The sbx image is the
+  same stage as before, now named `sbx` and kept **last** so ai-code-factory's
+  plain `docker build` (no `--target`) still gets it; `tests/test_dockerfile.py`
+  pins that order. Judgement calls:
+  - **The `factory-config` and `plugins` build contexts get default
+    stages of the same name** (an empty overlay, an empty directory). A
+    `--build-context NAME=DIR` overrides a stage of that name (BuildKit
+    documents this; checked on Docker 29.1.2 both ways), so the factory's
+    build is unchanged and `docker build` with no contexts now works for
+    either target. The alternative, keeping "pass empty contexts or the
+    build fails", would have made the compose quickstart (#58) carry two
+    throwaway directories.
+  - **`git` and `openssl` come from Debian's repositories, not pinned by
+    digest.** CLAUDE.md asks to pin the base by digest and flag what can't
+    be: apt has no digest pin short of a snapshot.debian.org mirror, which
+    is slow and rate-limited. The base digest is the pin; the build log
+    prints the versions installed. `openssl` is there so a user can mint
+    the self-signed certificate for TLS (W3.2) inside the container, with
+    nothing on the host.
+  - **Python 3.13, not 3.14 (the sbx base) or 3.11 (the floor).** The newest
+    release the tests have run on here and in the sbx image's neighbourhood;
+    3.14's slim image is newer than the rest of the stack has been checked
+    against. CI runs the suite inside this image, so a bump is one digest
+    and a green run.
+  - **uid 1000 by default, overridable with `--build-arg`.** The gateway
+    writes the bind-mounted workspace's exchange directory; on a native
+    Linux host that needs a matching uid, and 1000 is the first user on
+    most distributions. Docker Desktop (Mac, Windows) ignores it.
+  - **No `run.sh` loop and no HEALTHCHECK in the image.** The container
+    runtime restarts the process; a healthcheck depends on whether TLS
+    (W3.2) is on, so it belongs in the compose file (#58), not the image.
+  - **CI builds the standalone target with no build contexts** (so the
+    default stages are what get tested) and runs the whole test suite inside
+    it as the non-root user, after unsetting the image's `BROKER_*` defaults
+    (the tests assume a bare checkout's environment). Publishing is #59.
 
 - **`credentials.get` takes an `on_unusable` callback (doomtickle/passdesk-ops#53,
   follow-up on W1.3).** `check_secrets`'s and `check_standalone`'s fallback

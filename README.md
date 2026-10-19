@@ -340,32 +340,69 @@ Directly, with Python 3.11+:
 python3 -m unittest discover -v
 ```
 
-Or inside the pinned image, the same way CI builds it. The Dockerfile needs
-two additional build contexts (`factory-config`, a deployment's policy
-overlay; `plugins`, optional plugin packages) that plain `docker build`
-doesn't supply, so pass empty ones explicitly:
+Or inside the pinned image, the same way CI builds it (either target, see
+"Images" below; the standalone one sets `BROKER_*` defaults the tests don't
+expect, so unset them first):
 
 ```
-mkdir -p /tmp/passdesk-empty/factory-config /tmp/passdesk-empty/plugins
-: > /tmp/passdesk-empty/factory-config/policy.toml
-docker buildx build --load -t passdesk:dev \
-  --build-context factory-config=/tmp/passdesk-empty/factory-config \
-  --build-context plugins=/tmp/passdesk-empty/plugins \
-  .
+docker buildx build --load -t passdesk:dev .
 docker run --rm --network none -v "$PWD:/b:ro" -w /b passdesk:dev python3 -m unittest -v
+
+docker buildx build --load --target standalone -t passdesk:dev-standalone .
+docker run --rm --network none -v "$PWD:/b:ro" -w /b passdesk:dev-standalone \
+  sh -c 'unset BROKER_DEPLOYMENT BROKER_STATE BROKER_WORKSPACE BROKER_SECRETS_DIR; exec python3 -m unittest -v'
 ```
 
-CI (`.github/workflows/test.yml`) runs exactly this, on every push and pull
-request. A second job would push tagged images (`v*`) to Docker Hub but
-stays disabled until the owner adds the
-`DOCKERHUB_USERNAME`/`DOCKERHUB_TOKEN` repository secrets.
+CI (`.github/workflows/test.yml`) runs exactly this for both targets, plus a
+smoke test of the standalone image, on every push and pull request. A
+second job would push tagged images (`v*`) to Docker Hub but stays disabled
+until the owner adds the `DOCKERHUB_USERNAME`/`DOCKERHUB_TOKEN` repository
+secrets.
+
+## Images
+
+The `Dockerfile` has two targets. Both bake `policy.toml` in at build time
+(never read from a caller-writable path), take the same two optional named
+build contexts, and are pinned to their base image's multi-arch digest:
+
+| Target | Base | Installs to | Runs as | For |
+|---|---|---|---|---|
+| `sbx` (the default: plain `docker build` with no `--target`) | `docker/sandbox-templates:shell-docker` | `/opt/factory-broker` | `agent` | the Docker Sandboxes deployment below; what ai-code-factory builds. Unchanged. |
+| `standalone` (`--target standalone`) | `python:3.13-slim-bookworm` plus `git` and `openssl` from Debian | `/opt/passdesk` | `passdesk` (uid 1000, non-root) | plain Docker, no sbx: `BROKER_DEPLOYMENT=standalone` |
+
+The two build contexts are `factory-config` (a directory holding your
+`policy.toml` overlay, baked in as `policy.local.toml` and merged table by
+table) and `plugins` (optional plugin packages, loaded only when
+`PASSDESK_PLUGINS` names them). Pass them with `--build-context
+factory-config=DIR --build-context plugins=DIR`; leave either out and an
+empty default (a stage of the same name in the `Dockerfile`) stands in, so
+`docker build` with no contexts works.
+
+The standalone image sets `BROKER_DEPLOYMENT=standalone`,
+`BROKER_STATE=/var/lib/passdesk` (mount a volume there to keep tokens, the
+audit log and git mirrors across container recreation),
+`BROKER_WORKSPACE=/workspace` (bind-mount the project there),
+`BROKER_SECRETS_DIR=/etc/passdesk/secrets` (Docker secrets under
+`/run/secrets/` are found too), and puts `/opt/passdesk` on `PYTHONPATH` so
+`python3 -m passdesk principal ...` and `python3 -m passdesk.doctor` work
+under `docker exec` from any directory. Its command is `python3
+/opt/passdesk/server.py`; there is no `run.sh` restart loop, the container
+runtime restarts it. `git` and `openssl` come from the Debian repositories
+the pinned base is configured with, at whatever version they serve at build
+time: they are the one part of the image not pinned by digest (the build log
+prints the versions). The non-root user's uid is a build argument
+(`--build-arg PASSDESK_UID=... PASSDESK_GID=...`) for a Linux host whose
+user isn't uid 1000; the gateway must be able to write the workspace's
+exchange directory. A compose quickstart for this image is a separate
+change (doomtickle/passdesk-ops#58).
 
 ## Deploying with Docker Sandboxes (sbx)
 
-The Dockerfile's default `INSTALL_DIR` (`/opt/factory-broker`), the secret
-paths above and the default `BROKER_DEPLOYMENT=sbx` all assume this
-deployment: Passdesk runs as its own sbx sandbox, built by the AI Code
-Factory from this repo's `Dockerfile`, with
+The Dockerfile's default target (`sbx`, with its `INSTALL_DIR`
+`/opt/factory-broker`), the secret paths above and the default
+`BROKER_DEPLOYMENT=sbx` all assume this deployment: Passdesk runs as its
+own sbx sandbox, built by the AI Code Factory from this repo's
+`Dockerfile`, with
 its policy overlay passed as the `factory-config` build context and its
 secrets delivered to `/etc/factory-broker/secrets/` by
 `scripts/start-broker.sh` (which also sets `BROKER_WORKSPACE` and
