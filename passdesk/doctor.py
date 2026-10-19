@@ -37,6 +37,7 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+from . import egress_guard
 from . import tools  # noqa: F401 - registers every tool
 from .core import auth, config, credentials, plugins, registry
 from .core import policy as policy_mod
@@ -173,6 +174,7 @@ def _check_policy_shape(report: Report, pol: dict) -> None:
         "filters": {"max_commits", "max_diff_bytes", "max_bundle_bytes"},
         "gemini": {"model", "max_prompt_chars"},
         "jira": {"site", "cloud_id", "projects", "max_results", "max_comments"},
+        "egress_guard": {"allow_hosts"},  # read by `passdesk egress-guard`, not a tool
     }
     for table, val in pol.items():
         if table not in known:
@@ -189,6 +191,11 @@ def _check_policy_shape(report: Report, pol: dict) -> None:
     for table in ("web", "git"):
         if not isinstance(pol.get(table), dict):
             report.fail(f"[{table}] is missing; web_fetch and the git tools need it even if its lists are empty")
+    try:
+        egress_guard.load_allowlist(pol)
+    except ValueError as e:
+        report.fail(str(e), "the egress guard refuses to start on this policy; fix the entry in policy.toml "
+                    "(or the overlay) and rebuild the image")
 
     web = pol.get("web") if isinstance(pol.get("web"), dict) else {}
     _check_hosts(report, "[web].allow_hosts", web.get("allow_hosts", []))
@@ -621,6 +628,19 @@ def check_standalone(report: Report, granted: set[str], pol: dict | None = None,
 
     needed = egress_hosts(pol or {})
     report.info(f"{len(needed)} host(s) reachable under this policy; list them with --egress-hosts")
+    if isinstance((pol or {}).get("egress_guard"), dict):  # absent: this deployment doesn't run the guard
+        try:
+            allow = egress_guard.load_allowlist(pol)
+        except ValueError:
+            pass  # check_policy already failed it
+        else:
+            if allow:
+                report.info(f"egress guard forwards CONNECT to port 443 on {len(allow)} host(s): "
+                            f"{', '.join(sorted(allow))}")
+            else:
+                report.warn("[egress_guard].allow_hosts is empty: `passdesk egress-guard` refuses to start, so an "
+                            "agent container behind it has no model API",
+                            "list the model API hosts the agent needs (README, \"Egress guard\")")
     if kits:
         report.warn("--kit is ignored in standalone mode: there is no sbx kit to compare the policy's "
                      "egress hosts against",

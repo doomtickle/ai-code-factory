@@ -89,6 +89,26 @@ max_bundle_bytes = 100_000_000
 model = "gemini-2.5-flash"
 max_prompt_chars = 50_000
 
+[egress_guard]
+# `python3 -m passdesk egress-guard` (a standalone deployment's CONNECT
+# proxy for the agent container's own model traffic; see README, "Egress
+# guard") forwards `CONNECT host:443` to exactly these hosts and nothing
+# else. Exact DNS names, no wildcards, ports or IP literals; the guard also
+# refuses a name that resolves to any non-public address. The defaults are
+# what Claude Code (api.anthropic.com, plus the claude.ai sign-in hosts for a
+# subscription) and Codex CLI (chatgpt.com and auth.openai.com for a ChatGPT
+# login, api.openai.com for an API key) need; drop what you don't use, and
+# add nothing an agent could fetch code or packages from.
+allow_hosts = [
+  "api.anthropic.com",
+  "platform.claude.com",
+  "claude.ai",
+  "claude.com",
+  "chatgpt.com",
+  "auth.openai.com",
+  "api.openai.com",
+]
+
 [jira]
 # jira_my_issues / jira_get_issue: Jira Cloud REST API v3, reached through the
 # scoped-token gateway at api.atlassian.com/ex/jira/<cloudId>/... . The

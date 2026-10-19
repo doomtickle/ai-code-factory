@@ -297,6 +297,44 @@ deployment, or for a principal the factory doesn't manage at all; for a
 factory role, change `roles/<role>/role.conf` instead and let
 `start-broker.sh` apply it.
 
+## Egress guard
+
+In a deployment without sbx, the agent container's only way out is a
+CONNECT proxy that forwards nothing but its model traffic. Passdesk ships
+one, in the same image so there is one pin:
+
+```
+python3 -m passdesk egress-guard [--bind 0.0.0.0] [--port 3128] [--max-connections 64]
+```
+
+Put it on both the agents' internal network and a network with egress, and
+set `HTTPS_PROXY=http://egress-guard:3128` (plus
+`NO_PROXY=passdesk,localhost,127.0.0.1`) in the agent container; the compose
+quickstart (doomtickle/passdesk-ops#58) does exactly that. The guard accepts
+`CONNECT host:443` for a host named in `policy.toml`'s
+`[egress_guard].allow_hosts` (exact names, lowercased and without a
+trailing dot before matching; no wildcards, ports or IP literals, and an
+entry that isn't one stops it from starting) and refuses everything else:
+every other method, every other port, an IP-literal target, a name not on
+the list. It resolves the name itself and refuses the request unless every
+address is global unicast (no RFC 1918, loopback, link-local such as
+`169.254.169.254`, `100.64/10`, `fc00::/7`, multicast, or an IPv6 address
+embedding an IPv4 one), then connects to one of those exact addresses, so
+there is no second lookup to rebind. The tunnel is opaque: no TLS
+interception, no logging of what crosses it. Every refusal is one line on
+stderr with the status, the reason and the target (never a payload), and
+every tunnel one `allow` line with the host and address. The request read
+has a 10-second limit and an 8 KiB cap, an upstream connect 10 seconds, an
+idle tunnel 10 minutes, and connections beyond `--max-connections` get 503.
+
+The default list covers Claude Code (`api.anthropic.com`, plus
+`platform.claude.com`, `claude.ai` and `claude.com` for a subscription
+sign-in) and Codex CLI (`chatgpt.com` and `auth.openai.com` for a ChatGPT
+login, `api.openai.com` for an API key); trim it to the client you run in
+your `policy.toml` overlay, and never add a host an agent could fetch code
+or packages from. The doctor fails on a bad entry in either mode and, in
+standalone mode, lists what the guard forwards.
+
 ## Checking a deployment
 
 ```
