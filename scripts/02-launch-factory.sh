@@ -6,10 +6,15 @@ set -euo pipefail
 # Starts the factory for <project-dir>:
 #   - the broker VM (network tools for roles) and the dispatch bridge (host)
 #   - one sandbox per role in roles/, plus the Coordinator sandbox
-#   - a Herdr workspace "code-factory": a "coordinator" tab where you talk to
-#     the Coordinator (plus a host shell), and one tab per role showing the
-#     live transcripts of the tasks the Coordinator delegates to it (every
-#     lane's, for a role with LANES > 1).
+#   - a Herdr workspace "code-factory", with a "coordinator" tab where you
+#     talk to the Coordinator (plus a host shell below it). Its layout
+#     (FACTORY_LAYOUT, default "watch"; bin/factory resolves and passes it -
+#     see `factory start --layout`) is one of:
+#       watch: a "factory watch" pane beside the Coordinator, live for every
+#         role's lanes; no per-role tabs (any left over from "tabs" are closed).
+#       tabs: one tab per role, tailing the live transcripts of the tasks the
+#         Coordinator delegates to it (every lane's, for a role with LANES > 1);
+#         any "Watch" pane left over from "watch" is closed.
 # Inside a Herdr pane it uses the current Herdr session. Otherwise it uses the
 # session named by FACTORY_HERDR_SESSION (bin/factory sets "factory"), starting
 # that session's server if needed; attach with `herdr session attach <name>`.
@@ -29,6 +34,15 @@ require_bin jq
 # Coordinator with `sbx run` and follows roles with `factory logs`.
 [ "${FACTORY_NO_UI:-}" = 1 ] || require_herdr
 require_sbx
+
+# FACTORY_LAYOUT: bin/factory resolves and passes this (--layout, FACTORY_LAYOUT,
+# or the saved default); a direct run defaults to "watch". Ignored entirely
+# with FACTORY_NO_UI=1 (no Herdr layout to pick).
+LAYOUT="${FACTORY_LAYOUT:-watch}"
+case "$LAYOUT" in
+  watch|tabs) ;;
+  *) die "FACTORY_LAYOUT must be 'watch' or 'tabs', got '$LAYOUT'" ;;
+esac
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd -P)"
 # shellcheck source=lib/roles.sh
@@ -278,7 +292,8 @@ tab_pane() {
   printf '%s' "$pane"
 }
 
-# Coordinator tab: the Coordinator sandbox, with a host shell below it.
+# Coordinator tab: the Coordinator sandbox, with a host shell below it (and,
+# under "watch", a Watch pane beside it - added below).
 coordinator="$(tab_pane "$COORDINATOR_TAB")"
 hd pane rename "$coordinator" "Coordinator (VM)" >/dev/null
 coord_tab="$(hd pane get "$coordinator" | jq -r '.result.pane.tab_id')"
@@ -295,27 +310,57 @@ if [ "$host_cwd" != "$PROJECT" ] && pane_idle "$host_shell"; then
 fi
 run_if_idle "$coordinator" "sbx run --name $COORDINATOR_SANDBOX"
 
-# One tab per role, tailing the transcripts of all its lanes (read-only;
-# nothing is typed into sandboxes). With several files, tail heads each chunk
-# with "==> <lane>.log <==".
-for role in $roles; do
-  pane="$(tab_pane "$role")"
-  hd pane rename "$pane" "$role (transcript)" >/dev/null
-  logs=()
-  for lane in $(role_lane_names "$role"); do
-    logs+=("$FACTORY_DISPATCH_STATE/logs/$lane.log")
-  done
-  stop_stale_tail "$pane" "${logs[@]}"
-  run_if_idle "$pane" "clear; tail -n 200 -F$(printf ' %q' "${logs[@]}")"
-done
+# "watch" layout: a "factory watch" pane to the right of the Coordinator,
+# full-width host shell below (splitting off the Coordinator pane itself, the
+# only one guaranteed to exist both on a fresh tab and on one already split
+# down for the host shell - so this lands the same way whichever happened
+# first; a true full-height right column isn't reachable once the coordinator
+# pane is already split into a top/bottom pair, since a pane split only
+# divides that one pane's own cell). Any Watch pane is closed under "tabs".
+watch_pane="$(hd pane list --workspace "$ws" \
+  | jq -r --arg t "$coord_tab" '[.result.panes[] | select(.tab_id == $t and .label == "Watch")][0].pane_id // empty')"
+if [ "$LAYOUT" = watch ]; then
+  if [ -z "$watch_pane" ]; then
+    watch_pane="$(hd pane split "$coordinator" --direction right --cwd "$PROJECT" --no-focus | jq -r '.result.pane.pane_id')"
+    hd pane rename "$watch_pane" "Watch" >/dev/null
+  fi
+  run_if_idle "$watch_pane" "$(printf '%q' "$ROOT/bin/factory") watch"
+elif [ -n "$watch_pane" ]; then
+  echo "Closing Watch pane (switched to the tabs layout)..."
+  hd pane close "$watch_pane" >/dev/null
+fi
 
-# Close transcript tabs of roles that no longer exist.
+# "tabs" layout: one tab per role, tailing the transcripts of all its lanes
+# (read-only; nothing is typed into sandboxes). With several files, tail
+# heads each chunk with "==> <lane>.log <==". Not created under "watch".
+if [ "$LAYOUT" = tabs ]; then
+  for role in $roles; do
+    pane="$(tab_pane "$role")"
+    hd pane rename "$pane" "$role (transcript)" >/dev/null
+    logs=()
+    for lane in $(role_lane_names "$role"); do
+      logs+=("$FACTORY_DISPATCH_STATE/logs/$lane.log")
+    done
+    stop_stale_tail "$pane" "${logs[@]}"
+    run_if_idle "$pane" "clear; tail -n 200 -F$(printf ' %q' "${logs[@]}")"
+  done
+fi
+
+# Close transcript tabs: under "tabs", only those of roles that no longer
+# exist; under "watch", every one (the Watch pane replaces them, and a
+# re-run after switching layouts must clean them up).
 hd tab list --workspace "$ws" | jq -r '.result.tabs[] | .tab_id + " " + .label' | while read -r tab label; do
   [ "$label" = "$COORDINATOR_TAB" ] && continue
-  in_list "$label" "$(printf '%s ' $roles)" && continue
+  if [ "$LAYOUT" = tabs ] && in_list "$label" "$(printf '%s ' $roles)"; then
+    continue
+  fi
   if hd pane list --workspace "$ws" | jq -e --arg t "$tab" --arg l "$label (transcript)" \
       'any(.result.panes[]; .tab_id == $t and .label == $l)' >/dev/null; then
-    echo "Closing tab of removed role $label..."
+    if [ "$LAYOUT" = watch ]; then
+      echo "Closing tab of $label (switched to the watch layout)..."
+    else
+      echo "Closing tab of removed role $label..."
+    fi
     hd tab close "$tab" >/dev/null
   fi
 done

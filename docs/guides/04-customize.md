@@ -186,8 +186,10 @@ comments. You don't change program behavior.
 - Keep your report short: the branch, the files changed, and open questions.
 ```
 
-Then run `factory start`. It creates the `factory-docs-writer` sandbox and a
-**docs-writer** tab, and the Coordinator sees the role the next time it calls
+Then run `factory start`. It creates the `factory-docs-writer` sandbox (and a
+**docs-writer** tab under the `tabs` layout; under the default `watch`
+layout, no tab is created and the role shows up in the Watch pane's lane
+list instead), and the Coordinator sees the role the next time it calls
 `list_roles`. If it's in the middle of a conversation, mention the new role,
 or ask it to check `list_roles`, so it plans with it.
 
@@ -205,8 +207,9 @@ exemption.
 > role that may search (see [Roles](../../README.md#roles)).
 
 To remove a role, delete `roles/<name>/` and run `factory start`. It closes the
-role's tab, removes its broker access, and prints the `sbx rm` command for its
-sandbox; sandboxes are never deleted automatically.
+role's tab (`tabs` layout) or drops it from the Watch pane's lane list,
+removes its broker access, and prints the `sbx rm` command for its sandbox;
+sandboxes are never deleted automatically.
 
 ## Local settings
 

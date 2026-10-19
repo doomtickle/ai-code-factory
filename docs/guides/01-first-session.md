@@ -115,13 +115,19 @@ creates afterwards.
 
 ## 5. Find your way around Herdr
 
-Herdr opens a workspace named `code-factory` with one tab per agent:
+Herdr opens a workspace named `code-factory`. By default (the `watch` layout)
+it has one **coordinator** tab:
 
-- **coordinator**: the Coordinator (top pane) and a Host shell (bottom pane).
-  You talk to the Coordinator here. The Host shell is a normal terminal on your
-  machine, in the project folder.
-- **developer**, **reviewer**, **researcher**: each shows that role's live
-  transcript. They are read-only views: you never type into them.
+- **Coordinator (VM)** (top-left): you talk to the Coordinator here.
+- **Host shell** (bottom-left): a normal terminal on your machine, in the
+  project folder.
+- **Watch** (right): a live `factory watch` view of every role's lanes. It's
+  a read-only view: you never type into it.
+
+Run `factory start --layout tabs` instead (it's remembered for next time) to
+get one tab per role - **developer**, **reviewer**, **researcher** - each
+showing that role's live transcript instead of the Watch pane. See
+"Layouts" in the [README](../../README.md#layouts).
 
 ## 6. Give the Coordinator a small first task
 
@@ -140,7 +146,8 @@ model and effort it picked for each job, so you can overrule it.
 
 ## 7. Watch the roles work
 
-Switch to the **developer** tab to follow the job live. Every transcript line
+Look at the **Watch** pane to follow the job live (switch to the **developer**
+tab instead if you started with `--layout tabs`). Every transcript line
 starts with the time. Between the start and the end you'll see the role's
 messages, each tool call and a one-line summary of its result (left out here):
 

@@ -283,8 +283,9 @@ transcript.
 ### A job seems stuck
 
 A job can run for a long time; the Coordinator waits up to 600 seconds per
-call and then waits again. Watch its tab, or `factory logs <role>`, to see
-whether it's still making progress. If it isn't, ask the Coordinator to stop it:
+call and then waits again. Watch its pane in `factory watch` (or its tab,
+`tabs` layout), or `factory logs <role>`, to see whether it's still making
+progress. If it isn't, ask the Coordinator to stop it:
 
 ```prompt
 The developer-lane2 job has been stuck on the same failing test for ten
