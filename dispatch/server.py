@@ -168,6 +168,7 @@ def load_roles() -> dict:
             "models": parse_models(values.get("MODEL", ""), values.get("MODELS", "")),
             "effort": values.get("EFFORT", "").strip() if values.get("EFFORT", "").strip() in EFFORTS else "",
             "max_session_tokens": parse_session_cap(values.get("MAX_SESSION_TOKENS", "")),
+            "max_turns": parse_turns(values.get("MAX_TURNS", "")),
             "lanes": parse_lanes(values.get("LANES", "")),
         }
     return roles
@@ -223,6 +224,12 @@ def parse_models(default: str, allowed: str) -> list:
 def parse_session_cap(value: str) -> int:
     value = value.strip()
     return int(value) if value.isdigit() else DEFAULT_MAX_SESSION_TOKENS
+
+
+def parse_turns(value: str) -> int:
+    """role.conf MAX_TURNS: claude's --max-turns for one job; empty or 0 means none."""
+    value = value.strip()
+    return int(value) if value.isdigit() else 0
 
 
 def sandbox_name(role: str) -> str:
@@ -298,6 +305,7 @@ class Job:
         self.resume = resume
         self.model = model
         self.effort = effort
+        self.max_turns = 0  # claude --max-turns, from role.conf MAX_TURNS; 0 = none
         self.instructions = instructions
         self.status = "running"  # running | done | failed | cancelled
         self.started = time.time()
@@ -447,6 +455,11 @@ def render_event(event: dict, log: Transcript, job: Job) -> None:
     elif etype == "result":
         job.session_id = event.get("session_id") or job.session_id
         job.result = str(event.get("result") or "")
+        if event.get("subtype") == "error_max_turns":
+            job.status = "failed"
+            job.result = (job.result + "\n" if job.result else "") + (
+                f"[stopped at the role's MAX_TURNS cap of {job.max_turns} turns; the lane keeps its "
+                "session, so a follow-up task on this lane can continue the work]")
         total = event.get("total_cost_usd")
         # A non-finite total (claude can report NaN) counts as missing.
         if (isinstance(total, (int, float)) and not isinstance(total, bool)
@@ -810,6 +823,8 @@ def claude_argv(job: Job, workdir: str, lane_root: str | None, resume: str | Non
         argv += ["--model", job.model]
     if job.effort:
         argv += ["--effort", job.effort]
+    if job.max_turns:
+        argv += ["--max-turns", str(job.max_turns)]
     # The session id in the argv is also what cancel_job's pkill pattern matches.
     argv += ["--resume", resume] if resume else ["--session-id", fresh_id]
     return argv
@@ -1033,6 +1048,7 @@ def tool_delegate(args: dict) -> str:
                 mode = "fresh session"
         job = Job(role, task, resume, model, start_cost, instructions, effort, lane=lane, rw=rw)
         job.session_mode = mode
+        job.max_turns = roles[role]["max_turns"]
         _jobs[job.id] = job
     threading.Thread(target=run_job, args=(job,), daemon=True).start()
     if wait:

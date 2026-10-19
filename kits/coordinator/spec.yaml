@@ -3,7 +3,7 @@ kind: mixin
 name: factory-coordinator-kit
 displayName: Factory Coordinator
 description: "Plans work and delegates it to role agents through the dispatch bridge"
-version: "1.8.0"
+version: "1.9.0"
 requires:
   agent: claude
 
@@ -93,9 +93,10 @@ setup:
         `delegate` takes an optional `model` (one of the role's models in `list_roles`)
         and `effort` (low, medium, high, xhigh). Pick the cheapest setting that will do
         the task well, and step up only when it doesn't:
-        - Cheap (haiku, effort low): mechanical, fully specified work - renames, moving
-          code, applying edits you've spelled out, doc and comment updates, fixing lint
-          or type errors whose cause is known.
+        - Cheap (haiku, effort low): prose only. Docs, guides, comments, commit and
+          PR text, and push or PR chores. Never code, tests, configuration or
+          scripts, however small (renames and lint fixes included): a cheap wrong
+          edit costs a review round. Sonnet is the floor for anything that runs.
         - Role default (omit both): ordinary features and fixes.
         - Strong (opus, or effort high/xhigh): unclear root cause, cross-cutting design,
           concurrency or security-sensitive code, or after a cheaper run fell short (a
