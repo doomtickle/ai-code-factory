@@ -36,9 +36,10 @@ Claude Code running in its own Docker Sandboxes (`sbx`) microVM, laid out in
   any project, e.g. *"how do I enable git push?"* or *"what does this
   `factory start` error mean?"*. It answers from the docs and tells you the
   command to run on your machine; it can't run it. You never type into role
-  sandboxes and nothing is typed into a terminal for you. It also gets direct, read-only access to two broker tools
-  (`jira_my_issues`, `jira_get_issue`, see "Enabling Jira"), configured in
-  `kits/coordinator/broker.conf` the same way a role's `BROKER_TOOLS` are.
+  sandboxes and nothing is typed into a terminal for you. It can also be granted
+  broker tools directly, with no role in between, in `kits/coordinator/broker.conf`
+  (the same way a role's `BROKER_TOOLS` work); none by default. The read-only
+  Jira tools are the opt-in example (see "Enabling Jira").
 - **Roles:** defined as data in `roles/<name>/`. Each role has its own
   instructions, a kit (Anthropic-only network access), an image, a list of the
   broker tools it may use, and a number of **lanes**: how many tasks it runs at
@@ -175,6 +176,11 @@ rate limiting to the API, implement it with tests, and get it reviewed."*
 To leave the factory running in the background, press **Ctrl+B** then **Q** in
 Herdr; run `factory start` again to reopen it.
 
+**Without Herdr:** `factory start --no-ui` starts everything but the terminal
+layout. Talk to the Coordinator with `sbx run --name factory-coordinator` in
+any terminal (type `/login` there the first time, then `factory start --no-ui`
+again), and follow a role's work with `factory logs <role>`.
+
 ## Commands
 
 | Command | What it does |
@@ -182,7 +188,7 @@ Herdr; run `factory start` again to reopen it.
 | `factory doctor` | Check the machine is ready; prints the fix for each problem (setup runs it first). Once the broker exists, it also runs the gateway's own doctor inside it: policy, tokens and grants, audit log, credentials, a live probe, GitHub access per repo, the policy's hosts against the broker kit, and (Passdesk Pro) a warning for any approval that expired with no decision |
 | `factory setup` | One-time setup (safe to re-run) |
 | `factory update [--yes]` | After pulling changes or editing kits, images or policy: pulls the latest factory, rebuilds, recreates only the sandboxes the changes affect (it lists them and what each loses, then asks), and restarts |
-| `factory start [dir]` | Start the factory for a project (default: current folder) and open Herdr |
+| `factory start [dir] [--no-ui]` | Start the factory for a project (default: current folder) and open Herdr. `--no-ui` (or `FACTORY_NO_UI=1`) skips Herdr: talk to the Coordinator with `sbx run --name factory-coordinator` in any terminal and follow roles with `factory logs <role>` |
 | `factory status` | Project, broker, dispatch bridge, login, roles (with their lanes), sandbox status, and (Passdesk Pro) pending approvals and the oldest one's age |
 | `factory logs <role>` | Follow a role's transcripts, all its lanes (`factory logs developer-lane2` for one lane); `factory logs broker` / `dispatch` for audit logs |
 | `factory packet [<job-id> \| latest \| <lane> \| --list]` | A job's review packet: the task, each branch's commits and diffstat against your checked-out branch, the `factory-test` modes it reported, the broker calls its role made, cost, and the role's report with its APPROVED / REVISE verdict. Written after every job; `--list` shows recent ones |
@@ -383,20 +389,25 @@ are redacted), and whether the token was attached.
 ### Enabling Gemini Flash queries
 
 The researcher's `gemini_flash_query` tool lets it send a prompt to Gemini Flash
-for cheap/fast summarization or triage. This is optional; without a key the tool
-just returns a DENIED error. `gemini` is not an `sbx` secret service, so unlike
+for cheap/fast summarization or triage. It is an opt-in: the researcher is not
+granted it by default, and without a key the tool just returns a DENIED error.
+`gemini` is not an `sbx` secret service, so unlike
 GitHub the key can't be proxy-injected. Instead it lives in the host OS keychain
 and is delivered as a file **inside the broker sandbox only**, never seen by any
 agent sandbox (the narrowly-scoped exception documented in this repo's
 `CLAUDE.md`, under "Credentials"):
 
-1. Store the key in the keychain, service `factory-gemini`:
+1. Grant the tool: add `gemini_flash_query` to `BROKER_TOOLS` in
+   `roles/researcher/role.conf` (so it reads
+   `BROKER_TOOLS="web_fetch gemini_flash_query"`). Grants are read on every
+   start, so no sandbox is recreated.
+2. Store the key in the keychain, service `factory-gemini`:
    - macOS: `security add-generic-password -s factory-gemini -a factory -w` (prompts for the key)
    - Linux: `secret-tool store --label "Factory Gemini key" service factory-gemini` (prompts for the key)
    
    Or, on any machine including WSL2: `factory secret save gemini` and paste the key
    (see *Storing credentials once* above). To revoke: `factory secret forget gemini`.
-2. Run `factory start` (or `./scripts/start-broker.sh <project-dir>` directly) again to
+3. Run `factory start` (or `./scripts/start-broker.sh <project-dir>` directly) again to
    deliver it to the broker sandbox. Re-running after changing the keychain entry
    rotates the key the broker uses.
 
@@ -413,19 +424,18 @@ of continuing to work off the old key.
 ### Enabling Jira
 
 The Coordinator's `jira_my_issues` and `jira_get_issue` tools give it **read-only**
-access to your own assigned issues on a Jira Cloud site. This is optional;
-until you set the site and add a token, the tools return DENIED errors with
-setup hints.
+access to your own assigned issues on a Jira Cloud site. They are an opt-in:
+the Coordinator is granted no broker tools by default, and until you set the
+site and add a token, the tools return DENIED errors with setup hints.
 
-If you already ran `factory start` before this repo had Jira support, first do the
-one-time upgrade below (Operating, "Upgrading") so the Coordinator's sandbox and the
-broker image actually pick up the new tools - otherwise the steps below deliver a
-credential the broker can't use yet.
-
-1. In your local `policy.toml` (Local settings), set `[jira].site` (e.g.
-   `"acme.atlassian.net"`) and `[jira].cloud_id`, the `cloudId` that
-   `https://<site>/_edge/tenant_info` returns (public tenant info, not a
-   secret). Then run `factory update`.
+1. Grant the tools: in `kits/coordinator/broker.conf` set
+   `BROKER_TOOLS="jira_my_issues jira_get_issue"`. In your local `policy.toml`
+   (Local settings), set `[jira].site` (e.g. `"acme.atlassian.net"`) and
+   `[jira].cloud_id`, the `cloudId` that `https://<site>/_edge/tenant_info`
+   returns (public tenant info, not a secret). Then run `factory update`: it
+   rebuilds the broker image and recreates the Coordinator's sandbox, which
+   gains broker access only when it is created (its conversation history is
+   discarded, as `factory update` says before it asks).
 2. Create a **scoped** API token at id.atlassian.com → Security → API tokens →
    Create API token with scopes, granting only `read:jira-work` and `read:jira-user`.
 3. Store it in the host keychain, service `factory-jira`, as `you@example.com:TOKEN`:
@@ -493,7 +503,7 @@ Three roles, split by what each is allowed to do rather than by job title:
 |---|---|---|---|---|
 | developer | implements the change, writes and runs its tests, updates the docs | read-only; works in its own clones, hands back `factory/*` branches | 3 | `npm_fetch`, `pip_download`, `git_fetch`, `git_push`, `github_create_pr` |
 | reviewer | independent check of correctness, tests, security and docs; runs the tests; APPROVED / REVISE; files issues when asked | read-only | 2 | `npm_fetch`, `github_create_issue` |
-| researcher | looks things up on the web and reports with sources | read-only | 1 | `web_fetch`, `gemini_flash_query` |
+| researcher | looks things up on the web and reports with sources | read-only | 1 | `web_fetch` (`gemini_flash_query` as an opt-in) |
 
 **Lanes.** A role with `LANES="3"` runs up to three tasks at once, in lanes
 named `developer`, `developer-lane2` and `developer-lane3`. Each lane has its
@@ -853,7 +863,7 @@ roles/<name>/role.conf       Role definition: description, image, rw/ro, lanes, 
 roles/<name>/instructions.md Role instructions (added to each task's system prompt)
 roles/<name>/kit/spec.yaml   Role kit: Anthropic-only egress
 kits/coordinator/spec.yaml   Coordinator kit
-kits/coordinator/broker.conf Coordinator's direct broker tool grants (Jira)
+kits/coordinator/broker.conf Coordinator's direct broker tool grants (none by default; Jira is the opt-in)
 kits/broker/spec.yaml        Broker kit: GitHub, registries, docs hosts
 broker/                      passdesk-broker, as a git submodule: MCP server (runs in the broker VM), policy, tests
 broker/passdesk/core/        Gateway core: protocol, auth and grants, policy, filters, audit

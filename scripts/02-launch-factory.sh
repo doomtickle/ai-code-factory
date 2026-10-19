@@ -25,7 +25,9 @@ set -euo pipefail
 [ -d "$1" ] || die "project directory not found: $1"
 
 require_bin jq
-require_herdr
+# FACTORY_NO_UI=1 (factory start --no-ui): no Herdr at all; the user talks to the
+# Coordinator with `sbx run` and follows roles with `factory logs`.
+[ "${FACTORY_NO_UI:-}" = 1 ] || require_herdr
 require_sbx
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd -P)"
@@ -195,6 +197,9 @@ else
 fi
 
 # --- Herdr ------------------------------------------------------------------------
+# Skipped entirely with FACTORY_NO_UI=1 (the block ends after the removed-role
+# tabs are closed; the final "ready" message is chosen at the bottom).
+if [ "${FACTORY_NO_UI:-}" != 1 ]; then
 if [ -n "$HERDR_SESSION" ] && ! herdr session list 2>/dev/null | grep -q "^$HERDR_SESSION .*running"; then
   echo "Starting Herdr session '$HERDR_SESSION'..."
   nohup herdr --session "$HERDR_SESSION" server >/dev/null 2>&1 </dev/null &
@@ -314,6 +319,7 @@ hd tab list --workspace "$ws" | jq -r '.result.tabs[] | .tab_id + " " + .label' 
     hd tab close "$tab" >/dev/null
   fi
 done
+fi  # FACTORY_NO_UI
 
 # A Coordinator sandbox created before its kit installed the briefing doesn't
 # know it is a factory Coordinator (not recreated automatically: it holds the
@@ -332,10 +338,14 @@ done
 
 if [ -n "$roles_waiting_for_login" ]; then
   echo "note: no Claude login is stored yet, so these role sandboxes were not created:$roles_waiting_for_login
-  Type /login in the Coordinator pane, then run 'factory start' again (e.g. in the Host shell pane)."
+  Type /login in the Coordinator, then run 'factory start' again (e.g. in the Host shell pane)."
 fi
 
-hd workspace focus "$ws" >/dev/null
-hd tab focus "$coord_tab" >/dev/null
-echo "Factory ready (Herdr ${HERDR_SESSION:+session '$HERDR_SESSION', }workspace $WS_LABEL): talk to the Coordinator in the '$COORDINATOR_TAB' tab."
+if [ "${FACTORY_NO_UI:-}" = 1 ]; then
+  echo "Factory ready (no UI): talk to the Coordinator with 'sbx run --name $COORDINATOR_SANDBOX'; follow a role with 'factory logs <role>'."
+else
+  hd workspace focus "$ws" >/dev/null
+  hd tab focus "$coord_tab" >/dev/null
+  echo "Factory ready (Herdr ${HERDR_SESSION:+session '$HERDR_SESSION', }workspace $WS_LABEL): talk to the Coordinator in the '$COORDINATOR_TAB' tab."
+fi
 echo "Roles: $(printf '%s ' $roles)"

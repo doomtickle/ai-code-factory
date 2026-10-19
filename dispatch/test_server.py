@@ -170,6 +170,8 @@ class Base(unittest.TestCase):
         return [c for c in self.sbx_calls() if c[0] == "exec" and c[2:4] == ["factory-lane", sub]]
 
     def delegate(self, role, task, **kw):
+        """Start a job without waiting (delegate waits by default) and return its id."""
+        kw.setdefault("wait_seconds", 0)
         out = d.tool_delegate({"role": role, "task": task, **kw})
         return out.split("job ", 1)[1].split(" ", 1)[0]
 
@@ -402,10 +404,38 @@ class DelegateTests(Base):
         self.assertEqual(out["session"], "fresh session")
 
     def test_delegate_with_wait_on_a_slow_job_returns_its_id(self):
-        out = json.loads(d.tool_delegate({"role": "developer", "task": "hang", "wait_seconds": 1}))
+        old = d.MIN_WAIT_SECONDS
+        d.MIN_WAIT_SECONDS = 0
+        try:
+            out = json.loads(d.tool_delegate({"role": "developer", "task": "hang", "wait_seconds": 1}))
+        finally:
+            d.MIN_WAIT_SECONDS = old
         self.assertEqual(out["status"], "running")
         self.assertIn("call wait_for_job again", out["note"])
         self.assertTrue(out["job_id"])
+
+    def test_delegate_waits_by_default(self):
+        out = json.loads(d.tool_delegate({"role": "developer", "task": "build"}))
+        self.assertEqual((out["status"], out["report"]), ("done", "REPORT: did build"))
+        started = d.tool_delegate({"role": "developer", "task": "build", "wait_seconds": 0})
+        self.assertIn("Started job", started)
+
+    def test_short_waits_are_stretched_and_zero_is_status_now(self):
+        job_id = self.delegate("developer", "hang")
+        old = d.MIN_WAIT_SECONDS
+        d.MIN_WAIT_SECONDS = 2
+        try:
+            started = time.monotonic()
+            self.assertEqual(json.loads(d.tool_wait_for_job({"job_id": job_id, "timeout_seconds": 0}))["status"],
+                             "running")
+            self.assertLess(time.monotonic() - started, 1)
+            started = time.monotonic()
+            out = json.loads(d.tool_wait_for_job({"job_id": job_id, "timeout_seconds": 1}))
+            self.assertGreaterEqual(time.monotonic() - started, 2)
+            self.assertEqual(out["status"], "running")
+        finally:
+            d.MIN_WAIT_SECONDS = old
+        d.tool_cancel_job({"job_id": job_id})
 
     def test_bad_wait_seconds_is_refused_before_starting(self):
         for bad in (-1, True):
@@ -901,8 +931,7 @@ class ImportTests(Base):
     def test_lane_refs_are_namespaced_per_lane(self):
         self.make_host(d.PROJECT)
         self.make_lane(d.PROJECT, "builder-lane2", ".", ["x"])
-        report = self.wait(d.tool_delegate({"role": "builder", "task": "t", "lane": 2})
-                           .split("job ", 1)[1].split(" ", 1)[0])
+        report = self.wait(self.delegate("builder", "t", lane=2))
         self.assertEqual([b["ref"] for b in report["branches"]], ["factory-builder-lane2/factory/x"])
 
     def test_multi_repo_project(self):
