@@ -714,8 +714,9 @@ again. All of these take effect from the next task:
 `factory start` copies the instructions into the state folder and the bridge
 reads that copy, so a role editing this repo can't change prompts on its own. Kit, image, project access and
 whether the role has broker access at all are fixed when the sandbox is created,
-so for those run `factory update`, which recreates that role's sandbox. Each role's tab shows the
-job session's main model once the job reports it (subagents it spawns may use others).
+so for those run `factory update`, which recreates that role's sandbox. Each role's tab
+(`tabs` layout) shows the job session's main model once the job reports it
+(subagents it spawns may use others).
 
 **Change the Coordinator's model:** unlike a role's `MODEL` (read fresh on every
 dispatch), the Coordinator's model is baked into its kit's managed settings

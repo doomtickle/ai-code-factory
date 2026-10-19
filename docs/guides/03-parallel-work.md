@@ -157,7 +157,8 @@ factory analytics
 
 Edit `LANES` in the role's `role.conf` (1 to 8; empty means 1), then run
 `factory start`. No sandbox is recreated: the dispatch bridge reads `LANES` for
-every task, and `factory start` updates the role's tab to show the new lanes.
+every task, and `factory start` updates the role's tab (`tabs` layout) or
+`factory watch`'s lane list to show the new lanes.
 
 ```conf
 # roles/developer/role.conf

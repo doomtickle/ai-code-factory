@@ -78,8 +78,9 @@ For a prompt like the one above, the typical flow is:
    suite once, reviews correctness, tests, security and docs, and ends with
    **APPROVED** or **REVISE** and a list of required changes.
 
-Each role's tab shows its transcript live while it works. See
-[Roles](../../README.md#roles) for what each role may do.
+The Watch pane shows every lane's transcript live while it works (each role's
+tab, under the `tabs` layout). See [Roles](../../README.md#roles) for what
+each role may do.
 
 ## Read a job result
 

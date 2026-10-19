@@ -324,7 +324,7 @@ if [ "$LAYOUT" = watch ]; then
     watch_pane="$(hd pane split "$coordinator" --direction right --cwd "$PROJECT" --no-focus | jq -r '.result.pane.pane_id')"
     hd pane rename "$watch_pane" "Watch" >/dev/null
   fi
-  run_if_idle "$watch_pane" "$ROOT/bin/factory watch"
+  run_if_idle "$watch_pane" "$(printf '%q' "$ROOT/bin/factory") watch"
 elif [ -n "$watch_pane" ]; then
   echo "Closing Watch pane (switched to the tabs layout)..."
   hd pane close "$watch_pane" >/dev/null
