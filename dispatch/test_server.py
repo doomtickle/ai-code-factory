@@ -93,6 +93,9 @@ FAKE_SBX = textwrap.dedent(r'''
             {"type": "assistant", "parent_tool_use_id": "t1",  # a subagent: not the session's context
              "message": {"usage": {"input_tokens": 999999}, "content": []}},
             {"type": "user", "message": {"content": [{"type": "tool_result", "content": "a.txt"}]}},
+            {"type": "user", "message": {"content": [{"type": "tool_result", "content": [{"type": "text",
+                "text": "factory-test: mode: clean install (yarn.lock, offline)\nfactory-test: running in /c\n"
+                        "ok\nfactory-test: mode was: clean install (yarn.lock, offline) (exit 0)"}]}]}},
         ]
         if task == "nan-cost":
             total = float("nan")  # json.dumps writes NaN, as a faulty claude might
@@ -139,6 +142,7 @@ class Base(unittest.TestCase):
         fake.write_text(FAKE_SBX)
         fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
         d.SBX = str(fake)
+        d.BROKER_AUDIT = d.STATE / "broker-audit.jsonl"  # absent unless a test writes it
         self.sbx_log = root / "sbx-calls.jsonl"
         os.environ["FAKE_SBX_LOG"] = str(self.sbx_log)
         for var in ("FAKE_PREPARE", "FAKE_EXPORT", "FAKE_LANES"):
@@ -442,6 +446,15 @@ class DelegateTests(Base):
                 f.write_text(text)
             with self.assertRaisesRegex(d.Denied, msg):
                 d.tool_delegate({"role": "developer", "task": "x"})
+
+    def test_review_packet_of_a_read_only_job_carries_the_verdict(self):
+        job_id = self.delegate("reviewer", "Review it: REVISE please")
+        report = json.loads(d.tool_wait_for_job({"job_id": job_id, "timeout_seconds": 60}))
+        text = Path(report["packet"]).read_text()
+        self.assertIn("# reviewer job", text)
+        self.assertIn("- Verdict: REVISE\n", text)
+        self.assertNotIn("## Branches", text)
+        self.assertIn("## Report\n\nREPORT: did Review it: REVISE please", text)
 
     def test_one_job_per_role_and_cancel(self):
         job_id = self.delegate("developer", "hang")
@@ -914,6 +927,52 @@ class ImportTests(Base):
         self.assertEqual(report["branches"], [])
         self.assertIn("importing the bundle failed", report["import_errors"][0])
         self.assertFalse(self.marker.exists())
+
+    def test_review_packet(self):
+        self.make_host(d.PROJECT)
+        self.make_lane(d.PROJECT, "developer", ".", ["rate-limit"])
+        now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        records = [{"ts": now, "principal": "developer", "tool": "npm_fetch", "decision": "allow"},
+                   {"ts": now, "principal": "reviewer", "tool": "npm_fetch", "decision": "allow"},
+                   {"ts": "2020-01-01T00:00:00Z", "principal": "developer", "tool": "git_push",
+                    "decision": "deny", "reason": "long ago"},
+                   {"ts": now, "event": "start"}]
+        d.BROKER_AUDIT.write_text("\n".join(json.dumps(r) for r in records) + "\nnot json\n")
+        report = self.wait(self.delegate("developer", "build"))
+        self.assertEqual(report["packet"], str(d.STATE / "packets" / f"{report['job_id']}.md"))
+        text = Path(report["packet"]).read_text()
+        self.assertIn(f"# developer job {report['job_id']}: done", text)
+        self.assertIn("- Lane: developer\n", text)
+        self.assertIn("- Model: claude-sonnet-5\n", text)
+        self.assertIn("- Session: fresh session\n", text)
+        self.assertIn("this job, $", text)
+        self.assertIn("## Task\n\nbuild\n", text)
+        self.assertIn("### factory-developer/factory/rate-limit at", text)
+        self.assertIn("Commits past HEAD (1):", text)
+        self.assertRegex(text, r"\n    [0-9a-f]{7,} rate-limit\n")
+        self.assertIn("rate-limit.txt | 1 +", text)
+        self.assertIn("## Tests\n\n- factory-test: mode: clean install (yarn.lock, offline)\n"
+                      "- factory-test: mode was: clean install (yarn.lock, offline) (exit 0)", text)
+        calls = text.split("## Broker calls by the developer role during the job\n\n")[1].split("\n\n## ")[0]
+        self.assertIn("npm_fetch  allow", calls)
+        self.assertNotIn("git_push", calls)  # outside the job's time window
+        self.assertEqual(calls.count("\n") + 1, 1)  # the reviewer's call and the non-tool record are not listed
+        self.assertIn("## Report\n\nREPORT: did build\n", text)
+        self.assertNotIn("Verdict", text)
+        self.assertFalse(self.marker.exists(), "a host hook or fsmonitor ran while writing the packet")
+        self.assertIn(f"📄 review packet: factory packet {report['job_id']}",
+                      (d.STATE / "logs" / "developer.log").read_text())
+        end = [json.loads(l) for l in (d.STATE / "audit.jsonl").read_text().splitlines()
+               if '"job-end"' in l][-1]
+        self.assertEqual(end["packet"], report["packet"])
+
+    def test_review_packet_without_a_broker_log_or_branches(self):
+        self.make_host(d.PROJECT)
+        self.make_lane(d.PROJECT, "developer", ".", [])
+        report = self.wait(self.delegate("developer", "build"))
+        text = Path(report["packet"]).read_text()
+        self.assertIn("## Branches\n\n(none)", text)
+        self.assertIn("during the job\n\n(none)", text)
 
 
 class FactoryDocsTest(Base):
