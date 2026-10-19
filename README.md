@@ -660,6 +660,10 @@ project, so projects need no factory files, and roles can't change it. For examp
 - Tests: `factory-test -q -- npx vitest run` (`npm test` starts watch mode).
 - Type check: `factory-test -q -- npx tsc --noEmit`.
 ```
+Notes for one role only go in `projects/<project-folder-name>.<role>.md`
+(e.g. `my-api.developer.md` for the docs style, `my-api.reviewer.md` for what
+to be strict about); `factory start` appends them after the shared notes, to
+that role alone, so the others don't carry them in every prompt.
 Keep them short: a role's instructions plus these notes must stay under 20,000
 characters, or the bridge refuses that role's tasks (`instructions for <role>
 exceed 20000 characters`).

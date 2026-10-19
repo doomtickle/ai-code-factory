@@ -44,18 +44,26 @@ fi
 # Snapshot each role's instructions (dispatch passes them to every task). The
 # bridge reads this copy, not roles/, so edits take effect on the next start.
 # Notes for this project from the factory config folder (e.g. its test
-# command), if any, are appended for every role: they live outside the project,
-# so the project needs no factory files and no role can change what the others
-# are told.
-notes="$FACTORY_CONFIG/projects/$(basename "$PROJECT").md"
+# command), if any, are appended for every role, then notes for one role only
+# (projects/<project>.<role>.md, e.g. a docs style for the developer). They
+# live outside the project, so the project needs no factory files and no role
+# can change what the others are told.
+project_name="$(basename "$PROJECT")"
+notes="$FACTORY_CONFIG/projects/$project_name.md"
 rm -rf "$STATE/instructions.tmp"
 mkdir -p "$STATE/instructions.tmp"
 for role in $(list_roles); do
   validate_role "$role"
   cp "$ROOT/roles/$role/instructions.md" "$STATE/instructions.tmp/$role.md"
   if [ -s "$notes" ]; then
-    printf '\n# This project (%s)\n' "$(basename "$PROJECT")" >> "$STATE/instructions.tmp/$role.md"
+    printf '\n# This project (%s)\n' "$project_name" >> "$STATE/instructions.tmp/$role.md"
     cat "$notes" >> "$STATE/instructions.tmp/$role.md"
+  fi
+  role_notes="$FACTORY_CONFIG/projects/$project_name.$role.md"
+  if [ -s "$role_notes" ]; then
+    printf '\n# This project (%s), for the %s\n' "$project_name" "$role" >> "$STATE/instructions.tmp/$role.md"
+    cat "$role_notes" >> "$STATE/instructions.tmp/$role.md"
+    echo "Added $role notes from $role_notes to its instructions"
   fi
 done
 [ ! -s "$notes" ] || echo "Added project notes from $notes to the role instructions"
