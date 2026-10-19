@@ -78,16 +78,18 @@ of output is headed with the lane's log file:
 15:01:04  ▶ job 20261017-150104-4d5e6f from the Coordinator
 ```
 
-To follow every lane of every role at once, with each lane in its own pane,
-tool calls condensed to one line and the job's status, elapsed time, model and
-cost in the pane's title:
+To follow every lane of every role at once, with each active lane in its own
+pane (a job running, or finished in the last ten minutes; idle lanes take one
+status line each), tool calls condensed to one line and the job's status,
+elapsed time, model and cost in the pane's title:
 
 ```bash
 factory watch
 ```
 
 Press a lane's number to read that lane full-screen, `p` for its latest review
-packet, `a` for the grid again and `q` to quit. It reads the same transcripts
+packet, `a` for the grid again (press it on the grid to show every lane, idle
+ones included) and `q` to quit. It reads the same transcripts
 Herdr tails, so it works with or without Herdr. For the raw log of one role or
 lane:
 

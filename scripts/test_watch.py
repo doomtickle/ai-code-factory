@@ -127,22 +127,49 @@ class RenderTests(unittest.TestCase):
 
     def test_layout(self):
         self.assertEqual(len(w.layout(6, 160, 40)), 6)
-        self.assertEqual({x for _, x, _, _ in w.layout(6, 160, 40)}, {0, 53, 106})  # 3 columns
+        self.assertEqual({x for _, x, _, _ in w.layout(6, 160, 40)}, {0, 80})  # 2 columns
         self.assertEqual({x for _, x, _, _ in w.layout(6, 80, 40)}, {0})  # 1 column
         self.assertEqual(w.layout(0, 80, 24), [])
 
-    def test_grid_frame(self):
-        text = w.plain(w.render(self.watch, 110, 24), 110)
+    def at(self, clock):
+        return time.mktime(time.strptime("2026-10-19 " + clock, "%Y-%m-%d %H:%M:%S"))
+
+    def test_grid_frame_shows_active_lanes_and_a_status_strip(self):
+        # 00:20: the developer's job ended 7 minutes ago (active); old-role is running.
+        text = w.plain(w.render(self.watch, 130, 24, now=self.at("00:20:00")), 130)
         lines = text.splitlines()
         self.assertEqual(len(lines), 24)
         self.assertIn("factory watch  myproj", lines[0])
         self.assertIn("last 24h: 1 jobs $1.31", lines[0])
         self.assertIn("bridge down", lines[0])
-        self.assertIn(" developer ", text)
-        self.assertIn("done · 3:55 · sonnet-5 · $1.31", text)
-        self.assertIn(" developer-lane2 ", text)
-        self.assertIn("idle", text)
+        self.assertIn(" developer ─", text)
+        self.assertIn("✓ done · 3:55 · sonnet-5 · $1.31", text)
+        self.assertIn(" old-role ─", text)
+        self.assertIn("● running · 20:00", text)
+        self.assertIn(" developer-lane2 · idle", lines[-3])
+        self.assertIn(" reviewer · idle", lines[-2])
+        self.assertIn("a every lane", lines[-1])
         self.assertIn("1=developer", lines[-1])
+        self.assertTrue(all(len(line) <= 130 for line in lines))
+
+    def test_finished_lanes_leave_the_grid_after_ten_minutes(self):
+        text = w.plain(w.render(self.watch, 100, 20, now=self.at("03:00:00")), 100)
+        self.assertNotIn(" developer ─", text)
+        self.assertIn(" developer ✓ done · 3:55 · sonnet-5 · $1.31 · at 00:13", text)
+        self.assertIn(" old-role ─", text)  # still running: the only pane
+        self.watch.all = True
+        text = w.plain(w.render(self.watch, 130, 24, now=self.at("03:00:00")), 130)
+        for name in ("developer", "developer-lane2", "reviewer", "old-role"):
+            self.assertIn(f" {name} ─", text)
+        self.assertIn("a active lanes only", text.splitlines()[-1])
+
+    def test_nothing_active_shows_the_most_recent_lane(self):
+        (self.state / "logs" / "old-role.log").write_text("")
+        self.watch = w.Watch(self.state, self.roles, "myproj")
+        self.watch.refresh()
+        text = w.plain(w.render(self.watch, 100, 20, now=self.at("03:00:00")), 100)
+        self.assertIn(" developer ─", text)
+        self.assertIn(" reviewer · idle", text)
 
     def test_focus_frame_renders_the_transcript_for_reading(self):
         self.watch.focus = 0
