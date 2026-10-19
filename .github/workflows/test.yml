@@ -1,5 +1,6 @@
-# Builds the broker image from this repo's Dockerfile and runs its test
-# suite inside it, the same way the README's "Running the tests" section
+# Builds the broker image from this repo's Dockerfile (both targets: the
+# sbx image the factory uses, and the standalone image) and runs the test
+# suite inside each, the same way the README's "Running the tests" section
 # does. Runs on push to main and factory/* work branches (the repo's own
 # branch naming convention) and on every pull request, so a PR from any
 # other branch name or a fork still gets covered; workflow_dispatch allows
@@ -47,6 +48,34 @@ jobs:
         run: |
           docker run --rm --network none -e PYTHONDONTWRITEBYTECODE=1 \
             -v "$PWD:/b:ro" -w /b passdesk:ci python3 -m unittest -v
+
+      # The standalone target (plain Docker, no sbx): built with no
+      # --build-context, so the Dockerfile's default empty overlay and
+      # plugins stages are what get exercised here, then the same test suite
+      # inside it, as its non-root user, on its Python and git. Publishing
+      # it is a separate job (not yet written).
+      - name: Build standalone image
+        run: |
+          docker buildx build --load --target standalone -t passdesk:ci-standalone .
+
+      - name: Run tests in the standalone image
+        # The image's own BROKER_* defaults are unset first: the tests
+        # expect the environment a bare checkout has (deployment "sbx").
+        run: |
+          docker run --rm --network none -v "$PWD:/b:ro" -w /b passdesk:ci-standalone \
+            sh -c 'unset BROKER_DEPLOYMENT BROKER_STATE BROKER_WORKSPACE BROKER_SECRETS_DIR
+                   exec python3 -m unittest -v'
+
+      - name: Standalone image smoke test
+        run: |
+          docker run --rm --network none passdesk:ci-standalone sh -c '
+            set -eu
+            [ "$(id -u)" != 0 ] || { echo "runs as root" >&2; exit 1; }
+            [ "$BROKER_DEPLOYMENT" = standalone ]
+            python3 -m passdesk principal add agent --tools git_fetch >/dev/null
+            python3 -m passdesk principal list
+            python3 -m passdesk.doctor || true
+            git --version'
 
   publish:
     # Disabled until the owner adds DOCKERHUB_USERNAME and DOCKERHUB_TOKEN
