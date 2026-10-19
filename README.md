@@ -555,7 +555,15 @@ The split follows the capabilities that matter:
 - **Only the researcher reads the web.** Web pages are the main way
   prompt-injection attacks arrive, and anything fetched lands in a role that
   can't modify your project. The developer gets the researcher's findings only
-  as a report relayed by the Coordinator.
+  as a report relayed by the Coordinator. Pages come through the broker's
+  `web_fetch` (allowlisted hosts, untrusted-content markers, audit log). The
+  researcher also keeps Claude Code's built-in `WebSearch`, which the model API
+  serves: it runs outside the broker, so its results are neither allowlisted
+  nor audited, and the role's instructions treat them as leads to verify
+  through `web_fetch`, never as sources (its report lists them under
+  "Unverified"). The role kits deny the built-in `WebFetch` for every role (the
+  sandboxes have no egress for it) and `WebSearch` for the developer and
+  reviewer, through root-owned managed settings like the Coordinator's.
 
 For a deeper security pass, the Coordinator can ask the reviewer for a
 security-only review.

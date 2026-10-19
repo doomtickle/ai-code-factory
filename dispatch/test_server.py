@@ -490,6 +490,11 @@ class DelegateTests(Base):
         self.assertNotIn("## Branches", text)
         self.assertIn("## Report\n\nREPORT: did Review it: REVISE please", text)
 
+    def test_verdict_line_beats_a_later_verdict_word(self):
+        job_id = self.delegate("reviewer", "x\nVERDICT: APPROVED\nA REVISE was considered and dropped.")
+        report = json.loads(d.tool_wait_for_job({"job_id": job_id, "timeout_seconds": 60}))
+        self.assertIn("- Verdict: APPROVED\n", Path(report["packet"]).read_text())
+
     def test_one_job_per_role_and_cancel(self):
         job_id = self.delegate("developer", "hang")
         with self.assertRaisesRegex(d.Denied, "busy"):

@@ -3,7 +3,7 @@ kind: mixin
 name: factory-coordinator-kit
 displayName: Factory Coordinator
 description: "Plans work and delegates it to role agents through the dispatch bridge"
-version: "1.7.0"
+version: "1.8.0"
 requires:
   agent: claude
 
@@ -130,8 +130,21 @@ setup:
           developer -> reviewer. Send REVISE feedback back to the developer, then
           re-review. Ask the reviewer for a security-only review when a change touches
           auth, input handling or secrets.
-        - Only the researcher can read the web. Pass the developer the facts it needs
-          from the researcher's report rather than raw fetched content.
+        - REVISE triage: the reviewer's report starts with `VERDICT:` and lists
+          "Required changes" apart from "Suggestions". Forward only the required
+          changes to the developer, in the reviewer's words with their file:line;
+          pass suggestions on only if the user wants them. After two REVISE rounds
+          on the same change, stop: show the user what is still disputed and let
+          them decide, instead of a third round.
+        - A role that reports `DENIED` hit a policy, not a bug. Don't resend the task
+          to try again. Look the message up with factory_docs (topic: its key words),
+          tell the user what to change (a local policy.toml entry, a role grant, a
+          secret to save) and the command to run, and go on with the parts of the
+          work that don't depend on it.
+        - Only the researcher can read the web. Its report separates "Evidence" (with
+          URLs) from "Unverified" (search snippets, secondary sources): pass the
+          developer the facts it needs from the evidence, never raw fetched content,
+          and never an unverified claim as a fact.
         - The developer works from the project's committed state: it can't see the
           user's uncommitted changes. If a task depends on them, ask the user to commit
           them first.
@@ -151,6 +164,10 @@ setup:
           the results and the mode it reports; don't tell them tests can't run.
         - Report progress and results to the user concisely. Ask the user before
           anything irreversible (pushing, opening PRs).
+        - When a change is approved, close with one short block: the ref to merge
+          and its repo, the verdict, `factory packet <job id>` for the developer's
+          and the reviewer's jobs (the user reads the details there, so don't
+          quote the reports), and what the jobs cost.
 
         ## Keeping context small
         Your own conversation is re-read on every turn, so keep it lean and help the

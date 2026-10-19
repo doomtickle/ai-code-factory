@@ -654,6 +654,9 @@ def import_lane(job: Job, log: Transcript) -> None:
 # reported, the broker calls its role made meanwhile, its cost and its report.
 
 _TEST_MODE = re.compile(r"factory-test: mode(?: was)?: [^\n]{1,200}")
+# The reviewer's report starts with "VERDICT: APPROVED" or "VERDICT: REVISE" (its
+# instructions); a report without that line falls back to the last bare word.
+_VERDICT_LINE = re.compile(r"^\s*VERDICT:\s*(APPROVED|REVISE)\b", re.M)
 _VERDICT = re.compile(r"\b(APPROVED|REVISE)\b")
 _AUDIT_TS = "%Y-%m-%dT%H:%M:%SZ"
 
@@ -741,7 +744,8 @@ def write_packet(job: Job) -> None:
         cost.append(f"context ~{round(job.context_tokens / 1000)}k tokens")
     if cost:
         rows.append(("Cost", ", ".join(cost)))
-    verdicts = _VERDICT.findall(job.result)
+    line = _VERDICT_LINE.search(job.result)
+    verdicts = [line.group(1)] if line else _VERDICT.findall(job.result)
     if verdicts:
         rows.append(("Verdict", verdicts[-1]))
     parts = ["\n".join([f"# {job.role} job {job.id}: {job.status}", ""] + [f"- {k}: {v}" for k, v in rows]),
