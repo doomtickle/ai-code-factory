@@ -63,6 +63,7 @@ _TOOL_HOSTS = {
     "git_fetch": ["github.com"],
     "git_push": ["github.com"],
     "github_create_pr": ["api.github.com"],
+    "github_create_issue": ["api.github.com"],
     "npm_fetch": ["registry.npmjs.org"],
     "pip_download": ["pypi.org", "files.pythonhosted.org"],
     "gemini_flash_query": ["generativelanguage.googleapis.com"],
@@ -75,7 +76,7 @@ _EXCHANGE_DIRS = ("incoming", "outgoing", "npm-mirror", "wheels")
 # Tools that need the "github" credential. In sbx mode this is proxy-injected
 # (never read by the gateway); in standalone mode check_standalone checks it
 # through credentials.get(), the only place that distinction matters.
-_GITHUB_TOOLS = {"git_fetch", "git_push", "github_create_pr"}
+_GITHUB_TOOLS = {"git_fetch", "git_push", "github_create_pr", "github_create_issue"}
 
 
 def _proxy_blocks_other_providers(order: list[str]) -> bool:
@@ -169,6 +170,7 @@ def _check_policy_shape(report: Report, pol: dict) -> None:
     known = {
         "web": {"allow_hosts", "max_bytes"},
         "git": {"repos", "protected_branches", "push_branch_prefix", "default_base"},
+        "github": {"issue_repos"},
         "packages": {"npm_deny", "npm_allow", "pypi_deny", "pypi_allow", "npm_private_registry",
                      "npm_redirect_hosts"},
         "filters": {"max_commits", "max_diff_bytes", "max_bundle_bytes"},
@@ -320,6 +322,14 @@ def check_policy(report: Report, path: Path | None = None) -> dict | None:
     if _is_str_list(git.get("repos", [])) and not git.get("repos"):
         report.info("[git].repos is empty: git_fetch, git_push and github_create_pr return DENIED",
                     "add the repos agents may use, e.g. repos = [\"acme/widgets\"], then rebuild the image")
+    gh = pol.get("github") if isinstance(pol.get("github"), dict) else {}
+    issue_repos = gh.get("issue_repos", [])
+    if not _is_str_list(issue_repos) or any(not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", r)
+                                            or ".." in r for r in issue_repos):
+        report.fail("[github].issue_repos must be a list of \"owner/name\" strings")
+    elif not issue_repos:
+        report.info("[github].issue_repos is empty: github_create_issue returns DENIED",
+                    "list the repos agents may file issues in (keep it to private trackers), then rebuild the image")
     return pol
 
 

@@ -22,7 +22,11 @@ the code; the decision log records what changed on the way.
   calls `require` *outside* the tool lock, so a pending approval never
   blocks another role's git call; it then re-takes the lock, confirms the
   ref it validated is unchanged, and pushes. `github_create_pr` calls
-  `require` after the title and body pass the secret scan.
+  `require` after the title and body pass the secret scan, and
+  `github_create_issue` after its title, body and labels pass it and the
+  labels are confirmed to exist (its card carries a `body_sha256`). Pro
+  holds only the tools `[approvals] tools` lists; add `github_create_issue`
+  there to hold issues too.
 
 The card never carries a credential, and nothing in it comes from the
 network: it is made of what the gateway itself verified. `require` also

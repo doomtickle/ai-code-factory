@@ -4,6 +4,33 @@ Dated entries, for the user to review. Newest first.
 
 ## 2026-10-18
 
+- **`github_create_issue`, a core tool with its own allowlist
+  (doomtickle/passdesk-ops#86).** The owner wants a factory role (the
+  reviewer, not the read-only Coordinator) to file tracker issues. A core
+  tool, not a plugin: it needs the GitHub credential, which plugin tools
+  may never read. Choices:
+  - **Its own repo list, `[github].issue_repos`, empty by default.** It
+    never falls back to `[git].repos`: those usually include public repos,
+    and an issue in a public repo publishes whatever an agent writes, which
+    makes it a way out for anything the agent read. List private trackers.
+  - **Labels must already exist.** GitHub creates any label a request
+    names, so the tool first reads the repo's labels (paged, at most 10
+    pages) and refuses unknown ones. It sends GitHub's spelling, but the
+    approval card shows the agent's (scanned) names, since nothing on a
+    card comes from the network. Labels are a comma-separated string
+    because `call_tool` checks only string and boolean arguments.
+  - **File only.** No assignees, milestones, edits or closing.
+  - **Inputs:** title one line, 1-256 characters, no control characters;
+    body at most 65,536 characters (GitHub's limit). Title, body and every
+    label are secret-scanned before any request or card.
+  - **An external write:** an intent audit record, then the approval point.
+    The card carries `body_sha256` beside the 2,000-character excerpt, so
+    cards can't collide on long bodies (the problem #13 tracks for PRs).
+  - **Token handling is `github_create_pr`'s:** the sbx proxy
+    authenticates, or in standalone a Bearer header with redirects refused.
+    The token needs Issues read/write.
+  What would change this: a need to comment on or close issues (a separate
+  tool, so a grant can stay file-only).
 - **Compose quickstart and isolation check (doomtickle/passdesk-ops#58,
   Phase 3a W3.4).** `compose.yaml` runs the gateway, the egress guard and
   a Claude Code agent; `scripts/isolation-check.py` runs in the agent's
