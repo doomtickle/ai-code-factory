@@ -179,7 +179,7 @@ Herdr; run `factory start` again to reopen it.
 **Without Herdr:** `factory start --no-ui` starts everything but the terminal
 layout. Talk to the Coordinator with `sbx run --name factory-coordinator` in
 any terminal (type `/login` there the first time, then `factory start --no-ui`
-again), and follow a role's work with `factory logs <role>`.
+again), and watch every lane with `factory watch` in another.
 
 ## Commands
 
@@ -191,6 +191,7 @@ again), and follow a role's work with `factory logs <role>`.
 | `factory start [dir] [--no-ui]` | Start the factory for a project (default: current folder) and open Herdr. `--no-ui` (or `FACTORY_NO_UI=1`) skips Herdr: talk to the Coordinator with `sbx run --name factory-coordinator` in any terminal and follow roles with `factory logs <role>` |
 | `factory status` | Project, broker, dispatch bridge, login, roles (with their lanes), sandbox status, and (Passdesk Pro) pending approvals and the oldest one's age |
 | `factory logs <role>` | Follow a role's transcripts, all its lanes (`factory logs developer-lane2` for one lane); `factory logs broker` / `dispatch` for audit logs |
+| `factory watch` | Live terminal view of every lane at once: one pane per lane with the job's status, elapsed time, model and cost in its title, and the transcript rendered for reading (tool calls condensed, results dimmed, text wrapped). A digit focuses one lane, `p` shows its latest review packet, `q` quits. `--once` prints one plain-text frame |
 | `factory packet [<job-id> \| latest \| <lane> \| --list]` | A job's review packet: the task, each branch's commits and diffstat against your checked-out branch, the `factory-test` modes it reported, the broker calls its role made, cost, and the role's report with its APPROVED / REVISE verdict. Written after every job; `--list` shows recent ones |
 | `factory roles` | List roles, their project access, lanes and network tools |
 | `factory role new <name> [like]` | Add a role (copied from `reviewer`, or the role you name) |

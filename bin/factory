@@ -75,6 +75,8 @@ ${B}Usage${N}
   factory stop               Stop the agents, broker and dispatch bridge
   factory logs [name]        Follow a role's work (all its lanes; e.g. developer,
                              or one lane: developer-lane2), or broker / dispatch
+  factory watch              Live view of every lane: one pane per lane, tool calls
+                             condensed, jobs' status and cost in the titles
   factory packet [id|lane]   A job's review packet: task, branch commits and diffstat,
                              tests, broker calls, cost, report (default: the latest;
                              --list for recent jobs)
@@ -339,7 +341,8 @@ cmd_start() {
     say ""
     say "Factory running, without Herdr."
     say "  Talk to the Coordinator:  ${B}sbx run --name $COORDINATOR_SANDBOX${N}"
-    say "  Follow a role's work:     ${B}factory logs <role>${N}  (roles: $(list_roles | tr '\n' ' '))"
+    say "  Watch every lane:         ${B}factory watch${N}"
+    say "  Follow one role's log:    ${B}factory logs <role>${N}  (roles: $(list_roles | tr '\n' ' '))"
     say "  Stop everything:          ${B}factory stop${N}"
   elif [ "${HERDR_ENV:-}" = "1" ]; then
     "$SCRIPTS/02-launch-factory.sh" "$project"
@@ -1044,6 +1047,16 @@ cmd_update() {
   fi
 }
 
+# --- watch -----------------------------------------------------------------------------
+# cmd_watch -> scripts/watch.py: a curses view of every lane's transcript, read
+# from the dispatch state folder (host Python, stdlib, nothing else).
+cmd_watch() {
+  local python
+  python="$(resolve_python)"
+  "$python" "$SCRIPTS/watch.py" --state "$FACTORY_DISPATCH_STATE" --roles "$ROOT/roles" \
+    --project "$(basename "$(bound_project)")" "$@"
+}
+
 # --- approvals ---------------------------------------------------------------------
 # cmd_approvals -> the Passdesk Pro approval console (scripts/approvals.py):
 # plain files under the broker state dir, host Python, nothing else.
@@ -1069,6 +1082,7 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
     reset) cmd_reset "$@" ;;
     logs|log) cmd_logs "$@" ;;
     packet|packets) cmd_packet "$@" ;;
+    watch) cmd_watch "$@" ;;
     roles) cmd_roles "$@" ;;
     role) cmd_role "$@" ;;
     secret) cmd_secret "$@" ;;
