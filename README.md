@@ -279,18 +279,20 @@ shares settings, keep a copy of the folder somewhere for teammates to copy.
 1. Add the repos agents may use to `[git].repos` in your local `policy.toml`
    (Local settings; for example `"my-org/my-project"`), then run `factory update` to rebuild the broker image and recreate the broker sandbox.
 2. Create a GitHub fine-grained token scoped to those repos (Contents: read/write,
-   Pull requests: read/write) and save it once:
+   Pull requests: read/write, Workflows: read/write) and save it once:
    ```sh
    factory secret save github
    ```
-   It goes into this machine's keychain (`factory-github`), and every broker start
+   GitHub rejects pushes that change `.github/workflows/` files without the Workflows
+   permission. It goes into this machine's keychain (`factory-github`), and every broker start
    registers it as an sbx secret **for the broker sandbox only**, so it survives
    `factory update` and `factory reset`. The same token keeps working until its
    GitHub expiry date; when it expires, create a new one and save it again.
    (Without a keychain: `sbx secret set github --sandbox factory-broker`, which
    has to be repeated whenever the broker sandbox is recreated.) Never store it
    globally (`sbx secret set github` without `--sandbox`): sbx would then inject it
-   for every sandbox.
+   for every sandbox. If a token is missing it, update the token on GitHub and run
+   `factory secret save github` again, then restart the factory.
 Agents may only push branches starting with `factory/`. They can never push to
 protected branches (`main`, `master`, `release/*`) and can't force-push. The
 developer runs `factory-lane bundle` in its sandbox, which writes the branch
