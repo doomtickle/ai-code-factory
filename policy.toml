@@ -47,6 +47,13 @@ push_branch_prefix = "factory/"
 # Base branch used when a tool call does not name one.
 default_base = "main"
 
+[github]
+# Repos (owner/name) github_create_issue may file issues in. Empty disables
+# it. Its own list, never [git].repos: an issue in a public repo publishes
+# whatever an agent writes, so list private trackers only. The GitHub token
+# needs Issues read/write on these repos.
+issue_repos = []
+
 [packages]
 # Lowercase package names. An empty *_allow list means "anything not denied".
 npm_deny = []

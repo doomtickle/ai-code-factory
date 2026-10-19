@@ -1,4 +1,4 @@
-"""git_fetch, git_push, github_create_pr. Network git runs only in the
+"""git_fetch, git_push, github_create_pr, github_create_issue. Network git runs only in the
 broker's private mirrors; code crosses into the workspace as git bundles.
 
 GitHub credential: with sbx the egress proxy attaches the token and the
@@ -324,6 +324,127 @@ def tool_github_create_pr(args: dict, policy: dict) -> str:
     return f"Opened PR #{pr['number']}: {pr['html_url']}"
 
 
+_ISSUE_TITLE_MAX = 256
+_ISSUE_BODY_MAX = 65536  # GitHub's own limit
+_ISSUE_LABELS_MAX = 10
+_LABEL_PAGES_MAX = 10
+_TITLE_BAD_RE = re.compile(r"[\x00-\x1f\x7f]")
+
+
+def check_issue_repo(repo: str, policy: dict) -> str:
+    """Issues may be filed only in repos listed in [github].issue_repos. It is
+    its own list, never [git].repos: those usually include public repos, and
+    an issue in a public repo is a way to publish whatever an agent writes."""
+    if not _REPO_RE.match(repo) or ".." in repo:
+        raise Denied(f"invalid repo: {repo!r} (expected owner/name)")
+    gh = policy.get("github") if isinstance(policy.get("github"), dict) else {}
+    listed = gh.get("issue_repos", [])
+    allowed = [r.lower() for r in listed if isinstance(r, str)] if isinstance(listed, list) else []
+    if repo.lower() not in allowed:
+        raise Denied(f"repo {repo} is not in the broker's issue allowlist (policy.toml [github].issue_repos)")
+    return repo
+
+
+def _github_api(method: str, path: str, token: str | None, payload: dict | None = None):
+    """One GitHub REST call; returns the parsed JSON. Raises HTTPError. With a
+    token the gateway holds, it goes as a Bearer header and redirects are
+    refused; with none, the deployment's egress proxy authenticates it."""
+    headers = {"Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28",
+               "User-Agent": config.USER_AGENT}
+    data = None
+    if payload is not None:
+        data = json.dumps(payload).encode()
+        headers["Content-Type"] = "application/json"
+    if token is not None:
+        headers["Authorization"] = f"Bearer {token}"
+    req = urllib.request.Request(f"{GITHUB_API}{path}", data=data, method=method, headers=headers)
+    open_url = NO_REDIRECT_OPENER.open if token is not None else urllib.request.urlopen
+    with open_url(req, timeout=30) as resp:
+        return json.load(resp)
+
+
+def _github_api_failure(e: urllib.error.HTTPError, repo: str, held: bool, needs: str) -> str:
+    with e:
+        detail = sanitize(e.read().decode("utf-8", "replace"), 2000)
+    if held:
+        fix = f"the gateway's github credential must be a token with {needs} access to {repo}"
+    else:
+        sbx = " (with sbx: sbx secret set github --sandbox factory-broker)" if config.DEPLOYMENT == "sbx" else ""
+        fix = f"the GitHub credential is supplied by the deployment{sbx}; it needs {needs} access to {repo}"
+    hint = f"\nHint: {fix}" if e.code in (401, 403, 404) else ""
+    return f"GitHub API returned HTTP {e.code}:\n" + untrusted(f"GitHub API ({repo})", detail) + hint
+
+
+def _repo_labels(repo: str, token: str | None) -> dict[str, str]:
+    """The repo's labels, lower-cased name -> the name as GitHub has it."""
+    names: dict[str, str] = {}
+    for page in range(1, _LABEL_PAGES_MAX + 1):
+        data = _github_api("GET", f"/repos/{repo}/labels?per_page=100&page={page}", token)
+        if not isinstance(data, list):
+            raise Denied(f"GitHub returned an unexpected label list for {repo}")
+        for item in data:
+            if isinstance(item, dict) and isinstance(item.get("name"), str):
+                names[item["name"].lower()] = item["name"]
+        if len(data) < 100:
+            break
+    return names
+
+
+def tool_github_create_issue(args: dict, policy: dict) -> str:
+    repo = check_issue_repo(args["repo"], policy)
+    title = args["title"].strip()
+    if not title or len(title) > _ISSUE_TITLE_MAX:
+        raise Denied(f"issue title must be 1-{_ISSUE_TITLE_MAX} characters")
+    if _TITLE_BAD_RE.search(title):
+        raise Denied("issue title must be a single line with no control characters")
+    body = args.get("body", "")
+    if len(body) > _ISSUE_BODY_MAX:
+        raise Denied(f"issue body is over {_ISSUE_BODY_MAX} characters")
+    block_outbound_secrets("issue title", title)
+    block_outbound_secrets("issue body", body)
+    wanted: list[str] = []
+    for name in (n.strip() for n in args.get("labels", "").split(",")):
+        if name and name.lower() not in (w.lower() for w in wanted):
+            wanted.append(name)
+    if len(wanted) > _ISSUE_LABELS_MAX:
+        raise Denied(f"at most {_ISSUE_LABELS_MAX} labels")
+    for name in wanted:
+        block_outbound_secrets("label", name)
+    labels: list[str] = []
+    if wanted:
+        # Labels must already exist: GitHub would otherwise create any label
+        # named in the request, and this tool only files issues.
+        token = github_token()
+        try:
+            existing = _repo_labels(repo, token)
+        except urllib.error.HTTPError as e:
+            return _github_api_failure(e, repo, token is not None, "Issues read/write")
+        missing = [n for n in wanted if n.lower() not in existing]
+        if missing:
+            known = sanitize(", ".join(sorted(existing.values())[:60]), 2000)
+            raise Denied(f"label(s) not defined in {repo}: {', '.join(missing)}; this tool never creates labels "
+                         f"(existing: {known or 'none'})")
+        labels = [existing[n.lower()] for n in wanted]
+    # The card carries the body's digest, so two issues whose bodies differ
+    # only past the excerpt never share a card, and the labels as the agent
+    # named them (scanned above), not as the label lookup returned them:
+    # nothing on a card comes from the network.
+    require_approval({"tool": "github_create_issue", "repo": repo, "title": title, "body": body[:2000],
+                      "body_sha256": hashlib.sha256(body.encode()).hexdigest(), "labels": wanted})
+    payload: dict = {"title": title, "body": body}
+    if labels:
+        payload["labels"] = labels
+    # Read after approval, so a long wait still uses the current token.
+    token = github_token()
+    try:
+        issue = _github_api("POST", f"/repos/{repo}/issues", token, payload)
+    except urllib.error.HTTPError as e:
+        return _github_api_failure(e, repo, token is not None, "Issues read/write")
+    if not isinstance(issue, dict) or not isinstance(issue.get("number"), int):
+        raise Denied(f"GitHub returned an unexpected response for the new issue in {repo}")
+    return f"Opened issue #{issue['number']} in {repo}: {sanitize(str(issue.get('html_url', '')), 300)}"
+
+
 register({
     "git_fetch": (tool_git_fetch, f"Fetch a branch of an allowlisted GitHub repo. Writes a git bundle to "
                   f"{config.EXCHANGE_DIR}/incoming/ and returns the command to import it.",
@@ -343,4 +464,13 @@ register({
                          {"repo": {"type": "string"}, "head": {"type": "string"}, "base": {"type": "string"},
                           "title": {"type": "string"}, "body": {"type": "string"},
                           "draft": {"type": "boolean"}}, ["repo", "head", "title"]),
+    "github_create_issue": (tool_github_create_issue, "File an issue in a GitHub repo on the broker's issue "
+                            "allowlist. Title and body are secret-scanned; labels must already exist in "
+                            "the repo. No assignees; issues can't be edited or closed with this tool.",
+                            {"repo": {"type": "string", "description": "owner/name"},
+                             "title": {"type": "string", "description": "one line, at most 256 characters"},
+                             "body": {"type": "string", "description": "Markdown"},
+                             "labels": {"type": "string",
+                                        "description": "comma-separated names of existing labels"}},
+                            ["repo", "title"]),
 })

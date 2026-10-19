@@ -34,7 +34,7 @@ def grant_hint(principal: str) -> str:
 # or the process is killed mid-call - this is an extra write, not a claim
 # that the log is tamper-evident (that's roadmap). Plugin tools declared
 # writes_externally (registry.WRITES_EXTERNALLY) get the same record.
-_WRITES_EXTERNALLY = {"git_push", "github_create_pr"}
+_WRITES_EXTERNALLY = {"git_push", "github_create_pr", "github_create_issue"}
 
 
 def call_tool(name: str, args: object, principal: str) -> tuple[str, bool]:
