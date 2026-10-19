@@ -156,8 +156,9 @@ MAX_SESSION_TOKENS=""
 ```
 
 Replace `roles/docs-writer/instructions.md`. Keep the branch rules from the
-developer's instructions: a `WORKSPACE="rw"` role works in its own clones, and
-only committed `factory/*` branches come back.
+developer's instructions (a `WORKSPACE="rw"` role works in its own clones, and
+only committed `factory/*` branches come back) and its fixed "Report" block,
+which the Coordinator and the review packet rely on.
 
 ```markdown
 # Docs writer
@@ -189,7 +190,10 @@ exemption.
 
 > **Note:** Each role's kit allows only Anthropic hosts, and that should stay
 > so. A role that needs the network gets it through broker tools in
-> `BROKER_TOOLS`, which the broker checks against its policy and logs.
+> `BROKER_TOOLS`, which the broker checks against its policy and logs. The kit
+> you copied also denies Claude Code's built-in `WebFetch` and `WebSearch`
+> through managed settings; keep that unless the new role is a researcher-like
+> role that may search (see [Roles](../../README.md#roles)).
 
 To remove a role, delete `roles/<name>/` and run `factory start`. It closes the
 role's tab, removes its broker access, and prints the `sbx rm` command for its

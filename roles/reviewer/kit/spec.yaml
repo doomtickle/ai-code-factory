@@ -3,7 +3,7 @@ kind: mixin
 name: factory-reviewer-kit
 displayName: Factory Reviewer
 description: "Independent review: correctness, tests, security, docs (read-only)"
-version: "5.0.0"
+version: "5.1.0"
 requires:
   agent: claude
 
@@ -15,3 +15,17 @@ permissions:
     # MCP tools, limited to BROKER_TOOLS in ../role.conf.
     allow:
       - api.anthropic.com
+
+setup:
+  install:
+    # Claude Code's built-in WebFetch can never work here (no egress) and only
+    # wastes turns; WebSearch is served by the model API, outside the broker's
+    # allowlist and audit log, and only the researcher may use it (its kit).
+    # Root-owned managed settings: bypassPermissions can't override them.
+    - command: >-
+        mkdir -p /etc/claude-code &&
+        printf '%s\n' '{"permissions":{"deny":["WebFetch","WebSearch"]}}'
+        > /etc/claude-code/managed-settings.json &&
+        chmod 0444 /etc/claude-code/managed-settings.json
+      user: "0"
+      description: "Deny the built-in web tools: this role's network is the broker only"
