@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 """factory watch: a live terminal view of every lane's transcript.
 
-One pane per lane in a grid that fits the terminal. Each pane's title shows the
+One pane per active lane (a job running, or finished in the last ten minutes)
+in a grid that fits the terminal; idle lanes take one status line each at the
+bottom, and "a" shows every lane. Each pane's title shows the
 lane, its current job's status, elapsed time, model and cost; the body shows the
 transcript rendered for reading: task lines marked, tool calls condensed to one
 line ("$ <command>", "read <path>", "broker <tool>(...)"), results dimmed,
 errors red, branches and packets highlighted, text wrapped.
 
-Keys: a digit focuses one lane full-screen, "a" returns to the grid, "p" shows
+Keys: a digit focuses one lane full-screen, "a" the grid (again: every lane), "p" shows
 the focused lane's latest review packet, j/k (or arrows) scroll, "q" quits.
 
 It only reads files in the dispatch state folder: dispatch/logs/<lane>.log,
@@ -43,7 +45,8 @@ CONF_LANES = re.compile(r'^LANES="(\d*)"', re.M)
 # A tool call's JSON arguments are cut at 140 characters in the transcript, so
 # the JSON may not parse; these pull the one field worth showing out of the text.
 FIELD = re.compile(r'"(command|file_path|notebook_path|query|description|pattern|prompt)": "(.*)')
-MIN_PANE_WIDTH = 48
+MIN_PANE_WIDTH = 60
+ACTIVE_SECONDS = 600  # a finished job keeps its pane this long
 
 Entry = collections.namedtuple("Entry", "ts kind text")
 
@@ -146,6 +149,13 @@ def seconds_of_day(ts: str) -> int:
     return h * 3600 + m * 60 + s
 
 
+def since_today(ts: str, now: float | None = None) -> int:
+    """Seconds from a transcript time of day (HH:MM:SS, local) to now, modulo a day."""
+    now = time.time() if now is None else now
+    t = time.localtime(now)
+    return ((t.tm_hour * 3600 + t.tm_min * 60 + t.tm_sec) - seconds_of_day(ts)) % 86400
+
+
 def fmt_secs(n: int) -> str:
     n = max(0, int(n))
     return f"{n // 60}:{n % 60:02d}" if n < 3600 else f"{n // 3600}h{(n % 3600) // 60:02d}"
@@ -204,10 +214,10 @@ class Lane(Tail):
             return
         if e.kind == "start":
             self.job = {"id": e.text, "started": e.ts, "status": "running", "model": None,
-                        "seconds": None, "task": ""}
+                        "seconds": None, "task": "", "ended": None}
         elif e.kind == "end" and self.job is not None:
             status, secs = e.text.split()
-            self.job.update(status=status, seconds=int(secs))
+            self.job.update(status=status, seconds=int(secs), ended=e.ts)
         elif e.kind == "model":
             if self.job is not None:
                 self.job["model"] = e.text
@@ -222,15 +232,22 @@ class Lane(Tail):
             return  # a code fence in a report: noise on screen
         self.entries.append(e)
 
+    def active(self, now: float | None = None) -> bool:
+        """A job running, or one that ended less than ACTIVE_SECONDS ago."""
+        if not self.job:
+            return False
+        if self.job["status"] == "running":
+            return True
+        if not self.job.get("ended"):
+            return False
+        return since_today(self.job["ended"], now) < ACTIVE_SECONDS
+
     def elapsed(self, now: float | None = None) -> int | None:
         if not self.job:
             return None
         if self.job["seconds"] is not None:
             return self.job["seconds"]
-        now = time.time() if now is None else now
-        today = time.localtime(now)
-        diff = (today.tm_hour * 3600 + today.tm_min * 60 + today.tm_sec) - seconds_of_day(self.job["started"])
-        return diff % 86400
+        return since_today(self.job["started"], now)
 
 
 class Audit(Tail):
@@ -289,6 +306,7 @@ class Watch:
         self.lanes = discover_lanes(roles, state / "logs")
         self.audit = Audit(state / "audit.jsonl")
         self.focus: int | None = None  # index into lanes
+        self.all = False  # grid of every lane, not only the active ones
         self.packet = False
         self.scroll = 0
 
@@ -366,22 +384,33 @@ def format_entry(e: Entry, width: int, compact: bool) -> list:
     return rows
 
 
-def pane_title(lane: Lane, audit: Audit, width: int, now: float | None = None) -> list:
+def job_info(lane: Lane, audit: Audit, now: float | None = None) -> tuple:
+    """(glyph, style, text) summarizing the lane's current job."""
     job = lane.job
     if not job:
-        glyph, style, info = "·", "dim", "idle"
-    else:
-        status = job["status"]
-        glyph, style = {"running": ("●", "warn"), "done": ("✓", "ok"), "failed": ("✗", "error"),
-                        "cancelled": ("■", "dim")}.get(status, ("?", "dim"))
-        bits = [status, fmt_secs(lane.elapsed(now) or 0)]
-        if job.get("model"):
-            model = job["model"].replace("claude-", "")
-            bits.append(model)
-        rec = audit.jobs.get(job["id"]) or {}
-        if rec.get("cost_usd") is not None:
-            bits.append(f"${rec['cost_usd']:.2f}")
-        info = " · ".join(bits)
+        return "·", "dim", "idle"
+    status = job["status"]
+    glyph, style = {"running": ("●", "warn"), "done": ("✓", "ok"), "failed": ("✗", "error"),
+                    "cancelled": ("■", "dim")}.get(status, ("?", "dim"))
+    bits = [status, fmt_secs(lane.elapsed(now) or 0)]
+    if job.get("model"):
+        bits.append(job["model"].replace("claude-", ""))
+    rec = audit.jobs.get(job["id"]) or {}
+    if rec.get("cost_usd") is not None:
+        bits.append(f"${rec['cost_usd']:.2f}")
+    return glyph, style, " · ".join(bits)
+
+
+def status_row(lane: Lane, audit: Audit, width: int, now: float | None = None) -> list:
+    """One line for a lane that has no pane: its name and its last job."""
+    glyph, style, info = job_info(lane, audit, now)
+    if lane.job and lane.job.get("ended"):
+        info += f" · at {lane.job['ended'][:5]}"
+    return [(f" {lane.name} ", "dim"), (f"{glyph} {info}"[: max(0, width - len(lane.name) - 2)], style)]
+
+
+def pane_title(lane: Lane, audit: Audit, width: int, now: float | None = None) -> list:
+    glyph, style, info = job_info(lane, audit, now)
     head = f" {lane.name} "
     tail = f" {glyph} {info} "
     fill = max(0, width - len(head) - len(tail))
@@ -422,7 +451,7 @@ def footer_row(watch: Watch, width: int) -> list:
     elif watch.focus is not None:
         keys = " focus   j/k scroll   p packet   a all lanes   q quit"
     else:
-        keys = " 1-9 focus a lane   p packet of lane 1   q quit"
+        keys = " 1-9 focus a lane   a " + ("active lanes only" if watch.all else "every lane") + "   p packet   q quit"
         keys += "   " + "  ".join(f"{i + 1}={lane.name}" for i, lane in enumerate(watch.lanes[:9]))
     return [(keys[:width].ljust(width), "hdr")]
 
@@ -446,15 +475,23 @@ def render(watch: Watch, width: int, height: int, now: float | None = None) -> l
         lane = watch.lanes[watch.focus]
         rows += pane_rows(lane, watch.audit, width, inner_h, watch.scroll, compact=False, now=now)
     else:
-        grid = [[("", "text")] for _ in range(inner_h)]
+        shown = list(watch.lanes) if watch.all else [lane for lane in watch.lanes if lane.active(now)]
+        if not shown and watch.lanes:
+            # Nothing active: the lane with the most recent job gets the whole area.
+            with_job = [lane for lane in watch.lanes if lane.job]
+            shown = [max(with_job, key=lambda lane: lane.job["id"])] if with_job else [watch.lanes[0]]
+        hidden = [lane for lane in watch.lanes if lane not in shown]
+        strip = [status_row(lane, watch.audit, width, now) for lane in hidden]
+        grid_h = max(1, inner_h - len(strip))
+        grid = [[("", "text")] for _ in range(grid_h)]
         cells: dict = {}
-        for lane, (y, x, h, w) in zip(watch.lanes, layout(len(watch.lanes), width, height)):
+        for lane, (y, x, h, w) in zip(shown, layout(len(shown), width, grid_h + 2)):
             for dy, row in enumerate(pane_rows(lane, watch.audit, w, h, now=now)):
                 cells.setdefault(y - 1 + dy, []).append((x, w, row))
-        for i in range(inner_h):
+        for i in range(grid_h):
             if i in cells:
                 grid[i] = [("__cells__", cells[i])]  # placed by the painter
-        rows += grid
+        rows += grid + strip[: max(0, inner_h - grid_h)]
     rows.append(footer_row(watch, width))
     return rows[:height]
 
@@ -530,6 +567,8 @@ def run_curses(watch: Watch) -> None:
             elif ord("1") <= key <= ord("9") and key - ord("1") < len(watch.lanes):
                 watch.focus, watch.packet, watch.scroll = key - ord("1"), False, 0
             elif key == ord("a"):
+                if watch.focus is None:
+                    watch.all = not watch.all  # already on the grid: toggle every lane / active only
                 watch.focus, watch.scroll = None, 0
             elif key == ord("p"):
                 if watch.focus is None and watch.lanes:
