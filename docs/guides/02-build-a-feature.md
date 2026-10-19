@@ -94,6 +94,7 @@ wrapped here; `report` is the role's own summary):
  "context_tokens": 48213,
  "branches": [{"repo": ".", "ref": "factory-developer/factory/rate-limit", "commit": "3f9c2ab"}],
  "import_errors": [],
+ "packet": "~/.local/state/ai-code-factory/dispatch/packets/20261017-142530-9b1e44.md",
  "report": "Branch factory/rate-limit (3f9c2ab): rate limiter in src/server/rate-limit.ts:1-58, wired in src/server/app.ts:41. Tests: 212 passed (factory-test mode: clean install).",
  "session": "fresh session"}
 ```
@@ -110,6 +111,7 @@ What the fields tell you:
 | `context_tokens` | How large the lane's session has grown; every later turn re-reads it |
 | `branches` | Committed `factory/*` branches now in your project: repo, ref and commit |
 | `import_errors` | Anything that could not be brought back |
+| `packet` | Path of the job's review packet (see below) |
 | `session` | Whether the job continued the lane's session or started fresh, and why |
 
 A reviewer job has the same fields except `branches` and `import_errors`.
