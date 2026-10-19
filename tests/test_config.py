@@ -46,11 +46,24 @@ class EnvDefaultsAndOverridesTests(unittest.TestCase):
 
     def test_ref_namespace_and_push_prefix_and_deployment_overridable(self):
         self.reload_under({"BROKER_REF_NAMESPACE": "refs/my-gateway", "BROKER_PUSH_PREFIX": "agents/",
-                           "BROKER_DEPLOYMENT": "standalone"})
+                           "BROKER_DEPLOYMENT": "standalone", "BROKER_BIND_HOST": "127.0.0.1"})
         self.assertEqual(config.REF_NAMESPACE, "refs/my-gateway")
         self.assertEqual(config.DEFAULT_PUSH_BRANCH_PREFIX, "agents/")
         self.assertEqual(config.DEPLOYMENT, "standalone")
         config.validate()
+
+    def test_tls_and_insecure_bind_overridable(self):
+        self.reload_under({"BROKER_TLS_CERT": "/etc/passdesk/tls/cert.pem", "BROKER_TLS_KEY": "/etc/passdesk/tls/key.pem",
+                           "BROKER_INSECURE_BIND": "1"})
+        self.assertEqual(config.TLS_CERT, "/etc/passdesk/tls/cert.pem")
+        self.assertEqual(config.TLS_KEY, "/etc/passdesk/tls/key.pem")
+        self.assertTrue(config.INSECURE_BIND)
+        self.reload_under({})
+        self.assertEqual((config.TLS_CERT, config.TLS_KEY, config.INSECURE_BIND), ("", "", False))
+        # Only the exact value "1" counts: "true", "yes" and "0" are all off.
+        for value in ("true", "yes", "0", ""):
+            self.reload_under({"BROKER_INSECURE_BIND": value})
+            self.assertFalse(config.INSECURE_BIND, value)
 
     def test_credential_provider_default_depends_on_deployment(self):
         with mock.patch.dict("os.environ"):
@@ -73,7 +86,8 @@ class EnvDefaultsAndOverridesTests(unittest.TestCase):
 
 class ValidateTests(unittest.TestCase):
     def setUp(self):
-        for name in ("DEPLOYMENT", "REF_NAMESPACE", "SECRETS_DIR", "DEFAULT_PUSH_BRANCH_PREFIX"):
+        for name in ("DEPLOYMENT", "REF_NAMESPACE", "SECRETS_DIR", "DEFAULT_PUSH_BRANCH_PREFIX",
+                     "BIND_HOST", "TLS_CERT", "TLS_KEY", "INSECURE_BIND"):
             self.addCleanup(setattr, config, name, getattr(config, name))
 
     def test_defaults_are_valid(self):
@@ -82,7 +96,8 @@ class ValidateTests(unittest.TestCase):
         config.validate()
 
     def test_standalone_is_valid(self):
-        config.DEPLOYMENT = "standalone"
+        # On loopback; a standalone bind off loopback without TLS is tests/test_tls.py's subject.
+        config.DEPLOYMENT, config.BIND_HOST = "standalone", "127.0.0.1"
         config.validate()
 
     def test_rejects_unknown_deployment(self):

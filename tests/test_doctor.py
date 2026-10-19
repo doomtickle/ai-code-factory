@@ -488,15 +488,17 @@ class StandaloneChecks(DoctorBase):
         doctor.check_standalone(report, granted={"git_push"})
         self.assertFails(report, "unknown credential provider 'vault'")
 
-    def test_tls_note_only_fires_off_loopback(self):
+    def test_tls_check_runs_in_standalone_section(self):
+        # The TLS check itself is tests/test_tls.py's subject; here, only
+        # that check_standalone runs it: quiet on loopback, a failure off it.
         config.BIND_HOST = "127.0.0.1"
         report = doctor.Report()
         doctor.check_standalone(report, granted=set())
-        self.assertFalse(any("TLS" in m for m in report.messages(doctor.INFO)))
+        self.assertFalse(any("TLS" in t for t in self.all_text(report)))
         config.BIND_HOST = "0.0.0.0"
         report = doctor.Report()
         doctor.check_standalone(report, granted=set())
-        self.assertTrue(any("TLS cert/key checks are not implemented" in m for m in report.messages(doctor.INFO)))
+        self.assertFails(report, "without TLS: the server refuses to start")
 
     def test_exchange_directory_writable(self):
         report = doctor.Report()
@@ -610,7 +612,7 @@ class StandaloneChecks(DoctorBase):
             config.BIND_HOST = host
             report = doctor.Report()
             doctor.check_standalone(report, granted=set())
-            self.assertFalse(any("TLS" in m for m in report.messages(doctor.INFO)), host)
+            self.assertFalse(any("TLS" in t for t in self.all_text(report)), host)
 
     def test_unusable_credential_file_warns_without_auditing(self):
         # A docker-secret directory (not a regular file) for github: refused
