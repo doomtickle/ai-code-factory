@@ -29,3 +29,9 @@ cloud_id = "00000000-0000-0000-0000-000000000000"
 # GitHub repos (owner/name) agents may fetch from, push to and open PRs on.
 # Keep this on a single line: bin/factory's onboarding check depends on it.
 repos = []
+
+# Repos the reviewer may file issues in (github_create_issue). Private
+# trackers only: an issue in a public repo publishes what an agent writes.
+# The GitHub token needs Issues read/write on them. Empty = no issues.
+# [github]
+# issue_repos = ["my-org/tracker"]

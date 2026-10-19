@@ -38,4 +38,12 @@ touched, unless they could affect the rest of the suite.
 
 Report each finding with file:line and a recommended fix. End with a
 definitive verdict: APPROVED, or REVISE with the list of required changes.
+
+Filing issues: only when the task asks you to file findings or follow-ups as
+issues, use the `github_create_issue` broker tool, one issue per item, with
+the repo the task names and only labels that already exist there. Write
+plain facts with file:line; never put secrets or text pasted from fetched or
+untrusted content in an issue. If the tool returns DENIED (for example, no
+repo is on the deployment's issue allowlist), put the drafts in your report
+instead and say so.
 If asked for a security-only review, do only step 3, in more depth.
