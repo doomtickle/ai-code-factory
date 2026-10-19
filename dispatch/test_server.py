@@ -103,7 +103,10 @@ FAKE_SBX = textwrap.dedent(r'''
         ]
         if task == "nan-cost":
             total = float("nan")  # json.dumps writes NaN, as a faulty claude might
-        if task == "fail":
+        if task == "max-turns":
+            events.append({"type": "result", "subtype": "error_max_turns", "is_error": True,
+                           "result": "", "session_id": sid, "total_cost_usd": total})
+        elif task == "fail":
             events.append({"type": "result", "is_error": True, "result": "boom", "session_id": sid})
         else:
             events.append({"type": "result", "is_error": False, "result": "REPORT: did " + task,
@@ -115,9 +118,10 @@ FAKE_SBX = textwrap.dedent(r'''
 ''').lstrip()
 
 
-def conf(desc, workspace, tools, model="", models="", lanes=""):
+def conf(desc, workspace, tools, model="", models="", lanes="", turns=""):
     return (f'DESCRIPTION="{desc}"\nTEMPLATE="developer"\nWORKSPACE="{workspace}"\n'
-            f'BROKER_TOOLS="{tools}"\nMODEL="{model}"\nMODELS="{models}"\nLANES="{lanes}"\n')
+            f'BROKER_TOOLS="{tools}"\nMODEL="{model}"\nMODELS="{models}"\nLANES="{lanes}"\n'
+            f'MAX_TURNS="{turns}"\n')
 
 
 class Base(unittest.TestCase):
@@ -133,7 +137,7 @@ class Base(unittest.TestCase):
         for name, text in {"developer": conf("Builds things", "rw", "web_fetch npm_ci"),
                            "reviewer": conf("Reviews things", "ro", ""),
                            "tester": conf("Tests things", "rw", ""),
-                           "opuser": conf("Uses a pinned model", "rw", "", model="opus"),
+                           "opuser": conf("Uses a pinned model", "rw", "", model="opus", turns="7"),
                            "tiered": conf("Picks a model per task", "rw", "", model="sonnet",
                                           models="haiku opus bad;name"),
                            "builder": conf("Builds in parallel", "rw", "", lanes="2"),
@@ -343,6 +347,22 @@ class DelegateTests(Base):
         out = json.loads(d.tool_delegate({"role": "tiered", "task": "two", "model": "opus",
                                           "wait_seconds": 30}))
         self.assertEqual(out["session"], "continuing its previous session")
+
+    def test_max_turns_is_passed_only_when_set(self):
+        d.tool_wait_for_job({"job_id": self.delegate("opuser", "x"), "timeout_seconds": 30})
+        argv = self.claude_calls()[-1]
+        self.assertEqual(argv[argv.index("--max-turns") + 1], "7")
+        d.tool_wait_for_job({"job_id": self.delegate("developer", "x"), "timeout_seconds": 30})
+        self.assertNotIn("--max-turns", self.claude_calls()[-1])
+        self.assertEqual(d.load_roles()["opuser"]["max_turns"], 7)
+        self.assertEqual(d.load_roles()["developer"]["max_turns"], 0)
+
+    def test_hitting_the_turn_cap_fails_the_job_with_an_explanation(self):
+        report = json.loads(d.tool_wait_for_job({"job_id": self.delegate("opuser", "max-turns"),
+                                                 "timeout_seconds": 30}))
+        self.assertEqual(report["status"], "failed")
+        self.assertIn("MAX_TURNS cap of 7 turns", report["report"])
+        self.assertIn("follow-up task on this lane can continue", report["report"])
 
     def test_effort_is_passed_and_reported(self):
         out = json.loads(d.tool_delegate({"role": "developer", "task": "x", "effort": "low",
