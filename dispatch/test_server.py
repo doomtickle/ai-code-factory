@@ -909,6 +909,34 @@ class ImportTests(Base):
         self.assertEqual(end["branches"], report["branches"])
         self.assertEqual(len(self.lane_calls("export")), 1)
 
+    def test_only_refs_this_job_created_or_moved_are_reported(self):
+        self.make_host(d.PROJECT)
+        self.make_lane(d.PROJECT, "developer", ".", ["a"])
+        first = self.wait(self.delegate("developer", "one"))
+        self.assertEqual([b["ref"] for b in first["branches"]], ["factory-developer/factory/a"])
+        clone = self.lanes / "developer"
+        git("checkout", "-q", "-b", "factory/b", "origin/main", cwd=clone)
+        (clone / "b.txt").write_text("b")
+        git("add", ".", cwd=clone)
+        git("commit", "-q", "-m", "b", cwd=clone)
+        second = self.wait(self.delegate("developer", "two"))
+        # a is still in the project (the import never prunes) but this job didn't touch it.
+        self.assertEqual([b["ref"] for b in second["branches"]], ["factory-developer/factory/b"])
+        self.assertTrue(git("rev-parse", "refs/remotes/factory-developer/factory/a", cwd=d.PROJECT))
+        self.assertNotIn("factory/a", Path(second["packet"]).read_text().split("## Branches")[1])
+        third = self.wait(self.delegate("developer", "three"))  # nothing new: nothing exported
+        self.assertEqual((third["branches"], third["import_errors"]), ([], []))
+
+    def test_test_mode_lines_come_only_from_real_output(self):
+        text = ('# "factory-test: mode: ..." lines seen in tool results\n'
+                "factory-test: mode: project files only (no yarn.lock or package-lock.json)\n"
+                "the factory-test: mode: clean install line is mentioned mid-line\n"
+                "factory-test: mode was: clean install (yarn.lock, offline) (exit 0)\n"
+                "factory-test: mode: something unknown\n")
+        self.assertEqual(d._TEST_MODE.findall(text), [
+            "factory-test: mode: project files only (no yarn.lock or package-lock.json)",
+            "factory-test: mode was: clean install (yarn.lock, offline) (exit 0)"])
+
     def test_missing_prerequisites_retry_with_the_full_history(self):
         self.make_host(d.PROJECT)
         self.make_lane(d.PROJECT, "developer", ".", [])
