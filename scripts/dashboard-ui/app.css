@@ -154,9 +154,11 @@ button { font: inherit; color: inherit; }
 .crt-roll > .vblank, .crt-roll > .crt-ghost { display: none; }
 .crt-roll.rolling > .vblank { display: block; position: absolute; left: -2%; right: -2%; top: 100%; height: var(--vb);
   background: linear-gradient(180deg, #000 0 35%, color-mix(in srgb, var(--c) 18%, #000) 45%, #000 55% 100%); }
-.crt-roll.rolling > .crt-ghost { display: block; position: absolute; left: 0; right: 0; top: calc(100% + var(--vb)); height: 100%; overflow: hidden; }
+.crt-roll.rolling:not(.live) > .crt-ghost { display: block; position: absolute; left: 0; right: 0; top: calc(100% + var(--vb)); height: 100%; overflow: hidden; }
 .crt-roll.rolling { animation: vroll var(--roll-dur, 6s) linear infinite; animation-direction: var(--roll-dir, normal); will-change: transform; }
 @keyframes vroll { from { transform: translateY(0); } to { transform: translateY(calc(-100% - var(--vb))); } }
+/* Terminal 0: the live terminal's frame, transparent so the tube shows through */
+.crt-term { flex: 1; min-height: 0; width: 100%; border: 0; display: block; background: transparent; }
 .crt-body { flex: 1; min-height: 0; overflow-y: auto; padding: 16px 20px 10px; scrollbar-width: thin; scrollbar-color: var(--dim) transparent; }
 .crt-body p { margin: 0 0 8px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .crt .a::before { content: "● "; }

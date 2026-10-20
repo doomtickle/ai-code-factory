@@ -404,7 +404,7 @@
     tube.style.setProperty("--contrast", (1 + knobVals.contrast / 100 * 0.5).toFixed(3));
     const v = knobVals.vhold, off = Math.abs(v) >= DETENT;
     const wasRolling = roll.classList.contains("rolling");
-    if (off && !wasRolling) syncGhost();
+    if (off && !wasRolling && !roll.classList.contains("live")) syncGhost();
     roll.classList.toggle("rolling", off);
     if (off) {
       const t = (Math.abs(v) - DETENT) / (100 - DETENT);       // 0..1 past the detent
@@ -454,6 +454,35 @@
   if (reduceMotion) roll.dataset.still = "1";
   applyKnobs();
 
+  // ---------- Terminal 0: the Coordinator's live terminal
+  // It lives on the dashboard's second origin (another port), framed here; this
+  // page never sees its key and can't script it. The frame sits in the tube's
+  // roll layer, so the glass, scanlines, knobs and V-HOLD still apply (the ghost
+  // copy is for the static placeholder only: a frame can't be cloned).
+  let termFrame = null;
+  function renderTerm() {
+    const t = state.term;
+    $("lamp-term").className = !t ? "led" : t.running ? "led g" : t.reason === "elsewhere" ? "led a" : "led";
+    if (!t) {
+      $("crt-banner").textContent = "TERMINAL 0 · NO COORDINATOR LINK";
+      $("crt-note").textContent = "This dashboard was started without --coordinator. Talk to the Coordinator with: factory chat";
+      return;
+    }
+    if (termFrame) return;
+    termFrame = document.createElement("iframe");
+    termFrame.className = "crt-term";
+    termFrame.title = "Coordinator terminal";
+    // Same host as this page (the cookie is per host), the terminal's port.
+    termFrame.src = `http://${location.hostname}:${Number(t.port)}/term`;
+    termFrame.setAttribute("sandbox", "allow-scripts allow-same-origin");
+    termFrame.setAttribute("referrerpolicy", "no-referrer");
+    crtBody.hidden = true;
+    roll.classList.add("live");
+    roll.insertBefore(termFrame, roll.firstChild);
+  }
+  // A click on the tube's glass or bezel (outside the frame) hands the keyboard to the terminal.
+  tube.addEventListener("click", () => { if (termFrame) termFrame.focus(); });
+
   // ---------- polling
   async function poll() {
     try {
@@ -461,7 +490,7 @@
       if (!r.ok) throw new Error(String(r.status));
       state = await r.json();
       polledAt = Date.now();
-      renderHeader(); renderLanes(); renderGate(); renderSpend(); renderPaper();
+      renderHeader(); renderLanes(); renderGate(); renderSpend(); renderPaper(); renderTerm();
       if (monLane) loadMon();
     } catch (e) {
       $("lamp-link").className = "led r blink";

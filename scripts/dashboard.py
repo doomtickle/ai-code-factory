@@ -7,13 +7,21 @@ tail, job status, model and cost; today's spend by hour and by role; an event
 printer of broker calls and finished jobs; and the writes Passdesk Pro is
 holding for approval.
 
-This version is read-only. While it serves, it reads files under the factory
-state folder and never writes there, runs no command (no sbx, git or shell),
-and makes no network connection:
+The state view is read-only. While it serves, it reads files under the
+factory state folder and never writes there, and makes no network connection:
   dispatch/logs/<lane>.log, dispatch/audit.jsonl, dispatch/packets/, dispatch/pid
   broker/audit.jsonl, broker/approvals/pending/
 It reuses watch.py's transcript model and approvals.py's card reader rather
 than parsing either command's output.
+
+With --coordinator NAME it also serves Terminal 0, the Coordinator's live
+terminal (dashboard_term.py): one fixed argv, `sbx run --name NAME`, in a PTY
+(no shell), started when the first terminal page connects, refused while the
+Coordinator is attached anywhere else, and shared by every open tab. It lives
+on a second port (its own origin) the main page frames; a WebSocket there
+needs the right Host and Origin, this run's cookie and the terminal key that
+only the terminal page holds. Besides that, the checks before starting it run
+`ps -axo pid=,ppid=,args=` and `sbx ls -q` (fixed argv).
 
 The one process it starts is the browser opener, once, at start-up (unless
 --no-open): on WSL `rundll32.exe url.dll,FileProtocolHandler <url>` (Windows'
@@ -36,13 +44,15 @@ runs under a CSP that allows nothing but its own files. Agent-written text
 page as text, never as HTML.
 
 Limitation: cookies ignore ports, so any other server on 127.0.0.1 that this
-browser visits receives the cookie too. That is tolerable while the dashboard
-only shows what is already on this machine; anything that lets the page act
-(doomtickle/passdesk-ops#112, the terminal, approve/decline) must require the
-token in a request header, not just the cookie, and check `Origin`.
+browser visits receives the cookie too. That is tolerable for what the page
+only shows; anything that lets a page act (the terminal; later approve and
+decline) must require a key in a request header, not just the cookie, and
+check `Origin`: the terminal's WebSocket does both.
 
   factory dashboard              serve and open the page
   factory dashboard --no-open    serve and print the URL only
+  factory dashboard --coordinator factory-coordinator
+                                 ... with the Coordinator's terminal
 
 Standard library only; runs on the macOS system Python (3.9).
 """
@@ -60,6 +70,7 @@ import platform
 import re
 import secrets
 import shutil
+import signal
 import subprocess
 import sys
 import threading
@@ -70,6 +81,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 import approvals
+import dashboard_term as dt
 import watch as w
 
 UI = Path(__file__).resolve().parent / "dashboard-ui"
@@ -86,6 +98,13 @@ STATIC = {
 }
 CSP = ("default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; connect-src 'self'; "
        "img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
+
+
+def page_csp(term_port: int | None = None) -> str:
+    """The main page's CSP; with a terminal, it may frame the terminal origin and nothing else."""
+    if term_port is None:
+        return CSP
+    return CSP + f"; frame-src http://127.0.0.1:{term_port} http://localhost:{term_port}"
 COOKIE = "factory_dashboard"  # prefix: the cookie is COOKIE_<port> (see cookie_name)
 TAIL = 40          # transcript lines per lane in /api/state (taller lane screens)
 FULL = 1500        # transcript lines per lane in /api/lane
@@ -352,9 +371,11 @@ def cookie_name(port: int) -> str:
     return f"{COOKIE}_{port}"
 
 
-def make_handler(board: Dashboard, token: str, port: int):
+def make_handler(board: Dashboard, token: str, port: int, term: dt.Term | None = None,
+                 term_port: int | None = None):
     hosts = {f"127.0.0.1:{port}", f"localhost:{port}"}
     cookie = cookie_name(port)
+    csp = page_csp(term_port)
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "factory-dashboard"
@@ -374,7 +395,7 @@ def make_handler(board: Dashboard, token: str, port: int):
             self.send_header("Cross-Origin-Opener-Policy", "same-origin")
             self.send_header("X-Frame-Options", "DENY")
             if ctype.startswith("text/html"):
-                self.send_header("Content-Security-Policy", CSP)
+                self.send_header("Content-Security-Policy", csp)
             for k, v in (extra or {}).items():
                 self.send_header(k, v)
             self.end_headers()
@@ -385,16 +406,8 @@ def make_handler(board: Dashboard, token: str, port: int):
             self.send(code, (text + "\n").encode(), "text/plain; charset=utf-8")
 
         def authorized(self) -> bool:
-            """Exactly one cookie of this port's name, holding the token. A
-            second one (say, set by another 127.0.0.1 server) is refused rather
-            than guessed between."""
-            values = []
-            for header in self.headers.get_all("Cookie") or []:
-                for part in header.split(";"):
-                    name, _, value = part.strip().partition("=")
-                    if name == cookie:
-                        values.append(value)
-            return len(values) == 1 and hmac.compare_digest(values[0].encode(), token.encode())
+            """Exactly one cookie of this port's name, holding the token."""
+            return dt.cookie_matches(self.headers, cookie, token)
 
         def do_GET(self) -> None:
             if self.headers.get("Host", "") not in hosts:
@@ -415,7 +428,12 @@ def make_handler(board: Dashboard, token: str, port: int):
                 self.refuse(403, "no token: open the link 'factory dashboard' printed")
                 return
             if url.path == "/api/state":
-                self.json(board.snapshot())
+                snap = board.snapshot()
+                # Where the terminal origin is, and whether the Coordinator is
+                # attached (for the lamp). Never the terminal key.
+                snap["term"] = None if term is None else {
+                    "port": term_port, "running": term.running(), "reason": term.reason}
+                self.json(snap)
             elif url.path == "/api/lane":
                 detail = board.lane_detail(parse_qs(url.query).get("name", [""])[0])
                 if detail is None:
@@ -448,15 +466,36 @@ def make_handler(board: Dashboard, token: str, port: int):
     return Handler
 
 
-def serve(board: Dashboard, port: int = 0, token: str | None = None) -> tuple:
-    """Start the server on 127.0.0.1 in a background thread: (server, url with token)."""
+def serve(board: Dashboard, port: int = 0, token: str | None = None, term: dt.Term | None = None,
+          term_port: int = 0) -> tuple:
+    """Start the server on 127.0.0.1 in a background thread: (server, url with token).
+    With a Term, also the terminal origin on a second port (server.term_server)."""
     token = token or secrets.token_urlsafe(32)
     server = ThreadingHTTPServer(("127.0.0.1", port), BaseHTTPRequestHandler)
     server.daemon_threads = True
     real_port = server.server_address[1]
-    server.RequestHandlerClass = make_handler(board, token, real_port)
+    server.term_server = None
+    real_term_port = None
+    if term is not None:
+        try:
+            server.term_server, _ = dt.serve(term, token, cookie_name(real_port), real_port, term_port)
+        except OSError:
+            server.server_close()
+            raise
+        real_term_port = server.term_server.server_address[1]
+    server.RequestHandlerClass = make_handler(board, token, real_port, term, real_term_port)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     return server, f"http://127.0.0.1:{real_port}/?token={token}"
+
+
+def stop(server, term: dt.Term | None = None) -> None:
+    """Hang up on the Coordinator (if attached) and stop both servers."""
+    if term is not None:
+        term.shutdown()
+    for s in (getattr(server, "term_server", None), server):
+        if s is not None:
+            s.shutdown()
+            s.server_close()
 
 
 def is_wsl() -> bool:
@@ -498,13 +537,22 @@ def main(argv=None) -> int:
     ap.add_argument("--project", default="", help="the project the factory runs on (for the header)")
     ap.add_argument("--port", type=int, default=0, help="port on 127.0.0.1 (default: any free port)")
     ap.add_argument("--no-open", action="store_true", help="print the URL without opening a browser")
+    ap.add_argument("--coordinator", default="", metavar="NAME",
+                    help="the Coordinator's sandbox: serve its live terminal (sbx run --name NAME)")
     args = ap.parse_args(argv)
+    term = None
+    if args.coordinator:
+        try:
+            term = dt.Term(dt.coordinator_argv(args.coordinator), args.coordinator)
+        except ValueError as e:
+            print(str(e), file=sys.stderr)
+            return 2
     board = Dashboard(args.state, args.roles, args.project or "(no project)")
     if not board.watch.lanes:
         print("no roles or transcripts found", file=sys.stderr)
         return 1
     try:
-        server, url = serve(board, args.port)
+        server, url = serve(board, args.port, term=term)
     except OSError as e:
         print(f"could not listen on 127.0.0.1:{args.port}: {e}", file=sys.stderr)
         return 1
@@ -516,13 +564,25 @@ def main(argv=None) -> int:
         print("Trying to open it in your browser. If nothing opens, open the link above in a browser on this machine.")
     else:
         print("Could not start a browser: open the link above in a browser on this machine.")
-    print("Ctrl-C stops the dashboard.", flush=True)
+    if term is not None:
+        print(f"Terminal 0 attaches to {args.coordinator} when the page opens (unless it is open elsewhere).")
+    print("Ctrl-C stops the dashboard" + (" and hangs up on the Coordinator." if term else "."), flush=True)
+    # SIGTERM and SIGHUP (the terminal closing) stop it as Ctrl-C does, so the
+    # Coordinator's sbx run is never left behind.
+    for sig in (signal.SIGTERM, signal.SIGHUP):
+        signal.signal(sig, _interrupt)
     try:
         while True:
             time.sleep(3600)
     except KeyboardInterrupt:
-        server.shutdown()
+        pass
+    finally:
+        stop(server, term)
     return 0
+
+
+def _interrupt(signum, frame):
+    raise KeyboardInterrupt
 
 
 if __name__ == "__main__":

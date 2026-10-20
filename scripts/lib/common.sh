@@ -76,11 +76,11 @@ esac
 readonly FACTORY_CONFIG
 
 # This machine's remembered `factory start --layout` choice. Holds just
-# "watch" or "tabs"; absent is the same as "watch" (resolve_layout's
+# "watch", "tabs" or "web"; absent is the same as "watch" (resolve_layout's
 # fallback), so nothing here needs it to exist.
 readonly FACTORY_LAYOUT_FILE="$FACTORY_CONFIG/layout"
 
-# resolve_layout FLAG ENV -> "watch" or "tabs": FLAG (factory start's --layout
+# resolve_layout FLAG ENV -> "watch", "tabs" or "web": FLAG (factory start's --layout
 # value) if non-empty, else ENV (FACTORY_LAYOUT from the environment) if
 # non-empty, else the value saved in FACTORY_LAYOUT_FILE, else "watch". A
 # non-empty FLAG or ENV is validated (dies, with the command's usage, on
@@ -90,8 +90,8 @@ resolve_layout() {
   local chosen="${1:-$2}" saved
   if [ -n "$chosen" ]; then
     case "$chosen" in
-      watch|tabs) ;;
-      *) die "usage: factory start [dir] [--no-ui] [--layout watch|tabs]" ;;
+      watch|tabs|web) ;;
+      *) die "usage: factory start [dir] [--no-ui] [--layout watch|tabs|web]" ;;
     esac
     mkdir -p "$FACTORY_CONFIG"
     printf '%s\n' "$chosen" > "$FACTORY_LAYOUT_FILE"
@@ -100,7 +100,7 @@ resolve_layout() {
   fi
   saved="$(cat "$FACTORY_LAYOUT_FILE" 2>/dev/null || true)"
   case "$saved" in
-    watch|tabs) printf '%s' "$saved" ;;
+    watch|tabs|web) printf '%s' "$saved" ;;
     *) printf '%s' "watch" ;;
   esac
 }
@@ -205,6 +205,18 @@ require_herdr() {
 
 sandbox_exists() {
   sbx ls -q 2>/dev/null | grep -qx "$1"
+}
+
+# coordinator_attached -> success if some process on this machine is already
+# running `sbx run --name $COORDINATOR_SANDBOX` (a Herdr pane, `factory chat`,
+# or the dashboard's Terminal 0). A second one would start a second
+# Coordinator in the same VM. Same match as attached_pids in
+# scripts/dashboard_term.py.
+coordinator_attached() {
+  ps -axo args= 2>/dev/null | awk -v n="$COORDINATOR_SANDBOX" '
+    { b = $1; sub(/.*\//, "", b) }
+    b == "sbx" && $2 == "run" && (($3 == "--name" && $4 == n) || $3 == "--name=" n) { found = 1 }
+    END { exit !found }'
 }
 
 # sandbox_running NAME -> success if NAME exists and sbx reports it running

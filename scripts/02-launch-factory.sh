@@ -15,6 +15,8 @@ set -euo pipefail
 #       tabs: one tab per role, tailing the live transcripts of the tasks the
 #         Coordinator delegates to it (every lane's, for a role with LANES > 1);
 #         any "Watch" pane left over from "watch" is closed.
+#       web: no Herdr at all (as FACTORY_NO_UI=1); bin/factory then starts
+#         `factory dashboard`, which holds the Coordinator's only terminal.
 # Inside a Herdr pane it uses the current Herdr session. Otherwise it uses the
 # session named by FACTORY_HERDR_SESSION (bin/factory sets "factory"), starting
 # that session's server if needed; attach with `herdr session attach <name>`.
@@ -30,19 +32,22 @@ set -euo pipefail
 [ -d "$1" ] || die "project directory not found: $1"
 
 require_bin jq
+
+# FACTORY_LAYOUT: bin/factory resolves and passes this (--layout, FACTORY_LAYOUT,
+# or the saved default); a direct run defaults to "watch". Ignored entirely
+# with FACTORY_NO_UI=1 (no Herdr layout to pick). "web" means no Herdr: the
+# dashboard bin/factory starts afterwards is the Coordinator's terminal.
+LAYOUT="${FACTORY_LAYOUT:-watch}"
+case "$LAYOUT" in
+  watch|tabs) ;;
+  web) FACTORY_NO_UI=1 ;;
+  *) die "FACTORY_LAYOUT must be 'watch', 'tabs' or 'web', got '$LAYOUT'" ;;
+esac
+
 # FACTORY_NO_UI=1 (factory start --no-ui): no Herdr at all; the user talks to the
 # Coordinator with `sbx run` and follows roles with `factory logs`.
 [ "${FACTORY_NO_UI:-}" = 1 ] || require_herdr
 require_sbx
-
-# FACTORY_LAYOUT: bin/factory resolves and passes this (--layout, FACTORY_LAYOUT,
-# or the saved default); a direct run defaults to "watch". Ignored entirely
-# with FACTORY_NO_UI=1 (no Herdr layout to pick).
-LAYOUT="${FACTORY_LAYOUT:-watch}"
-case "$LAYOUT" in
-  watch|tabs) ;;
-  *) die "FACTORY_LAYOUT must be 'watch' or 'tabs', got '$LAYOUT'" ;;
-esac
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd -P)"
 # shellcheck source=lib/roles.sh
@@ -308,7 +313,15 @@ host_cwd="$(hd pane get "$host_shell" | jq -r '.result.pane.cwd')"
 if [ "$host_cwd" != "$PROJECT" ] && pane_idle "$host_shell"; then
   hd pane run "$host_shell" "cd $(printf '%q' "$PROJECT")"
 fi
-run_if_idle "$coordinator" "sbx run --name $COORDINATOR_SANDBOX"
+# One attachment only: a second `sbx run` would start a second Coordinator in
+# the same VM. If the dashboard (or `factory chat`) holds it, leave the pane be.
+if pane_idle "$coordinator"; then
+  if coordinator_attached; then
+    echo "note: the Coordinator is already open elsewhere (the dashboard or 'factory chat'); not opening it in Herdr too."
+  else
+    hd pane run "$coordinator" "sbx run --name $COORDINATOR_SANDBOX"
+  fi
+fi
 
 # "watch" layout: a "factory watch" pane to the right of the Coordinator,
 # full-width host shell below (splitting off the Coordinator pane itself, the
@@ -386,7 +399,9 @@ if [ -n "$roles_waiting_for_login" ]; then
   Type /login in the Coordinator, then run 'factory start' again (e.g. in the Host shell pane)."
 fi
 
-if [ "${FACTORY_NO_UI:-}" = 1 ]; then
+if [ "$LAYOUT" = web ]; then
+  echo "Factory ready (web): the dashboard is the Coordinator's terminal."
+elif [ "${FACTORY_NO_UI:-}" = 1 ]; then
   echo "Factory ready (no UI): talk to the Coordinator with 'factory chat'; watch every lane with 'factory watch'."
 else
   hd workspace focus "$ws" >/dev/null
