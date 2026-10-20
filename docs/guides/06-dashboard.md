@@ -24,7 +24,7 @@ back. `--no-open` only prints the link; `--port N` picks the port.
 ## The layout
 
 ```text
-┌────────────────────────── header: lamps · spend today · jobs · clock ──────────────────────────┐
+┌───────────────────── header: lamps · spend today · jobs · clock · MANUAL ──────────────────────┐
 │ Terminal 0                │ Lanes                                                              │
 │ (the Coordinator)         │  ┌ 1 developer ┐ ┌ 2 developer-lane2 ┐ ┌ 3 reviewer ┐ ...            │
 │                           │  └─────────────┘ └───────────────────┘ └────────────┘               │
@@ -45,6 +45,10 @@ underneath them.
   while a write is held for you.
 - **Readouts:** today's spend in dollars, today's job count, the jobs running
   now, and the clock.
+- **MANUAL** opens these docs in a tab of their own. The **?** on each module
+  opens its part of this guide, in the same tab. The docs are the ones in your
+  factory checkout when the dashboard started; restart `factory dashboard` to
+  see edits.
 
 ## Terminal 0: the Coordinator
 
@@ -225,7 +229,6 @@ restarting or updating. Run these in a terminal:
 | `factory role new`, `factory roles` | Roles and their kits are part of the security boundary. |
 | `factory reset`, `factory setup` | They remove sandboxes or install tools, and may ask for a password. |
 | `factory analytics`, `factory packet --list` | The full cost report and older review packets. |
-| `factory docs` | These docs. |
 
 ## Is it safe to leave open?
 

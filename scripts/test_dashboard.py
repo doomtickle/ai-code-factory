@@ -1,6 +1,7 @@
 """Tests for scripts/dashboard.py (factory dashboard): the state snapshot built
-from a fixture state folder, the HTTP server's access checks, and the page's
-static files (vendored font checksums, no HTML injection sinks in the script).
+from a fixture state folder, the HTTP server's access checks, the docs it
+serves at /docs/ (MANUAL), and the page's static files (vendored font
+checksums, no HTML injection sinks in the script, help links that resolve).
 
 Run on the host with the system Python:
   python3 -m unittest discover -s scripts -p 'test_dashboard.py' -v
@@ -19,6 +20,7 @@ from unittest import mock
 import dashboard as d
 
 UI = Path(__file__).resolve().parent / "dashboard-ui"
+REPO = Path(__file__).resolve().parent.parent
 TOKEN = "test-token-0123456789abcdefghijklmnop"
 
 
@@ -354,7 +356,7 @@ class ServerTests(unittest.TestCase):
         (fx.roles / "tester" / "role.conf").write_text('LANES="1"\n')
         write_lane(logs, "tester", "20261019-000003-cccccc", fx.now,
                    "".join(f"{hms(fx.now - 30)}     line {i}\n" for i in range(d.FULL + 100)))
-        cls.server, url = d.serve(d.Dashboard(fx.state, fx.roles, "proj"), 0, TOKEN)
+        cls.server, url = d.serve(d.Dashboard(fx.state, fx.roles, "proj"), 0, TOKEN, manual=d.load_docs())
         cls.port = cls.server.server_address[1]
         cls.cookie = d.cookie_name(cls.port)
         assert url == f"http://127.0.0.1:{cls.port}/?token={TOKEN}"
@@ -442,8 +444,25 @@ class ServerTests(unittest.TestCase):
     def test_static_allowlist_only(self):
         for path in d.STATIC:
             self.assertEqual(self.get(path)[0].status, 200, path)
-        for path in ("/../dashboard.py", "/fonts/OFL-VT323.txt", "/index.html", "/fonts/../app.js", "//etc/passwd"):
+        for path in ("/../dashboard.py", "/fonts/OFL-VT323.txt", "/index.html", "/fonts/../app.js", "//etc/passwd",
+                     "/docs/index.html", "/docs/../app.js", "/docs/README.md", "/docs/docs.css/"):
             self.assertEqual(self.get(path)[0].status, 404, path)
+
+    def test_docs(self):
+        resp, body = self.get("/docs/")
+        self.assertEqual(resp.status, 200)
+        self.assertEqual(resp.getheader("Content-Type"), "text/html; charset=utf-8")
+        # The main page's CSP minus frame-src: the docs frame nothing.
+        self.assertEqual(resp.getheader("Content-Security-Policy"), d.CSP)
+        self.assertEqual(resp.getheader("X-Frame-Options"), "DENY")
+        self.assertIn(b"Use the dashboard", body)
+        for path, (_name, ctype) in d.DOCS.items():
+            resp, _ = self.get(path)
+            self.assertEqual((resp.status, resp.getheader("Content-Type")), (200, ctype), path)
+            self.assertEqual(self.get(path, cookie=False)[0].status, 403, path)
+        resp, _ = self.get("/docs")
+        self.assertEqual((resp.status, resp.getheader("Location")), (303, "/docs/"))
+        self.assertEqual(self.get("/docs/", host="evil.example")[0].status, 403)
 
     def test_favicon_is_empty(self):
         self.assertEqual(self.get("/favicon.ico")[0].status, 204)
@@ -464,6 +483,29 @@ class ServerTests(unittest.TestCase):
             self.assertNotIn("fp", card)  # the fingerprint is for the control unit only
             self.assertNotIn("nonce", card)
         self.assertNotIn(self.server.term_server.cu_key, json.dumps(state))
+
+
+class DocsAbsentTests(unittest.TestCase):
+    """Without the docs the dashboard still runs; /docs/ says why."""
+
+    def test_no_docs_and_failed_docs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fx = Fixture(Path(tmp))
+            failed = d.load_docs(Path(tmp) / "no-checkout")
+            self.assertIsInstance(failed, str)
+            for manual, code in ((None, 404), (failed, 503)):
+                server, _ = d.serve(d.Dashboard(fx.state, fx.roles, "proj"), 0, TOKEN, manual=manual)
+                try:
+                    port = server.server_address[1]
+                    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+                    conn.request("GET", "/docs/", headers={"Host": f"127.0.0.1:{port}",
+                                                          "Cookie": f"{d.cookie_name(port)}={TOKEN}"})
+                    resp = conn.getresponse()
+                    self.assertEqual(resp.status, code)
+                    self.assertIn(b"factory docs", resp.read())
+                    conn.close()
+                finally:
+                    d.stop(server)
 
 
 class PageTests(unittest.TestCase):
@@ -489,6 +531,22 @@ class PageTests(unittest.TestCase):
         self.assertIsNone(re.search(r"\son[a-z]+=", html), "inline event handler")
         self.assertNotIn("<style", html)
         self.assertIsNone(re.search(r"https?://", html + (UI / "app.css").read_text()), "network URL")
+
+    def test_help_links_resolve(self):
+        # Every MANUAL and ? link opens the docs tab, and every ? names a heading of
+        # the dashboard guide: renaming a heading there must not break one silently.
+        html = (UI / "index.html").read_text()
+        links = re.findall(r'<a class="[^"]*\b(?:help|manual)\b[^"]*" href="([^"]*)" target="([^"]*)"', html)
+        self.assertEqual(len(links), len(re.findall(r'class="[^"]*\b(?:help|manual)\b', html)))
+        self.assertGreaterEqual(len(links), 6)
+        self.assertEqual({t for _h, t in links}, {"factory-docs"})
+        page = d.load_docs(REPO)["index.html"].decode()
+        for href, _t in links:
+            self.assertTrue(href.startswith("/docs/"), href)
+            anchor = href.partition("#")[2]
+            if anchor:
+                self.assertTrue(anchor.startswith("guide-dashboard:"), href)
+                self.assertIn(f'id="{anchor}"', page, href)
 
 
 if __name__ == "__main__":

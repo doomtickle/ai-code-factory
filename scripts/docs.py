@@ -22,6 +22,11 @@ checkout, and only if they stay inside it; any other scheme renders as text.
 With --out the page is written atomically and nothing is printed; without it
 the page goes to stdout. Exit 1 with a one-line message on stderr on error.
 
+build_served() is the same docs for a server (the dashboard's MANUAL key): the
+page with its CSS and JS as separate files, so it runs under a CSP with no
+inline script or style. Links to repo files that aren't docs render as text
+there (a page served over http can't open file:// links), and it runs no git.
+
 Standard library only; compatible with the macOS system Python (3.9).
 """
 
@@ -475,6 +480,8 @@ class DocRenderer:
             return None
         if self.site.link_base:
             return self.site.link_base + quote(target.relative_to(root).as_posix()), True
+        if self.site.served:
+            return None  # over http the browser would refuse a file:// link
         return target.as_uri(), False
 
     # -- blocks
@@ -731,11 +738,14 @@ class Doc:
 
 
 class Site:
-    def __init__(self, root: Path, link_base: str | None = None):
+    def __init__(self, root: Path, link_base: str | None = None, served: bool = False):
         self.root = root.resolve()
         # Published site (e.g. GitHub Pages): links to repo files go to
         # link_base + their repo path instead of file:// into the checkout.
         self.link_base = link_base
+        # Served from the dashboard (build_served): CSS and JS as separate files,
+        # and repo files that aren't docs as text.
+        self.served = served
         self.docs: list[Doc] = []
         self.doc_keys: dict[Path, str] = {}
         self.doc_routes: dict[str, str] = {}
@@ -1516,7 +1526,7 @@ def render_nav(site: Site) -> str:
         extra = ""
         if group == "Platform setup":
             mac = site.root / "docs" / "mac-quickstart.html"
-            if mac.is_file():
+            if mac.is_file() and not site.served:
                 # A published site serves the quickstart next to the page.
                 href = "mac-quickstart.html" if site.link_base else mac.resolve().as_uri()
                 extra = (f'<li><a class="file-link" href="{esc(href)}">'
@@ -1579,13 +1589,17 @@ def render_page(site: Site, k: int) -> str:
 
 def render_site(site: Site, now: datetime | None = None) -> str:
     now = now or datetime.now().astimezone()
-    commit = git_commit(site.root)
+    commit = "" if site.served else git_commit(site.root)
     built = f"commit <code>{esc(commit)}</code> of " if commit else ""
     sources = ", ".join(f"<code>{esc(str(d.path.relative_to(site.root)))}</code>"
                         for d in site.docs if d.kind != "guide")
     if any(d.kind == "guide" for d in site.docs):
         sources = "<code>docs/guides/</code>, " + sources
-    if site.link_base:
+    if site.served:
+        footer = (f'<footer class="site-foot">Built from <code>{esc(str(site.root))}</code> when this '
+                  f'dashboard started, from {sources}. Restart <code>factory dashboard</code> to see '
+                  f'edits; <code>factory docs</code> opens the same docs on their own.</footer>')
+    elif site.link_base:
         footer = (f'<footer class="site-foot">Built from {built}the factory repository on '
                   f'{esc(now.strftime("%Y-%m-%d %H:%M %Z").strip())}, from {sources}. Run '
                   f'<code>factory docs</code> in your checkout for the version that matches it.</footer>')
@@ -1596,6 +1610,12 @@ def render_site(site: Site, now: datetime | None = None) -> str:
     pages = "\n".join(render_page(site, k) for k in range(len(site.pages)))
     docs_attr = " ".join(d.key for d in site.docs)
     first_title = site.pages[0].title_plain if site.pages else "Docs"
+    if site.served:
+        head = '<script src="docs-head.js"></script>\n<link rel="stylesheet" href="docs.css">'
+        tail = '<script src="docs.js"></script>'
+    else:
+        head = f"<script>{HEAD_JS}</script>\n<style>{CSS}</style>"
+        tail = f"<script>{JS}</script>"
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1603,8 +1623,7 @@ def render_site(site: Site, now: datetime | None = None) -> str:
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
 <title>{esc(first_title)} · AI Code Factory docs</title>
-<script>{HEAD_JS}</script>
-<style>{CSS}</style>
+{head}
 </head>
 <body data-docs="{esc(docs_attr)}">
 <a class="skip" href="#main">Skip to content</a>
@@ -1628,7 +1647,7 @@ def render_site(site: Site, now: datetime | None = None) -> str:
 </main>
 </div>
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
-<script>{JS}</script>
+{tail}
 </body>
 </html>
 """
@@ -1644,6 +1663,18 @@ def build_html(root: Path, now: datetime | None = None,
     site = Site(root, link_base)
     site.build()
     return render_site(site, now), site.warnings
+
+
+def build_served(root: Path, now: datetime | None = None) -> tuple[dict[str, str], list[str]]:
+    """The docs for a server, as {file name: text} (index.html, docs.css,
+    docs-head.js, docs.js; the page names the others relative to itself), and
+    any warnings. No inline script or style, no file:// links, no git."""
+    if not root.is_dir():
+        raise DocsError(f"{root} is not a directory")
+    site = Site(root, served=True)
+    site.build()
+    return {"index.html": render_site(site, now), "docs.css": CSS,
+            "docs-head.js": HEAD_JS, "docs.js": JS}, site.warnings
 
 
 def write_atomic(path: Path, text: str) -> None:

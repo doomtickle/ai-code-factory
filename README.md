@@ -858,10 +858,16 @@ your browser. It shows:
   browser).
 - **Lamps:** whether the page can reach the dashboard, whether the dispatch
   bridge is running, and whether anything is held.
+- **MANUAL** (on the header plate) opens these docs in a tab of their own,
+  and the **?** on each module opens its part of the
+  [dashboard guide](docs/guides/06-dashboard.md). The dashboard renders them
+  from the factory checkout once, when it starts: restart `factory dashboard`
+  to see edits.
 
 It is local. Apart from the terminal and the control unit, it only reads the
 state folder (lane transcripts, both audit logs, review packets, approval
-cards, and for INSPECT the stored patch) and makes no network connection. The
+cards, and for INSPECT the stored patch), and at start-up the factory's docs,
+and makes no network connection. The
 control unit writes only a decision file (approve, decline) and its action logs, and runs only
 `factory restart`, `factory update --yes` and `factory update --plan` (a fixed
 command line, never a shell; `--factory PATH` runs another `factory`); its fonts and xterm.js are
