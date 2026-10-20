@@ -56,7 +56,7 @@ jobs:
           git config --global user.email "ci@example.invalid"
       - name: dispatch bridge
         run: python3 -m unittest discover -s dispatch -v
-      - name: host Python scripts (analytics, approvals, docs)
+      - name: host Python scripts (analytics, approvals, dashboard, docs)
         run: python3 -m unittest discover -s scripts -p 'test_*.py' -v
       - name: factory-lane
         run: bash scripts/test_factory_lane.sh
@@ -70,6 +70,8 @@ jobs:
         run: bash scripts/test_factory_docs.sh
       - name: factory chat
         run: bash scripts/test_factory_chat.sh
+      - name: factory restart
+        run: bash scripts/test_factory_restart.sh
 
   macos:
     # What a Mac user runs: the system bash (3.2) and the system Python
@@ -96,7 +98,7 @@ jobs:
           git config --global user.email "ci@example.invalid"
       - name: dispatch bridge
         run: python3 -m unittest discover -s dispatch -v
-      - name: host Python scripts (analytics, approvals, docs)
+      - name: host Python scripts (analytics, approvals, dashboard, docs)
         run: python3 -m unittest discover -s scripts -p 'test_*.py' -v
       - name: factory update
         run: bash scripts/test_factory_update.sh
@@ -108,6 +110,8 @@ jobs:
         run: bash scripts/test_factory_docs.sh
       - name: factory chat
         run: bash scripts/test_factory_chat.sh
+      - name: factory restart
+        run: bash scripts/test_factory_restart.sh
       # factory-lane runs only inside the Linux sandboxes, so it's tested on Linux.
 
   images:

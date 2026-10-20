@@ -76,13 +76,14 @@ esac
 readonly FACTORY_CONFIG
 
 # This machine's remembered `factory start --layout` choice. Holds just
-# "watch", "tabs" or "web"; absent is the same as "watch" (resolve_layout's
+# "watch", "tabs" or "web"; absent is the same as "web" (resolve_layout's
 # fallback), so nothing here needs it to exist.
 readonly FACTORY_LAYOUT_FILE="$FACTORY_CONFIG/layout"
 
 # resolve_layout FLAG ENV -> "watch", "tabs" or "web": FLAG (factory start's --layout
 # value) if non-empty, else ENV (FACTORY_LAYOUT from the environment) if
-# non-empty, else the value saved in FACTORY_LAYOUT_FILE, else "watch". A
+# non-empty, else the value saved in FACTORY_LAYOUT_FILE, else "web" (GUI
+# first: the dashboard; owner's decision of 20 Oct 2026). A
 # non-empty FLAG or ENV is validated (dies, with the command's usage, on
 # anything else) and saved as the new default, so later runs don't need it
 # repeated.
@@ -101,7 +102,7 @@ resolve_layout() {
   saved="$(cat "$FACTORY_LAYOUT_FILE" 2>/dev/null || true)"
   case "$saved" in
     watch|tabs|web) printf '%s' "$saved" ;;
-    *) printf '%s' "watch" ;;
+    *) printf '%s' "web" ;;
   esac
 }
 

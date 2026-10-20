@@ -147,8 +147,9 @@ DENIED: the developer sandbox has not been created; ask the user to run 'factory
 
 **Cause:** `sbx` gives a sandbox the stored Claude login only when it creates
 it, so role sandboxes wait until you've signed in.
-**Fix:** type `/login` in the Coordinator pane and sign in, then run
-`factory start` again (the Host shell pane works).
+**Fix:** type `/login` in the Coordinator's terminal (POWER ON on the
+dashboard, or the Coordinator pane in Herdr) and sign in, then run `factory
+start` again (or RESTART on the dashboard's control unit).
 
 ### "port 18766 is already in use"
 
@@ -294,8 +295,8 @@ minutes. Cancel it and tell me what it reported so far.
 
 The Coordinator calls `cancel_job`, which stops only that job; other lanes keep
 running. Anything the lane committed to a `factory/*` branch is still brought
-back. If the whole factory is unresponsive, `factory stop` then `factory start`
-restarts everything; running jobs are lost, but saved sessions, branches already
+back. If the whole factory is unresponsive, `factory restart` (RESTART on the
+dashboard) restarts everything; running jobs are lost, but saved sessions, branches already
 brought back and logs are kept.
 
 ### Costs keep climbing

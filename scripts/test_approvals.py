@@ -11,6 +11,7 @@ import sys
 import tempfile
 import time
 import unittest
+import unittest.mock
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -150,6 +151,107 @@ class ConsoleTests(unittest.TestCase):
             code = approvals.main(["--state", str(state), "list"])
         return code, out.getvalue(), err.getvalue()
 
+
+class SharedWriterTests(unittest.TestCase):
+    """card_fingerprint and write_decision, shared by this console and the
+    dashboard's control unit."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.state = Path(self.tmp.name)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_fingerprint(self):
+        import hashlib
+        c = card()
+        fp = approvals.card_fingerprint(c)
+        self.assertEqual(fp, hashlib.sha256(b"abcdef0123456789\0n0nce").hexdigest()[:16])
+        self.assertEqual(len(fp), 16)
+        self.assertNotIn("n0nce", fp)
+        self.assertNotEqual(fp, approvals.card_fingerprint(card(nonce="other")))  # a new card, same id
+        self.assertNotEqual(fp, approvals.card_fingerprint(card("abcdef01234567890")))
+        self.assertEqual(len(approvals.card_fingerprint({"id": "x"})), 16)  # no nonce: still a fingerprint
+
+    def test_write_decision(self):
+        c = card()
+        before = time.time()
+        out = approvals.write_decision(self.state, c, "decline", "alice", "too big")
+        path = self.state / "approvals" / "decisions" / "abcdef0123456789.json"
+        rec = json.loads(path.read_text())
+        self.assertEqual(rec, out)
+        self.assertEqual({k: rec[k] for k in ("id", "nonce", "decision", "approver", "reason")},
+                         {"id": c["id"], "nonce": "n0nce", "decision": "decline", "approver": "alice",
+                          "reason": "too big"})
+        self.assertGreaterEqual(rec["ts"], before)
+        self.assertEqual(list(path.parent.iterdir()), [path])  # no .tmp left behind
+        with self.assertRaises(ValueError):
+            approvals.write_decision(self.state, c, "maybe", "alice")
+
+    def test_unsafe_ids_refused(self):
+        for cid in ("../x", "a/b", "", "a" * 65, "a.b", "a b", "\u00e9", 5, None):
+            with self.assertRaises(ValueError, msg=repr(cid)):
+                approvals.write_decision(self.state, card(cid), "approve", "alice")
+        approvals.write_decision(self.state, card("A-z_09" + "a" * 58), "approve", "alice")  # 64: fine
+        self.assertEqual([p.name for p in (self.state / "approvals" / "decisions").iterdir()],
+                         ["A-z_09" + "a" * 58 + ".json"])
+
+    def test_non_text_ids_are_skipped(self):
+        pending = self.state / "approvals" / "pending"
+        pending.mkdir(parents=True)
+        (pending / "int.json").write_text(json.dumps(card(12345)))
+        (pending / "ok.json").write_text(json.dumps(card("ok1")))
+        self.assertEqual([c["id"] for c in approvals.read_cards(self.state)], ["ok1"])
+        err = io.StringIO()
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+            self.assertEqual(approvals.main(["--state", str(self.state), "approve", "123"]), 1)  # no crash
+        self.assertIn("no pending approval matches 123", err.getvalue())
+
+    def test_cli_refuses_an_unsafe_id(self):
+        pending = self.state / "approvals" / "pending"
+        pending.mkdir(parents=True)
+        (pending / "x.json").write_text(json.dumps(card("bad.id")))
+        err = io.StringIO()
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+            self.assertEqual(approvals.main(["--state", str(self.state), "approve", "bad.id"]), 1)
+        self.assertIn("cannot decide bad.id", err.getvalue())
+        self.assertFalse((self.state / "approvals" / "decisions" / "bad.id.json").exists())
+
+    def test_concurrent_writers_and_cleanup(self):
+        import threading
+        c = card()
+        errors = []
+
+        def write(name):
+            try:
+                for _ in range(50):
+                    approvals.write_decision(self.state, c, "approve", name)
+            except Exception as e:  # noqa: BLE001 - any failure fails the test
+                errors.append(e)
+        threads = [threading.Thread(target=write, args=(n,)) for n in ("alice", "bob", "carol")]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        self.assertEqual(errors, [])
+        folder = self.state / "approvals" / "decisions"
+        self.assertEqual([p.name for p in folder.iterdir()], ["{}.json".format(c["id"])])  # no temp files left
+        self.assertIn(json.loads((folder / "{}.json".format(c["id"])).read_text())["approver"], {"alice", "bob", "carol"})
+        with unittest.mock.patch.object(approvals.os, "replace", side_effect=OSError("disk full")):
+            with self.assertRaises(OSError):
+                approvals.write_decision(self.state, c, "decline", "dave", "no")
+        self.assertEqual([p.name for p in folder.iterdir()], ["{}.json".format(c["id"])])  # the temp is cleaned up
+
+    def test_cli_writes_the_same_record(self):
+        c = card()
+        (self.state / "approvals" / "pending").mkdir(parents=True)
+        (self.state / "approvals" / "pending" / "{}.json".format(c["id"])).write_text(json.dumps(c))
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(approvals.main(["--state", str(self.state), "approve", c["id"], "--as", "bob"]), 0)
+        rec = json.loads((self.state / "approvals" / "decisions" / "{}.json".format(c["id"])).read_text())
+        self.assertEqual(set(rec), {"id", "nonce", "decision", "approver", "reason", "ts"})
+        self.assertEqual((rec["decision"], rec["approver"], rec["reason"]), ("approve", "bob", ""))
 
 if __name__ == "__main__":
     unittest.main()

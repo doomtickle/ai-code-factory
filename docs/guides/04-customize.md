@@ -187,9 +187,9 @@ comments. You don't change program behavior.
 ```
 
 Then run `factory start`. It creates the `factory-docs-writer` sandbox (and a
-**docs-writer** tab under the `tabs` layout; under the default `watch`
-layout, no tab is created and the role shows up in the Watch pane's lane
-list instead), and the Coordinator sees the role the next time it calls
+**docs-writer** tab under the `tabs` layout; on the dashboard (the default)
+and under the `watch` layout, no tab is created and the role's lanes show up
+with the others), and the Coordinator sees the role the next time it calls
 `list_roles`. If it's in the middle of a conversation, mention the new role,
 or ask it to check `list_roles`, so it plans with it.
 

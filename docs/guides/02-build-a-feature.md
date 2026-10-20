@@ -78,8 +78,8 @@ For a prompt like the one above, the typical flow is:
    suite once, reviews correctness, tests, security and docs, and ends with
    **APPROVED** or **REVISE** and a list of required changes.
 
-The Watch pane shows every lane's transcript live while it works (each role's
-tab, under the `tabs` layout). See [Roles](../../README.md#roles) for what
+The dashboard shows every lane's transcript live while it works (the Watch
+pane under the `watch` layout, each role's tab under `tabs`). See [Roles](../../README.md#roles) for what
 each role may do.
 
 ## Read a job result
@@ -224,7 +224,9 @@ how it was tested.
 The Coordinator asks you before anything irreversible like a push or a PR. The
 developer bundles the branch, and the broker checks the branch name, refuses
 protected branches and force-pushes, secret-scans every commit, then pushes.
-With the Passdesk Pro plugin, each push and PR also waits for your approval
+With the Passdesk Pro plugin, each push and PR also waits for your approval:
+press APPROVE (or DECLINE, with a reason) on the dashboard's control unit, or
+use `factory approvals`
 ([Enabling approvals](../../README.md#enabling-approvals-passdesk-pro)).
 
 ## Keep the Coordinator's context small

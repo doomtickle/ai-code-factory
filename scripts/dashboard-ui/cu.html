@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="cu-key" content="__CU_KEY__">
+<meta name="cu-main-port" content="__CU_MAIN_PORT__">
+<title>Control unit</title>
+<link rel="stylesheet" href="/cu.css">
+<script src="/cu.js" defer></script>
+</head>
+<body>
+<!-- Opened on its own, not framed by the dashboard: cu.js shows this and makes no requests. -->
+<section class="screen alone" id="scr-alone" hidden>
+  <div class="unit">
+    <p class="silk alone-h">Control unit · not connected</p>
+    <div class="lcd deck-lcd"><div class="ln big">Not in the dashboard</div><div class="ln">Open the Factory dashboard; the control unit only works inside it.</div></div>
+  </div>
+</section>
+
+<!-- Screen "deck": the compact unit that sits in the dashboard's rail. -->
+<section class="screen deck" id="scr-deck" hidden>
+  <div class="unit">
+    <div class="deck-h">
+      <span class="led" id="cu-led"></span>
+      <span class="silk deck-title">Control unit</span>
+      <span class="sel" id="sel" hidden>
+        <button class="nubkey" type="button" id="sel-prev" aria-label="Previous held write">◀</button>
+        <span class="sel-n" id="sel-n" aria-live="polite"></span>
+        <button class="nubkey" type="button" id="sel-next" aria-label="Next held write">▶</button>
+      </span>
+      <span class="lcd cd-box" id="cd-box" title="Time left before the hold expires"><span id="cd" aria-hidden="true">--:--</span></span>
+    </div>
+    <div class="lcd deck-lcd" id="deck-lcd" tabindex="0" aria-label="Held write details">
+      <div class="deck-body" id="deck-body"></div>
+      <div class="more" id="deck-more" aria-hidden="true" hidden>▼</div>
+      <div class="flash" id="flash" role="status" hidden></div>
+    </div>
+    <div class="gate-row">
+      <label class="sr-only" for="reason">Reason (needed to decline)</label>
+      <input class="reason" id="reason" type="text" maxlength="500" autocomplete="off" spellcheck="false" placeholder="Reason (needed to decline)">
+    </div>
+    <div class="keys" role="group" aria-label="Decide the held write">
+      <span class="keys-hold" id="keys-hold" role="status" hidden>Check the new card</span>
+      <button class="bigkey" type="button" id="btn-decline"><span class="led" id="led-decline"></span>Decline</button>
+      <button class="bigkey go" type="button" id="btn-approve"><span class="led" id="led-approve"></span>Approve</button>
+    </div>
+    <div class="service" role="group" aria-label="Service">
+      <span class="silk">Service</span>
+      <button class="svckey" type="button" id="svc-restart"><span class="led" id="led-restart"></span>Restart</button>
+      <button class="svckey warnkey" type="button" id="svc-update"><span class="led" id="led-update"></span>Update</button>
+      <button class="svckey logkey" type="button" id="svc-log" hidden><span class="led" id="led-log"></span>Log</button>
+    </div>
+    <!-- The reserved settings slot: a blanking plate until the settings screen moves in. -->
+    <div class="blank" aria-hidden="true"><span class="silk">Setup</span></div>
+  </div>
+</section>
+
+<!-- Screens "confirm" and "log": the expanded service monitor. -->
+<section class="screen console" id="scr-console" hidden role="dialog" aria-modal="true" aria-labelledby="con-title">
+  <div class="monitor">
+    <div class="mon-h">
+      <span class="led" id="con-led"></span>
+      <span class="title" id="con-title"></span>
+      <span class="state-tag" id="con-state"></span>
+      <span class="dymo" id="con-project"></span>
+      <span class="silk con-note" id="con-note"></span>
+    </div>
+    <div class="crt-wrap">
+      <div class="crt" id="con-crt">
+        <div class="crt-body" id="con-body" tabindex="0" aria-label="Service console"></div>
+        <div class="more" id="con-more" aria-hidden="true" hidden>▼ more</div>
+      </div>
+    </div>
+    <div class="mon-foot">
+      <span class="badge-plate">Factory · Service</span>
+      <div class="mon-actions">
+        <button class="bigkey" type="button" id="con-cancel">Cancel</button>
+        <button class="bigkey go" type="button" id="con-go"></button>
+      </div>
+    </div>
+  </div>
+</section>
+</body>
+</html>

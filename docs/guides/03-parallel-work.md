@@ -70,7 +70,8 @@ lane's state:
 
 ## Watch each lane
 
-The default layout's **Watch** pane (`factory watch`, the command behind it)
+The dashboard (the default layout) shows every lane as its own module. In
+Herdr, the `watch` layout's **Watch** pane (`factory watch`, the command behind it)
 follows every lane of every role at once, with each active lane in its own
 pane (a job running, or finished in the last ten minutes; idle lanes take one
 status line each), tool calls condensed to one line and the job's status,
