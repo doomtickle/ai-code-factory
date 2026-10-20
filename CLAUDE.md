@@ -24,15 +24,19 @@ boundary.
     only through `GIT_CONFIG_*` variables in one child's environment
     (scoped to `https://github.com/`, never argv or disk), never follows a
     redirect with it, and redacts it from everything it returns or records.
-  - Credentials nothing can proxy-inject (currently Jira, Gemini, and a
-    read-only token for a private npm registry) are read from files inside
+  - Credentials nothing can proxy-inject (currently Jira, Gemini, a
+    read-only token for a private npm registry, and a GitLab project access
+    token, owner decision 2026-10-20 in `docs/decisions.md`) are read from files inside
     Passdesk's own sandbox (`/etc/factory-broker/secrets/`, a Docker secret
     under `/run/secrets/`, or a file whose path is in
     `PASSDESK_SECRET_<NAME>_FILE`), delivered there by the deployment (never
     via argv, an env flag holding the value, a log, or git). All of them go
     through `passdesk/core/credentials.py`. Passdesk reads each file fresh
     on every call, so rotating the file rotates the credential without
-    restarting the server. Do not widen this exception to other credentials
+    restarting the server. The GitLab token is handed to git and its API
+    exactly as a gateway-held GitHub token is (see above), scoped to the
+    `[gitlab].url` prefix, and neither forge's token is ever sent to the
+    other. Do not widen this exception to other credentials
     without updating this rule. A provider a plugin registers with
     `credentials.register_provider` is bound by the same rule: it never
     takes a value from a plain environment variable, and never logs or

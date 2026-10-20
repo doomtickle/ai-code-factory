@@ -36,8 +36,9 @@ _CREDENTIALED_HOSTS = {
 
 def credentialed_host_tool(host: str, policy: dict) -> str | None:
     """Dedicated tool name if host is one that carries a credential elsewhere
-    in the broker, or None. The configured private npm registry is included
-    even though its host isn't known until policy is loaded."""
+    in the broker, or None. The configured private npm registry and GitLab
+    ([gitlab].url) are included even though their hosts aren't known until
+    policy is loaded."""
     for pattern, tool in _CREDENTIALED_HOSTS.items():
         if host_allowed(host, [pattern]):
             return tool
@@ -45,6 +46,16 @@ def credentialed_host_tool(host: str, policy: dict) -> str | None:
     private_host = urllib.parse.urlsplit(private).hostname if private else None
     if private_host and host_allowed(host, [private_host]):
         return "npm_fetch"
+    # The configured GitLab carries the gateway's gitlab credential. Read
+    # leniently: a malformed [gitlab].url still blocks the host it names.
+    gl = policy.get("gitlab")
+    url = gl.get("url", "") if isinstance(gl, dict) else ""
+    try:
+        gitlab = urllib.parse.urlsplit(url).hostname if isinstance(url, str) and url else None
+    except ValueError:
+        gitlab = None
+    if gitlab and host_allowed(host, [gitlab]):
+        return "git_fetch, git_push or gitlab_create_mr"
     return None
 
 

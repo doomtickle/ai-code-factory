@@ -4,6 +4,46 @@ Dated entries, for the user to review. Newest first.
 
 ## 2026-10-20
 
+- **GitLab, self-hosted or gitlab.com (doomtickle/passdesk-ops#120).** The
+  owner needs the factory on a self-hosted GitLab as well as GitHub.
+  Choices:
+  - **The `gitlab` token is a file credential (owner decision).** sbx can
+    proxy-inject GitHub but not GitLab, so the token can't stay outside the
+    gateway as GitHub's does. The owner approved widening CLAUDE.md's
+    file-credential exception to it. It is handled exactly as a gateway-held
+    GitHub token: to git only as an extraHeader scoped to `[gitlab].url`
+    (Basic `oauth2:<token>`) in one child's environment, redirects refused,
+    no credential helper, trace switches removed; to the API only as a Bearer
+    header through `NO_REDIRECT_OPENER`; redacted once read. The two forges'
+    tokens never cross. The README says to use a project (or group) access
+    token with the Developer role, `api` and `write_repository`: creating a
+    merge request needs `api`, which on a personal token reaches everything
+    its owner can.
+  - **One `[git].repos`, host-qualified names.** A GitLab project is listed
+    as `<host>/<group>/.../<project>`. A first segment with a dot or a port
+    can't be a GitHub owner (letters, digits and dashes), so the name alone
+    says the forge, `git_fetch` and `git_push` stay one pair of tools with
+    every check they had, and a host-qualified name must be on
+    `[gitlab].url` or it is refused. `[gitlab].url` itself must be https,
+    end in `/`, carry no credentials, query or fragment, and not be a
+    GitHub host.
+  - **A separate `gitlab_create_mr`, not a renamed or forge-agnostic PR
+    tool.** Renaming `github_create_pr` would break grants, audit history
+    and approval cards. It takes the same arguments, scans the same fields,
+    makes the same card (tool `gitlab_create_mr`, with `title` as sent,
+    `Draft: ` included), and checks the token is there before the hold, so
+    nobody approves a call that can't be made. Each PR tool refuses the
+    other forge's repos.
+  - **GitLab mirrors are named by digest.** GitHub's mirror name
+    (`owner__name`) is unambiguous because owners have no `_`; GitLab paths
+    may, so `g/a__b` and `g__a/b` would share a mirror (and its origin).
+    `gitlab__<host>__<sha256(url, lower-cased path)[:32]>.git` can't collide.
+  - **`web_fetch` refuses the `[gitlab].url` host**, read leniently, so even
+    a malformed URL keeps its host blocked: a tightening of the
+    credentialed-host denylist.
+  - **Not done:** a private CA for the instance (the system trust store
+    must accept its certificate; documented), and GitLab issues (the owner
+    doesn't need them).
 - **The approver can read the code: a broker-local patch per held push
   (doomtickle/passdesk-ops#113).** Until now a person deciding a held
   `git_push` saw the repo, branch, file names and a shortstat, and approved

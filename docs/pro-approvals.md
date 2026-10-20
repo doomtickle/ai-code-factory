@@ -17,16 +17,19 @@ the code; the decision log records what changed on the way.
   plugin registers what it provides (today: an approval hook). The image
   takes an optional `plugins` build context on `PYTHONPATH`; with nothing
   named, nothing loads and the gateway behaves exactly as before.
-- **Two call sites.** `git_push` builds its card after every check has
+- **The call sites.** `git_push` builds its card after every check has
   passed (bundle verified, every commit secret-scanned, limits applied) and
   calls `require` *outside* the tool lock, so a pending approval never
   blocks another role's git call; it then re-takes the lock, confirms the
-  ref it validated is unchanged, and pushes. `github_create_pr` calls
-  `require` after the title and body pass the secret scan, and
+  ref it validated is unchanged, and pushes. `github_create_pr` and
+  `gitlab_create_mr` call `require` after the title and body pass the
+  secret scan (`gitlab_create_mr` also after confirming the gateway holds a
+  `gitlab` token), and
   `github_create_issue` after its title, body and labels pass it and the
   labels are confirmed to exist (its card carries a `body_sha256`). Pro
-  holds only the tools `[approvals] tools` lists; add `github_create_issue`
-  there to hold issues too.
+  holds only the tools `[approvals] tools` lists (its default holds
+  `git_push`, `github_create_pr` and `gitlab_create_mr`); add
+  `github_create_issue` there to hold issues too.
 
 - **The patch to inspect** (doomtickle/passdesk-ops#113). Only when a hook
   is installed, `git_push` writes the pushed commits' patch to

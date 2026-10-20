@@ -1,5 +1,11 @@
-"""git_fetch, git_push, github_create_pr, github_create_issue. Network git runs only in the
-broker's private mirrors; code crosses into the workspace as git bundles.
+"""git_fetch, git_push, github_create_pr, gitlab_create_mr, github_create_issue. Network git
+runs only in the broker's private mirrors; code crosses into the workspace as git bundles.
+
+Two forges. A [git].repos entry is a GitHub repo ("owner/name") or, when
+[gitlab].url names a GitLab instance (self-hosted or gitlab.com), a project
+on it, host first ("gitlab.example.com/group/sub/project"). A first segment
+with a dot or a port can't be a GitHub owner, so the name alone says which
+forge a repo is on (remote_of).
 
 GitHub credential: with sbx the egress proxy attaches the token and the
 gateway never sees it (credentials.get("github") returns None). Where the
@@ -9,6 +15,13 @@ child's environment (an extraHeader scoped to GITHUB_GIT_URL, never argv or
 disk), the API call sends it as a Bearer header, neither follows a redirect,
 and the value and its encoded form are redacted from everything the gateway
 returns, audits or shows on an approval card (filters.remember_secret).
+
+GitLab credential: nothing proxy-injects it, so the deployment always
+delivers it as the `gitlab` file credential (owner decision, docs/decisions.md).
+It is handled exactly like a gateway-held GitHub token, scoped to the
+[gitlab].url prefix instead: git gets it as an extraHeader for that prefix
+only, gitlab_create_mr as a Bearer header through NO_REDIRECT_OPENER, and it
+is redacted everywhere. Neither forge's token is ever sent to the other.
 """
 
 from __future__ import annotations
@@ -21,7 +34,9 @@ import os
 import re
 import subprocess
 import urllib.error
+import urllib.parse
 import urllib.request
+from dataclasses import dataclass
 from pathlib import Path
 
 from ..core import approvals, config, credentials, filters
@@ -29,12 +44,18 @@ from ..core.approvals import require as require_approval
 from ..core.errors import Denied
 from ..core.filters import block_outbound_secrets, find_secrets, sanitize, untrusted
 from ..core.net import NO_REDIRECT_OPENER
+from ..core.policy import host_allowed as policy_host_allowed
 from ..core.registry import register
 from ..core.workspace import (copy_workspace_file, factory_dir, install_file, private_tempdir, run, run_capped,
                               run_head, tool_lock)
 
 _BRANCH_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$")
 _REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+# A GitLab project, host first: the host (and port, if not 443) of [gitlab].url,
+# then 2-20 path segments (group, any subgroups, project). GitLab's own path
+# rule: letters, digits, "_", "-" and ".", not starting with "-" or ".".
+_GITLAB_SEGMENT = r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,254}"
+_GITLAB_REPO_RE = re.compile(rf"^[A-Za-z0-9.-]+(?::[0-9]{{1,5}})?(?:/{_GITLAB_SEGMENT}){{2,20}}$")
 
 
 def check_branch_name(name: str) -> str:
@@ -49,12 +70,27 @@ def check_branch_name(name: str) -> str:
     return name
 
 
+def is_gitlab_name(repo: str) -> bool:
+    """True for a host-qualified repo name (a GitLab project). GitHub owners
+    are letters, digits and dashes, so a first segment with a dot or a colon
+    is a host."""
+    first = repo.split("/", 1)[0]
+    return ("." in first or ":" in first) and re.fullmatch(r"[A-Za-z0-9.-]+(?::[0-9]{1,5})?", first) is not None
+
+
 def check_repo(repo: str, policy: dict) -> str:
-    if not _REPO_RE.match(repo) or ".." in repo:
+    if not isinstance(repo, str):
+        raise Denied("invalid repo")
+    if is_gitlab_name(repo):
+        if (not _GITLAB_REPO_RE.match(repo) or ".." in repo
+                or repo.lower().endswith((".git", ".atom")) or "/." in repo or "/-" in repo):
+            raise Denied(f"invalid repo: {repo!r} (expected owner/name, or <gitlab host>/<group>/<project>)")
+    elif not _REPO_RE.match(repo) or ".." in repo:
         raise Denied(f"invalid repo: {repo!r} (expected owner/name)")
-    allowed = [r.lower() for r in policy["git"].get("repos", [])]
+    allowed = [r.lower() for r in policy["git"].get("repos", []) if isinstance(r, str)]
     if repo.lower() not in allowed:
         raise Denied(f"repo {repo} is not in the broker allowlist (policy.toml [git].repos)")
+    remote_of(repo, policy)  # a GitLab name must be on the configured instance
     return repo
 
 
@@ -80,6 +116,75 @@ GITHUB_API = "https://api.github.com"
 # digits and "_". Anything else is refused before it reaches a header or a
 # git config value, and the length floor keeps redaction meaningful.
 _TOKEN_RE = re.compile(r"[A-Za-z0-9_]{20,255}")
+# GitLab tokens (glpat-..., and the newer forms with "." separators): letters,
+# digits, "_", "-" and ".". Same reasons, same floor.
+_GITLAB_TOKEN_RE = re.compile(r"[A-Za-z0-9_.-]{20,255}")
+# Hosts [gitlab].url may never name: GitHub's own, whose token is a different credential.
+_NOT_GITLAB = ("github.com", "*.github.com", "*.githubusercontent.com")
+
+
+@dataclass(frozen=True)
+class Remote:
+    """Where a [git].repos entry lives: its forge, its path there ("owner/name"
+    on GitHub, the namespace path on GitLab) and the URL prefix git may send
+    that forge's token to."""
+    forge: str  # "github" or "gitlab"
+    path: str
+    base: str
+
+    @property
+    def label(self) -> str:
+        return "GitLab" if self.forge == "gitlab" else "GitHub"
+
+    @property
+    def git_url(self) -> str:
+        return f"{self.base}{self.path}.git"
+
+
+
+def gitlab_base(policy: dict) -> str | None:
+    """[gitlab].url, checked: an https:// URL with a host and no credentials,
+    query or fragment, ending in "/" (a sub-path such as https://acme.net/gitlab/
+    is fine). None when it is unset or "". Raises Denied when it is malformed."""
+    gl = policy.get("gitlab")
+    url = gl.get("url", "") if isinstance(gl, dict) else ""
+    if url == "":
+        return None
+    if not isinstance(url, str):
+        raise Denied("[gitlab].url must be a string")
+    try:
+        parts = urllib.parse.urlsplit(url)
+        port = parts.port
+    except ValueError:
+        raise Denied(f"[gitlab].url is not a URL: {url!r}") from None
+    host = parts.hostname or ""
+    if (parts.scheme != "https" or not host or parts.username is not None or parts.password is not None
+            or parts.query or parts.fragment or not url.endswith("/") or any(c.isspace() for c in url)
+            or not re.fullmatch(r"[a-z0-9.-]+", host)):
+        raise Denied(f"[gitlab].url must be https://<host>[:port]/[path/], ending in \"/\" (got {url!r})")
+    if any(policy_host_allowed(host, [p]) for p in _NOT_GITLAB):
+        raise Denied(f"[gitlab].url names {host}, a GitHub host")
+    return f"https://{host}{'' if port in (None, 443) else f':{port}'}{parts.path}"
+
+
+def gitlab_host(policy: dict) -> str | None:
+    """The host (and port, if not 443) GitLab repo names start with, or None."""
+    base = gitlab_base(policy)
+    return urllib.parse.urlsplit(base).netloc if base else None
+
+
+def remote_of(repo: str, policy: dict) -> Remote:
+    """The forge a (format-checked) repo name is on. A host-qualified name must
+    name [gitlab].url's host, or it is refused."""
+    if not is_gitlab_name(repo):
+        return Remote("github", repo, GITHUB_GIT_URL)
+    base = gitlab_base(policy)
+    if base is None:
+        raise Denied(f"repo {repo} names a GitLab host, but policy.toml [gitlab].url is not set")
+    host, path = repo.split("/", 1)
+    if host.lower() != urllib.parse.urlsplit(base).netloc:
+        raise Denied(f"repo {repo} is not on the configured GitLab ({urllib.parse.urlsplit(base).netloc})")
+    return Remote("gitlab", path, base)
 # Variables that would make git (or curl under it) write request headers to
 # stderr or a file, or add config we didn't choose. Removed from the child's
 # environment when it carries the token.
@@ -87,11 +192,11 @@ _UNSAFE_ENV_PREFIXES = ("GIT_TRACE", "GIT_CURL_VERBOSE", "GIT_CONFIG_KEY_", "GIT
 _UNSAFE_ENV = ("GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT", "GIT_CONFIG")
 
 
-def git_basic_auth(token: str) -> str:
-    """The Authorization value git sends: Basic x-access-token:<token>, the
-    form GitHub documents for every token type over HTTPS (and the one
-    actions/checkout uses)."""
-    return "Basic " + base64.b64encode(f"x-access-token:{token}".encode()).decode()
+def git_basic_auth(token: str, user: str = "x-access-token") -> str:
+    """The Authorization value git sends: Basic <user>:<token>. GitHub documents
+    x-access-token for every token type over HTTPS (the form actions/checkout
+    uses); GitLab takes any user name with an access token, oauth2 by custom."""
+    return "Basic " + base64.b64encode(f"{user}:{token}".encode()).decode()
 
 
 def github_token() -> str | None:
@@ -112,21 +217,39 @@ def github_token() -> str | None:
     return token
 
 
-def git_auth_env() -> dict | None:
-    """Environment changes that give one git child the token, or None (no
-    change at all) when the gateway holds none.
+def gitlab_token() -> str | None:
+    """The gateway's GitLab token (the `gitlab` file credential), or None.
+    Read fresh on every call; once read, it and git's header form are redacted."""
+    token = credentials.get("gitlab")
+    if token is None:
+        return None
+    if not _GITLAB_TOKEN_RE.fullmatch(token):
+        raise Denied("the gitlab credential is not a GitLab token (expected 20-255 letters, digits, '_', '-' "
+                     "or '.'); deliver a project access token - see README, Configuring credentials")
+    filters.remember_secret(token, git_basic_auth(token, "oauth2").removeprefix("Basic ").rstrip("="))
+    return token
+
+
+def git_auth_env(remote: Remote | None = None) -> dict | None:
+    """Environment changes that give one git child the token for remote's
+    forge (GitHub when None), or None (no change at all) when the gateway
+    holds none.
 
     The token travels only as GIT_CONFIG_COUNT/KEY/VALUE in that child's
-    environment: an http.extraHeader scoped to GITHUB_GIT_URL, so git sends
-    it to no other host. Redirects are refused (git would otherwise follow
-    the first one), no credential helper runs, and every trace or verbose
-    switch that would echo headers is removed.
+    environment: an http.extraHeader scoped to that forge's URL prefix
+    (GITHUB_GIT_URL, or [gitlab].url), so git sends it to no other host.
+    Redirects are refused (git would otherwise follow the first one), no
+    credential helper runs, and every trace or verbose switch that would
+    echo headers is removed.
     """
-    token = github_token()
+    if remote is not None and remote.forge == "gitlab":
+        token, prefix, user = gitlab_token(), remote.base, "oauth2"
+    else:
+        token, prefix, user = github_token(), GITHUB_GIT_URL, "x-access-token"
     if token is None:
         return None
     env: dict = {k: None for k in os.environ if k.startswith(_UNSAFE_ENV_PREFIXES) or k in _UNSAFE_ENV}
-    pairs = [(f"http.{GITHUB_GIT_URL}.extraHeader", f"Authorization: {git_basic_auth(token)}"),
+    pairs = [(f"http.{prefix}.extraHeader", f"Authorization: {git_basic_auth(token, user)}"),
              ("http.followRedirects", "false"),
              ("credential.helper", "")]
     env["GIT_CONFIG_COUNT"] = str(len(pairs))
@@ -137,11 +260,13 @@ def git_auth_env() -> dict | None:
 
 
 def git(*args: str, cwd: Path, timeout: int = 300, check: bool = True,
-        auth: bool = False) -> subprocess.CompletedProcess:
-    """Run git in a broker-owned repository. auth=True for a command that
-    talks to GitHub: it carries the gateway's token if there is one."""
+        auth: bool | Remote = False) -> subprocess.CompletedProcess:
+    """Run git in a broker-owned repository. auth for a command that talks to
+    the forge: the repo's Remote (True means GitHub); it carries the gateway's
+    token for that forge if there is one."""
+    remote = auth if isinstance(auth, Remote) else None
     cp = run(["git", *_GIT_HARDENING, *args], cwd=cwd, timeout=timeout,
-             extra_env=git_auth_env() if auth else None)
+             extra_env=git_auth_env(remote) if auth else None)
     if check and cp.returncode != 0:
         raise RuntimeError(f"git {args[0]} failed:\n" +
                            untrusted(f"git {args[0]}", sanitize(cp.stderr.strip(), 2000)))
@@ -197,23 +322,37 @@ def build_patch(rng: str, cwd: Path, limit: int) -> tuple[bytes, bool]:
     return cap_patch(head.decode("utf-8", "replace"), total - len(head), limit)
 
 
-def ensure_mirror(repo: str) -> Path:
-    path = config.MIRRORS / (repo.replace("/", "__") + ".git")
+def mirror_name(remote: Remote) -> str:
+    """The mirror's directory name. GitHub's is the readable owner__name (an
+    owner has no "_", so two repos can't share it). A GitLab path may hold
+    "_" anywhere, so its mirror is named by a digest of host and path, and
+    two projects never share one (and so never push to each other)."""
+    if remote.forge == "github":
+        return remote.path.replace("/", "__") + ".git"
+    host = urllib.parse.urlsplit(remote.base).netloc.replace(":", "_")
+    digest = hashlib.sha256(f"{remote.base}\0{remote.path.lower()}".encode()).hexdigest()[:32]
+    return f"gitlab__{host}__{digest}.git"
+
+
+def ensure_mirror(repo: str, remote: Remote | None = None) -> Path:
+    remote = remote or Remote("github", repo, GITHUB_GIT_URL)
+    path = config.MIRRORS / mirror_name(remote)
     if not path.exists():
         path.mkdir(parents=True)
         git("init", "--bare", "-q", cwd=path)
-        git("remote", "add", "origin", f"https://github.com/{repo}.git", cwd=path)
+        git("remote", "add", "origin", remote.git_url, cwd=path)
     return path
 
 
 def tool_git_fetch(args: dict, policy: dict) -> str:
     repo = check_repo(args["repo"], policy)
+    remote = remote_of(repo, policy)
     branch = check_branch_name(args["branch"])
     with tool_lock:
-        mirror = ensure_mirror(repo)
+        mirror = ensure_mirror(repo, remote)
         git("fetch", "--no-tags", "origin", f"+refs/heads/{branch}:refs/remotes/origin/{branch}", cwd=mirror,
-            auth=True)
-        name = f"{repo.replace('/', '__')}__{branch.replace('/', '__')}.bundle"
+            auth=remote)
+        name = f"{repo.replace('/', '__').replace(':', '_')}__{branch.replace('/', '__')}.bundle"
         with private_tempdir() as tmp:
             bundle = tmp / name
             git("bundle", "create", "-q", str(bundle), f"refs/remotes/origin/{branch}", cwd=mirror)
@@ -251,6 +390,7 @@ def check_commit_patches(patches: str, base: str) -> None:
 
 def tool_git_push(args: dict, policy: dict) -> str:
     repo = check_repo(args["repo"], policy)
+    remote = remote_of(repo, policy)
     branch = check_push_branch(args["branch"], policy)
     base = check_branch_name(args.get("base") or policy["git"].get("default_base", "main"))
     fname = args["bundle"]
@@ -268,9 +408,9 @@ def tool_git_push(args: dict, policy: dict) -> str:
         copy_workspace_file(f"{outgoing}/{fname}", bundle, max_bundle,
                             hint=f"bundle only the new commits (git bundle create {outgoing}/{fname} "
                                  f"origin/{base}..{branch}) or push the work in smaller pieces")
-        mirror = ensure_mirror(repo)
+        mirror = ensure_mirror(repo, remote)
         git("fetch", "--no-tags", "origin", f"+refs/heads/{base}:refs/remotes/origin/{base}", cwd=mirror,
-            auth=True)
+            auth=remote)
         verify = git("bundle", "verify", str(bundle), cwd=mirror, check=False)
         if verify.returncode != 0:
             raise Denied("bundle is invalid or its prerequisites are not on "
@@ -322,19 +462,21 @@ def tool_git_push(args: dict, policy: dict) -> str:
                       "commits": count, "shortstat": shortstat, "file_count": len(files), "files": files[:50],
                       "bundle_sha256": bundle_digest, "secret_scan": "clean", **patch_fields})
     with tool_lock:
-        mirror = ensure_mirror(repo)
+        mirror = ensure_mirror(repo, remote)
         if git("rev-parse", incoming, cwd=mirror).stdout.strip() != sha:
             raise Denied(f"{branch} changed in the broker's mirror while awaiting approval; retry the push")
         push = git("push", "--porcelain", "origin", f"{incoming}:refs/heads/{branch}", cwd=mirror, check=False,
-                   auth=True)
+                   auth=remote)
     if push.returncode != 0:
         body = sanitize(push.stderr + push.stdout, 3000)
-        return "Push rejected by GitHub:\n" + untrusted(f"git push {repo}:{branch}", body)
+        return f"Push rejected by {remote.label}:\n" + untrusted(f"git push {repo}:{branch}", body)
     return f"Pushed {count} commit(s) to {repo}:{branch} ({sha}).\n{sanitize(push.stdout, 2000)}"
 
 
 def tool_github_create_pr(args: dict, policy: dict) -> str:
     repo = check_repo(args["repo"], policy)
+    if remote_of(repo, policy).forge != "github":
+        raise Denied(f"{repo} is a GitLab project: open a merge request with gitlab_create_mr")
     head = check_push_branch(args["head"], policy)
     base = check_branch_name(args.get("base") or policy["git"].get("default_base", "main"))
     title, body = args["title"], args.get("body", "")
@@ -368,6 +510,68 @@ def tool_github_create_pr(args: dict, policy: dict) -> str:
         hint = f"\nHint: {fix}" if e.code in (401, 403, 404) else ""
         return f"GitHub API returned HTTP {e.code}:\n" + untrusted(f"GitHub API ({repo})", detail) + hint
     return f"Opened PR #{pr['number']}: {pr['html_url']}"
+
+
+_MR_TITLE_MAX = 255  # GitLab's limit
+_MR_BODY_MAX = 1_048_576  # GitLab's description limit
+# Title prefixes GitLab reads as "this merge request is a draft".
+_DRAFT_PREFIXES = ("draft:", "[draft]", "(draft)", "draft -")
+
+
+def _gitlab_failure(e: urllib.error.HTTPError, repo: str) -> str:
+    with e:
+        detail = sanitize(e.read().decode("utf-8", "replace"), 2000)
+    hint = ""
+    if e.code in (401, 403, 404):
+        hint = (f"\nHint: the gateway's gitlab credential must be a project (or group) access token with the "
+                f"Developer role and the api and write_repository scopes on {repo}")
+    return f"GitLab API returned HTTP {e.code}:\n" + untrusted(f"GitLab API ({repo})", detail) + hint
+
+
+def tool_gitlab_create_mr(args: dict, policy: dict) -> str:
+    repo = check_repo(args["repo"], policy)
+    remote = remote_of(repo, policy)
+    if remote.forge != "gitlab":
+        raise Denied(f"{repo} is a GitHub repo: open a pull request with github_create_pr")
+    head = check_push_branch(args["head"], policy)
+    base = check_branch_name(args.get("base") or policy["git"].get("default_base", "main"))
+    title, body = args["title"], args.get("body", "")
+    if not isinstance(title, str) or not title.strip() or _TITLE_BAD_RE.search(title):
+        raise Denied("merge request title must be a single line with no control characters")
+    if not isinstance(body, str) or len(body) > _MR_BODY_MAX:
+        raise Denied(f"merge request body must be a string of at most {_MR_BODY_MAX} characters")
+    block_outbound_secrets("MR title", title)
+    block_outbound_secrets("MR body", body)
+    draft = bool(args.get("draft", True))
+    if draft and not title.strip().lower().startswith(_DRAFT_PREFIXES):
+        title = f"Draft: {title}"
+    if len(title) > _MR_TITLE_MAX:
+        raise Denied(f"merge request title is over {_MR_TITLE_MAX} characters")
+    # Checked before the hold, so nobody approves a call that can't be made.
+    if gitlab_token() is None:
+        raise Denied("the gateway holds no gitlab credential; the deployment must deliver it "
+                     "(README, Configuring credentials)")
+    require_approval({"tool": "gitlab_create_mr", "repo": repo, "head": head, "base": base,
+                      "title": title, "body": body[:2000], "draft": draft})
+    # Read after approval, so a long wait still uses the current token.
+    token = gitlab_token()
+    if token is None:
+        raise Denied("the gateway's gitlab credential was removed while the call awaited approval")
+    payload = json.dumps({"source_branch": head, "target_branch": base, "title": title,
+                          "description": body}).encode()
+    headers = {"Accept": "application/json", "Content-Type": "application/json",
+               "User-Agent": config.USER_AGENT, "Authorization": f"Bearer {token}"}
+    project = urllib.parse.quote(remote.path, safe="")
+    req = urllib.request.Request(f"{remote.base}api/v4/projects/{project}/merge_requests", data=payload,
+                                 method="POST", headers=headers)
+    try:
+        with NO_REDIRECT_OPENER.open(req, timeout=30) as resp:
+            mr = json.load(resp)
+    except urllib.error.HTTPError as e:
+        return _gitlab_failure(e, repo)
+    if not isinstance(mr, dict) or not isinstance(mr.get("iid"), int):
+        raise Denied(f"GitLab returned an unexpected response for the new merge request in {repo}")
+    return f"Opened MR !{mr['iid']}: {sanitize(str(mr.get('web_url', '')), 300)}"
 
 
 _ISSUE_TITLE_MAX = 256
@@ -491,16 +695,18 @@ def tool_github_create_issue(args: dict, policy: dict) -> str:
     return f"Opened issue #{issue['number']} in {repo}: {sanitize(str(issue.get('html_url', '')), 300)}"
 
 
+_REPO_DESCRIPTION = "owner/name on GitHub, or <gitlab host>/<group>/<project> on the configured GitLab"
+
 register({
-    "git_fetch": (tool_git_fetch, f"Fetch a branch of an allowlisted GitHub repo. Writes a git bundle to "
-                  f"{config.EXCHANGE_DIR}/incoming/ and returns the command to import it.",
-                  {"repo": {"type": "string", "description": "owner/name"},
+    "git_fetch": (tool_git_fetch, f"Fetch a branch of an allowlisted GitHub repo or GitLab project. Writes a "
+                  f"git bundle to {config.EXCHANGE_DIR}/incoming/ and returns the command to import it.",
+                  {"repo": {"type": "string", "description": _REPO_DESCRIPTION},
                    "branch": {"type": "string"}}, ["repo", "branch"]),
-    "git_push": (tool_git_push, "Push a branch to an allowlisted GitHub repo. First run "
+    "git_push": (tool_git_push, "Push a branch to an allowlisted GitHub repo or GitLab project. First run "
                  f"`git bundle create {config.EXCHANGE_DIR}/outgoing/<name>.bundle origin/<base>..<branch>` "
                  "(or the whole branch). Diff, commit messages and the branch name are secret-scanned; "
                  "protected branches are refused and force-pushes are impossible.",
-                 {"repo": {"type": "string", "description": "owner/name"},
+                 {"repo": {"type": "string", "description": _REPO_DESCRIPTION},
                   "branch": {"type": "string", "description": "branch to push; must use the allowed prefix"},
                   "bundle": {"type": "string", "description": f"file name inside {config.EXCHANGE_DIR}/outgoing/"},
                   "base": {"type": "string", "description": "branch the work is based on (default from policy)"}},
@@ -509,6 +715,14 @@ register({
                          "Title, body and branch names are secret-scanned. Draft by default.",
                          {"repo": {"type": "string"}, "head": {"type": "string"}, "base": {"type": "string"},
                           "title": {"type": "string"}, "body": {"type": "string"},
+                          "draft": {"type": "boolean"}}, ["repo", "head", "title"]),
+    "gitlab_create_mr": (tool_gitlab_create_mr, "Open a merge request on an allowlisted GitLab project "
+                         "(<gitlab host>/<group>/<project>). Title, body and branch names are secret-scanned. "
+                         "Draft by default (the title gets GitLab's \"Draft: \" prefix).",
+                         {"repo": {"type": "string", "description": "<gitlab host>/<group>/<project>"},
+                          "head": {"type": "string", "description": "source branch; must use the allowed prefix"},
+                          "base": {"type": "string", "description": "target branch (default from policy)"},
+                          "title": {"type": "string"}, "body": {"type": "string", "description": "Markdown"},
                           "draft": {"type": "boolean"}}, ["repo", "head", "title"]),
     "github_create_issue": (tool_github_create_issue, "File an issue in a GitHub repo on the broker's issue "
                             "allowlist. Title and body are secret-scanned; labels must already exist in "
