@@ -99,6 +99,21 @@ class LaneTests(unittest.TestCase):
         self.assertEqual(len(self.lane.entries), 1)
 
 
+class AuditTests(unittest.TestCase):
+    def test_skips_malformed_job_ids(self):
+        # A job_id that isn't a string (a list, say) can't be a dict key; one such
+        # record must not stop the dashboard or watch from reading the rest.
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "audit.jsonl"
+            path.write_text("\n".join(json.dumps(r) for r in [
+                {"event": "job-end", "job_id": ["x"]}, {"event": "job-end", "job_id": {"a": 1}},
+                {"event": "job-end", "job_id": ""}, {"event": "job-end", "job_id": "ok", "cost_usd": 1.0},
+            ]) + "\n")
+            audit = w.Audit(path)
+            audit.feed()
+            self.assertEqual(list(audit.jobs), ["ok"])
+
+
 class RenderTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()

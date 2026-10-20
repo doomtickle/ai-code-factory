@@ -266,7 +266,7 @@ class Audit(Tail):
                 rec = json.loads(line)
             except ValueError:
                 continue
-            if isinstance(rec, dict) and rec.get("event") == "job-end" and rec.get("job_id"):
+            if isinstance(rec, dict) and rec.get("event") == "job-end" and isinstance(rec.get("job_id"), str) and rec["job_id"]:
                 self.jobs[rec["job_id"]] = rec
 
     def totals(self, since: float) -> tuple:

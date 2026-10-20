@@ -2,3 +2,5 @@
 # with Git for Windows; PowerShell scripts are Windows-native.
 * text=auto eol=lf
 *.ps1 text eol=crlf
+# Vendored fonts (scripts/dashboard-ui/fonts) are pinned by SHA-256: never touch their bytes.
+*.woff2 binary
