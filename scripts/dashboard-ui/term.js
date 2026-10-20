@@ -25,6 +25,7 @@
     exited: ["TERMINAL 0 · POWERED OFF", "The Coordinator session ended. Power on to start it again."],
     lost: ["TERMINAL 0 · NO SIGNAL", "Lost the dashboard. Reconnecting…"],
     framed: ["TERMINAL 0 · NOT IN THE DASHBOARD", "Open the Factory dashboard; this page only works inside it."],
+    service: ["TERMINAL 0 · SERVICE", "The factory is restarting or updating. The Coordinator comes back when it's done."],
   };
 
   // Opened on its own (not framed by the dashboard): never connect.
@@ -77,8 +78,11 @@
     const [title, text] = REASONS[reason] || REASONS.exited;
     $("off-title").textContent = title;
     $("off-text").textContent = text;
-    $("power").hidden = reason === "lost";
+    // Lost: it reconnects by itself. Service: the server holds power-on until the
+    // restart or update ends, and brings the Coordinator back itself.
+    $("power").hidden = reason === "lost" || reason === "service";
     $("power").disabled = false;
+    off.classList.toggle("service", reason === "service");
     off.hidden = false;
   }
   function send(data) {
@@ -127,6 +131,10 @@
       if (msg.running && !running) { term.reset(); sendSize(); }
       running = !!msg.running;
       const elsewhere = msg.reason === "elsewhere" || msg.elsewhere === true;
+      // During a restart or update the server decides whether the Coordinator
+      // comes back (only if it was attached and the action succeeded): no
+      // automatic power-on from this page then, or after.
+      if (msg.reason === "service") autoTried = true;
       if (!autoTried) {
         // Opening the dashboard brings the Coordinator up, once per page load,
         // and only if it is off and not open in Herdr or `factory chat`.

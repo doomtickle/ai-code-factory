@@ -7,12 +7,25 @@ tail, job status, model and cost; today's spend by hour and by role; an event
 printer of broker calls and finished jobs; and the writes Passdesk Pro is
 holding for approval.
 
-The state view is read-only. While it serves, it reads files under the
-factory state folder and never writes there, and makes no network connection:
+The state view is read-only. To build it, it reads files under the
+factory state folder and makes no network connection:
   dispatch/logs/<lane>.log, dispatch/audit.jsonl, dispatch/packets/, dispatch/pid
-  broker/audit.jsonl, broker/approvals/pending/
+  broker/audit.jsonl, broker/approvals/pending/, broker/project
 It reuses watch.py's transcript model and approvals.py's card reader rather
-than parsing either command's output.
+than parsing either command's output. The main page only displays: nothing
+it can reach acts.
+
+Every action lives in the control unit (dashboard_controls.py), a page on
+the second origin the main page frames, with its own key. What it writes and
+runs, and nothing else:
+  - APPROVE / DECLINE: one decision file, broker/approvals/decisions/<id>.json,
+    through approvals.write_decision() (what `factory approvals approve` writes).
+  - RESTART / UPDATE, each only after a confirm step (a prepare request, then a
+    run request with its single-use token): the fixed argv `<factory> restart`
+    or `<factory> update --yes` (no shell; <factory> is --factory, by default
+    this repo's bin/factory), its output in dashboard/actions/<time>-<action>.log.
+    Preparing UPDATE runs `<factory> update --plan` (read-only but for a
+    hook-free `git fetch` of the factory checkout) to show what it would do.
 
 With --coordinator NAME it also serves Terminal 0, the Coordinator's live
 terminal (dashboard_term.py): one fixed argv, `sbx run --name NAME`, in a PTY
@@ -24,8 +37,8 @@ WebSocket there needs the right Host and Origin, this run's cookie and the
 terminal key that only the terminal page holds. Besides that, the checks before starting it run
 `ps -axo pid=,ppid=,args=` and `sbx ls -q` (fixed argv).
 
-The one process it starts is the browser opener, once, at start-up (unless
---no-open): on WSL `rundll32.exe url.dll,FileProtocolHandler <url>` (Windows'
+Besides those and the control unit's commands above, the one process it
+starts is the browser opener, once, at start-up (unless --no-open): on WSL `rundll32.exe url.dll,FileProtocolHandler <url>` (Windows'
 URL protocol handler; WSL passes the argv through verbatim, no shell), else
 `wslview <url>`, else Python's webbrowser module. Never explorer.exe, which
 reads its argument as a folder and drops the query (and with it the token),
@@ -39,8 +52,8 @@ URL printed at start-up carries it once, the server swaps it for an HttpOnly,
 SameSite=Strict cookie named after the port (factory_dashboard_<port>, so two
 dashboards don't overwrite each other's), and any request without exactly one
 matching cookie gets 403. The Host header must name this server (a
-DNS-rebinding page can't borrow the cookie), only GET is served, and the page
-runs under a CSP that allows nothing but its own files. Agent-written text
+DNS-rebinding page can't borrow the cookie), only GET is served on the main
+port, and the page runs under a CSP that allows nothing but its own files. Agent-written text
 (transcripts, packets, cards, audit arguments) is only ever inserted into the
 page as text, never as HTML.
 
@@ -48,12 +61,14 @@ Limitation: cookies ignore ports, so any other server on 127.0.0.1 that this
 browser visits receives the cookie too. That is tolerable for what the page
 only shows; anything that lets a page act (the terminal; later approve and
 decline) must require a key in a request header, not just the cookie, and
-check `Origin`: the terminal's WebSocket does both.
+check `Origin`: the terminal's WebSocket and the control unit's POSTs do both.
 
   factory dashboard              serve and open the page
   factory dashboard --no-open    serve and print the URL only
   factory dashboard --coordinator factory-coordinator
                                  ... with the Coordinator's terminal
+  factory dashboard --factory PATH
+                                 RESTART and UPDATE run PATH instead of bin/factory
 
 Standard library only; runs on the macOS system Python (3.9).
 """
@@ -82,6 +97,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 import approvals
+import dashboard_controls as dc
 import dashboard_term as dt
 import watch as w
 
@@ -233,11 +249,12 @@ class Dashboard:
                 out[lane.role].append(lane.name)
         return out
 
-    def cards(self, now: float) -> list:
+    def cards(self, now: float, fp: bool = False) -> list:
         """The pending approval cards. A card's principal is the broker token's
         name, which is the role (developer), never the lane (developer-lane2),
         so "lanes" lists every running lane of that role: any of them may be
-        the one waiting."""
+        the one waiting. With fp (the control unit only, never the main
+        page's /api/state), each card also carries approvals.card_fingerprint."""
         running = self.running()
         out = []
         for card in approvals.read_cards(self.state / "broker"):
@@ -250,11 +267,15 @@ class Dashboard:
                 "principal": role, "role": role, "lanes": list(running.get(role, [])),
                 "repo": str(card.get("repo") or ""), "branch": str(card.get("branch") or card.get("head") or ""),
                 "base": str(card.get("base") or ""), "title": str(card.get("title") or ""),
+                # A PR card is a draft unless it says otherwise (as `factory approvals` reads it).
+                "draft": card.get("tool") == "github_create_pr" and card.get("draft", True) is not False,
                 "commits": None if commits is None else int(commits),
                 "file_count": None if file_count is None else int(file_count),
                 "files": [str(f) for f in files[:12]],
                 "seconds_left": None if expires is None else int(expires - now),
             })
+            if fp:
+                out[-1]["fp"] = approvals.card_fingerprint(card)
         return out
 
     @staticmethod
@@ -434,6 +455,8 @@ def make_handler(board: Dashboard, token: str, port: int, term: dt.Term | None =
                 # attached (for the lamp). Never the terminal key.
                 snap["term"] = None if term is None else {
                     "port": term_port, "running": term.running(), "reason": term.reason}
+                # Where the control unit is (the same second origin). Never its key.
+                snap["cu"] = None if term_port is None else {"port": term_port}
                 self.json(snap)
             elif url.path == "/api/lane":
                 detail = board.lane_detail(parse_qs(url.query).get("name", [""])[0])
@@ -460,7 +483,7 @@ def make_handler(board: Dashboard, token: str, port: int, term: dt.Term | None =
             self.send(200, json.dumps(obj, ensure_ascii=False).encode("utf-8"), "application/json; charset=utf-8")
 
         def refuse_method(self) -> None:
-            self.refuse(405, "this dashboard is read-only")
+            self.refuse(405, "GET only: the controls are in the control unit")
 
         do_POST = do_PUT = do_DELETE = do_PATCH = do_OPTIONS = refuse_method
 
@@ -468,22 +491,21 @@ def make_handler(board: Dashboard, token: str, port: int, term: dt.Term | None =
 
 
 def serve(board: Dashboard, port: int = 0, token: str | None = None, term: dt.Term | None = None,
-          term_port: int = 0) -> tuple:
-    """Start the server on 127.0.0.1 in a background thread: (server, url with token).
-    With a Term, also the terminal origin on a second port (server.term_server)."""
+          term_port: int = 0, controls: dc.Controls | None = None) -> tuple:
+    """Start the server on 127.0.0.1 in a background thread: (server, url with token),
+    and the second origin on another port (server.term_server): the control
+    unit (with controls) and, with a Term, the Coordinator's terminal."""
     token = token or secrets.token_urlsafe(32)
     server = ThreadingHTTPServer(("127.0.0.1", port), BaseHTTPRequestHandler)
     server.daemon_threads = True
     real_port = server.server_address[1]
-    server.term_server = None
-    real_term_port = None
-    if term is not None:
-        try:
-            server.term_server, _ = dt.serve(term, token, cookie_name(real_port), real_port, term_port)
-        except OSError:
-            server.server_close()
-            raise
-        real_term_port = server.term_server.server_address[1]
+    try:
+        server.term_server, _ = dt.serve(term, token, cookie_name(real_port), real_port, term_port,
+                                         controls=controls)
+    except OSError:
+        server.server_close()
+        raise
+    real_term_port = server.term_server.server_address[1]
     server.RequestHandlerClass = make_handler(board, token, real_port, term, real_term_port)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     return server, f"http://127.0.0.1:{real_port}/?token={token}"
@@ -544,6 +566,8 @@ def main(argv=None) -> int:
     ap.add_argument("--no-open", action="store_true", help="print the URL without opening a browser")
     ap.add_argument("--coordinator", default="", metavar="NAME",
                     help="the Coordinator's sandbox: serve its live terminal (sbx run --name NAME)")
+    ap.add_argument("--factory", type=Path, default=dc.FACTORY, metavar="PATH",
+                    help="the factory command the RESTART and UPDATE keys run (default: this repo's bin/factory)")
     args = ap.parse_args(argv)
     term = None
     if args.coordinator:
@@ -561,9 +585,10 @@ def main(argv=None) -> int:
     # listens or the browser opener starts.
     for sig in (signal.SIGTERM, signal.SIGHUP):
         signal.signal(sig, _interrupt)
+    controls = dc.Controls(board, args.state, term, args.factory)
     server = None
     try:
-        server, url = serve(board, args.port, term=term)
+        server, url = serve(board, args.port, term=term, controls=controls)
         return _run(args, server, url, term)
     except OSError as e:
         if server is not None:
@@ -593,7 +618,8 @@ def _run(args, server, url: str, term) -> int:
     if term is not None:
         print(f"Terminal 0 attaches to {args.coordinator} when you press POWER ON on the page "
               "(unless it is open elsewhere).")
-    print("Ctrl-C stops the dashboard" + (" and hangs up on the Coordinator." if term else "."), flush=True)
+    print("Ctrl-C stops the dashboard" + (" and hangs up on the Coordinator." if term else ".")
+          + " A RESTART or UPDATE started from it keeps running.", flush=True)
     while True:
         time.sleep(3600)
 

@@ -108,6 +108,22 @@ class SnapshotTests(unittest.TestCase):
         # Agent text stays text: the snapshot carries it verbatim for the page to insert with textContent.
         self.assertIn("<script>alert(1)</script>", lanes["reviewer"]["tail"][1]["text"])
 
+    def test_cards_draft_and_fingerprint(self):
+        import approvals
+        pending = self.fx.state / "broker" / "approvals" / "pending"
+        for cid, extra in (("pr1", {"draft": False}), ("pr2", {}), ("pr3", {"draft": True})):
+            (pending / f"{cid}.json").write_text(json.dumps(dict({
+                "id": cid, "tool": "github_create_pr", "principal": "developer", "repo": "o/r", "head": "factory/y",
+                "base": "main", "title": "T", "expires": self.fx.now + 60, "nonce": cid + "n"}, **extra)))
+        cards = {c["id"]: c for c in self.board.cards(self.fx.now)}
+        self.assertEqual({k: v["draft"] for k, v in cards.items()},
+                         {"c0ffee": False, "pr1": False, "pr2": True, "pr3": True})
+        self.assertTrue(all("fp" not in c for c in cards.values()))
+        with_fp = {c["id"]: c for c in self.board.cards(self.fx.now, fp=True)}
+        raw = json.loads((pending / "pr1.json").read_text())
+        self.assertEqual(with_fp["pr1"]["fp"], approvals.card_fingerprint(raw))
+        self.assertNotIn("nonce", json.dumps(with_fp))
+
     def test_totals_spend_and_gate(self):
         snap = self.board.snapshot(self.fx.now)
         self.assertEqual(snap["totals"], {"cost": 0.5, "jobs": 1, "running": 1})  # the old job is not today's
@@ -345,8 +361,7 @@ class ServerTests(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls):
-        cls.server.shutdown()
-        cls.server.server_close()
+        d.stop(cls.server)  # both origins: the second one (the control unit's) always runs
         cls.tmp.cleanup()
 
     def get(self, path, cookie=True, host=None, method="GET"):
@@ -436,7 +451,19 @@ class ServerTests(unittest.TestCase):
 
     def test_read_only(self):
         for method in ("POST", "PUT", "DELETE", "PATCH", "OPTIONS"):
-            self.assertEqual(self.get("/api/state", method=method)[0].status, 405, method)
+            for path in ("/api/state", "/cu/api/state", "/cu/api/decide"):
+                resp, _ = self.get(path, method=method)
+                self.assertEqual(resp.status, 405, (method, path))
+                self.assertIsNone(resp.getheader("Access-Control-Allow-Origin"))
+
+    def test_state_points_at_the_control_unit_but_holds_no_controls(self):
+        state = json.loads(self.get("/api/state")[1])
+        self.assertEqual(state["cu"], {"port": self.server.term_server.server_address[1]})
+        self.assertIsNone(state["term"])  # started without --coordinator
+        for card in state["gate"]:
+            self.assertNotIn("fp", card)  # the fingerprint is for the control unit only
+            self.assertNotIn("nonce", card)
+        self.assertNotIn(self.server.term_server.cu_key, json.dumps(state))
 
 
 class PageTests(unittest.TestCase):

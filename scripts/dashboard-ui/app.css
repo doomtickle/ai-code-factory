@@ -272,6 +272,23 @@ button { font: inherit; color: inherit; }
 .gate-lcd div { overflow-wrap: anywhere; }
 .gate-hint { margin: 0; letter-spacing: .08em; text-transform: none; font-size: .78rem; }
 .gate-hint:empty { display: none; }
+/* The control unit (cu.html, the second origin) under the gate display. With it the
+   rail is taller, and the gate display gives way first (the unit shows every detail). */
+.rail.has-cu { height: clamp(424px, 40vh, 480px); grid-template-columns: minmax(300px, 1fr) minmax(300px, 1.1fr) minmax(0, 2.4fr); }
+.rail.has-cu > .gate-mod { display: flex; flex-direction: column; gap: 8px; }
+.rail.has-cu .gate-lcd { flex: 0 1 auto; min-height: 3.4rem; overflow: hidden; }
+/* With the unit, the display is a two-line summary: count and countdown, then who */
+.rail.has-cu .gate-lcd .one { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rail.has-cu .gate-hint { flex: none; text-transform: uppercase; letter-spacing: .14em; font-size: .7rem; }
+.cu-slot { flex: none; height: 270px; min-width: 0; border-radius: 5px; }
+.cu-frame { display: block; width: 100%; height: 100%; border: 0; background: transparent; }
+/* Expanded for the unit's confirmation and log screens: a fixed layer over the whole
+   window (nothing above it in the rail sets transform, filter or contain, which would
+   pin it to the rail instead). */
+.cu-slot.expanded { position: fixed; inset: 0; z-index: 30; height: auto; border-radius: 0; background: rgba(0,0,0,.78);
+  -webkit-backdrop-filter: blur(2px); backdrop-filter: blur(2px);
+  padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px); }
+html.cu-open, html.cu-open body { overflow: hidden; }
 
 .spend-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .bargraph { display: flex; gap: 2px; align-items: flex-end; flex: 1; min-width: 150px; }
@@ -359,8 +376,12 @@ button { font: inherit; color: inherit; }
   .bays { grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr); }
   .bay.crt-bay { height: 640px; }
   .lanes { grid-auto-rows: 240px; --cols: 2 !important; }
-  .rail { height: auto; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); }
-  .printer { min-height: 280px; }
+  .rail, .rail.has-cu { height: auto; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); }
+  /* The rail grows to fit here: the gate module is plain flow, nothing clipped or shrunk */
+  .rail.has-cu > .gate-mod { display: grid; align-content: start; overflow: visible; }
+  .rail.has-cu .gate-lcd { overflow: visible; min-height: 0; }
+  .cu-slot { height: 270px; }
+  .rail > .printer { min-height: 280px; }  /* beats .rail > .mod's min-height: 0 */
 }
 @media (max-width: 860px) {
   .bays { grid-template-columns: minmax(0, 1fr); }

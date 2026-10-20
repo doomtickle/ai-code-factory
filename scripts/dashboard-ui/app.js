@@ -22,7 +22,7 @@
   const LED = { running: "g blink", held: "a blink", revise: "a", done: "g", approved: "g", idle: "", cancelled: "r", failed: "r" };
   const LABEL = { running: "Run", held: "Held", revise: "Revise", done: "Done", approved: "Approved", idle: "Idle", cancelled: "Cancelled", failed: "Failed" };
 
-  let state = null, polledAt = 0, lastEvent = "", gateKey = null;
+  let state = null, polledAt = 0, lastEvent = "", gateKey = null, gateCd = null;  // gateCd: the card the gate countdown follows
   // Monitor state: the open lane, its tab, the latest /api/lane data, a request
   // sequence number (stale responses are dropped) and what the body shows now.
   let monLane = null, monTab = "transcript", monData = null, monSeq = 0, monBusy = false;
@@ -169,25 +169,42 @@
     const lcd = $("gate-lcd");
     $("gate-led").className = `led ${cards.length ? "a blink" : ""}`;
     $("gate-state").textContent = cards.length ? `Held · ${cards.length}` : "Clear";
+    gateCd = null;
     if (!cards.length) {
       lcd.replaceChildren(el("div", "big", "No writes held"));
       $("gate-hint").textContent = "";
       return;
     }
-    const c = cards[0];
-    const what = c.tool === "git_push" ? `${c.commits ?? "?"} commits · ${c.file_count ?? "?"} files` : (c.title || c.tool);
-    let line;
-    if (c.seconds_left == null) {
-      line = el("div", null, `${what} · expiry unknown`);
-    } else {
-      const at = new Date((state.now + c.seconds_left) * 1000);
+    // The countdown follows the hold that expires first.
+    const timed = cards.filter(x => x.seconds_left != null);
+    gateCd = timed.length ? timed.reduce((a, b) => (b.seconds_left < a.seconds_left ? b : a)) : null;
+    const countdown = (before, after) => {
+      const at = new Date((state.now + gateCd.seconds_left) * 1000);
       const cd = el("span", "gate-cd");
       cd.setAttribute("aria-hidden", "true");
-      line = el("div", null, `${what} · expires `);
-      line.append(cd, el("span", "sr-only", `at ${pad(at.getHours())}:${pad(at.getMinutes())}`));
-    }
-    // The broker names the role, not the lane: list the role's running lanes.
+      const n = el("div", null, before);
+      n.append(cd, el("span", "sr-only", `at ${pad(at.getHours())}:${pad(at.getMinutes())}`));
+      if (after) n.append(after);
+      return n;
+    };
+    const c = cards[0];
     const role = c.role || c.principal;
+    if (cuFrame) {
+      // The control unit under this display shows every card in full and has the
+      // keys: here, just a summary of what is waiting.
+      const head = gateCd ? countdown(`${cards.length} held · next expires `) : el("div", null, `${cards.length} held`);
+      head.className = "big";
+      const who = el("div", "one", cards.length > 1 ? `${c.tool} · ${role} + ${cards.length - 1} more` : `${c.tool} · ${role}`);
+      who.title = who.textContent;
+      lcd.replaceChildren(head, who);
+      tickGate();
+      $("gate-hint").textContent = "Decide on the control unit ▼";
+      return;
+    }
+    const what = c.tool === "git_push" ? `${c.commits ?? "?"} commits · ${c.file_count ?? "?"} files` : (c.title || c.tool);
+    gateCd = c.seconds_left == null ? null : c;
+    const line = gateCd ? countdown(`${what} · expires `) : el("div", null, `${what} · expiry unknown`);
+    // The broker names the role, not the lane: list the role's running lanes.
     const lanes = Array.isArray(c.lanes) ? c.lanes : [];
     lcd.replaceChildren(
       el("div", "big", `${c.tool} · ${role}`),
@@ -201,7 +218,7 @@
   }
   function tickGate() {
     const cd = document.querySelector("#gate-lcd .gate-cd");
-    if (cd && state && state.gate.length && state.gate[0].seconds_left != null) setText(cd, mmss(Math.max(0, state.gate[0].seconds_left - sinceSec())));
+    if (cd && gateCd) setText(cd, mmss(Math.max(0, gateCd.seconds_left - sinceSec())));
   }
 
   function renderSpend() {
@@ -359,6 +376,7 @@
   }
   document.addEventListener("keydown", e => {
     if (e.metaKey || e.ctrlKey || e.altKey) return;
+    if (cuExpanded) return;  // the control unit's monitor is up over everything
     if (monLane) {
       // The monitor is modal: digits do not open another lane while it is up.
       if (e.key === "Escape") { e.preventDefault(); closeMon(); }
@@ -528,6 +546,47 @@
   // A click on the tube's glass or bezel (outside the frame) hands the keyboard to the terminal.
   tube.addEventListener("click", () => { if (termFrame) termFrame.focus(); });
 
+  // ---------- the control unit: every control the dashboard has
+  // It lives on the second origin (cu.html, with its own key), framed under the
+  // gate display; this page shows agent-written text, so it holds no action
+  // endpoint and no key, and never posts to the frame or reads it. The frame
+  // may say exactly three things: "cu:expand" (grow to the whole window, for
+  // its confirmation and log screens), "cu:collapse" and "cu:reload". Anything
+  // else, from anywhere else, is ignored.
+  let cuFrame = null, cuOrigin = null, cuExpanded = false;
+  function setCuExpanded(on) {
+    cuExpanded = on;
+    // The frame is never moved in the DOM (that would reload it): its slot becomes
+    // a fixed, full-window layer over a scrim, and the frame draws its own monitor.
+    $("cu-slot").classList.toggle("expanded", on);
+    document.documentElement.classList.toggle("cu-open", on);
+  }
+  function renderCu() {
+    if (cuFrame) return;
+    const c = state.cu || state.term;  // where the second origin is; never its key
+    const port = c ? Number(c.port) : NaN;
+    if (!Number.isInteger(port) || port < 1 || port > 65535) return;
+    cuOrigin = `http://${location.hostname}:${port}`;
+    cuFrame = document.createElement("iframe");
+    cuFrame.className = "cu-frame";
+    cuFrame.title = "Control unit";
+    cuFrame.setAttribute("sandbox", "allow-scripts allow-same-origin");
+    cuFrame.setAttribute("referrerpolicy", "no-referrer");
+    cuFrame.src = `${cuOrigin}/cu`;
+    // A (re)loaded control unit starts on its compact deck.
+    cuFrame.addEventListener("load", () => setCuExpanded(false));
+    $("cu-slot").append(cuFrame);
+    $("cu-slot").hidden = false;
+    $("rail").classList.add("has-cu");
+    gateKey = null;  // redraw the gate hint to point at the control unit
+  }
+  window.addEventListener("message", e => {
+    if (!cuFrame || e.source !== cuFrame.contentWindow || e.origin !== cuOrigin) return;
+    if (e.data === "cu:expand") setCuExpanded(true);
+    else if (e.data === "cu:collapse") setCuExpanded(false);
+    else if (e.data === "cu:reload") location.reload();
+  });
+
   // ---------- polling
   async function poll() {
     try {
@@ -535,7 +594,7 @@
       if (!r.ok) throw new Error(String(r.status));
       state = await r.json();
       polledAt = Date.now();
-      renderHeader(); renderLanes(); renderGate(); renderSpend(); renderPaper(); renderTerm();
+      renderCu(); renderHeader(); renderLanes(); renderGate(); renderSpend(); renderPaper(); renderTerm();
       if (monLane) loadMon();
     } catch (e) {
       $("lamp-link").className = "led r blink";

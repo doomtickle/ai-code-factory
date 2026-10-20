@@ -33,6 +33,16 @@ only the terminal page knows (the server writes it into the page it serves;
 the main page, which shows agent-written text, can't read a cross-origin
 page). The WebSocket is RFC 6455, server side, standard library only.
 
+The same origin serves the control unit (dashboard_controls.py), the one
+page that can act: /cu, with its own per-run key, under the same iframe-only
+rule, and its API, POST /cu/api/<name>. A POST is read only when the Host and
+Origin name this origin exactly, Sec-Fetch-Site (if sent) is same-origin, the
+dashboard cookie matches, the X-Factory-Control header holds the control
+unit's key (not the terminal's), and the body is declared JSON of at most
+MAX_BODY bytes (control_refusal); every other method, OPTIONS included, is
+refused, and no response carries CORS headers. Without --coordinator the
+origin still runs, for the control unit; /term is then a 404.
+
 Standard library only; runs on the macOS system Python (3.9).
 """
 
@@ -70,8 +80,13 @@ KEY_SLOT = "__TERM_KEY__"   # placeholder in term.html the server fills in
 HTTP_TIMEOUT = 30          # seconds a request on the terminal port may take, before any upgrade
 PING_INTERVAL = 30         # seconds between the server's pings to each page
 PING_TIMEOUT = 60          # seconds without any frame from a page before it is dropped
-FRAME_DESTS = {"iframe"}                       # Sec-Fetch-Dest allowed for /term
-FRAME_SITES = {"same-site", "same-origin"}     # Sec-Fetch-Site allowed for /term
+FRAME_DESTS = {"iframe"}                       # Sec-Fetch-Dest allowed for /term and /cu
+FRAME_SITES = {"same-site", "same-origin"}     # Sec-Fetch-Site allowed for /term and /cu
+CU_KEY_SLOT = "__CU_KEY__"              # placeholders in cu.html the server fills in
+CU_PORT_SLOT = "__CU_MAIN_PORT__"
+CU_HEADER = "X-Factory-Control"         # the request header carrying the control unit's key
+CU_API = "/cu/api/"
+MAX_BODY = 8192                         # largest control request body accepted
 
 # The terminal origin's only files: path -> (file under UI, content type).
 STATIC = {
@@ -81,6 +96,12 @@ STATIC = {
     "/vendor/xterm/xterm.css": ("vendor/xterm/xterm.css", "text/css; charset=utf-8"),
     "/vendor/xterm/addon-fit.js": ("vendor/xterm/addon-fit.js", "text/javascript; charset=utf-8"),
     "/fonts/vt323.woff2": ("fonts/vt323.woff2", "font/woff2"),
+    # The control unit's (cu.html is served at /cu, like term.html at /term).
+    "/cu.js": ("cu.js", "text/javascript; charset=utf-8"),
+    "/cu.css": ("cu.css", "text/css; charset=utf-8"),
+    "/fonts/barlow-condensed-600.woff2": ("fonts/barlow-condensed-600.woff2", "font/woff2"),
+    "/fonts/barlow-condensed-700.woff2": ("fonts/barlow-condensed-700.woff2", "font/woff2"),
+    "/fonts/dotgothic16.woff2": ("fonts/dotgothic16.woff2", "font/woff2"),
 }
 
 # Opcodes (RFC 6455 5.2)
@@ -101,6 +122,47 @@ def term_csp(term_port: int, main_port: int) -> str:
             f"connect-src ws://127.0.0.1:{term_port} ws://localhost:{term_port}; font-src 'self'; "
             f"frame-ancestors http://127.0.0.1:{main_port} http://localhost:{main_port}; "
             "base-uri 'none'; form-action 'none'")
+
+
+def cu_csp(term_port: int, main_port: int) -> str:
+    """The control unit's CSP: its own files, no inline style or script, fetch()
+    only to this origin, and framing only by the main dashboard."""
+    return ("default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; "
+            f"connect-src http://127.0.0.1:{term_port} http://localhost:{term_port}; img-src 'self'; "
+            f"frame-ancestors http://127.0.0.1:{main_port} http://localhost:{main_port}; "
+            "base-uri 'none'; form-action 'none'")
+
+
+def control_refusal(headers, *, hosts, origins, cookie: str, token: str, key: str) -> tuple:
+    """(None, length) if a POST to the control unit's API may be read, else
+    (status, reason). Every check is on the headers, before any of the body is
+    read: Host and Origin name this origin exactly, Sec-Fetch-Site (if the
+    browser sent one) is same-origin, exactly one dashboard cookie holds the
+    token, the key header holds the control unit's key, and the body is
+    declared JSON of at most MAX_BODY bytes."""
+    if headers.get("Host", "") not in hosts:
+        return 403, "wrong Host header"
+    if headers.get("Origin", "") not in origins:
+        return 403, "wrong Origin"
+    site = headers.get("Sec-Fetch-Site")
+    if site is not None and site != "same-origin":
+        return 403, "not a same-origin request"
+    if not cookie_matches(headers, cookie, token):
+        return 403, "no dashboard cookie"
+    given = headers.get_all(CU_HEADER) or []
+    if len(given) != 1 or not hmac.compare_digest(given[0].encode(), key.encode()):
+        return 403, "no control key"
+    if not headers.get("Content-Type", "").lower().startswith("application/json"):
+        return 415, "send JSON (Content-Type: application/json)"
+    if headers.get("Transfer-Encoding") is not None:
+        return 400, "send a Content-Length, not a chunked body"
+    lengths = headers.get_all("Content-Length") or []
+    if len(lengths) != 1 or not lengths[0].strip().isdigit():
+        return 400, "Content-Length required"
+    length = int(lengths[0])
+    if length > MAX_BODY:
+        return 413, f"the body is over {MAX_BODY} bytes"
+    return None, length
 
 
 def cookie_matches(headers, name: str, token: str) -> bool:
@@ -413,6 +475,7 @@ class Term:
         self.proc = None
         self.master = None
         self.reason = None
+        self.held = None      # set by hold(): power-on is refused, with this reason, until release()
         self.closing = False  # set by shutdown(): nothing starts after it
         self.stopped = threading.Event()
         self.clock, self.ping_interval, self.ping_timeout = clock, ping_interval, ping_timeout
@@ -481,6 +544,11 @@ class Term:
         with self.start_lock:
             if self.closing or self.running():
                 return
+            if self.held:
+                with self.lock:
+                    self.reason = self.held
+                    self._broadcast(self.state())
+                return
             reason = self._preflight()
             if reason:
                 with self.lock:
@@ -548,7 +616,7 @@ class Term:
             os.close(master)
             if self.proc is proc:
                 self.proc = None
-                self.reason = "exited"
+                self.reason = self.held or "exited"
                 self._broadcast(self.state())
 
     def write(self, data: bytes) -> None:
@@ -593,6 +661,38 @@ class Term:
                 self.resize(cols, rows)
         elif msg.get("type") == "power" and msg.get("on") is True:
             self.power_on()
+
+    def hold(self, reason: str) -> None:
+        """Refuse power-on (the pages show reason) until release(): the control
+        unit holds the set while `factory restart` or `factory update` runs,
+        since both stop the Coordinator's sandbox."""
+        with self.lock:
+            self.held = reason
+            if not self.running():
+                self.reason = reason
+            self._broadcast(self.state())
+
+    def release(self) -> None:
+        with self.lock:
+            if self.held and not self.running() and self.reason == self.held:
+                self.reason = None
+            self.held = None
+            self._broadcast(self.state())
+
+    def hang_up(self, reason: str) -> None:
+        """Hang up on the child as shutdown() does (SIGHUP, then SIGTERM, then
+        SIGKILL), but keep the pages and the Term usable: the set shows
+        powered off with reason, and POWER ON works again (unless held)."""
+        with self.start_lock:
+            proc = self.proc
+            if proc is None:
+                return
+            _hang_up(proc)
+            with self.lock:
+                if self.proc is proc:  # the pump hasn't noticed yet
+                    self.proc = None
+                self.reason = reason
+                self._broadcast(self.state())
 
     def shutdown(self) -> None:
         """Refuse any further power-on or page, hang up on the child (SIGHUP,
@@ -655,10 +755,12 @@ def _reap(proc) -> None:
 # --------------------------------------------------------------------------
 # The terminal origin's HTTP server
 
-def make_handler(term: Term, token: str, cookie: str, key: str, port: int, main_port: int):
+def make_handler(term: Term | None, token: str, cookie: str, key: str, port: int, main_port: int,
+                 controls=None, cu_key: str = ""):
     hosts = {f"127.0.0.1:{port}", f"localhost:{port}"}
     origins = {f"http://127.0.0.1:{port}", f"http://localhost:{port}"}
     csp = term_csp(port, main_port)
+    cucsp = cu_csp(port, main_port)
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "factory-dashboard-term"
@@ -672,7 +774,8 @@ def make_handler(term: Term, token: str, cookie: str, key: str, port: int, main_
         def log_message(self, fmt, *args):
             pass
 
-        def send(self, code: int, body: bytes, ctype: str, extra: dict | None = None) -> None:
+        def send(self, code: int, body: bytes, ctype: str, extra: dict | None = None,
+                 page_csp: str | None = None) -> None:
             self.send_response(code)
             self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(len(body)))
@@ -681,7 +784,7 @@ def make_handler(term: Term, token: str, cookie: str, key: str, port: int, main_
             self.send_header("Referrer-Policy", "no-referrer")
             if ctype.startswith("text/html"):
                 # Framed by the main dashboard only (frame-ancestors), so no X-Frame-Options.
-                self.send_header("Content-Security-Policy", csp)
+                self.send_header("Content-Security-Policy", page_csp or csp)
                 self.send_header("Cross-Origin-Resource-Policy", "same-site")
             else:
                 self.send_header("Cross-Origin-Resource-Policy", "same-origin")
@@ -702,17 +805,18 @@ def make_handler(term: Term, token: str, cookie: str, key: str, port: int, main_
                 self.refuse(403, "wrong Host header")
                 return
             path = urlsplit(self.path).path
-            if path == "/term/ws" and self.command == "GET":
+            if path == "/term/ws" and self.command == "GET" and term is not None:
                 self.websocket()
                 return
             if not cookie_matches(self.headers, cookie, token):
                 self.refuse(403, "no token: open the link 'factory dashboard' printed")
                 return
-            if path == "/term":
+            if path.startswith(CU_API):
+                self.refuse(405, "POST only")
+            elif path == "/term" and term is not None:
                 # The page carrying the key: only for the main page's iframe,
                 # never a top-level navigation another local page could open.
-                if (self.headers.get("Sec-Fetch-Dest", "") not in FRAME_DESTS
-                        or self.headers.get("Sec-Fetch-Site", "") not in FRAME_SITES):
+                if not self.framed():
                     self.refuse(403, "the terminal opens inside the dashboard: open the link 'factory dashboard' printed")
                     return
                 try:
@@ -721,6 +825,18 @@ def make_handler(term: Term, token: str, cookie: str, key: str, port: int, main_
                     self.refuse(500, "missing term.html")
                     return
                 self.send(200, html.replace(KEY_SLOT, key).encode("utf-8"), "text/html; charset=utf-8")
+            elif path == "/cu" and controls is not None:
+                # The control unit carries its own key: the same rule as /term.
+                if not self.framed():
+                    self.refuse(403, "the controls open inside the dashboard: open the link 'factory dashboard' printed")
+                    return
+                try:
+                    html = (UI / "cu.html").read_text(encoding="utf-8")
+                except OSError:
+                    self.refuse(500, "missing cu.html")
+                    return
+                html = html.replace(CU_KEY_SLOT, cu_key).replace(CU_PORT_SLOT, str(int(main_port)))
+                self.send(200, html.encode("utf-8"), "text/html; charset=utf-8", page_csp=cucsp)
             elif path in STATIC:
                 name, ctype = STATIC[path]
                 try:
@@ -734,10 +850,49 @@ def make_handler(term: Term, token: str, cookie: str, key: str, port: int, main_
 
         do_HEAD = do_GET
 
+        def framed(self) -> bool:
+            """A same-site iframe load (the main dashboard framing this page)."""
+            return (self.headers.get("Sec-Fetch-Dest", "") in FRAME_DESTS
+                    and self.headers.get("Sec-Fetch-Site", "") in FRAME_SITES)
+
         def refuse_method(self) -> None:
             self.refuse(405, "GET only")
 
-        do_POST = do_PUT = do_DELETE = do_PATCH = do_OPTIONS = refuse_method
+        do_PUT = do_DELETE = do_PATCH = do_OPTIONS = refuse_method
+
+        def json_reply(self, code: int, obj, close: bool = False) -> None:
+            extra = None
+            if close:
+                self.close_connection = True
+                extra = {"Connection": "close"}
+            self.send(code, json.dumps(obj, ensure_ascii=False).encode("utf-8"),
+                      "application/json; charset=utf-8", extra)
+
+        def do_POST(self) -> None:
+            """The control unit's API: POST /cu/api/<name>, a JSON object in and
+            out. Nothing else on this origin takes a POST, and no response ever
+            carries CORS headers."""
+            path = urlsplit(self.path).path
+            if controls is None or not path.startswith(CU_API):
+                self.refuse(405, "GET only")
+                return
+            status, detail = control_refusal(self.headers, hosts=hosts, origins=origins, cookie=cookie,
+                                             token=token, key=cu_key)
+            if status is not None:
+                # The body was never read: end the connection with the reply.
+                self.json_reply(status, {"error": detail}, close=True)
+                return
+            try:
+                raw = read_exact(self.rfile, detail)
+                body = json.loads(raw.decode("utf-8")) if raw else None
+            except (EOFError, OSError, ValueError):
+                self.json_reply(400, {"error": "the body is not JSON"}, close=True)
+                return
+            if not isinstance(body, dict):
+                self.json_reply(400, {"error": "send a JSON object"}, close=True)
+                return
+            code, out = controls.api(path[len(CU_API):], body)
+            self.json_reply(code, out)
 
         def websocket(self) -> None:
             status, detail = upgrade_refusal(self.headers, origins=origins, cookie=cookie, token=token, key=key)
@@ -796,15 +951,22 @@ def make_handler(term: Term, token: str, cookie: str, key: str, port: int, main_
     return Handler
 
 
-def serve(term: Term, token: str, cookie: str, main_port: int, port: int = 0, key: str | None = None) -> tuple:
-    """Start the terminal origin on 127.0.0.1 in a background thread: (server, key)."""
+def serve(term: Term | None, token: str, cookie: str, main_port: int, port: int = 0, key: str | None = None,
+          controls=None, cu_key: str | None = None) -> tuple:
+    """Start the second origin on 127.0.0.1 in a background thread: (server, key).
+    It serves the terminal when term is given (else /term is a 404) and the
+    control unit when controls is given (else /cu is a 404), each with its
+    own key; server.cu_key is the control unit's."""
     key = key or secrets.token_hex(24)
+    cu_key = cu_key or secrets.token_hex(24)
     server = ThreadingHTTPServer(("127.0.0.1", port), BaseHTTPRequestHandler)
     server.daemon_threads = True
     real_port = server.server_address[1]
-    server.RequestHandlerClass = make_handler(term, token, cookie, key, real_port, main_port)
+    server.cu_key = cu_key
+    server.RequestHandlerClass = make_handler(term, token, cookie, key, real_port, main_port, controls, cu_key)
     threading.Thread(target=server.serve_forever, daemon=True).start()
-    threading.Thread(target=term.heartbeat_loop, daemon=True).start()
+    if term is not None:
+        threading.Thread(target=term.heartbeat_loop, daemon=True).start()
     return server, key
 
 

@@ -5,7 +5,8 @@ set -euo pipefail
 # behind `factory start --layout watch|tabs|web` / FACTORY_LAYOUT:
 #
 # 1. With nothing saved yet and neither a flag nor an environment value, it
-#    defaults to "watch".
+#    defaults to "web" (GUI first: the dashboard; Herdr is --layout
+#    watch|tabs). A saved explicit choice still wins over that default.
 # 2. A valid flag is accepted, returned, and saved to FACTORY_LAYOUT_FILE so a
 #    later call with neither flag nor env reads it back.
 # 3. The flag wins over the environment value when both are given, and the
@@ -59,14 +60,25 @@ run_resolve() {
 }
 
 # ===========================================================================
-# Part 1: nothing saved, no flag, no env -> "watch".
+# Part 1: nothing saved, no flag, no env -> "web"; a saved choice still wins.
 # ===========================================================================
 [ ! -e "$layout_file" ] || rm -f "$layout_file"
 run_resolve "" ""
 assert_eq "no flag, no env, nothing saved: exits 0" "$R_RC" "0"
-assert_eq "no flag, no env, nothing saved: defaults to watch" "$R_OUT" "watch"
+assert_eq "no flag, no env, nothing saved: defaults to web (the dashboard)" "$R_OUT" "web"
 [ ! -e "$layout_file" ] && ok "no flag, no env, nothing saved: nothing written" \
   || bad "no flag, no env, nothing saved: nothing written (found $layout_file)"
+mkdir -p "$FACTORY_CONFIG"
+printf 'watch\n' > "$layout_file"
+run_resolve "" ""
+assert_eq "a saved 'watch' (an earlier explicit choice) still wins over the web default" "$R_OUT" "watch"
+printf 'bogus\n' > "$layout_file"
+run_resolve "" ""
+assert_eq "an unreadable saved value falls back to web" "$R_OUT" "web"
+rm -f "$layout_file"
+grep -q '\[ "$no_ui" = 1 \] || \[ "$layout" = web \] || require_herdr' "$REPO_ROOT/bin/factory" \
+  && ok "bin/factory: the default (web) layout doesn't need Herdr" \
+  || bad "bin/factory: the default (web) layout doesn't need Herdr"
 
 # ===========================================================================
 # Part 2: a valid flag is saved, and read back later with neither flag nor env.

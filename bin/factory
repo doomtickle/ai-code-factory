@@ -67,19 +67,25 @@ ${B}Usage${N}
                              apply the security baseline, put 'factory' on your PATH
   factory update [--yes]     Pull the latest factory, rebuild, recreate whatever
                              sandboxes the changes need, and restart
+  factory update --plan      Say what 'factory update' would do, changing nothing
+                             (but a git fetch): incoming commits, sandboxes it
+                             recreates and what each loses
   factory start [dir] [--no-ui] [--layout watch|tabs|web]
                              Start the factory for a project (default: this folder)
-                             and open it in Herdr; --no-ui skips Herdr and prints
-                             how to reach the Coordinator and follow the roles.
-                             --layout (or FACTORY_LAYOUT) picks the layout:
-                             "watch" (default) adds a 'factory watch' pane beside
-                             the Coordinator; "tabs" keeps one tab per role,
-                             tailing its transcript; "web" skips Herdr and opens
-                             the dashboard, with the Coordinator's terminal in it.
-                             Remembered for next time in $FACTORY_CONFIG/layout
+                             and open the dashboard in your browser, with the
+                             Coordinator's terminal in it; --no-ui opens nothing
+                             and prints how to reach the Coordinator and follow
+                             the roles. --layout (or FACTORY_LAYOUT) picks the
+                             layout: "web" (default) is the dashboard; "watch"
+                             opens Herdr with a 'factory watch' pane beside the
+                             Coordinator; "tabs" opens Herdr with one tab per
+                             role, tailing its transcript. Remembered for next
+                             time in $FACTORY_CONFIG/layout
   factory chat               Talk to the Coordinator in this terminal
   factory status             What is running, and for which project
   factory stop               Stop the agents, broker and dispatch bridge
+  factory restart            Stop, then start the factory again for its project
+                             (the dashboard, if open, keeps running)
   factory logs [name]        Follow a role's work (all its lanes; e.g. developer,
                              or one lane: developer-lane2), or broker / dispatch
   factory watch              Live view of the lanes: a pane per active lane, idle lanes as
@@ -87,8 +93,10 @@ ${B}Usage${N}
   factory dashboard [--no-open] [--port N]
                              The whole factory on one screen in your browser: the
                              Coordinator's terminal, lanes, spend, broker calls,
-                             held writes (local). Prints a link with this run's
-                             token; 'gui' also works
+                             held writes (local). Its control unit approves and
+                             declines held writes and runs restart and update
+                             (each after a confirm step). Prints a link with this
+                             run's token; 'gui' also works
   factory packet [id|lane]   A job's review packet: task, branch commits and diffstat,
                              tests, broker calls, cost, report (default: the latest;
                              --list for recent jobs)
@@ -319,12 +327,14 @@ $(sed -n 's/^[[:space:]]*-[[:space:]]*"\{0,1\}\([^"[:space:]#]*\).*/\1/p' "$kit"
 cmd_start() {
   # --no-ui (or FACTORY_NO_UI=1): everything but Herdr. Talk to the Coordinator
   # with `sbx run` in any terminal and follow roles with `factory logs`.
-  # --layout (or FACTORY_LAYOUT): "watch" (default) adds a `factory watch`
-  # pane beside the Coordinator and skips the per-role transcript tabs;
-  # "tabs" keeps one tab per role; "web" skips Herdr and ends by running
-  # `factory dashboard`, the Coordinator's terminal. --no-ui ignores it.
-  # --no-dashboard (internal, from cmd_update): with "web", finish instead of
-  # running the dashboard in the foreground, so `factory update --yes` returns.
+  # --layout (or FACTORY_LAYOUT): "web" (default; GUI first, owner's call of
+  # 20 Oct 2026) skips Herdr and ends by running `factory dashboard`, which
+  # holds the Coordinator's terminal; "watch" opens Herdr with a `factory
+  # watch` pane beside the Coordinator and no per-role transcript tabs;
+  # "tabs" opens Herdr with one tab per role. --no-ui ignores it.
+  # --no-dashboard (internal, from cmd_update and cmd_restart): with "web",
+  # finish instead of running the dashboard in the foreground, so `factory
+  # update --yes` and `factory restart` return.
   local target="" project current no_ui="${FACTORY_NO_UI:-}" layout_flag="" layout no_dashboard=""
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -498,7 +508,7 @@ onboarding_hints() {
     [ -z "$stale" ] || warn "out of date (made from an older image or kit): ${stale% }; run 'factory update' to recreate them"
   fi
   if ! claude_login_stored; then
-    warn "first time: type /login in the Coordinator pane to sign in with your Claude subscription, then run 'factory start' again (e.g. in the Host shell pane) to create the role sandboxes"
+    warn "first time: type /login in the Coordinator (POWER ON on the dashboard, or its Herdr pane) to sign in with your Claude subscription, then run 'factory start' again (or press RESTART on the dashboard) to create the role sandboxes"
   fi
   if git_push_enabled; then
     local sbx_secrets
@@ -555,7 +565,7 @@ cmd_status() {
     bad "dispatch bridge not running"
   fi
   if claude_login_stored; then ok "Claude login stored"
-  else warn "no Claude login yet: type /login in the Coordinator pane, then run 'factory start' again"; fi
+  else warn "no Claude login yet: type /login in the Coordinator (the dashboard's Terminal 0 or its Herdr pane), then run 'factory start' again"; fi
 
   local coord_tools
   coord_tools="$(coordinator_broker_tools)"
@@ -584,6 +594,23 @@ cmd_status() {
 # --- stop / reset ------------------------------------------------------------------
 cmd_stop() {
   "$SCRIPTS/03-stop-factory.sh"
+}
+
+# cmd_restart -> stop the factory (03-stop-factory.sh: the dispatch bridge and
+# every factory-* sandbox; never the dashboard), then start it again for the
+# project it is bound to. With the "web" layout it doesn't open a dashboard
+# (one may be open already: the control unit's RESTART key runs this).
+cmd_restart() {
+  local project
+  [ $# -eq 0 ] || die "usage: factory restart"
+  project="$(bound_project)"
+  [ -n "$project" ] || die "the factory isn't bound to a project yet: run 'factory start' in one"
+  [ -d "$project" ] || die "the factory's project $project no longer exists: run 'factory start' in another"
+  require_sbx
+  step "Stopping the factory"
+  "$SCRIPTS/03-stop-factory.sh"
+  step "Starting it again for $project"
+  cmd_start "$project" --no-dashboard
 }
 
 cmd_reset() {
@@ -1053,15 +1080,93 @@ forget_role_sessions() {
   done
 }
 
+# plan_maybe_sandboxes CHANGED-FILES -> "SANDBOX<TAB>WHY" lines: existing
+# sandboxes whose inputs (image, kit, role) the incoming files touch. A
+# heuristic: the update itself decides from fingerprints after it rebuilds.
+plan_maybe_sandboxes() {
+  local changed="$1" existing r t sb f why
+  existing="$(sbx ls -q 2>/dev/null || true)"
+  emit() { printf '%s\n' "$existing" | grep -qx "$1" && printf '%s\t%s\n' "$1" "$2"; return 0; }
+  # One path per line, read as is: a name with spaces or glob characters is
+  # neither split nor expanded.
+  printf '%s\n' "$changed" | while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    case "$f" in
+      broker|broker/*|kits/broker/*) emit "$BROKER_SANDBOX" "the broker's code or kit changes ($f)" ;;
+      kits/coordinator/*) emit "$COORDINATOR_SANDBOX" "its kit changes ($f)" ;;
+      templates/developer/*|templates/agent/*) emit "$COORDINATOR_SANDBOX" "its image changes ($f)" ;;
+      scripts/lib/roles.sh) emit "$COORDINATOR_SANDBOX" "how sandboxes are fingerprinted changes ($f)"
+        emit "$BROKER_SANDBOX" "how sandboxes are fingerprinted changes ($f)" ;;
+    esac
+    for r in $(list_roles); do
+      sb="$(role_sandbox "$r")"
+      t="$(role_get "$r" TEMPLATE)"
+      why=""
+      case "$f" in
+        roles/"$r"/kit/*|roles/"$r"/role.conf) why="its role changes ($f)" ;;
+        templates/"$t"/*|templates/agent/*) why="its image changes ($f)" ;;
+        scripts/lib/roles.sh) why="how sandboxes are fingerprinted changes ($f)" ;;
+      esac
+      [ -z "$why" ] || emit "$sb" "$why"
+    done
+  done | awk -F'\t' '!seen[$1]++'
+}
+
+# cmd_update_plan -> what `factory update` would do, as tab-separated lines,
+# changing nothing but the factory checkout's remote-tracking refs (a hook-free
+# `git fetch`). The dashboard's UPDATE key shows it before asking to confirm:
+#   commit<TAB>SHA<TAB>SUBJECT      each incoming commit (HEAD..@{u})
+#   recreate<TAB>SANDBOX<TAB>LOSES  out of date now (stale_sandboxes): recreated
+#   maybe<TAB>SANDBOX<TAB>WHY       may be recreated once the new code is built
+#   note<TAB>TEXT                   anything that changes what update does
+cmd_update_plan() {
+  local upstream changed="" sb stale broker_change
+  if ! upstream="$(git "${BROKER_GIT_SAFE[@]}" -C "$ROOT" rev-parse --abbrev-ref '@{u}' 2>/dev/null)"; then
+    printf 'note\t%s\n' "this checkout has no upstream branch: update skips git pull and only rebuilds"
+  else
+    git "${BROKER_GIT_SAFE[@]}" -C "$ROOT" fetch --quiet --no-recurse-submodules 2>/dev/null \
+      || printf 'note\t%s\n' "could not fetch $upstream: the commits below may be out of date"
+    git "${BROKER_GIT_SAFE[@]}" -C "$ROOT" log --no-color --format='commit%x09%h%x09%s' 'HEAD..@{u}' 2>/dev/null || true
+    if ! git "${BROKER_GIT_SAFE[@]}" -C "$ROOT" merge-base --is-ancestor HEAD '@{u}' 2>/dev/null; then
+      printf 'note\t%s\n' "this checkout has commits that $upstream doesn't: git pull --ff-only will fail"
+    fi
+    changed="$(git "${BROKER_GIT_SAFE[@]}" -c core.quotePath=false -C "$ROOT" diff --no-ext-diff --no-textconv --name-only 'HEAD...@{u}' 2>/dev/null || true)"
+    if [ -n "$(git "${BROKER_GIT_SAFE[@]}" -C "$ROOT" status --porcelain --ignore-submodules=all)" ]; then
+      printf 'note\t%s\n' "$ROOT has uncommitted changes: update skips git pull (commit or stash them to pull)"
+    elif broker_initialized "$ROOT"; then
+      if ! broker_change="$(broker_dirty "$ROOT" 2>&1)"; then
+        printf 'note\t%s\n' "update skips git pull: $broker_change"
+      elif [ -n "$(broker_blocking_changes "$broker_change")" ]; then
+        printf 'note\t%s\n' "$ROOT/broker has uncommitted changes: update skips git pull"
+      fi
+    fi
+  fi
+  stale="$(stale_sandboxes)"
+  for sb in $stale; do printf 'recreate\t%s\t%s\n' "$sb" "$(describe_loss "$sb")"; done
+  [ -z "$changed" ] || plan_maybe_sandboxes "$changed" | while IFS="$(printf '\t')" read -r sb why; do
+    printf '%s\n' "$stale" | grep -qx "$sb" || printf 'maybe\t%s\t%s (a guess from the changed files)\n' "$sb" "$why"
+  done
+  if [ -z "$(bound_project)" ]; then
+    printf 'note\t%s\n' "no project is bound: update rebuilds but starts nothing"
+  fi
+  return 0
+}
+
 cmd_update() {
-  local yes="" pulled="" arg stale sb project
+  local yes="" pulled="" plan="" arg stale sb project
   for arg in "$@"; do
     case "$arg" in
       --yes|-y) yes=1 ;;
       --pulled) pulled=1 ;;
-      *) die "usage: factory update [--yes]" ;;
+      --plan) plan=1 ;;
+      *) die "usage: factory update [--yes | --plan]" ;;
     esac
   done
+  if [ -n "$plan" ]; then
+    [ -z "$yes$pulled" ] || die "usage: factory update [--yes | --plan]"
+    cmd_update_plan
+    return
+  fi
   [ -n "$pulled" ] || pull_factory ${yes:+--yes}
 
   FACTORY_UPDATING=1 cmd_setup
@@ -1114,8 +1219,12 @@ cmd_watch() {
 # per-run token, read from the state folder (host Python, stdlib), plus Terminal 0:
 # the Coordinator's terminal on a second port, running the fixed argv
 # 'sbx run --name $COORDINATOR_SANDBOX' (no shell) when the page presses POWER ON, unless the
-# Coordinator is open elsewhere. Otherwise it starts only the browser opener, once
-# (none with --no-open). Runs in the foreground; Ctrl-C stops it and hangs up.
+# Coordinator is open elsewhere. Its control unit (same second port, its own key)
+# writes approval decisions and, each after a confirm step, runs the fixed argvs
+# '$ROOT/bin/factory restart' and 'update --yes' (and 'update --plan' to show
+# what an update would do). Otherwise it starts only the browser opener, once
+# (none with --no-open). Runs in the foreground; Ctrl-C stops it and hangs up
+# (a restart or update it started keeps running).
 cmd_dashboard() {
   local python
   python="$(resolve_python)"
@@ -1146,6 +1255,7 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
     chat|coordinator) cmd_chat "$@" ;;
     status) cmd_status "$@" ;;
     stop|down) cmd_stop "$@" ;;
+    restart) cmd_restart "$@" ;;
     reset) cmd_reset "$@" ;;
     logs|log) cmd_logs "$@" ;;
     packet|packets) cmd_packet "$@" ;;

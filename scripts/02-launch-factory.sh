@@ -6,10 +6,10 @@ set -euo pipefail
 # Starts the factory for <project-dir>:
 #   - the broker VM (network tools for roles) and the dispatch bridge (host)
 #   - one sandbox per role in roles/, plus the Coordinator sandbox
-#   - a Herdr workspace "code-factory", with a "coordinator" tab where you
-#     talk to the Coordinator (plus a host shell below it). Its layout
-#     (FACTORY_LAYOUT, default "watch"; bin/factory resolves and passes it -
-#     see `factory start --layout`) is one of:
+#   - unless the layout is "web", a Herdr workspace "code-factory", with a
+#     "coordinator" tab where you talk to the Coordinator (plus a host shell
+#     below it). The layout (FACTORY_LAYOUT; bin/factory resolves and passes
+#     it, "web" by default - see `factory start --layout`) is one of:
 #       watch: a "factory watch" pane beside the Coordinator, live for every
 #         role's lanes; no per-role tabs (any left over from "tabs" are closed).
 #       tabs: one tab per role, tailing the live transcripts of the tasks the
@@ -34,7 +34,8 @@ set -euo pipefail
 require_bin jq
 
 # FACTORY_LAYOUT: bin/factory resolves and passes this (--layout, FACTORY_LAYOUT,
-# or the saved default); a direct run defaults to "watch". Ignored entirely
+# or the saved default, "web" if none); a direct run without it defaults to
+# "watch" (the Herdr layout this script lays out). Ignored entirely
 # with FACTORY_NO_UI=1 (no Herdr layout to pick). "web" means no Herdr: the
 # dashboard bin/factory starts afterwards is the Coordinator's terminal.
 LAYOUT="${FACTORY_LAYOUT:-watch}"

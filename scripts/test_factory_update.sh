@@ -28,6 +28,11 @@ set -euo pipefail
 #    it. scripts/00-build-templates.sh is run for real against a fixture,
 #    with stub docker and sbx commands, to show it builds from that export.
 # 6. An exported ROOT doesn't redirect a direct run of bin/factory.
+# 7. `factory update --plan` (what the dashboard's UPDATE key shows before
+#    asking to confirm) changes nothing but the remote-tracking refs: it
+#    lists incoming commits, the sandboxes update would recreate (and what
+#    each loses), the ones the incoming files may make stale, and notes for
+#    a dirty checkout or a missing upstream; --plan with --yes is refused.
 #
 # broker/ is writable by an agent working on this repo's own code like any
 # other file, so all of the above matters for real, not just for a
@@ -531,6 +536,110 @@ case "$evil_out" in
   *) ok "an exported ROOT is never used by a direct run" ;;
 esac
 assert_empty "an exported ROOT: nothing was written into it" "$(ls -A "$tmp/evil-root")"
+
+# ===========================================================================
+# Part 7: factory update --plan.
+# ===========================================================================
+plan_bin="$tmp/plan-bin"
+mkdir -p "$plan_bin"
+# A fake sbx: lists $PLAN_SANDBOXES, has no secrets, records nothing else.
+cat > "$plan_bin/sbx" <<'STUB'
+#!/bin/sh
+case "$1" in
+  ls) printf '%s\n' $PLAN_SANDBOXES ;;
+esac
+STUB
+chmod +x "$plan_bin/sbx"
+export PLAN_SANDBOXES="factory-broker factory-coordinator"
+
+# run_plan DIR [ARGS] -> cmd_update's output with --plan (or ARGS) against
+# fixture DIR, in $P_OUT, its status in $P_RC.
+run_plan() {
+  local dir="$1"
+  shift
+  set +e
+  P_OUT="$( (
+    export PATH="$plan_bin:$PATH" XDG_STATE_HOME="$tmp/plan-state" XDG_CONFIG_HOME="$tmp/plan-config"
+    # shellcheck disable=SC1091
+    . "$REPO_ROOT/bin/factory"
+    ROOT="$dir"
+    cmd_update "${@:---plan}"
+  ) 2>&1 )"
+  P_RC=$?
+  set -e
+}
+
+planco="$(fresh_checkout plan)"
+# The Coordinator's sandbox is up to date (its fingerprint recorded); the
+# broker's has none, so it counts as out of date.
+(
+  export PATH="$plan_bin:$PATH" XDG_STATE_HOME="$tmp/plan-state" XDG_CONFIG_HOME="$tmp/plan-config"
+  # shellcheck disable=SC1091
+  . "$REPO_ROOT/bin/factory"
+  ROOT="$planco"
+  record_sandbox_fingerprint "$COORDINATOR_SANDBOX"
+)
+run_plan "$planco"
+assert_eq "update --plan, nothing incoming: exits 0" "$P_RC" "0"
+assert_empty "update --plan, nothing incoming: no commit lines" "$(printf '%s\n' "$P_OUT" | grep '^commit' || true)"
+assert_contains "update --plan: the out-of-date broker is to be recreated, with what it loses" \
+  "$P_OUT" "$(printf 'recreate\tfactory-broker\tnothing (it keeps no history)')"
+assert_empty "update --plan: the up-to-date Coordinator isn't" \
+  "$(printf '%s\n' "$P_OUT" | grep "^recreate.factory-coordinator" || true)"
+assert_contains "update --plan: no bound project is noted" "$P_OUT" "no project is bound"
+
+# Upstream gains a commit touching the Coordinator's kit and the broker's.
+mkdir -p "$tmp/seed/kits/coordinator" "$tmp/seed/kits/broker"
+echo "x: 1" > "$tmp/seed/kits/coordinator/spec.yaml"
+echo "y: 1" > "$tmp/seed/kits/broker/spec.yaml"
+git -C "$tmp/seed" add kits
+git -C "$tmp/seed" commit -q -m "kits: tighten the Coordinator"
+git -C "$tmp/seed" push -q origin HEAD:main
+INCOMING="$(git -C "$tmp/seed" rev-parse --short HEAD)"
+before="$(git -C "$planco" rev-parse HEAD)"
+run_plan "$planco"
+assert_eq "update --plan, a commit incoming: exits 0" "$P_RC" "0"
+assert_contains "update --plan lists the incoming commit (after a fetch)" \
+  "$P_OUT" "$(printf 'commit\t%s\tkits: tighten the Coordinator' "$INCOMING")"
+assert_contains "update --plan: the Coordinator may be recreated (its kit changes), labelled a guess" \
+  "$P_OUT" "$(printf 'maybe\tfactory-coordinator\tits kit changes (kits/coordinator/spec.yaml) (a guess')"
+assert_empty "update --plan: a sandbox already to be recreated isn't listed as maybe too" \
+  "$(printf '%s\n' "$P_OUT" | grep "^maybe.factory-broker" || true)"
+assert_eq "update --plan doesn't pull: HEAD unchanged" "$(git -C "$planco" rev-parse HEAD)" "$before"
+[ ! -e "$planco/kits/coordinator/spec.yaml" ] && ok "update --plan doesn't touch the working tree" \
+  || bad "update --plan doesn't touch the working tree"
+assert_empty "update --plan: every line is a known kind" \
+  "$(printf '%s\n' "$P_OUT" | grep -v -E '^(commit|recreate|maybe|note)	' || true)"
+
+# File names with spaces and glob characters are read whole, never split or expanded.
+mkdir -p "$tmp/globdir" && touch "$tmp/globdir/kits-coordinator-expanded"
+set +e
+G_OUT="$( (
+  cd "$tmp/globdir"
+  export PATH="$plan_bin:$PATH" XDG_STATE_HOME="$tmp/plan-state" XDG_CONFIG_HOME="$tmp/plan-config"
+  # shellcheck disable=SC1091
+  . "$REPO_ROOT/bin/factory"
+  ROOT="$planco"
+  plan_maybe_sandboxes "$(printf '%s\n' 'kits/coordinator/my spec *.yaml' '*')"
+) 2>&1 )"
+set -e
+assert_eq "plan_maybe_sandboxes reads a name with spaces and '*' whole (one line, the full name)" \
+  "$G_OUT" "$(printf 'factory-coordinator\tits kit changes (kits/coordinator/my spec *.yaml)')"
+
+echo "dirty" > "$planco/untracked.txt"
+run_plan "$planco"
+assert_contains "update --plan notes uncommitted changes (the pull would be skipped)" \
+  "$P_OUT" "has uncommitted changes: update skips git pull"
+rm -f "$planco/untracked.txt"
+
+git -C "$planco" branch -q --unset-upstream
+run_plan "$planco"
+assert_eq "update --plan with no upstream: exits 0" "$P_RC" "0"
+assert_contains "update --plan with no upstream: notes it" "$P_OUT" "no upstream branch"
+
+run_plan "$planco" --plan --yes
+[ "$P_RC" -ne 0 ] && ok "update --plan --yes is refused" || bad "update --plan --yes is refused (got 0)"
+assert_contains "update --plan --yes: names the usage" "$P_OUT" "usage: factory update"
 
 echo "---"
 echo "$pass passed, $fail failed"

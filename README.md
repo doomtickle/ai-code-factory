@@ -6,8 +6,8 @@ Docs site: <https://doomtickle.github.io/ai-code-factory/> (the same page `facto
 A local multi-agent coding setup. You talk to a **Coordinator** agent; it breaks
 the work down and delegates it to **role agents** (Developer, Reviewer and
 Researcher, or any role you add). Every agent is
-Claude Code running in its own Docker Sandboxes (`sbx`) microVM, laid out in
-[Herdr](https://herdr.dev) tabs.
+Claude Code running in its own Docker Sandboxes (`sbx`) microVM, shown on a
+dashboard in your browser (or laid out in [Herdr](https://herdr.dev) tabs).
 
 ```
  You ─▶ Coordinator VM ──MCP──▶ dispatch bridge (host) ──sbx exec──▶ role VMs
@@ -48,8 +48,9 @@ Claude Code running in its own Docker Sandboxes (`sbx`) microVM, laid out in
   works in git clones of it on its sandbox's own disk, one per lane, and hands
   back committed `factory/*` branches. Read-only roles (`WORKSPACE="ro"`)
   just read it. Roles remember earlier tasks (each lane keeps a Claude
-  session). You can watch every role work live, in the `factory watch` pane
-  (default layout) or its own Herdr tab (`tabs` layout). Job results show the job's cost, the
+  session). You can watch every role work live, on the dashboard (default
+  layout), in the `factory watch` pane (`watch` layout) or its own Herdr tab
+  (`tabs` layout). Job results show the job's cost, the
   session's running total and its context size. A session over the role's
   `MAX_SESSION_TOKENS` (100k by default) isn't resumed: the next task starts
   fresh, because every turn of a resumed session re-reads its whole history.
@@ -156,29 +157,32 @@ cd ~/code/my-project
 factory start
 ```
 
-`factory start` runs the whole factory for that folder and opens it in Herdr
-(see "Layouts" below for the others): by default, one **coordinator** tab with
-the Coordinator (top-left), a host shell (bottom-left) and a live `factory
-watch` pane (right). `--layout web` opens it in your browser instead.
+`factory start` runs the whole factory for that folder and opens the
+dashboard in your browser (see "Dashboard"): the Coordinator's terminal,
+every lane, and the controls. `--layout watch` or `--layout tabs` opens it in
+Herdr instead (see "Layouts" below).
 
 The folder must be a git repository, or a folder whose subfolders are git
 repositories: the developer works in clones of them, from what is committed
 (see "Getting the developer's work").
 
-**The first time**, type `/login` in the Coordinator pane and sign in with your
-Claude subscription, then run `factory start` again (the Host shell pane below
-the Coordinator works). `sbx` stores the login, but it gives a sandbox the
+**The first time**, press POWER ON on the dashboard's Coordinator screen (or
+use the Coordinator pane in Herdr), type `/login` and sign in with your
+Claude subscription, then run `factory start` again (or press RESTART on the
+dashboard; in Herdr, the Host shell pane below the Coordinator works). `sbx` stores the login, but it gives a sandbox the
 login only when it creates it, so the first start creates just the Coordinator
 and the second creates the role sandboxes. To switch Claude accounts, run
 `factory reset` and `sbx secret rm anthropic`, then do the same.
 Then tell the Coordinator what you want, for example *"Research how to add
 rate limiting to the API, implement it with tests, and get it reviewed."*
 
-To leave the factory running in the background, press **Ctrl+B** then **Q** in
-Herdr; run `factory start` again to reopen it.
+Ctrl-C on the dashboard (or closing its terminal) closes the dashboard and
+leaves the factory running; `factory dashboard` reopens it. In Herdr, press
+**Ctrl+B** then **Q** to leave it running in the background; run `factory
+start` again to reopen it.
 
-**Without Herdr:** `factory start --no-ui` starts everything but the terminal
-layout. Talk to the Coordinator with `factory chat` in any terminal (type
+**Without a UI:** `factory start --no-ui` starts everything but the dashboard
+or Herdr. Talk to the Coordinator with `factory chat` in any terminal (type
 `/login` there the first time, then `factory start --no-ui` again), and watch
 every lane with `factory watch` in another.
 
@@ -189,19 +193,24 @@ every lane with `factory watch` in another.
 wins over it). Either way sticks for next time, without retyping it: it is
 saved to `~/.config/ai-code-factory/layout`, read by every later `factory
 start` that doesn't pass `--layout` or set `FACTORY_LAYOUT` itself. Omit both
-and nothing was ever saved, and you get `watch`, the default.
+and nothing was ever saved, and you get `web`, the default: the dashboard
+first, Herdr if you ask for it. A layout you saved earlier (say `watch`) is
+kept.
 
-- **watch** (default): the Coordinator (top-left), a host shell (bottom-left)
-  and a `factory watch` pane (right) live for every role's lanes. No per-role
-  tabs.
-- **tabs**: the Coordinator (top) and a host shell (bottom), plus one tab per
-  role showing its live transcripts (all its lanes).
-- **web**: no Herdr. `factory start` starts everything, then runs `factory
-  dashboard` in the foreground: the browser page shows every lane, and its
-  left-hand screen is the Coordinator's terminal (see "Dashboard"). Ctrl-C
-  closes the dashboard and the Coordinator's terminal; the factory keeps
-  running, and `factory dashboard` reopens it. `factory update` restarts the
-  factory but doesn't open the dashboard; run `factory dashboard` after it.
+- **web** (default): no Herdr. `factory start` starts everything, then runs
+  `factory dashboard` in the foreground: the browser page shows every lane,
+  its left-hand screen is the Coordinator's terminal, and its control unit
+  approves held writes and restarts or updates the factory (see "Dashboard").
+  Ctrl-C closes the dashboard and the Coordinator's terminal; the factory
+  keeps running, and `factory dashboard` reopens it. `factory update` and
+  `factory restart` in a terminal restart the factory but don't open the
+  dashboard; run `factory dashboard` after them (one that is already open
+  keeps running).
+- **watch**: Herdr, with the Coordinator (top-left), a host shell
+  (bottom-left) and a `factory watch` pane (right) live for every role's
+  lanes. No per-role tabs.
+- **tabs**: Herdr, with the Coordinator (top) and a host shell (bottom), plus
+  one tab per role showing its live transcripts (all its lanes).
 
 Switching layouts and running `factory start` again cleans up what the other
 layout added (the `factory watch` pane, or the per-role tabs). `--no-ui`
@@ -220,13 +229,15 @@ place to open it in another.
 |---|---|
 | `factory doctor` | Check the machine is ready; prints the fix for each problem (setup runs it first). Once the broker exists, it also runs the gateway's own doctor inside it: policy, tokens and grants, audit log, credentials, a live probe, GitHub access per repo, the policy's hosts against the broker kit, and (Passdesk Pro) a warning for any approval that expired with no decision |
 | `factory setup` | One-time setup (safe to re-run) |
-| `factory update [--yes]` | After pulling changes or editing kits, images or policy: pulls the latest factory, rebuilds, recreates only the sandboxes the changes affect (it lists them and what each loses, then asks), and restarts. With the `web` layout it doesn't open the dashboard (so `factory update --yes` returns): run `factory dashboard` afterwards |
-| `factory start [dir] [--no-ui] [--layout watch\|tabs\|web]` | Start the factory for a project (default: current folder) and open Herdr. `--no-ui` (or `FACTORY_NO_UI=1`) skips Herdr: talk to the Coordinator with `factory chat` in any terminal and follow roles with `factory logs <role>`. `--layout` (or `FACTORY_LAYOUT`) picks the layout, `web` being the dashboard instead of Herdr, and is remembered for next time (see "Layouts") |
+| `factory update [--yes]` | After pulling changes or editing kits, images or policy: pulls the latest factory, rebuilds, recreates only the sandboxes the changes affect (it lists them and what each loses, then asks), and restarts. With the `web` layout it doesn't open the dashboard (so `factory update --yes` returns): run `factory dashboard` afterwards. The dashboard's UPDATE key runs `factory update --yes` after showing the plan |
+| `factory update --plan` | What `factory update` would do, changing nothing but a (hook-free) `git fetch`: the incoming commits, the sandboxes it would recreate and what each loses, the ones the incoming changes may make out of date (a guess from the changed files), and notes such as uncommitted changes that would skip the pull. Tab-separated lines (`commit`, `recreate`, `maybe`, `note`), for the dashboard |
+| `factory start [dir] [--no-ui] [--layout watch\|tabs\|web]` | Start the factory for a project (default: current folder) and open the dashboard (`web`, the default) or Herdr (`watch`, `tabs`). `--no-ui` (or `FACTORY_NO_UI=1`) opens neither: talk to the Coordinator with `factory chat` in any terminal and follow roles with `factory logs <role>`. `--layout` (or `FACTORY_LAYOUT`) picks the layout and is remembered for next time (see "Layouts") |
+| `factory restart` | Stop the factory and start it again for the project it is bound to, with the saved layout (the `web` layout doesn't open a second dashboard; one already open keeps running). The dashboard's RESTART key runs it |
 | `factory chat` | Talk to the Coordinator in this terminal (wraps `sbx run --name factory-coordinator`); `factory start` creates the sandbox first. Refuses while the Coordinator is open elsewhere (Herdr, the dashboard) |
 | `factory status` | Project, broker, dispatch bridge, login, roles (with their lanes), sandbox status, and (Passdesk Pro) pending approvals and the oldest one's age |
 | `factory logs <role>` | Follow a role's transcripts, all its lanes (`factory logs developer-lane2` for one lane); `factory logs broker` / `dispatch` for audit logs |
 | `factory watch` | Live terminal view of the lanes: one pane per active lane (a job running, or finished in the last ten minutes) with the job's status, elapsed time, model and cost in its title and the transcript rendered for reading (tool calls condensed, results dimmed, text wrapped); idle lanes take one status line each. A digit focuses one lane, `a` shows every lane, `p` shows a lane's latest review packet, `q` quits. `--once` prints one plain-text frame |
-| `factory dashboard [--no-open] [--port N]` | The whole factory on one screen in your browser (see "Dashboard"): the Coordinator's live terminal; every lane's live transcript, status, model, cost and timer; today's spend by hour and role; an event printer of broker calls and finished jobs; and the writes held for approval. Local. `factory gui` is the same command |
+| `factory dashboard [--no-open] [--port N]` | The whole factory on one screen in your browser (see "Dashboard"): the Coordinator's live terminal; every lane's live transcript, status, model, cost and timer; today's spend by hour and role; an event printer of broker calls and finished jobs; the writes held for approval; and the control unit, which approves and declines them and restarts or updates the factory (each after a confirm screen). Local. `factory gui` is the same command |
 | `factory packet [<job-id> \| latest \| <lane> \| --list]` | A job's review packet: the task, each branch's commits and diffstat against your checked-out branch, the `factory-test` modes it reported, the broker calls its role made, cost, and the role's report with its APPROVED / REVISE verdict. Written after every job; `--list` shows recent ones |
 | `factory roles` | List roles, their project access, lanes and network tools |
 | `factory role new <name> [like]` | Add a role (copied from `reviewer`, or the role you name) |
@@ -524,9 +535,10 @@ call later; the decision is picked up by the retry.
    and paste the license key, then `factory secret save approvals-webhook` and paste the webhook URL
    (see *Storing credentials once* above). Revoke with `factory secret forget passdesk-license`
    or `factory secret forget approvals-webhook`.
-4. Decide with `factory approvals` (list), `factory approvals approve <id>`
-   or `factory approvals decline <id> --reason "..."`; `factory approvals
-   watch` prints cards as they arrive. Decisions are plain files in the
+4. Decide on the dashboard's control unit (APPROVE, or DECLINE with a
+   reason), or with `factory approvals` (list), `factory approvals approve
+   <id>` or `factory approvals decline <id> --reason "..."`; `factory
+   approvals watch` prints cards as they arrive. Decisions are plain files in the
    broker state folder, so nothing new listens on the network.
 5. `factory status` shows a line with the pending count and the oldest
    card's age once there is at least one; `factory doctor` warns (without
@@ -789,10 +801,30 @@ your browser. It shows:
   transcript on an LCD (tool calls, errors, branches and held writes in their
   own colors), and its model, cost, context size and elapsed time. A digit key
   (or a click) opens the lane's full transcript and its latest review packet.
-- **Write gate:** the pushes and pull requests Passdesk Pro is holding for you,
-  with the command to approve or decline each one. A held write names the
-  role, not the lane, so when two lanes of one role are running both show
-  as held.
+- **Write gate:** the pushes and pull requests Passdesk Pro is holding for you.
+  A held write names the role, not the lane, so when two lanes of one role
+  are running both show as held. Under its display is the **control unit**:
+  - the selected card in full (tool, role and lanes, repo, branch or head to
+    base, PR title, commits and files, time left; ◀ ▶ step through several),
+    a reason field, and DECLINE and APPROVE keys. One press decides, exactly
+    as `factory approvals approve <id>` does (the same decision file);
+    declining needs a reason, which the agent reads. If the card expired or
+    a new one replaced it meanwhile, the key says so and decides nothing.
+  - RESTART (`factory restart`) and UPDATE (`factory update --yes`). Neither
+    starts on the first press: the unit fills the window with what it would
+    do (the running jobs it cancels, the held writes it drops, and for UPDATE
+    the incoming commits and the sandboxes it recreates and what each loses,
+    from `factory update --plan`), and only CONFIRM there starts it. Its
+    output then scrolls on the same screen, and is kept in
+    `dashboard/actions/` in the state folder. The Coordinator's terminal hangs
+    up while it runs (POWER ON waits) and, if it was attached and the command
+    succeeded, attaches again afterwards. After an update that
+    changed the dashboard itself, the unit asks you to reload the page, or to
+    restart `factory dashboard` if its server code changed. The command keeps
+    running if you close the dashboard. It runs without a terminal, so
+    anything that would ask for a password (say, `sudo` while installing
+    tools) fails instead of waiting: run `factory update` in a terminal then.
+  - a blanking plate marked SETUP, where settings will go.
 - **Spend:** today's cost per hour and per role, from `dispatch/audit.jsonl`.
 - **Event printer:** today's broker calls (allowed, denied, held, decided) and
   finished jobs.
@@ -806,12 +838,12 @@ your browser. It shows:
 - **Lamps:** whether the page can reach the dashboard, whether the dispatch
   bridge is running, and whether anything is held.
 
-Buttons for approving, restarting and updating are coming in a follow-up
-(doomtickle/passdesk-ops#112); until then use `factory approvals`.
-
-It is local. Apart from the terminal, it only reads: the state folder (lane
-transcripts, both audit logs, review packets, approval cards); it writes
-nothing there and makes no network connection; its fonts and xterm.js are
+It is local. Apart from the terminal and the control unit, it only reads the
+state folder (lane transcripts, both audit logs, review packets, approval
+cards) and makes no network connection. The control unit writes only a
+decision file (approve, decline) and its action logs, and runs only
+`factory restart`, `factory update --yes` and `factory update --plan` (a fixed
+command line, never a shell; `--factory PATH` runs another `factory`); its fonts and xterm.js are
 vendored (`scripts/dashboard-ui/fonts/`, `scripts/dashboard-ui/vendor/`). It
 binds `127.0.0.1` on a free port (`--port` to choose one) and prints a link
 carrying a token for this run: the browser trades it for a cookie, and every
@@ -842,8 +874,19 @@ is visible for a moment in the opener's command line and stays in your
 browser history, which is fine on a machine only you use: it dies with the
 command. One limitation: browsers don't separate cookies by port, so another
 web server on `127.0.0.1` that you open in the same browser also receives the
-dashboard's cookie. That alone opens nothing that acts: the terminal also
-needs its key, sent in a request header, and checks `Origin`.
+dashboard's cookie. That alone opens nothing that acts: the terminal and the
+control unit each need their own key, sent in a request header, and check
+`Origin`.
+
+The control unit lives on the terminal's origin, not the main page's: the
+main page shows text the agents wrote, so it holds no key and reaches no
+endpoint that acts; it can't script the unit, and the unit tells it only
+"expand", "collapse" or "reload". The unit's page, like the terminal's, is
+served only into the dashboard's frame and refuses to run on its own. Every
+control is a POST carrying the unit's key in a header, checked against this
+run's cookie, `Host` and `Origin`. No single request can start a host
+command: RESTART and UPDATE need a confirm token, good once, for two
+minutes, for that one action.
 
 ## Analytics
 

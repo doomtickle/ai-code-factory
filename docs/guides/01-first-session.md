@@ -78,7 +78,9 @@ factory start
 ```
 
 `factory start` starts the broker and the dispatch bridge, creates the
-sandboxes, and opens Herdr.
+sandboxes, and opens the dashboard in your browser (it prints the link too,
+in case no window appears). It keeps running in that terminal: Ctrl-C closes
+the dashboard, not the factory.
 
 ## 4. Sign in to Claude, then start again
 
@@ -92,9 +94,11 @@ note: no Claude login is stored yet, so these role sandboxes were not created: d
 
 Do exactly that:
 
-1. In the **Coordinator (VM)** pane, type `/login` and sign in with your Claude
+1. On the dashboard, press **POWER ON** under the Coordinator's screen (Terminal
+   0, on the left), type `/login` there and sign in with your Claude
    subscription.
-2. In the **Host shell** pane below it, run `factory start` again.
+2. Press **RESTART** on the control unit (under the Write gate display, on the
+   right) and then **CONFIRM**, or run `factory start` again in a terminal.
 
 ```bash
 factory start
@@ -104,33 +108,40 @@ The second start creates the role sandboxes, which pick up the stored login.
 You only do this once per machine: `sbx` keeps the login for every sandbox it
 creates afterwards.
 
-> **No Herdr?** `factory start --no-ui` starts everything but the terminal
-> layout. Then open the Coordinator with `factory chat` in any terminal, type
-> `/login` there the first time, and run `factory start --no-ui` again. Follow
-> a role with `factory logs <role>`.
+> **In Herdr instead?** With `factory start --layout watch` (or `tabs`;
+> remembered for next time), type `/login` in the **Coordinator (VM)** pane
+> and run `factory start` again in the **Host shell** pane below it.
+>
+> **No UI at all?** `factory start --no-ui` starts everything but the
+> dashboard or Herdr. Then open the Coordinator with `factory chat` in any
+> terminal, type `/login` there the first time, and run `factory start
+> --no-ui` again. Follow a role with `factory logs <role>`.
 
 > **Why two starts?** `sbx` gives a sandbox the stored login only when it
-> creates the sandbox, and role panes don't take typed input. So the factory
-> waits for your login before it creates the roles.
+> creates the sandbox, and role sandboxes don't take typed input. So the
+> factory waits for your login before it creates the roles.
 
-## 5. Find your way around Herdr
+## 5. Find your way around the dashboard
 
-Herdr opens a workspace named `code-factory`. By default (the `watch` layout)
-it has one **coordinator** tab:
+The dashboard is one screen, styled as a 1984 control unit:
 
-- **Coordinator (VM)** (top-left): you talk to the Coordinator here.
-- **Host shell** (bottom-left): a normal terminal on your machine, in the
-  project folder.
-- **Watch** (right): a live `factory watch` view of every role's lanes. It's
-  a read-only view: you never type into it.
+- **Terminal 0** (left): the Coordinator. Press POWER ON, then talk to it
+  here. Every browser tab you open shows the same session.
+- **Lanes**: one module per lane of every role, with its live transcript.
+  Press a lane's number (or click it) for the full transcript and its
+  latest review packet.
+- **Write gate** (right): the pushes and pull requests waiting for you (with
+  Passdesk Pro), and under it the **control unit**: APPROVE and DECLINE for
+  the selected one, and RESTART and UPDATE for the factory, which show what
+  they'd do and wait for CONFIRM before running anything.
+- **Spend** and the **event printer**: today's cost, and broker calls and
+  finished jobs as they happen.
 
-Run `factory start --layout tabs` instead (it's remembered for next time) to
-get one tab per role - **developer**, **reviewer**, **researcher** - each
-showing that role's live transcript instead of the Watch pane. Or run
-`factory start --layout web` to skip Herdr: the dashboard opens in your
-browser, with the Coordinator's terminal on its left-hand screen (press
-POWER ON to attach, and type `/login` there the first time). See "Layouts" in the
-[README](../../README.md#layouts).
+Prefer the terminal? `factory start --layout watch` (remembered for next
+time) opens Herdr instead, with the Coordinator (top-left), a host shell
+(bottom-left) and a live `factory watch` view of every lane (right);
+`--layout tabs` gives one Herdr tab per role instead of the Watch pane. See
+"Layouts" and "Dashboard" in the [README](../../README.md#layouts).
 
 ## 6. Give the Coordinator a small first task
 
@@ -149,8 +160,8 @@ model and effort it picked for each job, so you can overrule it.
 
 ## 7. Watch the roles work
 
-Look at the **Watch** pane to follow the job live (switch to the **developer**
-tab instead if you started with `--layout tabs`). Every transcript line
+Look at the developer's lane on the dashboard to follow the job live (or the
+**Watch** pane in Herdr, or the **developer** tab with `--layout tabs`). Every transcript line
 starts with the time. Between the start and the end you'll see the role's
 messages, each tool call and a one-line summary of its result (left out here):
 
@@ -182,9 +193,12 @@ git merge factory-developer/factory/slug-tests
 
 ## 8. Leave it running, stop it, bring it back
 
-- **Leave it running in the background:** in Herdr, press **Ctrl+B**, then
-  **Q**. The agents keep working.
-- **Reopen it:** run `factory start` again in the same project.
+- **Leave it running in the background:** press Ctrl-C where `factory start`
+  (or `factory dashboard`) is running, or close that terminal: the dashboard
+  closes, the agents keep working. In Herdr, press **Ctrl+B**, then **Q**.
+- **Reopen it:** `factory dashboard`, or run `factory start` again in the
+  same project.
+- **Restart it:** RESTART on the control unit, or `factory restart`.
 - **Stop everything:** `factory stop` stops the agents, the broker and the
   dispatch bridge. Sandboxes and their state are kept.
 - **After a reboot:** `factory start`.

@@ -25,3 +25,7 @@ body { color: var(--matrix); font-family: "VT323", ui-monospace, Menlo, Consolas
   color: #000500; background: var(--matrix); border: 0; border-radius: 3px; padding: 6px 14px 4px; box-shadow: 0 0 10px var(--matrix-glow); }
 .power:focus-visible { outline: 2px solid var(--matrix-pale); outline-offset: 3px; }
 .power:disabled { opacity: .5; cursor: default; }
+/* Service (a restart or update from the control unit): the banner pulses while the set waits */
+.off.service .banner { animation: svc-pulse 1.6s ease-in-out infinite; }
+@keyframes svc-pulse { 50% { opacity: .45; box-shadow: none; } }
+@media (prefers-reduced-motion: reduce) { .off.service .banner { animation: none; } }

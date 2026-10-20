@@ -5,7 +5,9 @@ Passdesk Pro records each held push or pull request as a card under the
 broker state directory (approvals/pending/<id>.json) and waits for a
 decision file (approvals/decisions/<id>.json) that this console writes. It
 runs on the host with the system Python (3.9 on macOS), standard library
-only, and touches nothing but those files.
+only, and touches nothing but those files. The dashboard's control unit
+(scripts/dashboard_controls.py) writes decisions through write_decision()
+here, so both write the same record.
 
     factory approvals                      pending cards
     factory approvals show <id>
@@ -17,11 +19,19 @@ only, and touches nothing but those files.
 
 import argparse
 import getpass
+import hashlib
 import json
 import os
+import re
 import sys
+import tempfile
 import time
 from pathlib import Path
+
+
+# What a card id may be before it names a file (decisions/<id>.json). Passdesk
+# Pro's ids fit; anything else is refused rather than joined onto a path.
+CARD_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
 
 
 def default_state():
@@ -37,7 +47,7 @@ def read_cards(state):
             card = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             continue
-        if isinstance(card, dict) and card.get("id"):
+        if isinstance(card, dict) and isinstance(card.get("id"), str) and card["id"]:
             cards.append(card)
     return cards
 
@@ -100,6 +110,51 @@ def cmd_show(state, args):
     return 0
 
 
+def card_fingerprint(card):
+    """A short public stand-in for the card's nonce: the first 16 hex digits of
+    sha256(id NUL nonce). The dashboard's control unit sends it back with a
+    decision, so a decision meant for one card never lands on a newer card
+    with the same id; the nonce itself never leaves this machine's files."""
+    raw = "{}\0{}".format(card.get("id") or "", card.get("nonce") or "")
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
+
+
+def write_decision(state, card, verdict, approver, reason=""):
+    """Write the decision file Passdesk Pro waits for (approvals/decisions/<id>.json),
+    atomically (a temporary file, then os.replace). Used by this console and
+    by the dashboard's control unit, so both write exactly the same record.
+    Returns the decision."""
+    if verdict not in ("approve", "decline"):
+        raise ValueError("verdict must be approve or decline")
+    if not isinstance(card.get("id"), str) or not CARD_ID.fullmatch(card["id"]):
+        raise ValueError("not a card id: {!r}".format(card.get("id")))
+    # The nonce ties the decision to this card: a later card with the same id
+    # (the same push, re-requested after this one expired) needs a new decision.
+    decision = {"id": card["id"], "nonce": card.get("nonce"), "decision": verdict, "approver": approver,
+                "reason": reason or "", "ts": time.time()}
+    path = state / "approvals" / "decisions" / "{}.json".format(card["id"])
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # A temporary file of its own (two people deciding at once must not share
+    # one), in the same folder so os.replace is atomic; removed on failure.
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".{}.".format(card["id"]), suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(json.dumps(decision, indent=2) + "\n")
+        os.chmod(tmp, 0o644)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+    return decision
+
+
+def default_approver():
+    return os.environ.get("USER") or getpass.getuser()
+
+
 def decide(state, args, verdict):
     card = find(state, args.id)
     if not card:
@@ -111,16 +166,12 @@ def decide(state, args, verdict):
     if verdict == "decline" and not args.reason:
         print("give the agent a reason: --reason \"...\"", file=sys.stderr)
         return 1
-    approver = args.as_name or os.environ.get("USER") or getpass.getuser()
-    # The nonce ties the decision to this card: a later card with the same id
-    # (the same push, re-requested after this one expired) needs a new decision.
-    decision = {"id": card["id"], "nonce": card.get("nonce"), "decision": verdict, "approver": approver,
-                "reason": args.reason or "", "ts": time.time()}
-    path = state / "approvals" / "decisions" / "{}.json".format(card["id"])
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(json.dumps(decision, indent=2) + "\n", encoding="utf-8")
-    os.replace(tmp, path)
+    approver = args.as_name or default_approver()
+    try:
+        write_decision(state, card, verdict, approver, args.reason)
+    except ValueError as e:
+        print("cannot decide {}: {}".format(card["id"], e), file=sys.stderr)
+        return 1
     print("{} {} as {}: {}".format("approved" if verdict == "approve" else "declined", card["id"], approver,
                                    one_line(card)))
     if verdict == "approve":

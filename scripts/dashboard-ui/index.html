@@ -62,11 +62,13 @@
 
   </div>
 
-  <aside class="rail" aria-label="Gate, spend and events">
-    <section class="plate mod" aria-labelledby="gate-h">
+  <aside class="rail" id="rail" aria-label="Gate, spend and events">
+    <section class="plate mod gate-mod" aria-labelledby="gate-h">
       <div class="mod-h"><span class="silk" id="gate-h">Write gate</span><span class="right"><span class="led" id="gate-led"></span><span class="silk" id="gate-state">Clear</span></span></div>
       <div class="lcd gate-lcd" id="gate-lcd" aria-live="polite"></div>
       <p class="silk gate-hint" id="gate-hint"></p>
+      <!-- The control unit (cu.html, the second origin) is framed in here by app.js. -->
+      <div class="cu-slot" id="cu-slot" hidden></div>
     </section>
 
     <section class="plate mod" aria-labelledby="spend-h">
