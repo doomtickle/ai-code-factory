@@ -87,7 +87,7 @@ STATIC = {
 CSP = ("default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; connect-src 'self'; "
        "img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
 COOKIE = "factory_dashboard"  # prefix: the cookie is COOKIE_<port> (see cookie_name)
-TAIL = 10          # transcript lines per lane in /api/state
+TAIL = 40          # transcript lines per lane in /api/state (taller lane screens)
 FULL = 1500        # transcript lines per lane in /api/lane
 EVENTS = 80        # event printer lines
 VERDICT = re.compile(r"^- Verdict: (\S+)", re.M)

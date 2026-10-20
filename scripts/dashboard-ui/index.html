@@ -64,26 +64,27 @@
       <div class="lanes" id="lanes"></div>
     </section>
 
-    <aside class="rail">
-      <section class="plate mod" aria-labelledby="gate-h">
-        <div class="mod-h"><span class="silk" id="gate-h">Write gate</span><span class="right"><span class="led" id="gate-led"></span><span class="silk" id="gate-state">Clear</span></span></div>
-        <div class="lcd gate-lcd" id="gate-lcd" aria-live="polite"></div>
-        <p class="silk gate-hint" id="gate-hint"></p>
-      </section>
-
-      <section class="plate mod" aria-labelledby="spend-h">
-        <div class="mod-h"><span class="silk" id="spend-h">Spend / hour</span><span class="right silk" id="spend-sub"></span></div>
-        <div class="spend-row"><div class="bargraph" id="bargraph" role="img" aria-label="Spend per hour today"></div></div>
-        <div class="roles" id="roles"></div>
-      </section>
-
-      <section class="plate mod printer" aria-labelledby="print-h">
-        <div class="mod-h"><span class="silk" id="print-h">Event printer</span><span class="right silk" id="print-sub"></span></div>
-        <div class="paper-well"><div class="paper" id="paper"></div></div>
-        <div class="head-bar"><i></i></div>
-      </section>
-    </aside>
   </div>
+
+  <aside class="rail" aria-label="Gate, spend and events">
+    <section class="plate mod" aria-labelledby="gate-h">
+      <div class="mod-h"><span class="silk" id="gate-h">Write gate</span><span class="right"><span class="led" id="gate-led"></span><span class="silk" id="gate-state">Clear</span></span></div>
+      <div class="lcd gate-lcd" id="gate-lcd" aria-live="polite"></div>
+      <p class="silk gate-hint" id="gate-hint"></p>
+    </section>
+
+    <section class="plate mod" aria-labelledby="spend-h">
+      <div class="mod-h"><span class="silk" id="spend-h">Spend / hour</span><span class="right silk" id="spend-sub"></span></div>
+      <div class="spend-row"><div class="bargraph" id="bargraph" role="img" aria-label="Spend per hour today"></div></div>
+      <div class="roles" id="roles"></div>
+    </section>
+
+    <section class="plate mod printer" aria-labelledby="print-h">
+      <div class="mod-h"><span class="silk" id="print-h">Event printer</span><span class="right silk" id="print-sub"></span></div>
+      <div class="paper-well"><div class="paper" id="paper"></div></div>
+      <div class="head-bar"><i></i></div>
+    </section>
+  </aside>
 </div>
 
 <div class="scrim" id="scrim" hidden>

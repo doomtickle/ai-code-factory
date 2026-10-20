@@ -84,17 +84,13 @@
     r.card.setAttribute("aria-label", `Open lane ${name}`);
     const top = el("div", "lane-top");
     r.led = el("span", "led"); r.tag = el("span", "state-tag"); r.key = el("span", "keycap key");
-    top.append(r.led, el("span", "lane-name", name), r.tag, r.key);
     r.lcd = el("div", "lcd lcd-text"); r.lcdKey = null;
     const stats = el("div", "lane-stats");
-    const stat = label => { const s = el("div", "stat"); const v = el("span", "val"); s.append(el("span", "silk", label), v); stats.append(s); return v; };
+    const stat = label => { const s = el("div", "stat"); s.title = label; const v = el("span", "val"); s.append(el("span", "silk", label), v); stats.append(s); return v; };
     r.model = stat("Model"); r.cost = stat("Cost"); r.ctx = stat("Ctx");
-    const timer = el("div", "stat timer");
-    r.timerLabel = el("span", "silk");
     r.tbox = el("div", "lcd seg-box"); r.tbox.dataset.name = name; r.segText = null;
-    timer.append(r.timerLabel, r.tbox);
-    stats.append(timer);
-    r.card.append(top, r.lcd, stats);
+    top.append(r.led, el("span", "lane-name", name), r.tag, stats, r.tbox, r.key);
+    r.card.append(top, r.lcd);
     r.card.addEventListener("click", () => openMon(name));
     return r;
   }
@@ -120,11 +116,13 @@
     setText(r.model, lane.model || "--");
     setText(r.cost, usd(lane.cost));
     setText(r.ctx, ktok(lane.context_tokens));
-    setText(r.timerLabel, lane.state === "running" || lane.state === "held" ? "Elapsed" : "Took");
+    r.tbox.title = lane.state === "running" || lane.state === "held" ? "Elapsed" : "Took";
   }
 
   function renderLanes() {
     const box = $("lanes");
+    const n = state.lanes.length;
+    box.style.setProperty("--cols", String(n <= 2 ? Math.max(n, 1) : n <= 4 ? 2 : n <= 6 ? 3 : 4));
     const names = new Set(state.lanes.map(l => l.name));
     for (const [name, r] of cards) if (!names.has(name)) { r.card.remove(); cards.delete(name); }
     state.lanes.forEach((lane, i) => {
