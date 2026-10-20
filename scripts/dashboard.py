@@ -32,6 +32,8 @@ runs, and nothing else:
     this repo's bin/factory), its output in dashboard/actions/<time>-<action>.log.
     Preparing UPDATE runs `<factory> update --plan` (read-only but for a
     hook-free `git fetch` of the factory checkout) to show what it would do.
+  - DIAG, after the same confirm step: the fixed argv `<factory> doctor`
+    (read-only), its output logged the same way. Terminal 0 stays attached.
 
 With --coordinator NAME it also serves Terminal 0, the Coordinator's live
 terminal (dashboard_term.py): one fixed argv, `sbx run --name NAME`, in a PTY

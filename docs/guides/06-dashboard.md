@@ -161,9 +161,15 @@ you don't approve something you haven't seen.
 Stands in for: `factory approvals`, `factory approvals approve <id>` and
 `factory approvals decline <id> --reason "..."`.
 
-### Restart or update the factory
+### Diagnose, restart or update the factory
 
-The **SERVICE** row has two keys. Neither runs on the first press.
+The **SERVICE** row has three keys. None runs on the first press.
+
+- **DIAG** runs `factory doctor`: it checks this machine, its tools, Docker,
+  the sandboxes and the gateway, and prints the fix for each problem. It
+  changes nothing, so it cancels no jobs, drops no held writes and leaves
+  Terminal 0 attached. Its report ends with NO PROBLEMS FOUND or PROBLEMS
+  FOUND; fix what it lists, then press DIAG again.
 
 - **RESTART** runs `factory restart`. First the unit shows what it will
   cancel: the running jobs and the held writes it drops.
@@ -172,8 +178,8 @@ The **SERVICE** row has two keys. Neither runs on the first press.
   update --plan`), plus the jobs and held writes it drops.
 
 Only **CONFIRM** on that screen starts the command. Its output scrolls on the
-same screen, and **LOG** shows the last run again later. While it runs,
-Terminal 0 hangs up, and it reattaches afterwards if it was attached and the
+same screen, and **LOG** shows the last run again later. One runs at a time.
+While RESTART or UPDATE runs, Terminal 0 hangs up, and it reattaches afterwards if it was attached and the
 command succeeded. If an update changed the dashboard itself, the unit asks
 you to reload the page (or to restart `factory dashboard`, if its server code
 changed).
@@ -185,7 +191,8 @@ terminal.
 
 The **SETUP** plate is a placeholder; settings will go there.
 
-Stands in for: `factory restart`, `factory update` and `factory update --plan`.
+Stands in for: `factory doctor`, `factory restart`, `factory update` and
+`factory update --plan`.
 
 ## Spend and the event printer
 
@@ -219,12 +226,12 @@ screen first to use the dashboard's keys.
 ## What still needs a terminal
 
 The dashboard covers watching, talking to the Coordinator, approving, and
-restarting or updating. Run these in a terminal:
+diagnosing, restarting or updating. Run these in a terminal:
 
 | Command | Why it isn't on the dashboard |
 |---|---|
 | `factory start`, `factory stop` | Starting the factory on a project, and stopping it. |
-| `factory status`, `factory doctor` | A full health check (the lamps give only the summary). |
+| `factory status` | The full status (the lamps give only the summary; DIAG runs the health check). |
 | `factory secret ...` | Credentials never go through the browser. |
 | `factory role new`, `factory roles` | Roles and their kits are part of the security boundary. |
 | `factory reset`, `factory setup` | They remove sandboxes or install tools, and may ask for a password. |
@@ -236,8 +243,8 @@ It is local: it listens only on `127.0.0.1`, refuses any request without
 this run's token, and makes no network connection of its own. Apart from
 Terminal 0 and the control unit it only reads the factory's state folder.
 The control unit can write only a decision file (APPROVE, DECLINE) and its
-action logs, and run only `factory restart`, `factory update --yes` and
-`factory update --plan`, each after a confirm screen. The README's
+action logs, and run only `factory doctor`, `factory restart`, `factory
+update --yes` and `factory update --plan`, each after a confirm screen. The README's
 [Dashboard](../../README.md#dashboard) section has the details.
 
 ## Next steps

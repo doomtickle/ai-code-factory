@@ -803,6 +803,42 @@ class ActionTests(unittest.TestCase):
         e.controls.digests = dc.dashboard_digests(e.scripts)
         self.assertEqual(update([e.scripts / "dashboard_term.py"]), "server")
 
+    def test_prepare_doctor_stops_nothing(self):
+        # DIAG needs no bound project, and warns of no jobs or held writes: it stops nothing.
+        e = self.env
+        code, out, _ = self.prepare("doctor")
+        self.assertEqual(code, 200, out)
+        self.assertEqual((out["action"], out["jobs"], out["held"], out["commits"], out["plan_error"]),
+                         ("doctor", [], [], [], None))
+        self.assertEqual(e.argv(), [])  # prepare ran nothing
+
+    def test_doctor_runs_and_reports_problems(self):
+        e = self.env
+        (e.dir / "exit").write_text("1")  # the doctor's "problem(s) found"
+        token = self.prepare("doctor")[1]["confirm"]
+        self.assertEqual(self.run_action("update", token)[0], 403)  # a doctor token runs only the doctor
+        token = self.prepare("doctor")[1]["confirm"]
+        self.assertEqual(self.run_action("doctor", token)[0], 202)
+        self.assertTrue(e.controls.wait())
+        self.assertEqual(e.argv(), ["doctor"])
+        out = e.post("log", {"offset": 0})[1]
+        self.assertEqual((out["phase"], out["exit"], out["reload"]), ("failed", 1, "none"))
+        self.assertIn("stdin=eof", out["text"])
+        logs = list((e.fx.state / "dashboard" / "actions").glob("*-doctor.log"))
+        self.assertEqual(len(logs), 1)
+        self.assertEqual(oct(logs[0].stat().st_mode & 0o777), "0o600")
+
+    def test_one_action_at_a_time_includes_doctor(self):
+        e = self.env
+        e.bind()
+        (e.dir / "block").write_text("")
+        token = self.prepare("doctor")[1]["confirm"]
+        self.assertEqual(self.run_action("doctor", token)[0], 202)
+        self.assertEqual(self.prepare("restart")[0], 409)
+        self.assertEqual(self.prepare("doctor")[0], 409)
+        (e.dir / "block").unlink()
+        self.assertTrue(e.controls.wait())
+
     def test_factory_that_cannot_start(self):
         e = self.env
         token = self.prepare("update")[1]["confirm"]
@@ -817,6 +853,7 @@ class ActionTests(unittest.TestCase):
         c = self.env.controls
         self.assertEqual(c.argv("restart"), [str(self.env.factory), "restart"])
         self.assertEqual(c.argv("update"), [str(self.env.factory), "update", "--yes"])
+        self.assertEqual(c.argv("doctor"), [str(self.env.factory), "doctor"])
         self.assertEqual(dc.FACTORY, Path(dc.__file__).resolve().parent.parent / "bin" / "factory")
 
 
@@ -992,6 +1029,17 @@ class TermAroundActionTests(unittest.TestCase):
         time.sleep(0.2)
         self.assertFalse(t.running())
 
+    def test_doctor_leaves_the_terminal_alone(self):
+        t = self.term
+        t.power_on()
+        self.start("doctor")
+        self.assertTrue(t.running())
+        self.assertIsNone(t.held)  # POWER ON still works while it runs
+        (self.env.dir / "block").unlink()
+        self.assertTrue(self.c.wait())
+        self.assertTrue(t.running())
+        self.assertIsNone(t.held)
+
     def test_hang_up_keeps_the_term_usable(self):
         t = self.term
         t.hang_up("service")  # nothing attached: nothing to do
@@ -1129,6 +1177,14 @@ class RealPageTests(unittest.TestCase):
             self.assertNotIn(sink, js, f"cu.js uses {sink}")
         css = (UI / "cu.css").read_text() if (UI / "cu.css").exists() else ""
         self.assertIsNone(re.search(r"https?://", html + css), "network URL")
+
+    def test_service_keys(self):
+        html = (UI / "cu.html").read_text()
+        row = html[html.index('<div class="service"'):html.index('<div class="blank"')]
+        self.assertEqual(re.findall(r'id="svc-([a-z]+)"', row), ["doctor", "restart", "update", "log"])
+        js = (UI / "cu.js").read_text()
+        self.assertIn('doctor: "factory doctor"', js)
+        self.assertIn('$("svc-doctor").addEventListener("click", () => openService("doctor"));', js)
 
     def test_inspect_key_has_its_own_row(self):
         # INSPECT never shares the reason tape's row (it squeezed it), and the hold

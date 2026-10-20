@@ -13,7 +13,7 @@
 // the broker's state, checks it against the card's digest, parses and sanitises
 // it, so this page only draws lines with textContent; nothing from the patch
 // goes into an attribute, a URL, a class name or a title.
-// Starting a restart or an update takes two presses: the key asks the server
+// Starting a restart, an update or a diag takes two presses: the key asks the server
 // what would happen (/cu/api/prepare, which runs nothing but `factory update
 // --plan`), and only CONFIRM on that screen sends the single-use token back.
 "use strict";
@@ -267,6 +267,8 @@
     $("svc-restart").disabled = !!fault || !st || run || !bound;
     $("svc-restart").title = st && !bound ? "No project is bound to the factory: start it once with factory start" : "";
     $("svc-update").disabled = !!fault || !st || run;
+    $("svc-doctor").disabled = !!fault || !st || run;
+    setClass($("led-doctor"), `led${run ? " a blink" : ""}`);
     setClass($("led-restart"), `led${run ? " a blink" : ""}`);
     setClass($("led-update"), `led${run ? " a blink" : ""}`);
     const showLog = !fault && !!a.name && a.phase !== "idle";
@@ -411,10 +413,13 @@
   let svc = null, svcSeq = 0, lastKey = null;
   const P = (cls, text) => el("p", cls, text);
   const H = (text, tag) => { const h = el("h5", null, text); if (tag) h.append(el("span", "tag", tag)); return h; };
-  const RUNS = { restart: "factory restart", update: "factory update --yes" };
+  const RUNS = { restart: "factory restart", update: "factory update --yes", doctor: "factory doctor" };
+  const TITLES = { restart: "Restart the factory", update: "Update the factory", doctor: "Diagnose the factory" };
+  const NAMES = { restart: "restart", update: "update", doctor: "diag" };  // what the keys say
+  const keyName = action => NAMES[action] || str(action);
 
   function head(action, tag, tagCls, led, note) {
-    setText($("con-title"), `SERVICE · ${action.toUpperCase()}`);
+    setText($("con-title"), `SERVICE · ${keyName(action).toUpperCase()}`);
     const t = $("con-state");
     setClass(t, `state-tag st-${tagCls}`);
     setText(t, tag);
@@ -436,12 +441,12 @@
     svc = { action, seq, token: null, deadline: 0, state: "checking", onGo: null };
     go("confirm");
     head(action, "Check", "check", "a blink");
-    keys("Cancel", `Confirm ${action}`, false);
+    keys("Cancel", `Confirm ${keyName(action)}`, false);
     conBody.replaceChildren(
-      P("banner", action === "update" ? "Update the factory" : "Restart the factory"),
+      P("banner", TITLES[action]),
       P("cursor", action === "update"
         ? "▶ Fetching the factory's upstream and comparing the sandboxes with it (this can take up to a minute and a half)…"
-        : "▶ Checking what a restart would stop…"));
+        : action === "doctor" ? "▶ Getting ready…" : "▶ Checking what a restart would stop…"));
     conBody.scrollTop = 0;
     moreCue();
     cancelKey.focus();
@@ -460,7 +465,20 @@
     svc.deadline = Date.now() + Math.max(0, Number(d.expires_in) || 0) * 1000;
     svc.state = "ready";
     svc.onGo = runAction;
-    const out = [P("banner", action === "update" ? "Update the factory" : "Restart the factory")];
+    const out = [P("banner", TITLES[action])];
+    if (action === "doctor") {
+      out.push(P(null, "▶ Diag runs the factory's doctor: it checks this machine, its tools, Docker, the sandboxes and the gateway, and prints the fix for each problem. It changes nothing."));
+      if (d.project) out.push(P("ind k-dim", `  project: ${str(d.project)}`));
+      out.push(P("ind k-cmd", `  runs exactly: ${RUNS[action]}`));
+      out.push(P("ind k-dim", "  Terminal 0 stays attached. Running jobs and held writes carry on."));
+      out.push(el("div", "gap"), P("k-dim", "Nothing has run yet. CONFIRM DIAG starts it; CANCEL or Esc backs out."));
+      conBody.replaceChildren(...out);
+      conBody.scrollTop = 0;
+      moreCue();
+      keys("Cancel", "Confirm diag", true);
+      tickConfirm();
+      return;
+    }
     if (action === "update") {
       out.push(P(null, "▶ Update pulls the factory's code, rebuilds what changed, recreates the sandboxes listed below, then starts the factory again."));
     } else {
@@ -550,7 +568,7 @@
     const { action, token, seq } = svc;
     svc.state = "starting";
     svc.token = null;  // single use, whatever the answer
-    keys("Cancel", `Confirm ${action}`, false);
+    keys("Cancel", `Confirm ${keyName(action)}`, false);
     let res;
     try {
       res = await api("run", { action, confirm: token });
@@ -602,9 +620,13 @@
     const name = str(logName);
     if (phase === "done" || phase === "failed") {
       const ok = phase === "done";
-      head(name, ok ? "Done" : "Failed", ok ? "done" : "failed", ok ? "g" : "r");
+      // The doctor exits 1 when it finds problems: that's its answer, not a failure.
+      const found = name === "doctor" && exit === 1;
+      const word = ok ? (name === "doctor" ? "NO PROBLEMS FOUND" : "FINISHED") : found ? "PROBLEMS FOUND" : "FAILED";
+      head(name, ok ? "Done" : found ? "Problems" : "Failed", ok ? "done" : "failed", ok ? "g" : "r");
       logStatus.replaceChildren(P(ok ? "k-ok" : "k-err",
-        `${ok ? "✓" : "✕"} ${name.toUpperCase()} ${ok ? "FINISHED" : "FAILED"} · exit ${exit == null ? "unknown" : str(exit)}`));
+        `${ok ? "✓" : "✕"} ${keyName(name).toUpperCase()} ${word} · exit ${exit == null ? "unknown" : str(exit)}`));
+      if (found) logStatus.append(P("k-dim", "Each problem has its fix indented under it. Fix them, then press DIAG again."));
       if (reload === "page") {
         logStatus.append(P("k-warn", "The dashboard's page changed. Press RELOAD to load the new one."));
         svc.onGo = () => tell("cu:reload");
@@ -966,6 +988,7 @@
   goKey.addEventListener("click", () => { if (svc && svc.onGo && !goKey.disabled) svc.onGo(); });
   $("svc-restart").addEventListener("click", () => openService("restart"));
   $("svc-update").addEventListener("click", () => openService("update"));
+  $("svc-doctor").addEventListener("click", () => openService("doctor"));
   $("svc-log").addEventListener("click", () => { lastKey = $("svc-log"); openLog(false); });
 
   // The monitor and the inspector are modal: Esc backs out, Tab stays inside.
