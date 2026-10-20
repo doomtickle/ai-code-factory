@@ -171,7 +171,7 @@
     $("gate-state").textContent = cards.length ? `Held · ${cards.length}` : "Clear";
     gateCd = null;
     if (!cards.length) {
-      lcd.replaceChildren(el("div", "big", "No writes held"));
+      lcd.replaceChildren(el("div", cuFrame ? "one" : "big", "No writes held"));
       $("gate-hint").textContent = "";
       return;
     }
@@ -191,14 +191,14 @@
     const role = c.role || c.principal;
     if (cuFrame) {
       // The control unit under this display shows every card in full and has the
-      // keys: here, just a summary of what is waiting.
-      const head = gateCd ? countdown(`${cards.length} held · next expires `) : el("div", null, `${cards.length} held`);
-      head.className = "big";
-      const who = el("div", "one", cards.length > 1 ? `${c.tool} · ${role} + ${cards.length - 1} more` : `${c.tool} · ${role}`);
-      who.title = who.textContent;
-      lcd.replaceChildren(head, who);
+      // keys: here, one line of what is waiting.
+      const tail = ` · ${c.tool} · ${role}${cards.length > 1 ? ` +${cards.length - 1}` : ""}`;
+      const one = gateCd ? countdown(`${cards.length} held · next `, tail) : el("div", null, `${cards.length} held${tail}`);
+      one.className = "one";
+      one.title = `${cards.length} held${tail}`;
+      lcd.replaceChildren(one);
       tickGate();
-      $("gate-hint").textContent = "Decide on the control unit ▼";
+      $("gate-hint").textContent = "";
       return;
     }
     const what = c.tool === "git_push" ? `${c.commits ?? "?"} commits · ${c.file_count ?? "?"} files` : (c.title || c.tool);
@@ -578,6 +578,7 @@
     $("cu-slot").append(cuFrame);
     $("cu-slot").hidden = false;
     $("rail").classList.add("has-cu");
+    $("gate-to-cu").hidden = false;
     gateKey = null;  // redraw the gate hint to point at the control unit
   }
   window.addEventListener("message", e => {
