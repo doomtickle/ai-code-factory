@@ -798,12 +798,11 @@ your browser. It shows:
   finished jobs.
 - **Front-panel knobs** under the Coordinator's screen: BRIGHT and CONTRAST
   adjust it; V-HOLD, turned off centre, makes the picture roll like an old
-  set; BLOOM sets the phosphor halo around lit text, from none (fully
-  counter-clockwise) to full (it starts at 25%); and CRT sets the tube's
-  texture on the characters themselves (scanlines, colour fringe, beam
-  softness), from flat to a worn-out tube (it starts at 30%). All five apply
-  to the live terminal too (drag, scroll or use the arrow keys; double-click
-  resets; remembered in your browser).
+  set; and CRT goes from 0, a flat screen, to 10, a full tube (scanlines,
+  aperture grille, colour fringe, beam softness, phosphor glow, rolling band
+  and flicker); it starts at 3. All four apply to the live terminal too (drag,
+  scroll or use the arrow keys; double-click resets; remembered in your
+  browser).
 - **Lamps:** whether the page can reach the dashboard, whether the dispatch
   bridge is running, and whether anything is held.
 

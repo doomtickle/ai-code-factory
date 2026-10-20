@@ -373,24 +373,23 @@
 
   // ---------- front-panel knobs on the Coordinator's monitor
   // BRIGHT and CONTRAST drive CSS filters on the tube; V-HOLD, off-centre, makes the
-  // picture roll like a real set (faster the further you turn it, up or down); BLOOM
-  // turns the phosphor halo around lit text from none (fully counter-clockwise) to
-  // full; CRT turns the tube's texture on the glyphs themselves (scanlines through
-  // them, a red/blue convergence fringe, beam softness and smear, an aperture grille)
-  // from flat (fully counter-clockwise) to a worn-out tube. Drag, scroll or use the arrow keys; double-click or Home resets. Settings
-  // stay in this browser only.
+  // picture roll like a real set (faster the further you turn it, up or down); CRT
+  // goes from 0, a flat screen, to 10, a full tube (scanlines, aperture grille, red/blue
+  // convergence fringe, beam softness, phosphor glow, rolling band, flicker). Drag,
+  // scroll or use the arrow keys; double-click or Home resets. Settings stay in this
+  // browser only.
   const KNOB_KEY = "fc1984-knobs";
   const DETENT = 12;           // V-HOLD locks within this many steps of centre
-  // Each knob's range and its reset value. The centred ones sweep -100..100; BLOOM
-  // sweeps 0..100 and starts a quarter of the way round, so the text is still crisp;
-  // CRT sweeps 0..100 and starts at 30, which is the look the tube had before it.
-  const KNOBS = { bright: [-100, 100, 0], contrast: [-100, 100, 0], vhold: [-100, 100, 0], bloom: [0, 100, 25], crt: [0, 100, 30] };
+  // Each knob's range and its reset value. The centred ones sweep -100..100; CRT
+  // sweeps 0 (flat, no tube at all) to 10 (a full, worn CRT) and starts at 3.
+  const KNOBS = { bright: [-100, 100, 0], contrast: [-100, 100, 0], vhold: [-100, 100, 0], crt: [0, 10, 3] };
   const knobVals = {};
   for (const k in KNOBS) knobVals[k] = KNOBS[k][2];
   const clampKnob = (name, v) => Math.max(KNOBS[name][0], Math.min(KNOBS[name][1], v));
   try {
     const saved = JSON.parse(localStorage.getItem(KNOB_KEY) || "{}");
-    for (const k in knobVals) if (saved && Number.isFinite(saved[k])) knobVals[k] = clampKnob(k, saved[k]);
+    // A value outside the knob's range is from an older layout of the panel: keep the default.
+    for (const k in knobVals) if (saved && Number.isFinite(saved[k]) && saved[k] === clampKnob(k, saved[k])) knobVals[k] = saved[k];
   } catch (e) { /* no storage: defaults */ }
   const tube = $("coord-crt"), roll = $("crt-roll"), ghost = $("crt-ghost"), crtBody = $("crt-body");
   const reduceMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -408,53 +407,44 @@
     const speed = Math.abs(v) > 70 ? "fast" : Math.abs(v) > 35 ? "steady" : "slow";
     return `rolling ${v > 0 ? "up" : "down"}, ${speed}`;
   }
-  // BLOOM: the live terminal is a cross-origin frame this page can't style inside,
-  // so the halo is drawn on the frame's pixels from out here: stacked drop-shadows
-  // on a transparent element follow the lit glyphs. 0 is no filter at all.
-  function bloomFilter(v) {
-    if (v <= 0) return "none";
-    const b = v / 100;
-    const glow = (r, a) => `drop-shadow(0 0 ${r.toFixed(1)}px rgba(0, 255, 65, ${a.toFixed(2)}))`;
-    return `${glow(0.6 + 3.4 * b, 0.25 + 0.6 * b)} ${glow(3 + 15 * b, 0.12 + 0.58 * b)}`;
-  }
-  // CRT: up to the default it fades in the tube's usual scanlines and convergence
-  // fringe; past it the scanlines thicken and darken, the fringe widens, an aperture
-  // grille appears and the beam softens and smears sideways. The scanlines and grille
-  // are the glass layer (.crt::after); the live frame's glyphs get the SVG filter
-  // #crt-glyph (none at 0); the placeholder gets the same fringe as a text-shadow.
-  const crtNode = id => document.getElementById(id);
-  const glyph = { rc: crtNode("crt-glyph-rc"), bc: crtNode("crt-glyph-bc"), r: crtNode("crt-glyph-r"), b: crtNode("crt-glyph-b"),
-    blur: crtNode("crt-glyph-blur"), mix: crtNode("crt-glyph-mix") };
-  function crtTexture(v) {
-    const home = KNOBS.crt[2];
-    const lo = Math.min(v, home) / home, hi = Math.max(0, v - home) / (100 - home);  // 0..1 each side of the default
-    const dx = 0.85 * lo + 1.75 * hi, fa = 0.3 * lo + 0.35 * hi, soft = 0.5 * hi;
-    const f = n => n.toFixed(3);
-    tube.style.setProperty("--scan", f(0.22 * lo + 0.33 * hi));
-    tube.style.setProperty("--scan-w", `${f(1 + 0.5 * hi)}px`);
-    tube.style.setProperty("--mask", f(0.2 * hi));
-    tube.style.setProperty("--crt-fx", v <= 0 ? "0 0 0 transparent" :
-      `-${f(dx)}px 0 rgba(255, 40, 90, ${f(fa * 1.2)}), ${f(dx)}px 0 rgba(40, 150, 255, ${f(fa * 1.2)}), ` +
-      `${f(1.4 * hi)}px 0 ${f(1.6 * hi)}px rgba(0, 255, 65, ${f(0.4 * hi)})`);
-    if (v <= 0 || !glyph.mix) return "";
-    glyph.rc.setAttribute("values", `0 0 0 0 1  0 0 0 0 .157  0 0 0 0 .353  0 0 0 ${f(fa)} 0`);
-    glyph.bc.setAttribute("values", `0 0 0 0 .157  0 0 0 0 .588  0 0 0 0 1  0 0 0 ${f(fa)} 0`);
-    glyph.r.setAttribute("dx", f(-dx));
-    glyph.b.setAttribute("dx", f(dx));
-    glyph.blur.setAttribute("stdDeviation", `${f(1.3 * hi)} ${f(0.35 * hi)}`);
-    glyph.mix.setAttribute("k2", f(soft));
-    glyph.mix.setAttribute("k3", f(1 - 0.3 * hi));
-    return "url(#crt-glyph)";
+  // CRT: one dial for everything that makes the screen look like a tube, linear from
+  // 0 (flat: no scanlines, fringe, glow, softness, band or flicker) to 10 (full). The
+  // scanlines, grille and rolling band are the glass layers (.crt::after/::before);
+  // the text effects go on the live frame as CSS filters and on the placeholder as
+  // a text-shadow (see app.css).
+  function crtLook(v) {
+    const t = v / KNOBS.crt[1];
+    const f = n => n.toFixed(2);
+    tube.classList.toggle("flat", t <= 0);
+    tube.style.setProperty("--scan", f(0.36 * t));
+    tube.style.setProperty("--scan-w", `${f(1 + 0.3 * t)}px`);
+    tube.style.setProperty("--mask", f(0.08 * t));
+    tube.style.setProperty("--band", f(Math.min(1, t * 1.6)));
+    if (t <= 0) {
+      tube.style.setProperty("--crt-fx", "0 0 0 transparent");
+      tube.style.setProperty("--soft-fx", "none");
+      tube.style.setProperty("--term-fx", "none");
+      return;
+    }
+    const dx = 0.3 + 1.7 * t, fa = 0.2 + 0.4 * t;          // convergence fringe
+    const soft = 0.35 * t;                                            // beam softness
+    const g1 = 0.8 + 1.6 * t, a1 = 0.15 + 0.4 * t;                     // tight phosphor glow
+    const g2 = 4 + 7 * t, a2 = 0.05 + 0.2 * t;                       // wide halo
+    const red = `rgba(255, 40, 90, ${f(fa)})`, blue = `rgba(40, 150, 255, ${f(fa)})`;
+    const glow = a => `rgba(0, 255, 65, ${f(a)})`;
+    tube.style.setProperty("--crt-fx",
+      `-${f(dx)}px 0 ${red}, ${f(dx)}px 0 ${blue}, 0 0 ${f(g1)}px ${glow(a1)}, 0 0 ${f(g2)}px ${glow(a2)}`);
+    tube.style.setProperty("--soft-fx", soft > 0.05 ? `blur(${f(soft * 0.6)}px)` : "none");
+    tube.style.setProperty("--term-fx", [
+      `drop-shadow(-${f(dx)}px 0 ${red})`, `drop-shadow(${f(dx)}px 0 ${blue})`,
+      soft > 0.05 ? `blur(${f(soft)}px)` : "",
+      `drop-shadow(0 0 ${f(g1)}px ${glow(a1)})`, `drop-shadow(0 0 ${f(g2)}px ${glow(a2)})`,
+    ].filter(Boolean).join(" "));
   }
   function applyKnobs() {
     tube.style.setProperty("--bright", (1 + knobVals.bright / 100 * 0.6).toFixed(3));
     tube.style.setProperty("--contrast", (1 + knobVals.contrast / 100 * 0.5).toFixed(3));
-    const bloom = bloomFilter(knobVals.bloom), glyphFx = crtTexture(knobVals.crt);
-    tube.style.setProperty("--bloom-fx", bloom);
-    tube.style.setProperty("--term-fx", [glyphFx, bloom === "none" ? "" : bloom].filter(Boolean).join(" ") || "none");
-    // The placeholder's faint wide text glow is part of the bloom too: it fades out
-    // below the default, so fully counter-clockwise is crisp.
-    tube.style.setProperty("--bloom", `color-mix(in srgb, var(--c) ${Math.round(24 * Math.min(1, knobVals.bloom / 25))}%, transparent)`);
+    crtLook(knobVals.crt);
     const v = knobVals.vhold, off = Math.abs(v) >= DETENT;
     const wasRolling = roll.classList.contains("rolling");
     if (off && !wasRolling && !roll.classList.contains("live")) syncGhost();
@@ -469,7 +459,7 @@
       const name = k.dataset.knob, val = knobVals[name], [lo, hi] = KNOBS[name];
       k.querySelector("i").style.setProperty("--rot", `${(-135 + (val - lo) / (hi - lo) * 270).toFixed(1)}deg`);
       k.setAttribute("aria-valuenow", String(Math.round(val)));
-      k.setAttribute("aria-valuetext", name === "vhold" ? holdText(val) : name === "bloom" ? (val ? `${Math.round(val)}%` : "off") : name === "crt" ? (val ? `${Math.round(val)}%` : "flat") : `${Math.round(val)}`);
+      k.setAttribute("aria-valuetext", name === "vhold" ? holdText(val) : name === "crt" ? (val ? `${Math.round(val)} of 10` : "flat") : `${Math.round(val)}`);
     });
     try { localStorage.setItem(KNOB_KEY, JSON.stringify(knobVals)); } catch (e) { /* fine */ }
   }
@@ -480,6 +470,7 @@
   document.querySelectorAll(".knob[data-knob]").forEach(k => {
     const name = k.dataset.knob, [lo, hi, home] = KNOBS[name];
     const travel = (hi - lo) / 200;  // the same drag turns every knob by the same angle
+    const unit = Math.max(1, (hi - lo) / 40);  // one arrow press or wheel notch: 5 of 200, 1 of 10
     let drag = null;
     k.addEventListener("pointerdown", e => {
       if (e.button !== 0) return;
@@ -496,10 +487,10 @@
     const end = () => { drag = null; };
     k.addEventListener("pointerup", end);
     k.addEventListener("pointercancel", end);
-    k.addEventListener("wheel", e => { e.preventDefault(); setKnob(name, knobVals[name] - Math.sign(e.deltaY) * 5); }, { passive: false });
+    k.addEventListener("wheel", e => { e.preventDefault(); setKnob(name, knobVals[name] - Math.sign(e.deltaY) * unit); }, { passive: false });
     k.addEventListener("dblclick", () => setKnob(name, home));
     k.addEventListener("keydown", e => {
-      const step = { ArrowUp: 5, ArrowRight: 5, ArrowDown: -5, ArrowLeft: -5, PageUp: 20, PageDown: -20 }[e.key];
+      const step = { ArrowUp: unit, ArrowRight: unit, ArrowDown: -unit, ArrowLeft: -unit, PageUp: 4 * unit, PageDown: -4 * unit }[e.key];
       if (step != null) { e.preventDefault(); e.stopPropagation(); setKnob(name, knobVals[name] + step); }
       else if (e.key === "Home") { e.preventDefault(); e.stopPropagation(); setKnob(name, home); }
       else if (e.key === "End") { e.preventDefault(); e.stopPropagation(); setKnob(name, hi); }

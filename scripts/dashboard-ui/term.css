@@ -15,7 +15,7 @@ body { color: var(--matrix); font-family: "VT323", ui-monospace, Menlo, Consolas
 #term .xterm-viewport { background: transparent !important; scrollbar-width: thin; scrollbar-color: var(--matrix-dim) transparent; }
 /* Phosphor: a soft glow. The tube's texture on the glyphs (convergence fringe, beam
    softness, smear) is the parent's CRT knob, drawn on this frame from out there. */
-#term .xterm-rows { text-shadow: 0 0 3px var(--matrix-glow); }
+/* No glow in here: the dashboard's CRT dial draws it on this frame from outside, so 0 is flat. */
 .off { position: absolute; inset: 0; padding: 16px 20px; font-size: 1.6rem; line-height: 1.15; display: flex; flex-direction: column; align-items: flex-start; gap: 10px;
   background: rgba(0, 5, 0, .82); text-shadow: 0 0 3px var(--matrix-glow); }
 .off p { margin: 0; white-space: pre-wrap; max-width: 46em; }
