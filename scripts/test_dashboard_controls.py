@@ -2,7 +2,8 @@
 its routes in dashboard_term.py): every refusal of POST /cu/api/* (Host,
 Origin, Sec-Fetch-Site, cookie, key, content type, size, body, methods),
 approve/decline (exact id, gone, changed, expired, reason rules, the decision
-file), the prepare -> run confirm step (single use, expiry, bound to one
+file), INSPECT's patch (digest, symlinks, names, size, fingerprint, the
+response), the prepare -> run confirm step (single use, expiry, bound to one
 action), one action at a time, the action's log, the Coordinator terminal's
 hang-up and hold around an action, the reload digest, and the /cu page's
 iframe gating and CSP.
@@ -27,6 +28,8 @@ from pathlib import Path
 from unittest import mock
 
 import approvals
+import hashlib
+import patchview
 import dashboard as d
 import dashboard_controls as dc
 import dashboard_term as dt
@@ -386,6 +389,235 @@ class DecideTests(unittest.TestCase):
                      {"id": ["pr1"], "fp": fp, "verdict": "approve"}, {"id": "pr1", "fp": 1, "verdict": "approve"}):
             self.assertEqual(self.env.post("decide", body)[0], 400, body)
         self.assertFalse(self.decisions.exists())
+
+
+# --------------------------------------------------------------------------
+# INSPECT: the held push's patch
+
+PATCH = ("commit " + "c" * 40 + "\nAuthor: Dev <dev@example.com>\nDate:   2026-10-20T12:00:00+00:00\n\n"
+         "    Add it\n    \n    commit " + "d" * 40 + "\n\n---\n x.py | 2 +-\n 1 file changed\n\n"
+         "diff --git a/x.py b/x.py\nindex 1..2 100644\n--- a/x.py\n+++ b/x.py\n@@ -1,2 +1,2 @@\n"
+         " ok = 1\n-admin = False\n+admin = True  # \u202e\n")
+
+
+def write_patch(state: Path, text, name=None) -> str:
+    data = text.encode("utf-8") if isinstance(text, str) else text
+    sha = hashlib.sha256(data).hexdigest()
+    folder = state / "broker" / "approvals" / "patches"
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / f"{name or sha}.patch").write_bytes(data)
+    return sha
+
+
+def push_card(state: Path, cid: str, now: float, sha=None, **over):
+    fields = {"tool": "git_push", "branch": "factory/x", "commits": 1, "file_count": 1, "files": ["x.py"]}
+    if sha is not None:
+        fields.update(patch_sha256=sha, patch_bytes=1, patch_truncated=False)
+    fields.update(over)
+    return write_card(state, cid, now, **fields)
+
+
+class PatchTests(unittest.TestCase):
+    def setUp(self):
+        self.env = Env(self.addCleanup)
+        self.state = self.env.fx.state
+        self.patches = self.state / "broker" / "approvals" / "patches"
+
+    def fp(self, cid):
+        path = self.state / "broker" / "approvals" / "pending" / f"{cid}.json"
+        return approvals.card_fingerprint(json.loads(path.read_text()))
+
+    def patch(self, cid, fp=None, **body):
+        return self.env.post("patch", dict({"id": cid, "fp": self.fp(cid) if fp is None else fp}, **body))
+
+    def test_the_patch(self):
+        e = self.env
+        sha = write_patch(self.state, PATCH)
+        push_card(self.state, "p1", e.fx.now, sha)
+        code, out, resp = self.patch("p1")
+        self.assertEqual(code, 200, out)
+        self.assertIsNone(resp.getheader("Access-Control-Allow-Origin"))
+        self.assertEqual(out, patchview.view(PATCH, patch_bytes=len(PATCH.encode()), files_total=1,
+                                             card_files=["x.py"]))
+        self.assertEqual((out["files_missing"], out["files_missing_more"]), ([], 0))
+        self.assertEqual((out["truncated"], out["patch_bytes"], out["files_total"], out["files_shown"]),
+                         (False, len(PATCH.encode()), 1, 1))
+        c = out["commits"][0]
+        self.assertEqual(c["message"], "Add it\n\ncommit " + "d" * 40)
+        f = c["files"][0]
+        self.assertEqual((f["path"], f["status"], f["adds"], f["dels"], f["flags"]), ("x.py", "M", 1, 1, ["bidi"]))
+        self.assertEqual(f["hunks"][0]["lines"][-1], ["+", "admin = True  # ⟨U+202E⟩"])
+        self.assertNotIn("\u202e", json.dumps(out, ensure_ascii=False))
+
+    def test_state_says_which_cards_have_a_patch(self):
+        e = self.env
+        sha = write_patch(self.state, PATCH)
+        push_card(self.state, "p1", e.fx.now, sha)
+        push_card(self.state, "p2", e.fx.now)                       # an older broker: no digest
+        push_card(self.state, "p3", e.fx.now, "../" + "a" * 61)     # not a digest
+        write_card(self.state, "pr1", e.fx.now, patch_sha256=sha)   # a PR card
+        cards = {c["id"]: c for c in e.post("state")[1]["cards"]}
+        self.assertEqual({k: cards[k]["patch"] for k in ("p1", "p2", "p3", "pr1")},
+                         {"p1": True, "p2": False, "p3": False, "pr1": False})
+        self.assertEqual({k: cards[k]["patch_truncated"] for k in ("p1", "p2", "p3", "pr1")},
+                         {"p1": False, "p2": False, "p3": False, "pr1": False})
+        push_card(self.state, "p4", e.fx.now, sha, patch_truncated=True)
+        push_card(self.state, "p5", e.fx.now, sha, patch_truncated="yes")   # only true is true
+        push_card(self.state, "p6", e.fx.now, None, patch_truncated=True)   # no patch: nothing to approve unseen
+        cards = {c["id"]: c for c in e.post("state")[1]["cards"]}
+        self.assertEqual([cards[k]["patch_truncated"] for k in ("p4", "p5", "p6")], [True, False, False])
+        self.assertEqual(set(cards["p1"]), set(dc.CARD_KEYS))
+        self.assertNotIn(sha, json.dumps(e.post("state")[1]))      # the digest itself stays on the server
+        # The main page's state carries no patch fields at all.
+        main = d.Dashboard(self.state, e.fx.roles, "proj").snapshot(e.fx.now)
+        self.assertNotIn("patch", json.dumps(main["gate"]))
+
+    def test_card_rules(self):
+        e = self.env
+        sha = write_patch(self.state, PATCH)
+        push_card(self.state, "p1", e.fx.now, sha)
+        fp = self.fp("p1")
+        self.assertEqual(self.patch("nope", fp=fp)[:2], (409, {"error": "gone"}))
+        self.assertEqual(self.patch("p", fp=fp)[:2], (409, {"error": "gone"}))  # no prefix match
+        self.assertEqual(self.patch("p1", fp="0" * 16)[:2], (409, {"error": "changed"}))
+        for body in ({"id": "p1"}, {"fp": fp}, {"id": ["p1"], "fp": fp}, {"id": "p1", "fp": 5}, {"id": "", "fp": fp}):
+            self.assertEqual(e.post("patch", body)[0], 400, body)
+        push_card(self.state, "p1", e.fx.now, sha, nonce="fresh")  # a retry: same id, new nonce
+        self.assertEqual(self.patch("p1", fp=fp)[:2], (409, {"error": "changed"}))
+        self.assertEqual(self.patch("p1")[0], 200)
+        pending = self.state / "broker" / "approvals" / "pending"
+        (pending / "p1-copy.json").write_text((pending / "p1.json").read_text())
+        self.assertEqual(self.patch("p1")[:2], (409, {"error": "ambiguous"}))
+        push_card(self.state, "old", e.fx.now, sha, expires=e.fx.now - 5)
+        self.assertEqual(self.patch("old")[0], 200)  # an expired hold can still be read
+
+    def test_no_patch(self):
+        e = self.env
+        push_card(self.state, "p2", e.fx.now)
+        self.assertEqual(self.patch("p2")[:2], (404, {"error": "no patch for this card"}))
+        write_card(self.state, "pr1", e.fx.now)
+        self.assertEqual(self.patch("pr1")[:2], (404, {"error": "no patch for this card"}))
+        push_card(self.state, "gone", e.fx.now, "e" * 64)  # pruned, or never written
+        self.assertEqual(self.patch("gone")[0], 404)
+
+    def test_odd_digests(self):
+        e = self.env
+        write_patch(self.state, PATCH)
+        (self.state / "broker" / "secret.patch").write_text("secret")
+        for n, sha in enumerate(("../secret", "../../broker/secret", "A" * 64, "a" * 63, "a" * 65, "a" * 64 + "\n",
+                                 "/etc/passwd", "", 5, ["a" * 64], True, "g" * 64)):
+            push_card(self.state, f"odd{n}", e.fx.now, sha)
+            code, out, _ = self.patch(f"odd{n}")
+            self.assertEqual(code, 400, sha)
+            self.assertEqual(out, {"error": "the card's patch digest is not valid"})
+
+    def test_digest_mismatch(self):
+        e = self.env
+        sha = write_patch(self.state, PATCH)
+        (self.patches / f"{sha}.patch").write_text(PATCH.replace("True", "Fals"))  # same size, other bytes
+        push_card(self.state, "p1", e.fx.now, sha)
+        self.assertEqual(self.patch("p1")[:2], (409, {"error": "patch does not match its card"}))
+        other = write_patch(self.state, "another patch\n")
+        push_card(self.state, "p2", e.fx.now, sha)
+        os.replace(self.patches / f"{other}.patch", self.patches / f"{sha}.patch")
+        self.assertEqual(self.patch("p2")[1], {"error": "patch does not match its card"})
+
+    def test_symlinks_and_odd_files_refused(self):
+        e = self.env
+        outside = Path(e.tmp.name) / "outside.patch"
+        outside.write_text(PATCH)
+        sha = hashlib.sha256(PATCH.encode()).hexdigest()
+        self.patches.mkdir(parents=True)
+        (self.patches / f"{sha}.patch").symlink_to(outside)
+        push_card(self.state, "p1", e.fx.now, sha)
+        self.assertEqual(self.patch("p1")[:2], (409, {"error": "the patch is not a regular file"}))
+        # A symlinked folder on the way, with a matching file behind it.
+        (self.patches / f"{sha}.patch").unlink()
+        self.patches.rmdir()
+        elsewhere = Path(e.tmp.name) / "elsewhere"
+        elsewhere.mkdir()
+        (elsewhere / f"{sha}.patch").write_text(PATCH)
+        self.patches.symlink_to(elsewhere)
+        self.assertEqual(self.patch("p1")[0], 409)
+        self.patches.unlink()
+        # A folder and a FIFO where the file should be (a FIFO must not hang the read).
+        self.patches.mkdir()
+        (self.patches / f"{sha}.patch").mkdir()
+        self.assertEqual(self.patch("p1")[0], 409)
+        (self.patches / f"{sha}.patch").rmdir()
+        os.mkfifo(self.patches / f"{sha}.patch")
+        self.assertEqual(self.patch("p1")[:2], (409, {"error": "the patch is not a regular file"}))
+        (self.patches / f"{sha}.patch").unlink()
+        write_patch(self.state, PATCH)
+        self.assertEqual(self.patch("p1")[0], 200)
+
+    def test_size_cap(self):
+        e = self.env
+        big = PATCH + "+x\n" * (dc.PATCH_MAX // 3 + 1)
+        sha = write_patch(self.state, big)
+        push_card(self.state, "big", e.fx.now, sha)
+        self.assertEqual(self.patch("big")[:2], (413, {"error": "the patch is too large to show"}))
+        ok = PATCH + "#" * (dc.PATCH_MAX - len(PATCH.encode()) - 1) + "\n"
+        sha = write_patch(self.state, ok)
+        push_card(self.state, "edge", e.fx.now, sha)
+        self.assertEqual(self.patch("edge")[0], 200)  # exactly the cap is fine
+
+    def test_truncated(self):
+        e = self.env
+        cut = PATCH[:PATCH.index("+admin")]
+        text = cut + f"[passdesk: patch truncated at {len(cut)} of {len(PATCH)} bytes]\n"
+        sha = write_patch(self.state, text)
+        push_card(self.state, "t1", e.fx.now, sha, patch_truncated=True, file_count=3)
+        code, out, _ = self.patch("t1")
+        self.assertEqual(code, 200, out)
+        self.assertEqual((out["truncated"], out["files_total"], out["files_shown"]), (True, 3, 1))
+        # The card names one file (x.py, shown); two more are counted, not named.
+        self.assertEqual((out["files_missing"], out["files_missing_more"]), ([], 2))
+        self.assertEqual(out["commits"][0]["files"][0]["hunks"][0]["lines"][-1], list(patchview.CUT))
+        push_card(self.state, "t3", e.fx.now, sha, patch_truncated=True, file_count=3, files=["x.py", "y\x1b.py", "z.py"])
+        out = self.patch("t3")[1]
+        self.assertEqual((out["files_shown"], out["files_missing"], out["files_missing_more"]),
+                         (1, ["y⟨U+001B⟩.py", "z.py"], 0))
+        self.assertEqual(out["commits"][0]["files"][0]["hunks"][0]["lines"][:-1], [[" ", "ok = 1"], ["-", "admin = False"]])
+        # The card says truncated (the trailer was lost somehow): still truncated.
+        sha = write_patch(self.state, cut)
+        push_card(self.state, "t2", e.fx.now, sha, patch_truncated=True)
+        self.assertTrue(self.patch("t2")[1]["truncated"])
+
+    def test_not_utf8(self):
+        e = self.env
+        sha = write_patch(self.state, PATCH.encode() + b"diff --git a/b b/b\n--- a/b\n+++ b/b\n@@ -1 +1 @@\n-\xff\n+\xc3\n")
+        push_card(self.state, "u", e.fx.now, sha)
+        code, out, _ = self.patch("u")
+        self.assertEqual(code, 200, out)
+        self.assertEqual(out["commits"][0]["files"][1]["hunks"][0]["lines"], [["-", "\ufffd"], ["+", "\ufffd"]])
+
+    def test_unexpected_failure(self):
+        e = self.env
+        sha = write_patch(self.state, PATCH)
+        push_card(self.state, "p1", e.fx.now, sha)
+        secret = "admin = True  # a line of the patch"
+        with mock.patch.object(patchview, "view", side_effect=ValueError(secret)), \
+                mock.patch("sys.stderr", new_callable=__import__("io").StringIO) as err:
+            code, out, _ = self.patch("p1")
+        self.assertEqual((code, out), (500, {"error": "the control unit failed; see the dashboard's log"}))
+        self.assertIn("ValueError", err.getvalue())
+        self.assertNotIn(secret, err.getvalue())
+        self.assertEqual(self.patch("p1")[0], 200)  # and the unit carries on
+
+    def test_needs_the_control_key(self):
+        e = self.env
+        sha = write_patch(self.state, PATCH)
+        push_card(self.state, "p1", e.fx.now, sha)
+        body = {"id": "p1", "fp": self.fp("p1")}
+        self.assertEqual(e.post("patch", body, **{"X-Factory-Control": None})[0], 403)
+        self.assertEqual(e.post("patch", body, Origin=f"http://127.0.0.1:{e.port}")[0], 403)
+        self.assertEqual(e.post("patch", body, Cookie=None)[0], 403)
+        # The main page's origin has no such route.
+        conn = http.client.HTTPConnection("127.0.0.1", e.port, timeout=10)
+        conn.request("POST", "/cu/api/patch", body=json.dumps(body), headers=e.headers(Host=f"127.0.0.1:{e.port}"))
+        self.assertNotEqual(conn.getresponse().status, 200)
+        conn.close()
 
 
 # --------------------------------------------------------------------------
@@ -863,6 +1095,20 @@ class KeySeparationTests(unittest.TestCase):
         self.assertEqual(e.post("state")[0], 200)
 
 
+@unittest.skipIf(shutil.which("node") is None, "no node")
+class CuScriptTests(unittest.TestCase):
+    """cu.js itself, under node with a fake DOM (scripts/test_cu_page.js)."""
+
+    def test_approve_unseen_asks_twice(self):
+        here = Path(__file__).resolve().parent
+        proc = __import__("subprocess").run(["node", str(here / "test_cu_page.js"), str(UI / "cu.js")],
+                                            capture_output=True, text=True, timeout=60)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(json.loads(proc.stdout.strip().splitlines()[-1]),
+                         ["plain approve", "deck asks, arms, confirms", "cancel, fp change and gone cancel the question",
+                          "viewer asks with the count", "viewer: fp change cancels"])
+
+
 class RealPageTests(unittest.TestCase):
     """The control unit's real files (scripts/dashboard-ui/cu.*), once they exist."""
 
@@ -883,6 +1129,35 @@ class RealPageTests(unittest.TestCase):
             self.assertNotIn(sink, js, f"cu.js uses {sink}")
         css = (UI / "cu.css").read_text() if (UI / "cu.css").exists() else ""
         self.assertIsNone(re.search(r"https?://", html + css), "network URL")
+
+    def test_inspect_key_has_its_own_row(self):
+        # INSPECT never shares the reason tape's row (it squeezed it), and the hold
+        # strip covers only the decide keys.
+        html = (UI / "cu.html").read_text()
+        row = html[html.index('<div class="gate-row">'):html.index('<div class="keys"')]
+        tape = row[:row.index('<div class="insp-row"')]
+        self.assertNotIn("btn-inspect", tape)
+        self.assertIn('id="btn-inspect"', row[row.index('<div class="insp-row"'):])
+        keys = html[html.index('<div class="keys"'):html.index('<div class="service"')]
+        self.assertIn('id="keys-hold"', keys)
+        self.assertNotIn("btn-inspect", keys)
+        css = (UI / "cu.css").read_text()
+        self.assertIn('"lcd inspect"', css)
+        self.assertIn(".insp-row { grid-area: inspect;", css)
+
+    def test_inspector_puts_nothing_in_attributes(self):
+        # The inspector's code (from its heading to the next one) draws patch text
+        # only with textContent: no title, no attribute but a fixed role, no class
+        # but its own fixed ones.
+        js = (UI / "cu.js").read_text()
+        start = js.index("// ---------- the inspector")
+        block = js[start:js.index("// ---------- leaving the monitor", start)]
+        self.assertNotRegex(block, r"\.title\s*=")
+        self.assertNotRegex(block, r"\.(href|src|style|dataset)\b")
+        self.assertEqual(re.findall(r"setAttribute\(([^)]*)\)", block), ['"role", "button"'])
+        self.assertNotRegex(block, r"className\s*=")
+        for cls in re.findall(r"classList\.(?:add|remove|toggle)\(([^,)]*)", block):
+            self.assertRegex(cls, r'^"[a-z-]+"$')
 
 
 if __name__ == "__main__":

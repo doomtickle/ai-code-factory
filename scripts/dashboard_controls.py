@@ -21,6 +21,11 @@ those requests reach:
   run      start the action named by a prepared token. So no single request
            ever starts a host command.
   log      the action's output, from an offset.
+  patch    the held push's patch, for INSPECT: read from the broker's state
+           (approvals/patches/<sha256>.patch, named by the card's
+           patch_sha256), checked against that digest, parsed and
+           sanitised here (patchview.py), never by the page. Exact id and
+           fingerprint, as decide. The main page never receives it.
 
 An action is one fixed argv, never a shell: [factory, "restart"] or
 [factory, "update", "--yes"], with stdin from /dev/null (so a sudo or
@@ -44,14 +49,18 @@ import getpass
 import hashlib
 import hmac
 import os
+import re
 import secrets
 import signal
+import stat
 import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
 
 import approvals
+import patchview
 
 SCRIPTS = Path(__file__).resolve().parent
 FACTORY = SCRIPTS.parent / "bin" / "factory"
@@ -62,7 +71,9 @@ LOG_CHUNK = 64 * 1024  # most bytes /cu/api/log returns at once
 MAX_REASON = 500       # characters in a decision's reason
 MAX_OFFSET = 2 ** 53   # largest log offset accepted (a page's JSON number stays exact)
 CARD_KEYS = ("id", "tool", "role", "lanes", "repo", "branch", "base", "title", "draft", "commits",
-             "file_count", "files", "seconds_left", "fp")
+             "file_count", "files", "seconds_left", "fp", "patch", "patch_truncated")
+PATCH_SHA = re.compile(r"[0-9a-f]{64}")  # a card's patch_sha256 (fullmatch), before it names a file
+PATCH_MAX = 2 * 1024 * 1024              # largest patch file read (the broker caps them at 256 KiB by default)
 
 
 class Refused(Exception):
@@ -87,9 +98,10 @@ def files_digest(paths) -> str:
 
 def dashboard_digests(scripts: Path = SCRIPTS) -> tuple:
     """(server, page): digests of the dashboard's Python (dashboard*.py and the
-    modules it imports, approvals.py and watch.py) and of its page files under
-    dashboard-ui/ (vendored files left out: they change only with a pin bump)."""
-    server = [p for p in scripts.glob("dashboard*.py")] + [scripts / "approvals.py", scripts / "watch.py"]
+    modules it imports: approvals.py, watch.py, patchview.py) and of its page
+    files under dashboard-ui/ (vendored files left out: they change only with a pin bump)."""
+    server = [p for p in scripts.glob("dashboard*.py")] + [scripts / n for n in ("approvals.py", "watch.py",
+                                                                              "patchview.py")]
     ui = scripts / "dashboard-ui"
     page = [p for p in ui.rglob("*") if p.is_file() and "vendor" not in p.relative_to(ui).parts] if ui.is_dir() else []
     return files_digest(server), files_digest(page)
@@ -164,13 +176,16 @@ class Controls:
     def api(self, name: str, body: dict) -> tuple:
         """(status, JSON object) for POST /cu/api/<name> with body."""
         handler = {"state": self.api_state, "decide": self.api_decide, "prepare": self.api_prepare,
-                   "run": self.api_run, "log": self.api_log}.get(name)
+                   "run": self.api_run, "log": self.api_log, "patch": self.api_patch}.get(name)
         if handler is None:
             return 404, {"error": "no such control"}
         try:
             return handler(body)
         except Refused as e:
             return e.status, {"error": str(e)}
+        except Exception as e:  # never the message: it could quote a card or a patch
+            print(f"control unit: /cu/api/{name} failed: {type(e).__name__}", file=sys.stderr)
+            return 500, {"error": "the control unit failed; see the dashboard's log"}
 
     def bound(self) -> str:
         """The project the factory is bound to ('' if none)."""
@@ -187,7 +202,16 @@ class Controls:
             running = [{"lane": lane.name, "task": str(lane.job.get("task") or "")}
                        for lane in self.board.watch.lanes if lane.job and lane.job.get("status") == "running"]
         raw = {str(c.get("id")): c for c in approvals.read_cards(self.state / "broker")}
-        return [{k: c.get(k) for k in CARD_KEYS} for c in cards], raw, running
+        out = []
+        for c in cards:
+            # "patch": the page may offer INSPECT (a push held with its patch stored);
+            # "patch_truncated": the stored patch was cut, so APPROVE asks again.
+            card = raw.get(c["id"]) or {}
+            patch = card.get("tool") == "git_push" and isinstance(card.get("patch_sha256"), str) \
+                and PATCH_SHA.fullmatch(card["patch_sha256"]) is not None
+            c = dict(c, patch=patch, patch_truncated=patch and card.get("patch_truncated") is True)
+            out.append({k: c.get(k) for k in CARD_KEYS})
+        return out, raw, running
 
     def action_json(self) -> dict:
         return {"name": self.action, "phase": self.phase, "started": self.started, "ended": self.ended,
@@ -201,6 +225,19 @@ class Controls:
             action = self.action_json()
         return 200, {"now": now, "project": project, "bound": bool(project), "cards": cards, "action": action}
 
+    def held_card(self, cid: str, fp: str) -> dict:
+        """The pending card with exactly this id, if its fingerprint is still fp."""
+        # Exact id only: a prefix (as the CLI allows) could pick another card.
+        matches = [c for c in approvals.read_cards(self.state / "broker") if c.get("id") == cid]
+        if not matches:
+            raise Refused(409, "gone")
+        if len(matches) > 1:  # two pending files claim one id: act on neither from here
+            raise Refused(409, "ambiguous")
+        card = matches[0]
+        if not hmac.compare_digest(approvals.card_fingerprint(card).encode(), fp.encode()):
+            raise Refused(409, "changed")
+        return card
+
     def api_decide(self, body: dict) -> tuple:
         cid, fp, verdict = body.get("id"), body.get("fp"), body.get("verdict")
         if not isinstance(cid, str) or not cid or not isinstance(fp, str):
@@ -210,15 +247,7 @@ class Controls:
         reason = clean_reason(body.get("reason", ""))
         if verdict == "decline" and not reason:
             raise Refused(400, "give the agent a reason for declining")
-        # Exact id only: a prefix (as the CLI allows) could pick another card.
-        matches = [c for c in approvals.read_cards(self.state / "broker") if c.get("id") == cid]
-        if not matches:
-            raise Refused(409, "gone")
-        if len(matches) > 1:  # two pending files claim one id: decide neither from here
-            raise Refused(409, "ambiguous")
-        card = matches[0]
-        if not hmac.compare_digest(approvals.card_fingerprint(card).encode(), fp.encode()):
-            raise Refused(409, "changed")
+        card = self.held_card(cid, fp)
         try:
             expired = float(card.get("expires", 0)) < self.clock()
         except (TypeError, ValueError):
@@ -234,6 +263,63 @@ class Controls:
         except (TypeError, ValueError):
             text = cid
         return 200, {"ok": True, "id": cid, "verdict": verdict, "text": text}
+
+    def api_patch(self, body: dict) -> tuple:
+        cid, fp = body.get("id"), body.get("fp")
+        if not isinstance(cid, str) or not cid or not isinstance(fp, str):
+            raise Refused(400, "id and fp are required")
+        card = self.held_card(cid, fp)
+        sha = card.get("patch_sha256")
+        if sha is None:  # an older broker, or a PR card
+            raise Refused(404, "no patch for this card")
+        if not isinstance(sha, str) or not PATCH_SHA.fullmatch(sha):
+            raise Refused(400, "the card's patch digest is not valid")
+        data = self.read_patch(sha)
+        if not hmac.compare_digest(hashlib.sha256(data).hexdigest().encode(), sha.encode()):
+            raise Refused(409, "patch does not match its card")
+        return 200, patchview.view(data.decode("utf-8", "replace"), patch_bytes=len(data),
+                                   files_total=card.get("file_count"), card_files=card.get("files"),
+                                   card_truncated=card.get("patch_truncated") is True)
+
+    def read_patch(self, sha: str) -> bytes:
+        """The bytes of approvals/patches/<sha>.patch under the broker's state.
+        The broker can write there, so no part of the path below the broker's
+        state folder is followed if it is a symlink, only a regular file is read (a
+        FIFO can't hang the open), and never more than PATCH_MAX bytes."""
+        flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+        dflags = flags | getattr(os, "O_DIRECTORY", 0)
+        fds = []
+        try:
+            try:
+                # The state folder itself is the factory's own; below it, the broker's.
+                fds.append(os.open(str(self.state / "broker"), os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
+                                   | getattr(os, "O_DIRECTORY", 0)))
+                for part in ("approvals", "patches"):
+                    fds.append(os.open(part, dflags, dir_fd=fds[-1]))
+                fds.append(os.open(sha + ".patch", flags | getattr(os, "O_NONBLOCK", 0), dir_fd=fds[-1]))
+            except FileNotFoundError:
+                raise Refused(404, "the patch file is missing (pruned, or never written)") from None
+            except OSError:
+                raise Refused(409, "the patch is not a regular file") from None
+            fd = fds[-1]
+            st = os.fstat(fd)
+            if not stat.S_ISREG(st.st_mode):
+                raise Refused(409, "the patch is not a regular file")
+            if st.st_size > PATCH_MAX:
+                raise Refused(413, "the patch is too large to show")
+            chunks, total = [], 0
+            while total <= PATCH_MAX:
+                chunk = os.read(fd, min(65536, PATCH_MAX + 1 - total))
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                total += len(chunk)
+            if total > PATCH_MAX:  # it grew after the fstat
+                raise Refused(413, "the patch is too large to show")
+            return b"".join(chunks)
+        finally:
+            for fd in fds:
+                os.close(fd)
 
     def api_prepare(self, body: dict) -> tuple:
         action = body.get("action")

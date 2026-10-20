@@ -21,6 +21,7 @@
   --lcd-bg: #c4cda8; --lcd-bg-2: #adb894; --lcd-ink: #080c05; --lcd-ghost: rgba(20, 27, 15, .09);
   --lcd-blue: #0b2c6b; --lcd-red: #7a1209; --lcd-amber: #5a3600; --lcd-purple: #3b1263; --lcd-green: #0c4a13;
   --amber: #ffb000; --amber-glow: rgba(255, 176, 0, .55); --amber-dim: #8a6100; --amber-pale: #ffe2a6; --crt-amber-bg: #140d02;
+  --green: #45ff7d; --green-glow: rgba(69, 255, 125, .5); --green-dim: #1f8a45; --green-pale: #c4ffd6; --crt-green-bg: #021207;
   --t-ok: #8cff8f; --t-err: #ff6e5a; --t-warn: #ffd84d; --t-cmd: #63dcec;
   --led-green: #4dff6a; --led-amber: #ffae1a; --led-red: #ff4433; --led-off: #3b3e42;
   --key: #dcd6c5; --key-lo: #9b9584; --key-ink: #2a2924;
@@ -255,9 +256,68 @@ button, input { font: inherit; color: inherit; }
 .mon-actions { margin-left: auto; display: flex; justify-content: flex-end; gap: 12px; flex-wrap: wrap; padding-bottom: 4px; }
 .mon-actions .bigkey { min-width: 11em; padding: 10px 14px 9px; font-size: .95rem; }
 
+/* ---------- the inspector: the held push's patch on a green-phosphor tube (as the
+   main page's lane monitor), commits and files on the left, hunks on the right. */
+/* INSPECT: a full-width key of its own (stacked: between the tape and the decide
+   keys; two columns: under DECLINE / APPROVE), never squeezing the reason tape. */
+.insp-row { flex: none; display: flex; }
+.inspkey { flex: 1; justify-content: center; }
+/* The second question before approving a truncated push: hazard-red, persistent */
+.flash.ask { background: var(--lcd-red); color: #fff3e6; z-index: 2; }
+.pv-ask { flex: none; margin: 0 6px; padding: 6px 10px; border-radius: 3px; font-family: var(--f-crt); font-size: 1.2rem; line-height: 1.1;
+  color: #fff3e6; background: repeating-linear-gradient(-45deg, #8f1d10 0 12px, #a3261a 12px 24px); box-shadow: 0 0 0 1px #000, 0 2px 6px rgba(0,0,0,.6); }
+.pv-missing { flex: none; margin: 0 14px; padding: 3px 8px; font-family: var(--f-crt); font-size: 1.1rem; line-height: 1.1; overflow-wrap: anywhere;
+  max-height: 3.4em; overflow-y: auto; color: #1a1305; background: repeating-linear-gradient(-45deg, var(--stripe-2) 0 10px, #f0c75a 10px 20px); border-radius: 2px; }
+.pv-cut { margin: 10px 0 0; padding: 2px 6px; color: var(--crt-bg); background: var(--t-warn); text-shadow: none; }
+.pv-ln.cut { margin-top: 6px; padding: 2px 6px; color: var(--crt-bg); background: var(--t-warn); text-shadow: none; font-style: normal; }
+.crt.green { --c: var(--green); --glow: var(--green-glow); --dim: var(--green-dim); --crt-bg: var(--crt-green-bg);
+  text-shadow: 0 0 1px var(--glow), 0 0 6px rgba(69, 255, 125, .22); }
+.crt.pv { flex-direction: row; font-size: 1.12rem; line-height: 1.12; }
+.pv-list, .pv-main { position: relative; min-height: 0; overflow: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--dim) transparent; }
+.pv-list { flex: 0 0 min(34%, 26em); padding: 14px 8px 12px 20px; border-right: 1px solid color-mix(in srgb, var(--c) 28%, transparent); }
+.pv-main { flex: 1; min-width: 0; padding: 14px 22px 12px 14px; }
+.pv-list:focus-visible, .pv-main:focus-visible { outline: 1px dashed var(--dim); outline-offset: -4px; }
+.pv ::selection { background: var(--c); color: var(--crt-bg); text-shadow: none; }
+.pv-commit { margin: 8px 0 2px; color: var(--green-pale); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pv-commit:first-child { margin-top: 0; }
+.pv-subj { color: var(--c); }
+.pv-file { display: flex; gap: .5em; align-items: baseline; padding: 0 4px 0 .8em; cursor: pointer; white-space: nowrap; border-radius: 2px; }
+.pv-file:hover { background: color-mix(in srgb, var(--c) 10%, transparent); }
+.pv-file.sel { background: var(--c); color: var(--crt-bg); text-shadow: none; }
+.pv-file.sel .pv-add, .pv-file.sel .pv-del { color: var(--crt-bg); }
+.pv-st { flex: none; width: 1em; opacity: .8; }
+.pv-path { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.pv-add { flex: none; color: var(--t-ok); }
+.pv-del { flex: none; color: var(--t-err); }
+.pv-badge { flex: none; margin-left: .4em; padding: 0 4px; font-size: .78em; line-height: 1.2; border: 1px solid var(--t-warn); color: var(--t-warn); border-radius: 2px; text-shadow: none; }
+.pv-file.sel .pv-badge { background: var(--crt-bg); }
+.pv-meta, .pv-title, .pv-warn, .pv-msg { margin: 0 0 2px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.pv-meta { color: var(--dim); text-shadow: none; }
+.pv-title { margin-top: 10px; color: var(--green-pale); text-transform: none; }
+.pv-warn { color: var(--t-warn); }
+.pv-warn .pv-badge { margin-left: 0; }
+.pv-msgtext { margin: 6px 0 4px 2ch; font: inherit; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--green-pale); }
+.pv-msg.k-err { color: var(--t-err); }
+.pv-msg.k-dim { color: var(--dim); text-shadow: none; }
+.pv-msg.cursor::after { content: "█"; animation: blink-c 1s steps(1) infinite; }
+.pv-hunk { margin: 10px 0 0; }
+.pv-hh { color: var(--t-cmd); white-space: pre-wrap; overflow-wrap: anywhere; }
+.pv-ln { white-space: pre-wrap; overflow-wrap: anywhere; tab-size: 4; min-height: 1.12em; }
+.pv-ln.add { color: var(--t-ok); background: rgba(140, 255, 143, .07); }
+.pv-ln.del { color: var(--t-err); background: rgba(255, 110, 90, .08); }
+.pv-ln.ctx { color: color-mix(in srgb, var(--c) 72%, var(--crt-bg)); }
+.pv-ln.note { color: var(--dim); font-style: italic; }
+.pv-trunc { text-transform: none; letter-spacing: .06em; color: var(--led-red); }
+.con-note.err { color: var(--led-red); }
+.pv-foot { flex-wrap: nowrap; }
+.pv-help { flex: none; text-transform: none; letter-spacing: .06em; }
+.pv-reason { flex: 1 1 14em; min-width: 8em; }
+.pv-keys { position: relative; margin-left: 0; flex-wrap: nowrap; }
+.pv-keys .bigkey { min-width: 7.5em; }
+
 /* ---------- motion */
 @media (prefers-reduced-motion: reduce) {
-  .led.blink, .cd-box.low span, .crt::after, .crt-body .cursor::after, .crt .more { animation: none !important; }
+  .led.blink, .cd-box.low span, .crt::after, .crt-body .cursor::after, .crt .more, .pv-msg.cursor::after { animation: none !important; }
   .crt::before { display: none; }
   .bigkey, .svckey { transition: none; }
 }
@@ -273,7 +333,8 @@ button, input { font: inherit; color: inherit; }
 @media (min-width: 380px) and (max-height: 260px) {
   .deck .unit { display: grid; grid-template-columns: minmax(0, 1fr) 196px; column-gap: 8px; row-gap: 4px; padding: 6px 10px;
     grid-template-rows: 26px auto minmax(0, 1fr) auto auto;
-    grid-template-areas: "head tape" "lcd keys" "lcd ." "lcd service" "lcd blank"; }
+    grid-template-areas: "head tape" "lcd keys" "lcd inspect" "lcd service" "lcd blank"; }
+  .insp-row { grid-area: inspect; align-self: start; }
   .deck-h { grid-area: head; min-height: 0; }
   .deck-lcd { grid-area: lcd; min-height: 0; margin: 2px 2px 2px; }
   .gate-row { grid-area: tape; }
@@ -313,7 +374,15 @@ button, input { font: inherit; color: inherit; }
   .service { padding: 4px 6px; gap: 6px; }
   .svckey { padding: 4px 6px 3px; letter-spacing: .06em; gap: 4px; }
 }
+@media (max-width: 900px) {
+  .pv-help { display: none; }
+  .pv-foot { flex-wrap: wrap; }
+}
 @media (max-width: 640px) {
+  .crt.pv { flex-direction: column; }
+  .pv-list { flex: 0 0 34%; border-right: 0; border-bottom: 1px solid color-mix(in srgb, var(--c) 28%, transparent); padding: 10px 12px; }
+  .pv-main { padding: 10px 14px; }
+  .pv-keys .bigkey { min-width: 0; }
   .console { padding: 6px; }
   .monitor { padding: 10px; }
   .crt-wrap { padding: 10px; border-radius: 16px; }
