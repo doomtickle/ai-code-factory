@@ -32,6 +32,7 @@
 html, body { height: 100%; }
 body { margin: 0; background: var(--seam); color: var(--silk); font-family: var(--f-silk); font-size: 14px; }
 button { font: inherit; color: inherit; }
+.sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
 :focus-visible { outline: 2px solid var(--stripe-2); outline-offset: 2px; }
 
 .rack { height: 100%; display: grid; grid-template-rows: auto minmax(0, 1fr); gap: 6px;
@@ -119,7 +120,7 @@ button { font: inherit; color: inherit; }
 .crt .k-error .tx { background: var(--t-err); color: var(--crt-bg); text-shadow: none; padding: 0 4px; }
 .crt .k-branch .tx, .crt .k-packet .tx { color: var(--t-branch); }
 .crt .k-end .tx { color: var(--t-ok); }
-.crt pre.packet { margin: 0; font: inherit; white-space: pre-wrap; overflow-wrap: anywhere; }
+.crt pre.packet { margin: 0; font: inherit; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; min-width: 0; max-width: 100%; }
 
 /* Lane modules */
 .lanes { flex: 1; min-height: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-auto-rows: minmax(0, 1fr); gap: 6px; }
@@ -141,6 +142,7 @@ button { font: inherit; color: inherit; }
 .lcd-text .k-branch, .lcd-text .k-packet { color: var(--lcd-purple); }
 .lcd-text .k-end { color: var(--lcd-green); }
 .lcd-text .k-held { color: var(--lcd-amber); font-weight: 700; animation: lcdblink 1.2s steps(1) infinite; }
+.lcd-text .ln.k-held { white-space: normal; overflow-wrap: anywhere; }
 @keyframes lcdblink { 50% { opacity: .15; } }
 .lane.idle .lcd-text { opacity: .6; }
 .lcd-text .k-idle { font-weight: 700; text-align: center; }
@@ -202,12 +204,19 @@ button { font: inherit; color: inherit; }
 .head-bar i { width: 70%; height: 3px; background: #000; border-radius: 2px; }
 
 /* Monitor (lane detail) */
+/* Explicit minmax(0, 1fr) tracks: with implicit auto tracks the grid grows to the
+   monitor's max-content height (1500 transcript lines) and centers it far below the viewport. */
 .scrim { position: fixed; inset: 0; background: rgba(0,0,0,.7); z-index: 20; display: grid; place-items: center;
+  grid-template-rows: minmax(0, 1fr); grid-template-columns: minmax(0, 1fr); overflow: hidden;
   padding-top: max(12px, env(safe-area-inset-top, 0px)); padding-bottom: max(12px, env(safe-area-inset-bottom, 0px));
   padding-left: max(12px, env(safe-area-inset-left, 0px)); padding-right: max(12px, env(safe-area-inset-right, 0px)); }
-.monitor { width: min(940px, 100%); height: min(720px, 100%); display: flex; flex-direction: column; gap: 10px; }
+.monitor { width: min(940px, 100%); height: min(720px, 100%); min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 10px; }
+.monitor .crt-wrap, .monitor .crt { min-width: 0; }
+.monitor .crt-body { overflow-x: hidden; overscroll-behavior: contain; }
 .mon-h { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 0 18px; }
 .mon-h .title { font-family: var(--f-crt); font-size: 1.5rem; color: var(--silk); }
+.mon-h .mon-note { color: var(--led-amber); text-transform: none; letter-spacing: .06em; min-width: 0; overflow-wrap: anywhere; }
+.mon-h .mon-note:empty { display: none; }
 .mon-h .right { margin-left: auto; display: flex; gap: 8px; }
 .tabkey { cursor: pointer; border: 0; padding: 4px 10px; border-radius: 4px; background: linear-gradient(180deg, #ece7d8, var(--key)); color: var(--key-ink);
   font-family: var(--f-silk); font-weight: 700; letter-spacing: .12em; text-transform: uppercase; font-size: .75rem; box-shadow: 0 3px 0 var(--key-lo), 0 4px 4px rgba(0,0,0,.5); }

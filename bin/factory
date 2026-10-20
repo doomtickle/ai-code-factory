@@ -83,9 +83,10 @@ ${B}Usage${N}
                              or one lane: developer-lane2), or broker / dispatch
   factory watch              Live view of the lanes: a pane per active lane, idle lanes as
                              one line each, tool calls condensed, status and cost in titles
-  factory dashboard [--no-open]
+  factory dashboard [--no-open] [--port N]
                              The whole factory on one screen in your browser: lanes,
-                             spend, broker calls, held writes (local, read-only)
+                             spend, broker calls, held writes (local, read-only).
+                             Prints a link with this run's token; 'gui' also works
   factory packet [id|lane]   A job's review packet: task, branch commits and diffstat,
                              tests, broker calls, cost, report (default: the latest;
                              --list for recent jobs)
@@ -1087,7 +1088,8 @@ cmd_watch() {
 
 # --- dashboard ---------------------------------------------------------------------
 # cmd_dashboard -> scripts/dashboard.py: serves the FC-1984 page on 127.0.0.1 with a
-# per-run token, read from the state folder (host Python, stdlib, read-only). Runs
+# per-run token, read from the state folder (host Python, stdlib, read-only). The
+# only process it starts is the browser opener, once (none with --no-open). Runs
 # in the foreground; Ctrl-C stops it.
 cmd_dashboard() {
   local python

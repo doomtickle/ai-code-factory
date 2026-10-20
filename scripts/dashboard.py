@@ -7,21 +7,39 @@ tail, job status, model and cost; today's spend by hour and by role; an event
 printer of broker calls and finished jobs; and the writes Passdesk Pro is
 holding for approval.
 
-This version is read-only. It reads files under the factory state folder and
-never writes there, runs no sbx, git or shell command, and makes no network
-connection:
+This version is read-only. While it serves, it reads files under the factory
+state folder and never writes there, runs no command (no sbx, git or shell),
+and makes no network connection:
   dispatch/logs/<lane>.log, dispatch/audit.jsonl, dispatch/packets/, dispatch/pid
   broker/audit.jsonl, broker/approvals/pending/
 It reuses watch.py's transcript model and approvals.py's card reader rather
 than parsing either command's output.
 
+The one process it starts is the browser opener, once, at start-up (unless
+--no-open): on WSL `rundll32.exe url.dll,FileProtocolHandler <url>` (Windows'
+URL protocol handler; WSL passes the argv through verbatim, no shell), else
+`wslview <url>`, else Python's webbrowser module. Never explorer.exe, which
+reads its argument as a folder and drops the query (and with it the token),
+and never cmd.exe or `powershell -Command`, which would re-parse the URL. The
+token therefore appears briefly in the opener's argv and once in the
+browser's history; on a single-user machine that is acceptable, since the
+token dies with this process.
+
 The server binds 127.0.0.1 only. Every request needs the per-run token: the
 URL printed at start-up carries it once, the server swaps it for an HttpOnly,
-SameSite=Strict cookie, and any request without it gets 403. The Host header
-must name this server (a DNS-rebinding page can't borrow the cookie), only GET
-is served, and the page runs under a CSP that allows nothing but its own files.
-Agent-written text (transcripts, packets, cards, audit arguments) is only ever
-inserted into the page as text, never as HTML.
+SameSite=Strict cookie named after the port (factory_dashboard_<port>, so two
+dashboards don't overwrite each other's), and any request without exactly one
+matching cookie gets 403. The Host header must name this server (a
+DNS-rebinding page can't borrow the cookie), only GET is served, and the page
+runs under a CSP that allows nothing but its own files. Agent-written text
+(transcripts, packets, cards, audit arguments) is only ever inserted into the
+page as text, never as HTML.
+
+Limitation: cookies ignore ports, so any other server on 127.0.0.1 that this
+browser visits receives the cookie too. That is tolerable while the dashboard
+only shows what is already on this machine; anything that lets the page act
+(doomtickle/passdesk-ops#112, the terminal, approve/decline) must require the
+token in a request header, not just the cookie, and check `Origin`.
 
   factory dashboard              serve and open the page
   factory dashboard --no-open    serve and print the URL only
@@ -36,6 +54,7 @@ import calendar
 import collections
 import hmac
 import json
+import math
 import os
 import platform
 import re
@@ -67,7 +86,7 @@ STATIC = {
 }
 CSP = ("default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; connect-src 'self'; "
        "img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
-COOKIE = "factory_dashboard"
+COOKIE = "factory_dashboard"  # prefix: the cookie is COOKIE_<port> (see cookie_name)
 TAIL = 10          # transcript lines per lane in /api/state
 FULL = 1500        # transcript lines per lane in /api/lane
 EVENTS = 80        # event printer lines
@@ -94,6 +113,14 @@ def clock(epoch: float) -> str:
     return time.strftime("%H:%M:%S", time.localtime(epoch))
 
 
+def num(value) -> float | None:
+    """A finite number from a JSON record, or None for anything else (a string,
+    null, a bool, NaN): one malformed record must not break every /api/state."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value) if math.isfinite(value) else None
+
+
 # --------------------------------------------------------------------------
 # Broker audit log -> event printer lines
 
@@ -113,7 +140,9 @@ class BrokerAudit(w.Tail):
                 rec = json.loads(line)
             except ValueError:
                 continue
-            if isinstance(rec, dict) and rec.get("tool"):
+            # Keep only records the printer prints: "intent" records would crowd
+            # real calls out of the 500 on a busy day.
+            if isinstance(rec, dict) and rec.get("tool") and broker_event(rec) is not None:
                 self.calls.append(rec)
 
 
@@ -176,22 +205,53 @@ class Dashboard:
             self.verdicts[job_id] = m.group(1).upper() if m else None
         return self.verdicts[job_id]
 
+    def running(self) -> dict:
+        """Role -> the names of its lanes with a job running."""
+        out: dict = collections.defaultdict(list)
+        for lane in self.watch.lanes:
+            if lane.job and lane.job["status"] == "running":
+                out[lane.role].append(lane.name)
+        return out
+
     def cards(self, now: float) -> list:
+        """The pending approval cards. A card's principal is the broker token's
+        name, which is the role (developer), never the lane (developer-lane2),
+        so "lanes" lists every running lane of that role: any of them may be
+        the one waiting."""
+        running = self.running()
         out = []
         for card in approvals.read_cards(self.state / "broker"):
             files = card.get("files") if isinstance(card.get("files"), list) else []
+            expires = num(card.get("expires"))
+            role = str(card.get("principal") or "")
+            commits, file_count = num(card.get("commits")), num(card.get("file_count"))
             out.append({
                 "id": str(card.get("id")), "tool": str(card.get("tool") or ""),
-                "principal": str(card.get("principal") or ""),
+                "principal": role, "role": role, "lanes": list(running.get(role, [])),
                 "repo": str(card.get("repo") or ""), "branch": str(card.get("branch") or card.get("head") or ""),
                 "base": str(card.get("base") or ""), "title": str(card.get("title") or ""),
-                "commits": card.get("commits"), "file_count": card.get("file_count"),
+                "commits": None if commits is None else int(commits),
+                "file_count": None if file_count is None else int(file_count),
                 "files": [str(f) for f in files[:12]],
-                "seconds_left": int(float(card.get("expires", 0) or 0) - now),
+                "seconds_left": None if expires is None else int(expires - now),
             })
         return out
 
-    def lane_json(self, lane: w.Lane, now: float, held: set, tail: int) -> dict:
+    @staticmethod
+    def held(cards: list) -> dict:
+        """Lane name -> note for each running lane whose role has a write held.
+        With one running lane the hold is surely its own (note ""); with several
+        the card can't say which, so each is marked held and the note says so."""
+        out: dict = {}
+        for card in cards:
+            lanes = card["lanes"]
+            note = "" if len(lanes) == 1 else (
+                f"one of {len(lanes)} running {card['role']} lanes is held; the broker names the role, not the lane")
+            for name in lanes:
+                out[name] = note
+        return out
+
+    def lane_json(self, lane: w.Lane, now: float, held: dict, tail: int) -> dict:
         job = lane.job
         rec = (self.watch.audit.jobs.get(job["id"]) if job else None) or {}
         state = "idle"
@@ -203,13 +263,14 @@ class Dashboard:
                 verdict = self.verdict(job["id"]) if state == "done" else None
                 if verdict in ("REVISE", "APPROVED"):
                     state = verdict.lower()
-        model = rec.get("model") or (job or {}).get("model") or ""
+        model = str(rec.get("model") or (job or {}).get("model") or "")
         return {
             "name": lane.name, "role": lane.role, "state": state,
+            "held_note": held.get(lane.name, "") if state == "held" else "",
             "job": (job or {}).get("id"), "task": (job or {}).get("task", ""),
             "model": model.replace("claude-", ""), "effort": rec.get("effort"),
             "elapsed": lane.elapsed(now), "ended": (job or {}).get("ended"),
-            "cost": rec.get("cost_usd"), "context_tokens": rec.get("context_tokens"),
+            "cost": num(rec.get("cost_usd")), "context_tokens": num(rec.get("context_tokens")),
             "tail": [{"ts": e.ts, "kind": e.kind, "text": e.text} for e in list(lane.entries)[-tail:]],
         }
 
@@ -218,7 +279,7 @@ class Dashboard:
         with self.lock:
             self.refresh()
             cards = self.cards(now)
-            held = {c["principal"] for c in cards}
+            held = self.held(cards)
             lanes = [self.lane_json(lane, now, held, TAIL) for lane in self.watch.lanes]
 
             midnight = local_midnight(now)
@@ -231,15 +292,15 @@ class Dashboard:
             hours = collections.OrderedDict((h, 0.0) for h in range(24))
             roles: dict = collections.defaultdict(float)
             for ts, rec in jobs:
-                cost = rec.get("cost_usd") or 0.0
-                hours[time.localtime(ts).tm_hour] = hours.get(time.localtime(ts).tm_hour, 0.0) + cost
+                cost = num(rec.get("cost_usd")) or 0.0
+                hours[time.localtime(ts).tm_hour] += cost
                 roles[str(rec.get("role") or "?")] += cost
 
             events = []
             for ts, rec in jobs:
                 status = str(rec.get("status") or "?")
-                cost = rec.get("cost_usd")
-                text = f"{rec.get('lane') or rec.get('role')} {status} {w.fmt_secs(rec.get('elapsed_seconds') or 0)}"
+                cost = num(rec.get("cost_usd"))
+                text = f"{rec.get('lane') or rec.get('role')} {status} {w.fmt_secs(num(rec.get('elapsed_seconds')) or 0)}"
                 if cost is not None:
                     text += f" ${cost:.2f}"
                 events.append({"t": ts, "kind": "JOB", "red": status in ("failed", "cancelled"), "text": text})
@@ -250,7 +311,7 @@ class Dashboard:
             events.sort(key=lambda e: e["t"])
             events = [dict(e, t=clock(e["t"])) for e in events[-EVENTS:]]
 
-        total = sum(rec.get("cost_usd") or 0.0 for _, rec in jobs)
+        total = sum(num(rec.get("cost_usd")) or 0.0 for _, rec in jobs)
         return {
             "now": now, "clock": clock(now), "project": self.project,
             "bridge": self.watch.bridge_alive(),
@@ -277,8 +338,7 @@ class Dashboard:
             lane = next((x for x in self.watch.lanes if x.name == name), None)
             if lane is None:
                 return None
-            held = {c["principal"] for c in self.cards(now)}
-            out = self.lane_json(lane, now, held, FULL)
+            out = self.lane_json(lane, now, self.held(self.cards(now)), FULL)
             out["packet"] = self.watch.packet_text(lane)
         return out
 
@@ -286,8 +346,15 @@ class Dashboard:
 # --------------------------------------------------------------------------
 # HTTP
 
+def cookie_name(port: int) -> str:
+    """Cookies ignore ports: naming it after the port keeps two dashboards (or a
+    restart on another port) from overwriting each other's."""
+    return f"{COOKIE}_{port}"
+
+
 def make_handler(board: Dashboard, token: str, port: int):
     hosts = {f"127.0.0.1:{port}", f"localhost:{port}"}
+    cookie = cookie_name(port)
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "factory-dashboard"
@@ -318,11 +385,16 @@ def make_handler(board: Dashboard, token: str, port: int):
             self.send(code, (text + "\n").encode(), "text/plain; charset=utf-8")
 
         def authorized(self) -> bool:
-            for part in self.headers.get("Cookie", "").split(";"):
-                name, _, value = part.strip().partition("=")
-                if name == COOKIE and hmac.compare_digest(value.encode(), token.encode()):
-                    return True
-            return False
+            """Exactly one cookie of this port's name, holding the token. A
+            second one (say, set by another 127.0.0.1 server) is refused rather
+            than guessed between."""
+            values = []
+            for header in self.headers.get_all("Cookie") or []:
+                for part in header.split(";"):
+                    name, _, value = part.strip().partition("=")
+                    if name == cookie:
+                        values.append(value)
+            return len(values) == 1 and hmac.compare_digest(values[0].encode(), token.encode())
 
         def do_GET(self) -> None:
             if self.headers.get("Host", "") not in hosts:
@@ -337,7 +409,7 @@ def make_handler(board: Dashboard, token: str, port: int):
                 # Swap the token in the URL for a cookie, and drop it from the address bar.
                 self.send(303, b"", "text/plain", {
                     "Location": "/",
-                    "Set-Cookie": f"{COOKIE}={token}; HttpOnly; SameSite=Strict; Path=/"})
+                    "Set-Cookie": f"{cookie}={token}; HttpOnly; SameSite=Strict; Path=/"})
                 return
             if not self.authorized():
                 self.refuse(403, "no token: open the link 'factory dashboard' printed")
@@ -350,6 +422,8 @@ def make_handler(board: Dashboard, token: str, port: int):
                     self.refuse(404, "no such lane")
                 else:
                     self.json(detail)
+            elif url.path == "/favicon.ico":
+                self.send(204, b"", "text/plain")  # no icon; don't fill the console with 404s
             elif url.path in STATIC:
                 name, ctype = STATIC[url.path]
                 try:
@@ -391,19 +465,30 @@ def is_wsl() -> bool:
     return "microsoft" in platform.uname().release.lower()
 
 
-def open_browser(url: str) -> bool:
-    """The default browser: Windows' on WSL (it reaches 127.0.0.1 through WSL's
-    localhost forwarding), otherwise whatever webbrowser finds."""
-    if is_wsl() and shutil.which("explorer.exe"):
-        try:
-            subprocess.Popen(["explorer.exe", url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            return True
-        except OSError:
-            pass
+def open_browser(url: str) -> str | None:
+    """Ask the default browser to open url: the name of the opener that started,
+    or None. Starting is not proof a window opened, so the caller always prints
+    the URL as well.
+
+    On WSL, Windows' browser (it reaches 127.0.0.1 through WSL's localhost
+    forwarding): rundll32's URL protocol handler, then wslview (wslu). Each gets
+    the URL as one argv item, never through cmd.exe or powershell, which would
+    re-parse it; never explorer.exe, which opens a folder instead and loses the
+    query. Elsewhere, or if neither starts, whatever webbrowser finds."""
+    if is_wsl():
+        for argv in (["rundll32.exe", "url.dll,FileProtocolHandler", url], ["wslview", url]):
+            if not shutil.which(argv[0]):
+                continue
+            try:
+                subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                 stderr=subprocess.DEVNULL)
+                return argv[0]
+            except OSError:
+                continue
     try:
-        return bool(webbrowser.open(url))
+        return "webbrowser" if webbrowser.open(url) else None
     except Exception:
-        return False
+        return None
 
 
 def main(argv=None) -> int:
@@ -425,10 +510,13 @@ def main(argv=None) -> int:
         return 1
     print(f"Factory dashboard: {url}")
     print("The link carries this run's access token; it stops working when this command exits.")
-    if not args.no_open and open_browser(url):
-        print("Opening it in your browser. Ctrl-C stops the dashboard.", flush=True)
+    if args.no_open:
+        print("Open it in a browser on this machine.")
+    elif open_browser(url):
+        print("Trying to open it in your browser. If nothing opens, open the link above in a browser on this machine.")
     else:
-        print("Open it in a browser on this machine. Ctrl-C stops the dashboard.", flush=True)
+        print("Could not start a browser: open the link above in a browser on this machine.")
+    print("Ctrl-C stops the dashboard.", flush=True)
     try:
         while True:
             time.sleep(3600)

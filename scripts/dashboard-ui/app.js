@@ -22,8 +22,11 @@
   const LED = { running: "g blink", held: "a blink", revise: "a", done: "g", approved: "g", idle: "", cancelled: "r", failed: "r" };
   const LABEL = { running: "Run", held: "Held", revise: "Revise", done: "Done", approved: "Approved", idle: "Idle", cancelled: "Cancelled", failed: "Failed" };
 
-  let state = null, polledAt = 0, monLane = null, monTab = "transcript", monData = null, lastFocus = null, lastEvent = "";
-
+  let state = null, polledAt = 0, lastEvent = "", gateKey = null;
+  // Monitor state: the open lane, its tab, the latest /api/lane data, a request
+  // sequence number (stale responses are dropped) and what the body shows now.
+  let monLane = null, monTab = "transcript", monData = null, monSeq = 0, monBusy = false;
+  let shown = { lane: null, tab: null, keys: [], packet: null };
   // ---------- 7-segment LCD digits, drawn as SVG
   const SEG = { a: "4,2 6,0 16,0 18,2 16,4 6,4", b: "18,3 20,5 20,15 18,17 16,15 16,5", c: "18,19 20,21 20,31 18,33 16,31 16,21",
     d: "4,34 6,32 16,32 18,34 16,36 6,36", e: "2,19 4,21 4,31 2,33 0,31 0,21", f: "2,3 4,5 4,15 2,17 0,15 0,5", g: "4,18 6,16 16,16 18,18 16,20 6,20" };
@@ -67,45 +70,81 @@
   const elapsedOf = lane => (lane.elapsed == null ? null : lane.elapsed + (lane.state === "running" || lane.state === "held" ? sinceSec() : 0));
 
   // ---------- lanes
-  function renderLanes() {
-    const lanes = state.lanes;
-    $("lanes").replaceChildren(...lanes.map((lane, i) => {
-      const card = el("button", `lane plate${lane.state === "idle" ? " idle" : ""}`);
-      card.type = "button";
-      card.setAttribute("aria-label", `Open lane ${lane.name}`);
-      const top = el("div", "lane-top");
-      top.append(el("span", `led ${LED[lane.state] || ""}`), el("span", "lane-name", lane.name),
-        el("span", `state-tag st-${lane.state}`, LABEL[lane.state] || lane.state));
-      if (i < 9) top.append(el("span", "keycap key", i + 1));
-      const lcd = el("div", "lcd lcd-text");
+  // Cards are keyed by lane name and updated in place, so a focused card keeps
+  // focus across polls and a click that spans a poll still lands.
+  const cards = new Map();
+  const setText = (n, t) => { t = String(t); if (n.textContent !== t) n.textContent = t; };
+  const setClass = (n, c) => { if (n.className !== c) n.className = c; };
+  const entryKey = e => `${e.ts}\u0000${e.kind}\u0000${e.text}`;
+
+  function makeCard(name) {
+    const r = { card: el("button", "lane plate") };
+    r.card.type = "button";
+    r.card.dataset.name = name;
+    r.card.setAttribute("aria-label", `Open lane ${name}`);
+    const top = el("div", "lane-top");
+    r.led = el("span", "led"); r.tag = el("span", "state-tag"); r.key = el("span", "keycap key");
+    top.append(r.led, el("span", "lane-name", name), r.tag, r.key);
+    r.lcd = el("div", "lcd lcd-text"); r.lcdKey = null;
+    const stats = el("div", "lane-stats");
+    const stat = label => { const s = el("div", "stat"); const v = el("span", "val"); s.append(el("span", "silk", label), v); stats.append(s); return v; };
+    r.model = stat("Model"); r.cost = stat("Cost"); r.ctx = stat("Ctx");
+    const timer = el("div", "stat timer");
+    r.timerLabel = el("span", "silk");
+    r.tbox = el("div", "lcd seg-box"); r.tbox.dataset.name = name; r.segText = null;
+    timer.append(r.timerLabel, r.tbox);
+    stats.append(timer);
+    r.card.append(top, r.lcd, stats);
+    r.card.addEventListener("click", () => openMon(name));
+    return r;
+  }
+
+  function updateCard(r, lane, i) {
+    setClass(r.card, `lane plate${lane.state === "idle" ? " idle" : ""}`);
+    setClass(r.led, `led ${LED[lane.state] || ""}`);
+    setClass(r.tag, `state-tag st-${lane.state}`);
+    setText(r.tag, LABEL[lane.state] || lane.state);
+    r.key.hidden = i >= 9;
+    setText(r.key, i < 9 ? i + 1 : "");
+    const lcdKey = JSON.stringify([lane.state, lane.ended, lane.held_note || "", lane.tail.map(entryKey)]);
+    if (lcdKey !== r.lcdKey) {
+      r.lcdKey = lcdKey;
       if (lane.state === "idle" && !lane.tail.length) {
-        lcd.append(el("div", null, "NO JOBS YET"));
+        r.lcd.replaceChildren(el("div", null, "NO JOBS YET"));
       } else {
-        lane.tail.forEach(e => lcd.append(el("div", `ln k-${e.kind}`, lineText(e))));
-        if (lane.state === "held") lcd.append(el("div", "ln k-held", "⏸ HELD FOR APPROVAL"));
-        if (lane.state === "idle" && lane.ended) lcd.append(el("div", "ln k-idle", `-- IDLE SINCE ${lane.ended.slice(0, 5)} --`));
+        r.lcd.replaceChildren(...lane.tail.map(e => el("div", `ln k-${e.kind}`, lineText(e))));
+        if (lane.state === "held") r.lcd.append(el("div", "ln k-held", lane.held_note ? `⏸ ${lane.held_note}` : "⏸ HELD FOR APPROVAL"));
+        if (lane.state === "idle" && lane.ended) r.lcd.append(el("div", "ln k-idle", `-- IDLE SINCE ${lane.ended.slice(0, 5)} --`));
       }
-      const stats = el("div", "lane-stats");
-      const stat = (label, val) => { const s = el("div", "stat"); s.append(el("span", "silk", label), el("span", "val", val)); return s; };
-      const timer = el("div", "stat timer");
-      const tbox = el("div", "lcd seg-box");
-      tbox.dataset.lane = String(i);
-      timer.append(el("span", "silk", lane.state === "running" || lane.state === "held" ? "Elapsed" : "Took"), tbox);
-      stats.append(stat("Model", lane.model || "--"), stat("Cost", usd(lane.cost)), stat("Ctx", ktok(lane.context_tokens)), timer);
-      card.append(top, lcd, stats);
-      card.addEventListener("click", () => openMon(lane.name));
-      return card;
-    }));
+    }
+    setText(r.model, lane.model || "--");
+    setText(r.cost, usd(lane.cost));
+    setText(r.ctx, ktok(lane.context_tokens));
+    setText(r.timerLabel, lane.state === "running" || lane.state === "held" ? "Elapsed" : "Took");
+  }
+
+  function renderLanes() {
+    const box = $("lanes");
+    const names = new Set(state.lanes.map(l => l.name));
+    for (const [name, r] of cards) if (!names.has(name)) { r.card.remove(); cards.delete(name); }
+    state.lanes.forEach((lane, i) => {
+      let r = cards.get(lane.name);
+      if (!r) { r = makeCard(lane.name); cards.set(lane.name, r); }
+      updateCard(r, lane, i);
+      if (box.children[i] !== r.card) box.insertBefore(r.card, box.children[i] || null);
+    });
     tickTimers();
   }
 
   function tickTimers() {
     if (!state) return;
-    document.querySelectorAll("#lanes .seg-box").forEach(box => {
-      const lane = state.lanes[Number(box.dataset.lane)];
+    const byName = new Map(state.lanes.map(l => [l.name, l]));
+    for (const [name, r] of cards) {
+      const lane = byName.get(name);
       const s = lane ? elapsedOf(lane) : null;
-      setSeg(box, s == null ? "--:--" : mmss(Math.max(0, s)), "sm");
-    });
+      const text = s == null ? "--:--" : mmss(Math.max(0, s));
+      if (text !== r.segText) { r.segText = text; setSeg(r.tbox, text, "sm"); }
+    }
     const now = new Date((state.now + sinceSec()) * 1000);
     setSeg($("ro-clock"), `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`);
   }
@@ -121,8 +160,14 @@
     setSeg($("ro-run"), String(state.totals.running));
   }
 
+  // The gate LCD is an aria-live region, so it is rebuilt only when the held
+  // cards change. The countdown ticks in an aria-hidden node (screen readers get
+  // the expiry as a fixed clock time instead), so it is never re-announced.
   function renderGate() {
     const cards = state.gate;
+    const key = JSON.stringify(cards.map(c => Object.assign({}, c, { seconds_left: c.seconds_left == null })));
+    if (key === gateKey) { tickGate(); return; }
+    gateKey = key;
     const lcd = $("gate-lcd");
     $("gate-led").className = `led ${cards.length ? "a blink" : ""}`;
     $("gate-state").textContent = cards.length ? `Held · ${cards.length}` : "Clear";
@@ -133,14 +178,32 @@
     }
     const c = cards[0];
     const what = c.tool === "git_push" ? `${c.commits ?? "?"} commits · ${c.file_count ?? "?"} files` : (c.title || c.tool);
-    const left = Math.max(0, c.seconds_left - sinceSec());
+    let line;
+    if (c.seconds_left == null) {
+      line = el("div", null, `${what} · expiry unknown`);
+    } else {
+      const at = new Date((state.now + c.seconds_left) * 1000);
+      const cd = el("span", "gate-cd");
+      cd.setAttribute("aria-hidden", "true");
+      line = el("div", null, `${what} · expires `);
+      line.append(cd, el("span", "sr-only", `at ${pad(at.getHours())}:${pad(at.getMinutes())}`));
+    }
+    // The broker names the role, not the lane: list the role's running lanes.
+    const role = c.role || c.principal;
+    const lanes = Array.isArray(c.lanes) ? c.lanes : [];
     lcd.replaceChildren(
-      el("div", "big", `${c.tool} · ${c.principal}`),
+      el("div", "big", `${c.tool} · ${role}`),
+      ...(lanes.length ? [el("div", null, `from ${role} (lane${lanes.length > 1 ? "s" : ""}: ${lanes.join(", ")})`)] : []),
       el("div", null, `→ ${c.repo}`),
       el("div", null, c.base ? `${c.branch} → ${c.base}` : c.branch),
-      el("div", null, `${what} · expires ${mmss(left)}`),
+      line,
       ...(cards.length > 1 ? [el("div", null, `+ ${cards.length - 1} more held`)] : []));
+    tickGate();
     $("gate-hint").textContent = `Decide in a terminal: factory approvals approve ${c.id}  (or decline ${c.id} --reason "...")`;
+  }
+  function tickGate() {
+    const cd = document.querySelector("#gate-lcd .gate-cd");
+    if (cd && state && state.gate.length && state.gate[0].seconds_left != null) setText(cd, mmss(Math.max(0, state.gate[0].seconds_left - sinceSec())));
   }
 
   function renderSpend() {
@@ -156,7 +219,7 @@
         cells.append(el("i", `cell${on ? " on" : ""}${on && c > CELLS * 0.66 ? " hot" : ""}${on && c > CELLS * 0.9 ? " max" : ""}`));
       }
       col.title = `${pad(h.hour)}:00 ${usd(h.cost)}`;
-      col.append(cells, el("span", "silk", h.hour % 6 === 0 ? pad(h.hour) : "\u00a0"));
+      col.append(cells, el("span", "silk", h.hour % 6 === 0 ? pad(h.hour) : " "));
       return col;
     }));
     const roles = state.spend.roles;
@@ -172,6 +235,7 @@
     $("spend-sub").textContent = `${state.totals.jobs} jobs today`;
   }
 
+  const nearBottom = (n, slack) => n.scrollHeight - n.scrollTop - n.clientHeight < slack;
   function renderPaper() {
     const events = state.events;
     const key = events.length ? JSON.stringify(events[events.length - 1]) + events.length : "";
@@ -179,8 +243,9 @@
     const fresh = lastEvent !== "";
     lastEvent = key;
     const paper = $("paper");
+    const follow = !fresh || nearBottom(paper, 18);  // reading older lines: stay put
     paper.replaceChildren(...events.map((e, i) => {
-      const n = el("div", `pl${e.red ? " red" : ""}${fresh && i === events.length - 1 ? " new" : ""}`);
+      const n = el("div", `pl${e.red ? " red" : ""}${fresh && follow && i === events.length - 1 ? " new" : ""}`);
       n.append(el("span", null, e.t.slice(0, 5)), el("span", null, e.kind), el("span", null, e.text));
       n.title = `${e.t} ${e.kind} ${e.text}`;
       return n;
@@ -190,57 +255,120 @@
       n.append(el("span"), el("span"), el("span", null, "-- nothing yet today --"));
       paper.append(n);
     }
-    paper.scrollTop = paper.scrollHeight;
+    if (follow) paper.scrollTop = paper.scrollHeight;
     $("print-sub").textContent = `${events.filter(e => e.kind === "DENY").length} denied`;
   }
 
   // ---------- monitor (one lane's transcript and review packet)
   function openMon(name) {
-    lastFocus = document.activeElement;
-    monLane = name; monTab = "transcript"; monData = null;
+    monLane = name; monTab = "transcript"; monData = null; monBusy = false; monSeq++;
+    shown = { lane: null, tab: null, keys: [], packet: null };
+    const body = $("mon-body");
+    body.replaceChildren(); body.scrollTop = 0;
     $("scrim").hidden = false;
     renderMon();
     loadMon();
     $("mon-close").focus();
   }
-  function closeMon() { monLane = null; $("scrim").hidden = true; if (lastFocus) lastFocus.focus(); }
-  async function loadMon() {
+  function closeMon() {
     if (!monLane) return;
-    const name = monLane;
+    const r = cards.get(monLane);  // back to this lane's card, looked up by name
+    monLane = null; monData = null; monSeq++;
+    $("scrim").hidden = true;
+    if (r && r.card.isConnected) r.card.focus();
+  }
+  async function loadMon() {
+    if (!monLane || monBusy) return;
+    const name = monLane, seq = ++monSeq;
+    monBusy = true;
     try {
       const r = await fetch(`/api/lane?name=${encodeURIComponent(name)}`, { cache: "no-store" });
       if (!r.ok) throw new Error(String(r.status));
       const data = await r.json();
-      if (monLane === name) { monData = data; renderMon(); }
+      if (seq === monSeq && monLane === name) { monData = data; renderMon(); }
     } catch (e) { /* the header's Link lamp shows the outage */ }
+    finally { if (seq === monSeq) monBusy = false; }
   }
+  function setTab(tab) {
+    if (!monLane) return;
+    monTab = tab;
+    renderMon();
+    const body = $("mon-body");
+    body.scrollTop = tab === "packet" ? 0 : body.scrollHeight;
+  }
+  const transcriptLine = e => { const n = el("div", `ln k-${e.kind}`); n.append(el("span", "ts", e.ts), el("span", "tx", lineText(e))); return n; };
   function renderMon() {
     const d = monData || (state && state.lanes.find(l => l.name === monLane)) || { name: monLane, state: "idle", tail: [] };
-    $("mon-title").textContent = `MONITOR · ${d.name}`;
-    $("mon-led").className = `led ${LED[d.state] || ""}`;
-    const st = $("mon-state"); st.className = `state-tag st-${d.state}`; st.textContent = LABEL[d.state] || d.state;
+    setText($("mon-title"), `MONITOR · ${d.name}`);
+    setClass($("mon-led"), `led ${LED[d.state] || ""}`);
+    const st = $("mon-state"); setClass(st, `state-tag st-${d.state}`); setText(st, LABEL[d.state] || d.state);
+    setText($("mon-note"), d.state === "held" && d.held_note ? d.held_note : "");
     document.querySelectorAll(".tabkey[data-tab]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.tab === monTab)));
     const body = $("mon-body");
-    const atBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 40;
-    if (monTab === "transcript") {
-      const lines = d.tail || [];
-      if (!lines.length) { body.replaceChildren(el("p", null, "NO TRANSCRIPT YET.")); return; }
-      body.replaceChildren(...lines.map(e => { const n = el("div", `ln k-${e.kind}`); n.append(el("span", "ts", e.ts), el("span", "tx", lineText(e))); return n; }));
-      if (atBottom || !body.dataset.shown) body.scrollTop = body.scrollHeight;
-      body.dataset.shown = "1";
-    } else {
-      body.replaceChildren(el("pre", "packet", monData ? monData.packet : "LOADING…"));
+    const same = shown.lane === monLane && shown.tab === monTab;
+    if (monTab === "packet") {
+      const text = monData ? monData.packet : "LOADING…";
+      if (same && shown.packet === text) return;
+      body.replaceChildren(el("pre", "packet", text));
+      if (!same) body.scrollTop = 0;
+      shown = { lane: monLane, tab: monTab, keys: [], packet: text };
+      return;
     }
+    const lines = d.tail || [];
+    const keys = lines.map(entryKey);
+    const old = same ? shown.keys : null;
+    if (old && old.length === keys.length && keys.length && old[0] === keys[0] && old[old.length - 1] === keys[keys.length - 1]) return;
+    if (old && !old.length && !keys.length && body.firstChild) return;
+    const follow = !same || nearBottom(body, 40);
+    if (!keys.length) {
+      body.replaceChildren(el("p", null, "NO TRANSCRIPT YET."));
+    } else {
+      // The transcript is a sliding window: old lines fall off the front and new
+      // ones arrive at the end. Find the overlap and patch only the ends, so a
+      // text selection or the reading position survives a poll.
+      let drop = -1;
+      if (old && old.length) {
+        for (let k = 0; k < old.length; k++) {
+          const n = old.length - k;
+          if (n <= keys.length && old[k] === keys[0] && old[old.length - 1] === keys[n - 1]) { drop = k; break; }
+        }
+      }
+      if (drop < 0 || body.children.length !== old.length) {
+        body.replaceChildren(...lines.map(transcriptLine));
+      } else {
+        const before = body.scrollHeight;
+        for (let k = 0; k < drop; k++) body.firstChild.remove();
+        const removed = before - body.scrollHeight;
+        body.append(...lines.slice(old.length - drop).map(transcriptLine));
+        if (!follow && removed > 0) body.scrollTop = Math.max(0, body.scrollTop - removed);
+      }
+    }
+    if (follow) body.scrollTop = body.scrollHeight;
+    shown = { lane: monLane, tab: monTab, keys, packet: null };
   }
-  document.querySelectorAll(".tabkey[data-tab]").forEach(b => b.addEventListener("click", () => {
-    monTab = b.dataset.tab; $("mon-body").dataset.shown = ""; renderMon(); $("mon-body").scrollTop = monTab === "packet" ? 0 : $("mon-body").scrollHeight;
-  }));
+  document.querySelectorAll(".tabkey[data-tab]").forEach(b => b.addEventListener("click", () => setTab(b.dataset.tab)));
   $("mon-close").addEventListener("click", closeMon);
   $("scrim").addEventListener("click", e => { if (e.target === $("scrim")) closeMon(); });
+
+  // Keep Tab inside the dialog while it is open (aria-modal).
+  function trapTab(e) {
+    const items = [...document.querySelectorAll(".monitor button, .monitor [tabindex='0']")].filter(n => n.offsetParent !== null);
+    if (!items.length) return;
+    const first = items[0], last = items[items.length - 1];
+    const inside = $("scrim").contains(document.activeElement);
+    if (e.shiftKey && (document.activeElement === first || !inside)) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && (document.activeElement === last || !inside)) { e.preventDefault(); first.focus(); }
+  }
   document.addEventListener("keydown", e => {
     if (e.metaKey || e.ctrlKey || e.altKey) return;
-    if (e.key === "Escape" && monLane) { closeMon(); return; }
-    if (e.key === "p" && monLane) { monTab = "packet"; renderMon(); return; }
+    if (monLane) {
+      // The monitor is modal: digits do not open another lane while it is up.
+      if (e.key === "Escape") { e.preventDefault(); closeMon(); }
+      else if (e.key === "Tab") trapTab(e);
+      else if (e.key === "p") setTab("packet");
+      else if (e.key === "t") setTab("transcript");
+      return;
+    }
     const n = parseInt(e.key, 10);
     if (state && n >= 1 && n <= Math.min(9, state.lanes.length)) openMon(state.lanes[n - 1].name);
   });
@@ -260,5 +388,5 @@
   }
   poll();
   setInterval(poll, POLL_MS);
-  setInterval(() => { tickTimers(); if (state && state.gate.length) renderGate(); }, 1000);
+  setInterval(() => { tickTimers(); tickGate(); }, 1000);
 })();
