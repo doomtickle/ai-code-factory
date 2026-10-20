@@ -789,6 +789,8 @@ class VendorTests(unittest.TestCase):
         js = (UI / "term.js").read_text()
         self.assertIn("window.top === window", js)  # refuses to run outside the dashboard
         self.assertIn('"replay"', js)               # mutes input while the replay is written
+        css = (UI / "term.css").read_text()
+        self.assertIn("font-variant-ligatures: none", css)  # VT323's ff/fi/fl ligatures break xterm's grid
         for sink in ("innerHTML", "outerHTML", "insertAdjacentHTML", "document.write", "eval(", "new Function",
                      "ClipboardAddon", "WebLinksAddon", "ImageAddon", "window.open"):
             self.assertNotIn(sink, js, f"term.js uses {sink}")

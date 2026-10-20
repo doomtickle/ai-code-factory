@@ -797,11 +797,13 @@ your browser. It shows:
 - **Event printer:** today's broker calls (allowed, denied, held, decided) and
   finished jobs.
 - **Front-panel knobs** under the Coordinator's screen: BRIGHT and CONTRAST
-  adjust it, and V-HOLD, turned off centre, makes the picture roll like an old
-  set, and BLOOM sets the phosphor halo around lit text, from none (fully
-  counter-clockwise) to full; it starts at 25%. All four apply to the live
-  terminal too (drag, scroll or use the arrow keys; double-click resets;
-  remembered in your browser).
+  adjust it; V-HOLD, turned off centre, makes the picture roll like an old
+  set; BLOOM sets the phosphor halo around lit text, from none (fully
+  counter-clockwise) to full (it starts at 25%); and CRT sets the tube's
+  texture on the characters themselves (scanlines, colour fringe, beam
+  softness), from flat to a worn-out tube (it starts at 30%). All five apply
+  to the live terminal too (drag, scroll or use the arrow keys; double-click
+  resets; remembered in your browser).
 - **Lamps:** whether the page can reach the dashboard, whether the dispatch
   bridge is running, and whether anything is held.
 

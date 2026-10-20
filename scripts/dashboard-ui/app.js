@@ -375,13 +375,16 @@
   // BRIGHT and CONTRAST drive CSS filters on the tube; V-HOLD, off-centre, makes the
   // picture roll like a real set (faster the further you turn it, up or down); BLOOM
   // turns the phosphor halo around lit text from none (fully counter-clockwise) to
-  // full. Drag, scroll or use the arrow keys; double-click or Home resets. Settings
+  // full; CRT turns the tube's texture on the glyphs themselves (scanlines through
+  // them, a red/blue convergence fringe, beam softness and smear, an aperture grille)
+  // from flat (fully counter-clockwise) to a worn-out tube. Drag, scroll or use the arrow keys; double-click or Home resets. Settings
   // stay in this browser only.
   const KNOB_KEY = "fc1984-knobs";
   const DETENT = 12;           // V-HOLD locks within this many steps of centre
   // Each knob's range and its reset value. The centred ones sweep -100..100; BLOOM
-  // sweeps 0..100 and starts a quarter of the way round, so the text is still crisp.
-  const KNOBS = { bright: [-100, 100, 0], contrast: [-100, 100, 0], vhold: [-100, 100, 0], bloom: [0, 100, 25] };
+  // sweeps 0..100 and starts a quarter of the way round, so the text is still crisp;
+  // CRT sweeps 0..100 and starts at 30, which is the look the tube had before it.
+  const KNOBS = { bright: [-100, 100, 0], contrast: [-100, 100, 0], vhold: [-100, 100, 0], bloom: [0, 100, 25], crt: [0, 100, 30] };
   const knobVals = {};
   for (const k in KNOBS) knobVals[k] = KNOBS[k][2];
   const clampKnob = (name, v) => Math.max(KNOBS[name][0], Math.min(KNOBS[name][1], v));
@@ -414,10 +417,41 @@
     const glow = (r, a) => `drop-shadow(0 0 ${r.toFixed(1)}px rgba(0, 255, 65, ${a.toFixed(2)}))`;
     return `${glow(0.6 + 3.4 * b, 0.25 + 0.6 * b)} ${glow(3 + 15 * b, 0.12 + 0.58 * b)}`;
   }
+  // CRT: up to the default it fades in the tube's usual scanlines and convergence
+  // fringe; past it the scanlines thicken and darken, the fringe widens, an aperture
+  // grille appears and the beam softens and smears sideways. The scanlines and grille
+  // are the glass layer (.crt::after); the live frame's glyphs get the SVG filter
+  // #crt-glyph (none at 0); the placeholder gets the same fringe as a text-shadow.
+  const crtNode = id => document.getElementById(id);
+  const glyph = { rc: crtNode("crt-glyph-rc"), bc: crtNode("crt-glyph-bc"), r: crtNode("crt-glyph-r"), b: crtNode("crt-glyph-b"),
+    blur: crtNode("crt-glyph-blur"), mix: crtNode("crt-glyph-mix") };
+  function crtTexture(v) {
+    const home = KNOBS.crt[2];
+    const lo = Math.min(v, home) / home, hi = Math.max(0, v - home) / (100 - home);  // 0..1 each side of the default
+    const dx = 0.85 * lo + 1.75 * hi, fa = 0.3 * lo + 0.35 * hi, soft = 0.5 * hi;
+    const f = n => n.toFixed(3);
+    tube.style.setProperty("--scan", f(0.22 * lo + 0.33 * hi));
+    tube.style.setProperty("--scan-w", `${f(1 + 0.5 * hi)}px`);
+    tube.style.setProperty("--mask", f(0.2 * hi));
+    tube.style.setProperty("--crt-fx", v <= 0 ? "0 0 0 transparent" :
+      `-${f(dx)}px 0 rgba(255, 40, 90, ${f(fa * 1.2)}), ${f(dx)}px 0 rgba(40, 150, 255, ${f(fa * 1.2)}), ` +
+      `${f(1.4 * hi)}px 0 ${f(1.6 * hi)}px rgba(0, 255, 65, ${f(0.4 * hi)})`);
+    if (v <= 0 || !glyph.mix) return "";
+    glyph.rc.setAttribute("values", `0 0 0 0 1  0 0 0 0 .157  0 0 0 0 .353  0 0 0 ${f(fa)} 0`);
+    glyph.bc.setAttribute("values", `0 0 0 0 .157  0 0 0 0 .588  0 0 0 0 1  0 0 0 ${f(fa)} 0`);
+    glyph.r.setAttribute("dx", f(-dx));
+    glyph.b.setAttribute("dx", f(dx));
+    glyph.blur.setAttribute("stdDeviation", `${f(1.3 * hi)} ${f(0.35 * hi)}`);
+    glyph.mix.setAttribute("k2", f(soft));
+    glyph.mix.setAttribute("k3", f(1 - 0.3 * hi));
+    return "url(#crt-glyph)";
+  }
   function applyKnobs() {
     tube.style.setProperty("--bright", (1 + knobVals.bright / 100 * 0.6).toFixed(3));
     tube.style.setProperty("--contrast", (1 + knobVals.contrast / 100 * 0.5).toFixed(3));
-    tube.style.setProperty("--bloom-fx", bloomFilter(knobVals.bloom));
+    const bloom = bloomFilter(knobVals.bloom), glyphFx = crtTexture(knobVals.crt);
+    tube.style.setProperty("--bloom-fx", bloom);
+    tube.style.setProperty("--term-fx", [glyphFx, bloom === "none" ? "" : bloom].filter(Boolean).join(" ") || "none");
     // The placeholder's faint wide text glow is part of the bloom too: it fades out
     // below the default, so fully counter-clockwise is crisp.
     tube.style.setProperty("--bloom", `color-mix(in srgb, var(--c) ${Math.round(24 * Math.min(1, knobVals.bloom / 25))}%, transparent)`);
@@ -435,7 +469,7 @@
       const name = k.dataset.knob, val = knobVals[name], [lo, hi] = KNOBS[name];
       k.querySelector("i").style.setProperty("--rot", `${(-135 + (val - lo) / (hi - lo) * 270).toFixed(1)}deg`);
       k.setAttribute("aria-valuenow", String(Math.round(val)));
-      k.setAttribute("aria-valuetext", name === "vhold" ? holdText(val) : name === "bloom" ? (val ? `${Math.round(val)}%` : "off") : `${Math.round(val)}`);
+      k.setAttribute("aria-valuetext", name === "vhold" ? holdText(val) : name === "bloom" ? (val ? `${Math.round(val)}%` : "off") : name === "crt" ? (val ? `${Math.round(val)}%` : "flat") : `${Math.round(val)}`);
     });
     try { localStorage.setItem(KNOB_KEY, JSON.stringify(knobVals)); } catch (e) { /* fine */ }
   }

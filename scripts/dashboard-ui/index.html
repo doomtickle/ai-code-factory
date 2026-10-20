@@ -50,6 +50,7 @@
           <div class="knob" data-knob="contrast" role="slider" tabindex="0" aria-label="Contrast" aria-valuemin="-100" aria-valuemax="100" aria-valuenow="0"><span class="scale"><i></i></span><span class="silk">Contrast</span></div>
           <div class="knob" data-knob="vhold" role="slider" tabindex="0" aria-label="Vertical hold" aria-valuemin="-100" aria-valuemax="100" aria-valuenow="0"><span class="scale"><i></i></span><span class="silk">V-Hold</span></div>
           <div class="knob" data-knob="bloom" role="slider" tabindex="0" aria-label="Bloom" aria-valuemin="0" aria-valuemax="100" aria-valuenow="25"><span class="scale"><i></i></span><span class="silk">Bloom</span></div>
+          <div class="knob" data-knob="crt" role="slider" tabindex="0" aria-label="CRT texture, flat to full tube" aria-valuemin="0" aria-valuemax="100" aria-valuenow="30"><span class="scale"><i></i></span><span class="silk">CRT</span></div>
         </div>
         <span class="silk">No shell · exec only</span>
       </div>
@@ -99,5 +100,19 @@
     <div class="lcd-bezel"><div class="lcd mon-lcd"><div class="mon-body" id="mon-body" tabindex="0" aria-label="Lane output"></div></div></div>
   </div>
 </div>
+<!-- The CRT knob's glyph texture for the live terminal (a cross-origin frame this page
+     can't style inside): red and blue convergence fringes offset either side of each
+     glyph, then beam softness and horizontal smear. app.js sets the numbers. -->
+<svg class="fx-defs" aria-hidden="true" focusable="false" width="0" height="0">
+  <filter id="crt-glyph" x="-1%" y="-1%" width="102%" height="102%" color-interpolation-filters="sRGB">
+    <feColorMatrix id="crt-glyph-rc" in="SourceGraphic" type="matrix" values="0 0 0 0 1  0 0 0 0 .157  0 0 0 0 .353  0 0 0 .3 0" result="r"/>
+    <feOffset id="crt-glyph-r" in="r" dx="-.85" dy="0" result="ro"/>
+    <feColorMatrix id="crt-glyph-bc" in="SourceGraphic" type="matrix" values="0 0 0 0 .157  0 0 0 0 .588  0 0 0 0 1  0 0 0 .3 0" result="b"/>
+    <feOffset id="crt-glyph-b" in="b" dx=".85" dy="0" result="bo"/>
+    <feMerge result="fringed"><feMergeNode in="ro"/><feMergeNode in="bo"/><feMergeNode in="SourceGraphic"/></feMerge>
+    <feGaussianBlur id="crt-glyph-blur" in="fringed" stdDeviation="0 0" result="soft"/>
+    <feComposite id="crt-glyph-mix" in="soft" in2="fringed" operator="arithmetic" k1="0" k2="0" k3="1" k4="0"/>
+  </filter>
+</svg>
 </body>
 </html>
