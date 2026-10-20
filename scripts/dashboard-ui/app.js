@@ -206,40 +206,6 @@
     if (cd && state && state.gate.length && state.gate[0].seconds_left != null) setText(cd, mmss(Math.max(0, state.gate[0].seconds_left - sinceSec())));
   }
 
-  // Plan usage: % of the session (5-hour) and weekly (7-day) limits, from the
-  // status line `factory usage enable` installs. Thresholds match the LED colors.
-  function renderUsage() {
-    const u = state.usage || { enabled: false, windows: {} };
-    const box = $("usage");
-    if (!u.enabled) {
-      const p = el("p", "usage-off", "Not recording. In a terminal on this machine run ");
-      p.append(el("code", null, "factory usage enable"), document.createTextNode(", then use Claude Code here."));
-      box.replaceChildren(p);
-      $("usage-sub").textContent = "";
-      return;
-    }
-    const fmtLeft = s => (s >= 86400 ? `${Math.floor(s / 86400)}d ${Math.floor(s / 3600) % 24}h` : `${Math.floor(s / 3600)}h ${pad(Math.floor(s / 60) % 60)}m`);
-    box.replaceChildren(...[["five_hour", "Session 5h"], ["seven_day", "Week 7d"]].map(([key, label]) => {
-      const w = u.windows[key];
-      const row = el("div", "usage-row");
-      const meter = el("div", "usage-meter");
-      const lit = w ? Math.round(w.used_percentage / 5) : 0;
-      for (let k = 0; k < 20; k++) {
-        const on = k < lit;
-        meter.append(el("i", `${on ? "on" : ""}${on && k >= 14 ? " hot" : ""}${on && k >= 18 ? " max" : ""}`));
-      }
-      const digits = el("div", "lcd seg-box");
-      setSeg(digits, w ? String(Math.round(w.used_percentage)).padStart(3, " ") : "---", "sm");
-      digits.append(el("span", "unit", "%"));
-      row.append(el("span", "silk", label), meter, digits,
-        el("span", "silk resets", w ? `resets in ${fmtLeft(Math.max(0, w.seconds_left - sinceSec()))}` : "unknown: no report since it reset"));
-      return row;
-    }));
-    const age = u.updated ? Math.max(0, state.now - u.updated) : null;
-    $("usage-sub").textContent = age == null ? "" : age < 120 ? "live"
-      : age < 3600 ? `as of ${Math.floor(age / 60)} min ago` : `as of ${fmtLeft(Math.floor(age))} ago`;
-  }
-
   function renderSpend() {
     const hours = state.spend.hours;  // midnight to now, one column an hour
     const CELLS = 12;
@@ -414,7 +380,7 @@
       if (!r.ok) throw new Error(String(r.status));
       state = await r.json();
       polledAt = Date.now();
-      renderHeader(); renderLanes(); renderGate(); renderUsage(); renderSpend(); renderPaper();
+      renderHeader(); renderLanes(); renderGate(); renderSpend(); renderPaper();
       if (monLane) loadMon();
     } catch (e) {
       $("lamp-link").className = "led r blink";

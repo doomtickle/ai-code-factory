@@ -20,6 +20,8 @@
   --t-user: #fff3d6; --t-tool: #63dcec; --t-ok: #8cff8f; --t-err: #ff6e5a; --t-held: #ffd84d; --t-branch: #ff86de;
   --amber: #ffb000; --amber-glow: rgba(255, 176, 0, .55); --amber-dim: #8a6100; --crt-amber-bg: #140d02;
   --green: #45ff7d; --green-glow: rgba(69, 255, 125, .5); --green-dim: #1f8a45; --crt-green-bg: #021207;
+  /* The Coordinator's tube: classic black-and-green "matrix" phosphor */
+  --matrix: #00ff41; --matrix-glow: rgba(0, 255, 65, .6); --matrix-dim: #0b8a2e; --matrix-pale: #b8ffca; --crt-matrix-bg: #000500;
   --led-green: #4dff6a; --led-amber: #ffae1a; --led-red: #ff4433; --led-off: #3b3e42;
   --paper: #f2efe2; --paper-bar: #d6e8d0; --ink: #2b2b36; --ink-red: #b3261e;
   --key: #dcd6c5; --key-lo: #9b9584; --key-ink: #2a2924;
@@ -89,38 +91,52 @@ button { font: inherit; color: inherit; }
 .bay-h .rule { flex: 1; height: 1px; background: var(--silk-dim); opacity: .4; }
 .bay-h.lanes-h { margin: 0 0 6px; padding: 8px 26px; }
 
-/* CRTs: amber for the Coordinator, green for the lane monitor */
-.crt-wrap { flex: 1; min-height: 0; padding: 14px; border-radius: 18px; background: linear-gradient(180deg, #1c1d1f, #0e0f10);
-  box-shadow: inset 0 0 0 2px #2c2e31, inset 0 8px 18px rgba(0,0,0,.8); display: flex; }
+/* CRTs: black-and-green matrix phosphor for the Coordinator, green for the lane monitor.
+   The bezel is molded plastic: a lit top-left edge, a shadowed lower lip, and a
+   recessed, bevelled well the tube sits in. */
+.crt-wrap { flex: 1; min-height: 0; padding: 18px; border-radius: 22px; display: flex; position: relative;
+  background:
+    radial-gradient(120% 90% at 20% 0%, rgba(255,255,255,.07), transparent 55%),
+    linear-gradient(180deg, #2a2b2e, #17181a 55%, #0f1011);
+  box-shadow:
+    inset 0 2px 0 rgba(255,255,255,.10), inset 0 -3px 0 rgba(0,0,0,.65),
+    inset 0 0 0 1px #34363a, inset 0 0 0 7px #121314, inset 0 0 0 8px #2b2d30,
+    inset 0 10px 22px rgba(0,0,0,.85), 0 3px 0 #000, 0 8px 18px rgba(0,0,0,.55); }
 .crt { --c: var(--amber); --glow: var(--amber-glow); --dim: var(--amber-dim); --crt-bg: var(--crt-amber-bg);
   position: relative; flex: 1; min-height: 0; min-width: 0; border-radius: 22px / 18px; overflow: hidden;
   background: radial-gradient(ellipse at 50% 40%, color-mix(in srgb, var(--crt-bg) 70%, var(--c) 6%), var(--crt-bg) 70%);
   color: var(--c); font-family: var(--f-crt); font-size: 20px; line-height: 1.15;
   /* The tube, kept small so text stays crisp: a sub-pixel red/blue convergence fringe
      (--crt-fx), the phosphor glow, and a faint wide bloom. Text itself is never warped. */
-  --crt-fx: -.6px 0 rgba(255, 40, 90, .3), .6px 0 rgba(40, 150, 255, .3);
-  --bloom: color-mix(in srgb, var(--c) 16%, transparent);
-  text-shadow: var(--crt-fx), 0 0 3px var(--glow), 0 0 10px var(--bloom);
-  box-shadow: inset 0 0 60px rgba(0,0,0,.85), inset 0 0 12px rgba(0,0,0,.9); display: flex; flex-direction: column; }
+  --crt-fx: -.85px 0 rgba(255, 40, 90, .36), .85px 0 rgba(40, 150, 255, .36);
+  --bloom: color-mix(in srgb, var(--c) 24%, transparent);
+  text-shadow: var(--crt-fx), 0 0 3px var(--glow), 0 0 12px var(--bloom);
+  box-shadow: inset 0 0 70px rgba(0,0,0,.9), inset 0 0 14px rgba(0,0,0,.95), 0 0 0 2px #050505, 0 0 24px color-mix(in srgb, var(--c) 10%, transparent);
+  display: flex; flex-direction: column; }
 .crt.green { --c: var(--green); --glow: var(--green-glow); --dim: var(--green-dim); --crt-bg: var(--crt-green-bg); }
+.crt.matrix { --c: var(--matrix); --glow: var(--matrix-glow); --dim: var(--matrix-dim); --crt-bg: var(--crt-matrix-bg); }
+/* On the matrix tube everything stays green: shades instead of hues */
+.crt.matrix .sub, .crt.matrix .c-held { color: var(--matrix-pale); text-shadow: var(--crt-fx), 0 0 4px var(--matrix-glow); }
+.crt.matrix .banner { border-color: var(--matrix); box-shadow: 0 0 8px var(--matrix-glow), inset 0 0 8px var(--matrix-glow); }
 /* Glass over the text, never on it: a "pillow" falloff that darkens toward the
    rounded corners, a curved specular highlight and a bright rim at the top edge sell
    the bulge of the tube face; scanlines on top. Static, so the 1500-line monitor
    scrolls under it without repainting it. */
 .crt::after { content: ""; position: absolute; inset: 0; pointer-events: none; border-radius: inherit;
   background:
-    radial-gradient(130% 75% at 30% -12%, rgba(255,255,255,.075), rgba(255,255,255,.02) 45%, transparent 65%),
-    repeating-linear-gradient(180deg, rgba(0,0,0,.16) 0 1px, transparent 1px 3px),
-    linear-gradient(90deg, rgba(0,0,0,.38), transparent 4.5%, transparent 95.5%, rgba(0,0,0,.38)),
-    linear-gradient(180deg, rgba(0,0,0,.38), transparent 6%, transparent 94%, rgba(0,0,0,.38)),
-    radial-gradient(ellipse at center, transparent 62%, rgba(0,0,0,.42) 100%);
-  box-shadow: inset 0 0 18px 4px rgba(0,0,0,.5), inset 0 1px 0 rgba(255,255,255,.07), inset 0 0 0 1px rgba(255,255,255,.03);
+    radial-gradient(130% 75% at 30% -12%, rgba(255,255,255,.1), rgba(255,255,255,.025) 45%, transparent 65%),
+    radial-gradient(40% 18% at 82% 92%, rgba(255,255,255,.035), transparent 70%),
+    repeating-linear-gradient(180deg, rgba(0,0,0,.22) 0 1px, transparent 1px 3px),
+    linear-gradient(90deg, rgba(0,0,0,.48), transparent 5%, transparent 95%, rgba(0,0,0,.48)),
+    linear-gradient(180deg, rgba(0,0,0,.48), transparent 7%, transparent 93%, rgba(0,0,0,.48)),
+    radial-gradient(ellipse at center, transparent 58%, rgba(0,0,0,.52) 100%);
+  box-shadow: inset 0 0 22px 5px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,255,255,.09), inset 0 0 0 1px rgba(255,255,255,.04);
   animation: flicker 6s infinite; }
 @keyframes flicker { 0%, 97%, 100% { opacity: 1; } 98% { opacity: .85; } }
 /* A very faint band rolling down the tube (mains hum), moved by transform only so the
    compositor animates it without repainting the text under it. */
 .crt::before { content: ""; position: absolute; left: 0; right: 0; top: 0; height: 24%; pointer-events: none;
-  background: linear-gradient(180deg, transparent, color-mix(in srgb, var(--c) 4%, transparent) 50%, transparent);
+  background: linear-gradient(180deg, transparent, color-mix(in srgb, var(--c) 6%, transparent) 50%, transparent);
   transform: translateY(-100%); animation: roll 14s linear infinite; will-change: transform; }
 @keyframes roll { to { transform: translateY(420%); } }
 .crt-body { flex: 1; min-height: 0; overflow-y: auto; padding: 16px 20px 10px; scrollbar-width: thin; scrollbar-color: var(--dim) transparent; }
@@ -129,7 +145,24 @@ button { font: inherit; color: inherit; }
 .crt .sub { color: var(--t-tool); text-shadow: var(--crt-fx), 0 0 3px rgba(99, 220, 236, .35); padding-left: 1.4em; }
 .crt .banner { border: 1px solid var(--dim); padding: 6px 10px; display: inline-block; margin-bottom: 12px; }
 .crt .c-held { color: var(--t-held); }
-.crt-foot { display: flex; justify-content: space-between; gap: 10px; padding: 8px 6px 0; }
+.crt-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 6px 0; flex-wrap: wrap; }
+/* Front-panel controls under the tube: knurled knobs with an index mark, a badge */
+.knobs { display: flex; align-items: center; gap: 14px; }
+.knob { display: grid; justify-items: center; gap: 3px; }
+.knob i { width: 22px; height: 22px; border-radius: 50%; position: relative;
+  background:
+    repeating-conic-gradient(from 0deg, #3a3c40 0 6deg, #1f2023 6deg 12deg);
+  box-shadow: 0 0 0 2px #0d0e0f, 0 2px 3px rgba(0,0,0,.7), inset 0 1px 0 rgba(255,255,255,.12); }
+.knob i::before { content: ""; position: absolute; inset: 4px; border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #55585d, #26282b 70%); box-shadow: inset 0 -1px 2px rgba(0,0,0,.6); }
+.knob i::after { content: ""; position: absolute; left: 50%; top: 3px; width: 2px; height: 6px; margin-left: -1px;
+  background: var(--silk); border-radius: 1px; transform-origin: 1px 8px; }
+.knob.k2 i::after { transform: rotate(-40deg); }
+.knob.k3 i::after { transform: rotate(55deg); }
+.knob .silk { font-size: .58rem; letter-spacing: .1em; }
+.badge-plate { font-family: var(--f-silk); font-weight: 700; font-size: .62rem; letter-spacing: .2em; text-transform: uppercase;
+  color: #cfc9b6; padding: 2px 8px; border-radius: 2px; background: linear-gradient(180deg, #4a4c50, #2a2c2f);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.18), 0 1px 0 #000; text-shadow: 0 -1px 0 #000; }
 .crt .ln { display: grid; grid-template-columns: 5.2em minmax(0, 1fr); gap: 10px; }
 .crt .ln .ts { color: var(--dim); text-shadow: none; }
 .crt .ln .tx { white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -189,20 +222,6 @@ button { font: inherit; color: inherit; }
 .gate-lcd div { overflow-wrap: anywhere; }
 .gate-hint { margin: 0; letter-spacing: .08em; text-transform: none; font-size: .78rem; }
 .gate-hint:empty { display: none; }
-
-/* Plan usage: two LED meters with 7-segment percentages */
-.usage { display: grid; gap: 8px; }
-.usage-row { display: grid; grid-template-columns: 5.6em minmax(0, 1fr) auto; gap: 8px; align-items: center; }
-.usage-row .silk { color: var(--silk); }
-.usage-row .seg-box { min-height: 30px; padding: 3px 6px; }
-.usage-row .resets { grid-column: 2 / -1; margin-top: -4px; }
-.usage-meter { display: grid; grid-template-columns: repeat(20, 1fr); gap: 2px; }
-.usage-meter i { height: 9px; border-radius: 1px; background: var(--led-off); }
-.usage-meter i.on { background: var(--led-green); box-shadow: 0 0 4px var(--led-green); }
-.usage-meter i.on.hot { background: var(--led-amber); box-shadow: 0 0 4px var(--led-amber); }
-.usage-meter i.on.max { background: var(--led-red); box-shadow: 0 0 4px var(--led-red); }
-.usage-off { margin: 0; font-family: var(--f-crt); font-size: 1.05rem; color: var(--silk-dim); }
-.usage-off code { color: var(--silk); font-family: inherit; }
 
 .spend-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .bargraph { display: flex; gap: 2px; align-items: flex-end; flex: 1; min-width: 150px; }

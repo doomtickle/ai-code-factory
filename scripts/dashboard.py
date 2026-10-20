@@ -11,8 +11,7 @@ This version is read-only. While it serves, it reads files under the factory
 state folder and never writes there, runs no command (no sbx, git or shell),
 and makes no network connection:
   dispatch/logs/<lane>.log, dispatch/audit.jsonl, dispatch/packets/, dispatch/pid
-  broker/audit.jsonl, broker/approvals/pending/,
-  usage.json (your plan usage, written by `factory usage enable`'s status line)
+  broker/audit.jsonl, broker/approvals/pending/
 It reuses watch.py's transcript model and approvals.py's card reader rather
 than parsing either command's output.
 
@@ -323,28 +322,7 @@ class Dashboard:
                       "roles": [{"role": r, "cost": round(c, 4)} for r, c in sorted(roles.items(), key=lambda x: -x[1])]},
             "events": events,
             "gate": cards,
-            "usage": self.usage(now),
         }
-
-    def usage(self, now: float) -> dict:
-        """Your plan's session (5-hour) and weekly (7-day) usage from <state>/usage.json,
-        which `factory usage enable`'s status line writes on this machine. A window
-        whose reset time has passed is unknown, not 0%: nothing has reported since."""
-        try:
-            rec = json.loads((self.state / "usage.json").read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            return {"enabled": False, "updated": None, "windows": {}}
-        rec = rec if isinstance(rec, dict) else {}
-        windows = {}
-        for name in ("five_hour", "seven_day"):
-            raw = rec.get(name) if isinstance(rec.get(name), dict) else {}
-            pct, resets = num(raw.get("used_percentage")), num(raw.get("resets_at"))
-            if pct is None or resets is None or resets <= now:
-                windows[name] = None
-            else:
-                windows[name] = {"used_percentage": round(min(max(pct, 0.0), 100.0), 1),
-                                 "seconds_left": int(resets - now)}
-        return {"enabled": True, "updated": num(rec.get("updated")), "windows": windows}
 
     @staticmethod
     def broker_today(rec: dict, midnight: float) -> dict | None:
