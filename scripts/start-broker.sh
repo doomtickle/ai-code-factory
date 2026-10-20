@@ -179,7 +179,7 @@ for name in $(printf '%s\n' "$registered" | grep '^factory-broker-' || true); do
 done
 
 # Credentials the sbx egress proxy cannot inject (Jira, Gemini, the private
-# npm registry, and, with the Passdesk Pro plugin, its license key and the
+# npm registry, GitLab, and, with the Passdesk Pro plugin, its license key and the
 # approvals webhook URL): the narrowly scoped exception in CLAUDE.md
 # ("Credentials"). Looked up in the host OS keychain and piped over stdin
 # into the running broker sandbox (secret_sync_from_keychain, scripts/lib/secrets.sh),

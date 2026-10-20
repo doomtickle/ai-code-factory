@@ -1,5 +1,5 @@
 # Shared helpers for the credentials sbx cannot proxy-inject (Jira, Gemini,
-# the private npm registry token, and, when the Passdesk Pro plugin is
+# the private npm registry token, the GitLab token, and, when the Passdesk Pro plugin is
 # installed, its license key and the approvals webhook URL) - the named
 # exception in CLAUDE.md ("Credentials"). Delivered into
 # /etc/factory-broker/secrets/<name> inside the broker sandbox over sbx exec

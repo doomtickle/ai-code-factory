@@ -16,7 +16,7 @@ dashboard in your browser (or laid out in [Herdr](https://herdr.dev) tabs).
                                       ▲                                    │
           your project ◀── git fetch ─┘ factory/* branches as bundles      │ MCP (per-role tools)
           (refs/remotes/factory-<lane>/)                                   ▼
-                                                  Broker VM ──▶ GitHub / npm / PyPI / docs
+                                                  Broker VM ──▶ GitHub / GitLab / npm / PyPI / docs
                                                   policy · secret filtering · audit
 ```
 
@@ -58,7 +58,7 @@ dashboard in your browser (or laid out in [Herdr](https://herdr.dev) tabs).
   their sessions and the Coordinator's tasks carry the context they need.
   `delegate` can wait for the job (`wait_seconds`), so a typical job costs the
   Coordinator one call.
-- **Broker:** the only VM with egress for tool traffic (GitHub, npm, PyPI, docs
+- **Broker:** the only VM with egress for tool traffic (GitHub, GitLab, npm, PyPI, docs
   sites). It identifies the calling role by token and gives that role only its
   granted tools. For every call it:
   - checks the rules in `broker/policy.toml`
@@ -76,7 +76,9 @@ dashboard in your browser (or laid out in [Herdr](https://herdr.dev) tabs).
   snippet, for instance), get it from the source, not verbatim from tool
   output.
 - **Credentials** are injected by the `sbx` egress proxy. Your Claude login and
-  an optional GitHub token live in the host `sbx` secret store.
+  an optional GitHub token live in the host `sbx` secret store. The ones sbx
+  can't inject (GitLab, Jira, Gemini, a private npm registry) stay in your
+  keychain and reach only the broker sandbox, as files.
 
 > **Platform:** macOS 14 (Sonoma) or later on Apple silicon, or Ubuntu 24.04+
 > on x86_64, including **WSL2 on Windows 11** (step-by-step guide:
@@ -109,6 +111,7 @@ dashboard in your browser (or laid out in [Herdr](https://herdr.dev) tabs).
 - A Docker account (for `sbx login`)
 - A Claude Pro or Max subscription
 - Optional: a GitHub fine-grained token, only if agents should push or open PRs
+- Optional: a GitLab project access token, only if agents should push to or open merge requests on GitLab
 - Optional: a Gemini API key, only if the researcher should use `gemini_flash_query`
 - Optional: a scoped Atlassian API token, only if the Coordinator should use
   `jira_my_issues` / `jira_get_issue`
@@ -227,7 +230,7 @@ place to open it in another.
 
 | Command | What it does |
 |---|---|
-| `factory doctor` | Check the machine is ready; prints the fix for each problem (setup runs it first; the dashboard's DIAG key runs it too). Once the broker exists, it also runs the gateway's own doctor inside it: policy, tokens and grants, audit log, credentials, a live probe, GitHub access per repo, the policy's hosts against the broker kit, and (Passdesk Pro) a warning for any approval that expired with no decision |
+| `factory doctor` | Check the machine is ready; prints the fix for each problem (setup runs it first; the dashboard's DIAG key runs it too). Once the broker exists, it also runs the gateway's own doctor inside it: policy, tokens and grants, audit log, credentials, a live probe, GitHub or GitLab access per repo, the policy's hosts against the broker kit, and (Passdesk Pro) a warning for any approval that expired with no decision |
 | `factory setup` | One-time setup (safe to re-run) |
 | `factory update [--yes]` | After pulling changes or editing kits, images or policy: pulls the latest factory, rebuilds, recreates only the sandboxes the changes affect (it lists them and what each loses, then asks), and restarts. With the `web` layout it doesn't open the dashboard (so `factory update --yes` returns): run `factory dashboard` afterwards. The dashboard's UPDATE key runs `factory update --yes` after showing the plan |
 | `factory update --plan` | What `factory update` would do, changing nothing but a (hook-free) `git fetch`: the incoming commits, the sandboxes it would recreate and what each loses, the ones the incoming changes may make out of date (a guess from the changed files), and notes such as uncommitted changes that would skip the pull. Tab-separated lines (`commit`, `recreate`, `maybe`, `note`), for the dashboard |
@@ -289,7 +292,7 @@ stay there. To do it by hand, run `factory reset`, then `factory start <other-fo
 
 The repo is generic: it works on any project, personal or work, and holds
 nothing specific to one organization. Settings that belong to you or your
-organization, such as a private npm registry, your Jira site and the GitHub
+organization, such as a private npm registry, your Jira site, your GitLab and the
 repos agents may push to, live in the factory config folder on your machine,
 `~/.config/ai-code-factory/` (`$XDG_CONFIG_HOME/ai-code-factory/` if you set
 it). Start from the example:
@@ -403,7 +406,9 @@ repos it may file in:
 
 It only files issues (existing labels, no assignees, no edits or closing),
 and every issue is secret-scanned and audited. To see each one before it is
-filed, add `"github_create_issue"` to `[approvals] tools` (Passdesk Pro).
+filed, set `[approvals] tools = ["git_push", "github_create_pr",
+"gitlab_create_mr", "github_create_issue"]` (Passdesk Pro): the list replaces
+the default, so name every tool you want held.
 
 ### Enabling a private npm registry
 
@@ -586,6 +591,11 @@ call later; the decision is picked up by the retry.
    one line for scripts (pending count and the oldest card's age). Decisions
    are plain files in the broker state folder, so nothing new listens on the
    network.
+   If you set `[approvals].tools` yourself, it replaces the default: list
+   `gitlab_create_mr` there for GitLab merge requests to wait for you. Holding
+   them also needs a Passdesk Pro copy from after GitLab support (re-copy it
+   into `plugins/` and run `factory update`); `factory status` warns if
+   merge requests would open unheld.
 5. `factory status` shows a line with the pending count and the oldest
    card's age once there is at least one; `factory doctor` warns (without
    failing) about any card that expired with no decision, pointing back at
@@ -816,7 +826,9 @@ sandbox (sandboxes are never deleted automatically).
 | `pip_download` | Downloads binary wheels for a hash-pinned `requirements.txt` (every line `name==version --hash=sha256:...`, no option lines; generate it with `uv pip compile --generate-hashes`) into `.factory/wheels/` (no code runs); pip only sees a copy the broker writes itself; agent installs offline with `uv` |
 | `git_fetch` | Fetches a branch into a private mirror and hands it to the agent as a bundle in `.factory/incoming/` |
 | `git_push` | Takes a bundle the developer wrote from its clone to `.factory/outgoing/` (size-capped, copied once into the broker), checks branch rules, secret-scans every commit's patch (binary files included), message and author/committer, pushes |
-| `github_create_pr` | Opens a (draft) PR; title and body are secret-scanned |
+| `github_create_pr` | Opens a (draft) PR; title and body are secret-scanned; refuses GitLab projects |
+| `gitlab_create_mr` | Opens a (draft) GitLab merge request (the title gets `Draft: `); title and body are secret-scanned; refuses GitHub repos |
+| `github_create_issue` | Files an issue in a repo on `[github].issue_repos` (existing labels only); title and body are secret-scanned |
 | `gemini_flash_query` | Sends a prompt to Gemini Flash for cheap/fast summarization or triage; prompt is secret-scanned and size-limited; output marked untrusted |
 | `jira_my_issues` | Lists Jira Cloud issues assigned to the caller (`status`: `todo`/`in_progress`/`all`, default not-Done); read-only; output marked untrusted |
 | `jira_get_issue` | One Jira Cloud issue the caller is assigned to: summary, status, priority, description, recent comments; read-only; output marked untrusted |

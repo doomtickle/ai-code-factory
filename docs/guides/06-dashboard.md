@@ -127,7 +127,7 @@ through under the broker's policy alone.
 The gate's display gives one line: how many writes are held, the first
 one's tool and role, and the time left before it expires. Under it, the
 **control unit** shows the selected write in full: the tool, the role and its
-lanes, the repo, the branch (or head and base for a PR), the PR title, the
+lanes, the repo, the branch (or head and base for a PR or merge request), its title, the
 commits and files, and the time left. **◀ ▶** step through several held
 writes.
 

@@ -16,7 +16,7 @@ factory doctor
 The doctor checks the platform, tools, Docker, `sbx` and `herdr` versions,
 setup and your Claude login. Once the broker sandbox is running, it also runs
 the gateway's own checks inside it: policy, tokens and grants, the audit log,
-credentials, a live probe, GitHub access per repo, and whether every host the
+credentials, a live probe, GitHub or GitLab access per repo, and whether every host the
 policy can reach is in a broker kit. Each problem comes with its fix. It changes
 nothing.
 
