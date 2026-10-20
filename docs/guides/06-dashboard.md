@@ -24,10 +24,11 @@ back. `--no-open` only prints the link; `--port N` picks the port.
 ## The layout
 
 ```text
-┌───────────────────── header: lamps · spend today · jobs · clock · MANUAL ──────────────────────┐
-│ Terminal 0                │ Lanes                                                              │
-│ (the Coordinator)         │  ┌ 1 developer ┐ ┌ 2 developer-lane2 ┐ ┌ 3 reviewer ┐ ...            │
-│                           │  └─────────────┘ └───────────────────┘ └────────────┘               │
+┌───────────────────── header: lamps · spend today · jobs · clock · MANUAL ───────────────────────┐
+│ Terminal 0                │ Lanes                                                               │
+│ (the Coordinator)         │  ┌ 1 developer ─────────────────┐ ┌ 2 developer-lane2 ───────────┐  │
+│                           │  └──────────────────────────────┘ └──────────────────────────────┘  │
+│                           │  ·3 developer-lane3  ·4 researcher  ·5 reviewer   (idle lanes)      │
 │                           ├──────────────┬────────────────────┬─────────────────────────────────┤
 │                           │ Spend / hour │ Event printer      │ Write gate + control unit       │
 └───────────────────────────┴──────────────┴────────────────────┴─────────────────────────────────┘
@@ -85,18 +86,29 @@ Stands in for: `factory chat`.
 
 ## Lanes
 
-One module per lane of every role. A role with three lanes has three modules
-(`developer`, `developer-lane2`, `developer-lane3`), because it can run three
-jobs at once. Each module shows:
+Every role has one lane per job it can run at once: a developer with three
+lanes has `developer`, `developer-lane2` and `developer-lane3`. As in `factory
+watch`, only the **active** lanes get a module: a job running, or one that
+finished in the last ten minutes. The modules share the bay, so one active
+lane fills it. When a lane gets a job it powers on in the bay, and the others
+move over to make room. Ten minutes after its job ends it powers down into
+the strip below.
+
+The **strip** under the modules has a chip for every idle lane, with its
+number and when its last job ended. With nothing running, the bay shows
+STANDBY above it.
+
+Each module shows:
 
 - a status LED and tag: RUN (green, blinking), HELD (amber, blinking: a write
   is waiting for you), REVISE (amber: a review asked for changes), DONE or
-  APPROVED (green), IDLE, CANCELLED or FAILED (red);
+  APPROVED (green), CANCELLED or FAILED (red);
 - the live tail of its transcript, with tool calls, errors, branches and held
   writes in their own colours;
 - its model, cost, context size, and the time the job has run (or took).
 
-Press a lane's number (1 to 9) or click it to open the **lane monitor**: the
+A lane keeps its number as a module and as a chip. Press it (1 to 9), or
+click the module or chip, to open the **lane monitor**: the
 full transcript (**T**) and the job's latest review packet (**P**), which has
 the task, each branch's commits and diffstat, the tests it ran, the broker
 calls it made, its cost and the role's report. **Esc** closes it.

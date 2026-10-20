@@ -70,9 +70,20 @@
   const elapsedOf = lane => (lane.elapsed == null ? null : lane.elapsed + (lane.state === "running" || lane.state === "held" ? sinceSec() : 0));
 
   // ---------- lanes
-  // Cards are keyed by lane name and updated in place, so a focused card keeps
-  // focus across polls and a click that spans a poll still lands.
-  const cards = new Map();
+  // As in `factory watch`: an active lane (running, held, or finished in the
+  // last ten minutes; the server marks every other lane "idle") gets a module,
+  // sized to fill the bay; an idle lane is a chip in the strip under them. A
+  // lane keeps its number in both forms. Cards and chips are keyed by lane name
+  // and updated in place, so a focused one keeps focus across polls and a click
+  // that spans a poll still lands.
+  // Motion: a module powers on (scale in, LCD flicker), powers down like a tube
+  // switching off before its chip appears, and the others glide to their new
+  // places (FLIP, with the Web Animations API). None of it with reduced motion.
+  const cards = new Map(), chips = new Map();
+  const ENTER_MS = 700, LEAVE_MS = 340, MOVE_MS = 300;
+  const motionOff = matchMedia("(prefers-reduced-motion: reduce)");
+  const narrow = matchMedia("(max-width: 1280px)");
+  let lanesDrawn = false;  // the first draw doesn't animate
   const setText = (n, t) => { t = String(t); if (n.textContent !== t) n.textContent = t; };
   const setClass = (n, c) => { if (n.className !== c) n.className = c; };
   const entryKey = e => `${e.ts}\u0000${e.kind}\u0000${e.text}`;
@@ -119,20 +130,117 @@
     r.tbox.title = lane.state === "running" || lane.state === "held" ? "Elapsed" : "Took";
   }
 
+  function makeChip(name) {
+    const c = { chip: el("button", "chip") };
+    c.chip.type = "button";
+    c.chip.dataset.name = name;
+    c.led = el("span", "led"); c.key = el("span", "keycap key"); c.since = el("span", "chip-since");
+    c.chip.append(c.led, c.key, el("span", "chip-name", name), c.since);
+    c.chip.addEventListener("click", () => openMon(name));
+    return c;
+  }
+  function updateChip(c, lane, i) {
+    c.key.hidden = i >= 9;
+    setText(c.key, i < 9 ? i + 1 : "");
+    const since = lane.ended ? `idle since ${lane.ended.slice(0, 5)}` : "no jobs yet";
+    setText(c.since, since);
+    const label = `Open lane ${lane.name}, ${since}`;
+    if (c.chip.getAttribute("aria-label") !== label) c.chip.setAttribute("aria-label", label);
+  }
+  // Classes that play a CSS animation once, then come off (so it can play again).
+  function play(node, classes, ms) {
+    const list = classes.split(" ");
+    node.classList.remove(...list);
+    void node.offsetWidth;  // restart the animation if it is still on
+    node.classList.add(...list);
+    clearTimeout(node.playTimer);
+    node.playTimer = setTimeout(() => node.classList.remove(...list), ms);
+  }
+  const colsFor = n => {
+    const c = n <= 2 ? Math.max(n, 1) : n <= 4 ? 2 : n <= 6 ? 3 : 4;
+    return narrow.matches ? Math.min(c, 2) : c;
+  };
+  // FLIP: let mutate() move the modules, then animate each from where it was.
+  function flip(box, animate, mutate) {
+    const before = animate ? new Map([...box.children].map(n => [n, n.getBoundingClientRect()])) : null;
+    mutate();
+    if (!before) return;
+    for (const n of box.children) {
+      const a = before.get(n);
+      if (!a || !a.width || n.classList.contains("leaving")) continue;
+      const b = n.getBoundingClientRect();
+      if (!b.width) continue;
+      const dx = a.left - b.left, dy = a.top - b.top, sx = a.width / b.width, sy = a.height / b.height;
+      if (Math.abs(dx) < 1 && Math.abs(dy) < 1 && Math.abs(sx - 1) < 0.01 && Math.abs(sy - 1) < 0.01) continue;
+      n.animate([{ transformOrigin: "0 0", transform: `translate(${dx}px, ${dy}px) scale(${sx}, ${sy})` },
+                 { transformOrigin: "0 0", transform: "none" }],
+                { duration: MOVE_MS, easing: "cubic-bezier(.2, .7, .2, 1)" });
+    }
+  }
+
   function renderLanes() {
-    const box = $("lanes");
-    const n = state.lanes.length;
-    box.style.setProperty("--cols", String(n <= 2 ? Math.max(n, 1) : n <= 4 ? 2 : n <= 6 ? 3 : 4));
+    const box = $("lanes"), strip = $("lane-strip"), standby = $("standby");
+    const animate = lanesDrawn && !motionOff.matches;
+    const focused = document.activeElement;
+    let focusCard = null, focusChip = null;
     const names = new Set(state.lanes.map(l => l.name));
-    for (const [name, r] of cards) if (!names.has(name)) { r.card.remove(); cards.delete(name); }
+    for (const [name, r] of cards) if (!names.has(name)) { clearTimeout(r.leaving); r.card.remove(); cards.delete(name); }
+    for (const [name, c] of chips) if (!names.has(name)) { c.chip.remove(); chips.delete(name); }
+
+    // Modules: the active lanes, in lane order, plus any still powering down.
+    const mods = [];
     state.lanes.forEach((lane, i) => {
       let r = cards.get(lane.name);
-      if (!r) { r = makeCard(lane.name); cards.set(lane.name, r); }
-      updateCard(r, lane, i);
-      if (box.children[i] !== r.card) box.insertBefore(r.card, box.children[i] || null);
+      if (lane.state !== "idle") {
+        if (!r) { r = makeCard(lane.name); cards.set(lane.name, r); }
+        if (r.leaving) { clearTimeout(r.leaving); r.leaving = 0; r.card.classList.remove("leaving"); }
+        else if (!r.card.isConnected && animate) play(r.card, "entering", ENTER_MS);
+        updateCard(r, lane, i);
+        mods.push(r.card);
+      } else if (r && r.card.isConnected) {
+        if (focused === r.card) focusChip = lane.name;
+        if (!animate) { r.card.remove(); return; }
+        if (!r.leaving) {
+          r.card.classList.add("leaving");
+          r.leaving = setTimeout(() => { r.leaving = 0; r.card.classList.remove("leaving"); r.card.remove(); if (state) renderLanes(); }, LEAVE_MS);
+        }
+        mods.push(r.card);
+      }
     });
+    box.hidden = !mods.length;
+    flip(box, animate, () => {
+      mods.forEach((n, k) => { if (box.children[k] !== n) box.insertBefore(n, box.children[k] || null); });
+      box.style.setProperty("--cols", String(colsFor(mods.length)));
+    });
+    if (standby.hidden !== mods.length > 0) {
+      standby.hidden = mods.length > 0;
+      if (!standby.hidden && animate) play(standby, "entering", ENTER_MS);
+    }
+
+    // Chips: the idle lanes, in lane order.
+    let k = 0;
+    state.lanes.forEach((lane, i) => {
+      let c = chips.get(lane.name);
+      if (lane.state !== "idle") {
+        if (c && c.chip.isConnected) { if (focused === c.chip) focusCard = lane.name; c.chip.remove(); }
+        return;
+      }
+      if (!c) { c = makeChip(lane.name); chips.set(lane.name, c); }
+      // A lane that just powered down: its chip lights once the module has gone.
+      if (!c.chip.isConnected && animate) play(c.chip, cards.get(lane.name) && cards.get(lane.name).leaving ? "entering late" : "entering", ENTER_MS + LEAVE_MS);
+      updateChip(c, lane, i);
+      if (strip.children[k] !== c.chip) strip.insertBefore(c.chip, strip.children[k] || null);
+      k++;
+    });
+    strip.hidden = k === 0;
+
+    // Keep the keyboard where it was when a lane changes form.
+    if (focusCard && cards.get(focusCard)) cards.get(focusCard).card.focus({ preventScroll: true });
+    else if (focusChip && chips.get(focusChip)) chips.get(focusChip).chip.focus({ preventScroll: true });
+    lanesDrawn = true;
     tickTimers();
   }
+  narrow.addEventListener("change", () => { if (state) renderLanes(); });
 
   function tickTimers() {
     if (!state) return;

@@ -233,6 +233,39 @@ a.tabkey { display: inline-block; text-decoration: none; }
 .lanes { flex: 1; min-height: 0; display: grid; grid-template-columns: repeat(var(--cols, 3), minmax(0, 1fr)); grid-auto-rows: minmax(0, 1fr); gap: 6px; }
 .lane { display: flex; flex-direction: column; gap: 6px; min-height: 0; min-width: 0; text-align: left; cursor: pointer; border: 0; padding: 8px 10px 10px; }
 .lane:hover .lcd-text { filter: brightness(1.06); }
+/* Power on: the module scales in and its LCD flickers up. Power down: it folds
+   to a bright line and goes out, like a tube switching off; then its chip lights. */
+.lane.entering { animation: lane-on .34s cubic-bezier(.2, .7, .2, 1) both; }
+.lane.entering .lcd-text { animation: lcd-on .7s steps(1, end) both; }
+.lane.leaving { animation: lane-off .34s cubic-bezier(.5, 0, .9, .4) both; pointer-events: none; }
+@keyframes lane-on { from { opacity: 0; transform: scale(.94); } 60% { opacity: 1; } to { transform: none; } }
+@keyframes lcd-on { 0% { filter: brightness(.25) contrast(.6); } 20% { filter: brightness(1.35); } 32% { filter: brightness(.5); }
+  44% { filter: brightness(1.2); } 60% { filter: none; } 100% { filter: none; } }
+@keyframes lane-off { 0% { opacity: 1; transform: none; filter: none; }
+  55% { opacity: 1; transform: scale(1, .03); filter: brightness(2.2); }
+  100% { opacity: 0; transform: scale(.2, .01); filter: brightness(3); } }
+/* Nothing running */
+.standby { flex: 1; min-height: 0; display: flex; padding: 14px; }
+.standby-lcd { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; padding: 16px; text-align: center;
+  font-family: var(--f-crt); font-size: 1.17rem; line-height: 1.15; color: var(--lcd-ink);
+  background: linear-gradient(160deg, rgba(255,255,255,.09), rgba(255,255,255,0) 38%), linear-gradient(170deg, var(--lcd-bg), var(--lcd-bg-2)); }
+.standby-lcd p { margin: 0; max-width: 34em; }
+.standby-lcd .big { font-size: 2rem; letter-spacing: .3em; text-transform: uppercase; }
+.standby.entering { animation: fade-in .5s ease-out both; }
+@keyframes fade-in { from { opacity: 0; } }
+/* Idle lanes: one chip each, under the modules */
+.lane-strip { flex: none; display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.chip { display: inline-flex; align-items: center; gap: 7px; min-width: 0; padding: 5px 11px 5px 9px; border: 0; border-radius: 5px; cursor: pointer;
+  background: linear-gradient(180deg, var(--case-hi), var(--case-lo)); box-shadow: inset 0 1px 0 rgba(255,255,255,.08), 0 2px 0 #000; }
+.chip:hover { filter: brightness(1.12); }
+.chip .keycap { min-width: 18px; height: 17px; font-size: .68rem; }
+.chip-name { font-family: var(--f-crt); font-size: 1.12rem; line-height: 1; color: var(--silk); white-space: nowrap; }
+.chip-since { font-family: var(--f-silk); font-weight: 600; font-size: .66rem; letter-spacing: .1em; text-transform: uppercase; color: var(--silk-dim); white-space: nowrap; }
+.chip.entering { animation: chip-on .45s cubic-bezier(.2, .7, .2, 1) both; }
+.chip.entering.late { animation-delay: .3s; }
+.chip.entering .led { animation: chip-led .45s ease-out both; animation-delay: inherit; }
+@keyframes chip-on { from { opacity: 0; transform: translateY(8px); } }
+@keyframes chip-led { 0% { background: var(--led-amber); box-shadow: 0 0 8px var(--led-amber), 0 0 0 2px #111; } 100% { background: var(--led-off); } }
 .lane-top { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 0 4px; }
 .lane-name { font-family: var(--f-crt); font-size: 1.35rem; color: var(--silk); line-height: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .lane-top .key { flex: none; }
@@ -382,6 +415,7 @@ html.cu-open, html.cu-open body { overflow: hidden; }
 
 @media (prefers-reduced-motion: reduce) {
   .led.blink, .lcd-text .k-held, .crt::after, .pl.new { animation: none !important; }
+  .lane.entering, .lane.entering .lcd-text, .lane.leaving, .standby.entering, .chip.entering, .chip.entering .led { animation: none !important; }
   .crt::before { display: none; }
   .crt-roll.rolling { animation: none; transform: translateY(var(--roll-still, 0)); }
 }
@@ -393,7 +427,8 @@ html.cu-open, html.cu-open body { overflow: hidden; }
   .bays { grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr); grid-template-rows: auto auto;
     grid-template-areas: "crt lanes" "rail rail"; }
   .bay.crt-bay { height: 640px; }
-  .lanes { grid-auto-rows: 240px; --cols: 2 !important; }
+  .lanes { grid-auto-rows: 260px; }  /* app.js caps the columns at 2 here */
+  .standby { flex: none; height: 260px; }
   .rail, .rail.has-cu { height: auto; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); }
   /* The rail grows to fit here: the gate module is plain flow, nothing clipped or shrunk */
   .rail.has-cu > .gate-mod { display: grid; align-content: start; overflow: visible; }
