@@ -35,15 +35,19 @@
       <div class="deck-body" id="deck-body"></div>
       <div class="more" id="deck-more" aria-hidden="true" hidden>▼</div>
       <div class="flash" id="flash" role="status" hidden></div>
+      <div class="flash ask" id="ask" role="alert" hidden></div>
     </div>
     <div class="gate-row">
       <label class="sr-only" for="reason">Reason (needed to decline)</label>
       <input class="reason" id="reason" type="text" maxlength="500" autocomplete="off" spellcheck="false" placeholder="Reason (needed to decline)">
     </div>
+    <div class="insp-row" id="insp-row" hidden>
+      <button class="svckey inspkey" type="button" id="btn-inspect"><span class="led" id="led-inspect"></span>Inspect the push</button>
+    </div>
     <div class="keys" role="group" aria-label="Decide the held write">
       <span class="keys-hold" id="keys-hold" role="status" hidden>Check the new card</span>
-      <button class="bigkey" type="button" id="btn-decline"><span class="led" id="led-decline"></span>Decline</button>
-      <button class="bigkey go" type="button" id="btn-approve"><span class="led" id="led-approve"></span>Approve</button>
+      <button class="bigkey" type="button" id="btn-decline"><span class="led" id="led-decline"></span><span id="lbl-decline">Decline</span></button>
+      <button class="bigkey go" type="button" id="btn-approve"><span class="led" id="led-approve"></span><span id="lbl-approve">Approve</span></button>
     </div>
     <div class="service" role="group" aria-label="Service">
       <span class="silk">Service</span>
@@ -77,6 +81,41 @@
       <div class="mon-actions">
         <button class="bigkey" type="button" id="con-cancel">Cancel</button>
         <button class="bigkey go" type="button" id="con-go"></button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Screen "inspect": the held push's patch on a green screen, with the gate's keys.
+     The server parsed and sanitised it; this page only draws it, with textContent. -->
+<section class="screen console" id="scr-inspect" hidden role="dialog" aria-modal="true" aria-labelledby="pv-title">
+  <div class="monitor">
+    <div class="mon-h">
+      <span class="led" id="pv-led"></span>
+      <span class="title" id="pv-title">INSPECT · PUSH</span>
+      <span class="state-tag" id="pv-state"></span>
+      <span class="dymo" id="pv-where"></span>
+      <span class="silk pv-trunc" id="pv-trunc" hidden></span>
+      <span class="silk con-note" id="pv-note" role="status"></span>
+    </div>
+    <p class="pv-missing" id="pv-missing" hidden></p>
+    <div class="crt-wrap">
+      <div class="crt green pv" id="pv-crt">
+        <div class="pv-list" id="pv-list" tabindex="0" aria-label="Commits and files (j and k move)"></div>
+        <div class="pv-main" id="pv-main" tabindex="0" aria-label="Changes (n and p move between hunks)"></div>
+      </div>
+    </div>
+    <div class="pv-ask" id="pv-ask" role="alert" hidden></div>
+    <div class="mon-foot pv-foot">
+      <span class="badge-plate">Factory · Write gate</span>
+      <span class="silk pv-help" aria-hidden="true">j k files · n p hunks · Esc closes</span>
+      <label class="sr-only" for="pv-reason">Reason (needed to decline)</label>
+      <input class="reason pv-reason" id="pv-reason" type="text" maxlength="500" autocomplete="off" spellcheck="false" placeholder="Reason (needed to decline)">
+      <div class="mon-actions pv-keys" role="group" aria-label="Decide the held write">
+        <span class="keys-hold" id="pv-hold" role="status" hidden>Check the new card</span>
+        <button class="bigkey" type="button" id="pv-close">Close</button>
+        <button class="bigkey" type="button" id="pv-decline"><span class="led" id="pv-led-decline"></span><span id="pv-lbl-decline">Decline</span></button>
+        <button class="bigkey go" type="button" id="pv-approve"><span class="led" id="pv-led-approve"></span><span id="pv-lbl-approve">Approve</span></button>
       </div>
     </div>
   </div>

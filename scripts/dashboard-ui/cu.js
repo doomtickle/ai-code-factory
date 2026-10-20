@@ -9,6 +9,10 @@
 // postMessage: "cu:expand" and "cu:collapse" (grow the frame to the whole window
 // for the confirmation and log screens, and back) and "cu:reload" (after an
 // update changed the dashboard's page). The main page never answers.
+// INSPECT shows a held push's patch (/cu/api/patch): the server reads it from
+// the broker's state, checks it against the card's digest, parses and sanitises
+// it, so this page only draws lines with textContent; nothing from the patch
+// goes into an attribute, a URL, a class name or a title.
 // Starting a restart or an update takes two presses: the key asks the server
 // what would happen (/cu/api/prepare, which runs nothing but `factory update
 // --plan`), and only CONFIRM on that screen sends the single-use token back.
@@ -72,6 +76,7 @@
     deck: { node: $("scr-deck"), expanded: false },      // gate deck and service row (compact, in the rail)
     confirm: { node: $("scr-console"), expanded: true },  // what RESTART / UPDATE would do, and CONFIRM
     log: { node: $("scr-console"), expanded: true },      // the running action's output
+    inspect: { node: $("scr-inspect"), expanded: true },  // a held push's patch, and the gate's keys
   };
   let screen = null, expanded = false;
   function go(name) {
@@ -177,6 +182,10 @@
   }
 
   function renderDeck() {
+    renderDeckOnly();
+    if (screen === "inspect") syncInspect();
+  }
+  function renderDeckOnly() {
     const body = $("deck-body");
     if (fault) {
       const k = `fault\u0000${fault.join("\u0000")}`;
@@ -209,6 +218,7 @@
     }
     selId = c ? c.id : null;
     selFp = c ? c.fp : null;
+    if (asking("deck") && (!c || c.id !== ask.id || c.fp !== ask.fp)) cancelAsk();
 
     setClass($("cu-led"), cs.length ? "led a blink" : "led g");
     $("sel").hidden = cs.length < 2;
@@ -235,15 +245,22 @@
     const live = !!c && !busy && !held;
     reason.disabled = !c;
     $("keys-hold").hidden = !held;
-    const canDecline = live && reason.value.trim() !== "";
-    const canApprove = live && !expired(c);
+    const deckAsk = asking("deck");
+    const canDecline = deckAsk ? !busy : live && reason.value.trim() !== "";
+    const canApprove = live && !expired(c) && (!deckAsk || armed());
+    setText($("lbl-decline"), deckAsk ? "Cancel" : "Decline");
+    setText($("lbl-approve"), deckAsk ? "Confirm approve" : "Approve");
     $("btn-decline").disabled = !canDecline;
     $("btn-approve").disabled = !canApprove;
     setClass($("led-decline"), `led${canDecline ? " r" : ""}`);
     setClass($("led-approve"), `led${canApprove ? " g" : ""}`);
     if (canDecline) reason.classList.remove("need");
+    const inspectable = !fault && !!c && c.patch === true;
+    $("insp-row").hidden = !inspectable;
+    $("btn-inspect").disabled = !inspectable;
+    setClass($("led-inspect"), `led${inspectable ? " g" : ""}`);
     $("btn-approve").title = c && expired(c) ? "This hold has expired" : "";
-    $("btn-decline").title = c && !canDecline && !busy && !held ? "Type a reason to decline" : "";
+    $("btn-decline").title = c && !canDecline && !busy && !held && !deckAsk ? "Type a reason to decline" : "";
 
     const a = act(), run = !fault && running();
     const bound = !!(st && st.bound);
@@ -255,6 +272,7 @@
     const showLog = !fault && !!a.name && a.phase !== "idle";
     $("svc-log").hidden = !showLog;
     setClass($("led-log"), `led${run ? " a blink" : a.phase === "done" ? " g" : a.phase === "failed" ? " r" : ""}`);
+    updateInspKeys();
   }
 
   // Once a second: the countdown, and APPROVE goes dark when the hold expires.
@@ -275,6 +293,7 @@
     const i = Math.max(0, cs.findIndex(c => c.id === selId));
     const c = cs[(i + d + cs.length) % cs.length];
     $("reason").value = "";
+    cancelAsk();
     selId = c.id; selFp = c.fp;
     renderDeck();
   }
@@ -284,32 +303,87 @@
     changed: "Changed: a new write replaced that card. Check it, then decide again.",
     expired: "Expired: the hold ran out. The agent can push again.",
   };
-  async function decide(verdict) {
-    const c = current();
+  // APPROVE on a push whose patch was truncated (the card says so, or the viewer
+  // got a truncated patch) asks once more, on the deck or in the viewer:
+  // "Approve without seeing N files?", with CANCEL and CONFIRM APPROVE, and
+  // CONFIRM stays dark for ARM_MS so a double press can't confirm. Only CONFIRM
+  // sends the decision; the card changing or going cancels the question.
+  const ARM_MS = 1000;
+  let ask = null, askTimer = 0;  // { where: "deck" | "viewer", id, fp, armAt }
+  const asking = where => !!ask && ask.where === where;
+  const armed = () => !!ask && Date.now() >= ask.armAt;
+  const needsAsk = (fromViewer, c) => c.patch_truncated === true
+    || (fromViewer && !!insp && !!insp.data && insp.data.truncated === true);
+  function askText(fromViewer) {
+    if (fromViewer && insp && insp.data) {
+      const n = list(insp.data.files_missing).length + Math.max(0, Number(insp.data.files_missing_more) || 0);
+      if (n > 0) return `Approve without seeing ${n} file${n === 1 ? "" : "s"}?`;
+    }
+    return "Approve without seeing the rest of the push?";
+  }
+  function showAsk() {
+    for (const [where, node] of [["deck", $("ask")], ["viewer", $("pv-ask")]]) {
+      node.hidden = !asking(where);
+      node.textContent = asking(where) ? `${askText(where === "viewer")} The patch was cut: CONFIRM APPROVE approves what you haven't seen too.` : "";
+    }
+  }
+  function askApprove(fromViewer, c) {
+    ask = { where: fromViewer ? "viewer" : "deck", id: c.id, fp: fromViewer ? insp.dataFp : c.fp, armAt: Date.now() + ARM_MS };
+    clearTimeout(askTimer);
+    askTimer = setTimeout(updateKeys, ARM_MS + 20);
+    showAsk();
+    updateKeys();
+  }
+  function cancelAsk() {
+    if (!ask) return;
+    ask = null;
+    clearTimeout(askTimer);
+    showAsk();
+    updateKeys();
+  }
+
+  // From the deck (the card on the glass), or with fromViewer from INSPECT: then
+  // the card the viewer shows, with the fingerprint of the patch it drew, so a
+  // decision never lands on a card whose patch wasn't the one on the screen.
+  async function decide(verdict, fromViewer) {
+    const c = fromViewer ? inspCard() : current();
     if (!c || busy) return;
-    const reason = $("reason").value.trim();
+    if (fromViewer ? !inspLive() : holding()) return;
+    const where = fromViewer ? "viewer" : "deck";
+    if (verdict === "decline" && asking(where)) { cancelAsk(); return; }  // the key reads CANCEL
+    if (verdict === "approve" && needsAsk(fromViewer, c)) {
+      if (!asking(where)) { askApprove(fromViewer, c); return; }
+      if (!armed() || ask.id !== c.id || ask.fp !== (fromViewer ? insp.dataFp : c.fp)) return;
+      ask = null;
+      clearTimeout(askTimer);
+      showAsk();
+    }
+    const reasonEl = fromViewer ? $("pv-reason") : $("reason");
+    const say = fromViewer ? inspSay : flash;
+    const reason = reasonEl.value.trim();
     if (verdict === "decline" && !reason) {
-      $("reason").classList.add("need");
-      $("reason").focus();
+      reasonEl.classList.add("need");
+      reasonEl.focus();
       return;
     }
     if (verdict === "approve" && expired(c)) return;
     busy = true;
     updateKeys();
     try {
-      const res = await api("decide", { id: c.id, fp: c.fp, verdict, reason });
+      const res = await api("decide", { id: c.id, fp: fromViewer ? insp.dataFp : c.fp, verdict, reason });
       if (res.ok) {
         expectGone = c.id;
-        $("reason").value = "";
+        reasonEl.value = "";
+        if (fromViewer) closeInspect();
         flash(`${verdict === "approve" ? "APPROVED" : "DECLINED"} · ${str(res.data.text)}`, "ok");
       } else if (res.status === 409) {
         const e = errText(res).toLowerCase();
-        flash(e.includes("gone") ? WHY.gone : e.includes("changed") ? WHY.changed : e.includes("expired") ? WHY.expired : errText(res), "err");
+        say(e.includes("gone") ? WHY.gone : e.includes("changed") ? WHY.changed : e.includes("expired") ? WHY.expired : errText(res), "err");
       } else {
-        flash(errText(res), "err");
+        say(errText(res), "err");
       }
     } catch (e) {
-      flash("No link to the dashboard: nothing was decided.", "err");
+      say("No link to the dashboard: nothing was decided.", "err");
     } finally {
       busy = false;
       await poll();
@@ -599,6 +673,284 @@
     if (again != null && screen === "log") logTimer = setTimeout(pollLog, again);
   }
 
+  // ---------- the inspector: a held push's patch on the green screen
+  const pvList = $("pv-list"), pvMain = $("pv-main"), pvReason = $("pv-reason");
+  // Fixed strings only: a flag or status the page doesn't know is not shown,
+  // and nothing the server sends becomes a class name.
+  const FLAGS = {
+    bidi: ["BIDI", "bidirectional control characters (they can make code read differently than it runs), shown as ⟨U+…⟩"],
+    invisible: ["INVIS", "invisible characters (zero-width, BOM, tags), shown as ⟨U+…⟩"],
+    control: ["CTRL", "control characters, shown as ⟨U+…⟩"],
+    longline: ["LONG", "lines over 2000 characters, cut"],
+    crlf: ["CRLF", "Windows (CRLF) line ends"],
+    malformed: ["BAD", "a part of this diff could not be read and is not shown"],
+  };
+  const STATUS = { M: "modified", A: "added", D: "deleted", R: "renamed", B: "binary" };
+  const KIND = { "+": "pv-ln add", "-": "pv-ln del", " ": "pv-ln ctx", "\\": "pv-ln note", "✂": "pv-ln cut" };
+  let insp = null, inspSeq = 0;
+  // insp: { id, fp (the card's, as last polled), dataFp (the one the drawn patch was
+  // read for), seq, data, files: [{c, f}], sel, hunk, hunkEls, rows, holdUntil }
+
+  const inspCard = () => (insp ? cards().find(c => c.id === insp.id) || null : null);
+  const inspHolding = () => !!insp && Date.now() < insp.holdUntil;
+  function inspLive() {
+    const c = inspCard();
+    return !!c && !fault && !busy && !!insp.data && insp.dataFp === c.fp && !inspHolding();
+  }
+  function inspSay(text, kind) {
+    const n = $("pv-note");
+    n.textContent = str(text);
+    n.classList.toggle("err", kind === "err");
+  }
+  function inspHead(tag, tagCls, led) {
+    const t = $("pv-state");
+    setClass(t, `state-tag st-${tagCls}`);
+    setText(t, tag);
+    setClass($("pv-led"), `led ${led}`);
+    const c = inspCard();
+    setText($("pv-where"), c ? `${str(c.repo)} · ${str(c.branch)}` : "");
+  }
+  function updateInspKeys() {
+    if (screen !== "inspect" || !insp) return;
+    const c = inspCard();
+    const live = inspLive();
+    const held = !!c && inspHolding();
+    $("pv-hold").hidden = !held;
+    pvReason.disabled = !c;
+    const vAsk = asking("viewer");
+    const canDecline = vAsk ? !busy : live && pvReason.value.trim() !== "";
+    const canApprove = live && !expired(c) && (!vAsk || armed());
+    setText($("pv-lbl-decline"), vAsk ? "Cancel" : "Decline");
+    setText($("pv-lbl-approve"), vAsk ? "Confirm approve" : "Approve");
+    $("pv-decline").disabled = !canDecline;
+    $("pv-approve").disabled = !canApprove;
+    setClass($("pv-led-decline"), `led${canDecline ? " r" : ""}`);
+    setClass($("pv-led-approve"), `led${canApprove ? " g" : ""}`);
+    if (canDecline) pvReason.classList.remove("need");
+  }
+
+  function openInspect() {
+    const c = current();
+    if (!c || c.patch !== true || fault) return;
+    cancelAsk();
+    lastKey = $("btn-inspect");
+    insp = { id: c.id, fp: c.fp, dataFp: null, seq: ++inspSeq, data: null, files: [], sel: -1, hunk: 0,
+             hunkEls: [], rows: [], holdUntil: 0 };
+    pvReason.value = "";
+    go("inspect");
+    loadPatch();
+    pvList.focus();
+  }
+
+  function loadPatch() {
+    const seq = ++inspSeq, fp = insp.fp;
+    insp.seq = seq;
+    insp.data = null;
+    inspHead("Reading", "check", "a blink");
+    $("pv-trunc").hidden = true;
+    $("pv-missing").hidden = true;
+    pvList.replaceChildren();
+    pvMain.replaceChildren(el("p", "pv-msg cursor", "▶ Reading the patch the gateway stored for this push…"));
+    updateInspKeys();
+    api("patch", { id: insp.id, fp }).then(res => {
+      if (!insp || insp.seq !== seq) return;
+      if (res.ok && Array.isArray(res.data.commits)) {
+        insp.data = res.data;
+        insp.dataFp = fp;
+        renderPatch();
+      } else if (res.status === 409 && /gone/i.test(errText(res))) {
+        closeInspect(WHY.gone);
+      } else {
+        inspHead("Error", "failed", "r");
+        pvMain.replaceChildren(el("p", "pv-msg k-err", `✕ ${errText(res)}`),
+          el("p", "pv-msg k-dim", "Nothing is shown, so nothing can be decided from here. Close, and decide from the deck if you must."));
+      }
+      updateInspKeys();
+    }, () => {
+      if (!insp || insp.seq !== seq) return;
+      inspHead("No link", "failed", "r");
+      pvMain.replaceChildren(el("p", "pv-msg k-err", "✕ Lost the dashboard: the patch was not read."));
+    });
+  }
+
+  function badges(flags, into) {
+    for (const f of list(flags)) {
+      const b = FLAGS[str(f)];
+      if (b) into.append(el("span", "pv-badge", b[0]));
+    }
+  }
+
+  function renderPatch() {
+    const d = insp.data;
+    const total = Number.isInteger(d.files_total) ? d.files_total : null;
+    const shown = Number.isInteger(d.files_shown) ? d.files_shown : 0;
+    const tr = $("pv-trunc");
+    tr.hidden = d.truncated !== true;
+    tr.textContent = `TRUNCATED · showing ${shown} of ${total == null ? "?" : total} files`;
+    // What the cut hides, by name (the card's own file list), so it can't be missed.
+    const missing = list(d.files_missing).map(str);
+    const more = Math.max(0, Number(d.files_missing_more) || 0);
+    const ms = $("pv-missing");
+    ms.hidden = d.truncated !== true;
+    ms.textContent = d.truncated !== true ? "" : missing.length || more
+      ? `NOT SHOWN: ${missing.join(", ")}${missing.length && more ? " … " : ""}${more ? `and ${more} more file${more === 1 ? "" : "s"}` : ""}`
+      : "NOT SHOWN: the rest of the push (the cut fell inside a file shown here)";
+    inspHead(d.truncated === true ? "Truncated" : "Held", d.truncated === true ? "confirm" : "running", "a blink");
+    insp.files = [];
+    insp.rows = [];
+    const out = [];
+    list(d.commits).forEach(c => {
+      if (!c || typeof c !== "object") return;
+      const first = str(c.message).split("\n")[0];
+      const h = el("div", "pv-commit", `${str(c.sha).slice(0, 9) || "(no commit)"}${c.merge === true ? " · merge" : ""}`);
+      h.append(el("span", "pv-subj", ` ${first}`));
+      badges(c.flags, h);
+      out.push(h);
+      for (const f of list(c.files)) {
+        if (!f || typeof f !== "object") continue;
+        const k = insp.files.length;
+        const row = el("div", "pv-file");
+        row.setAttribute("role", "button");
+        row.append(el("span", "pv-st", STATUS[str(f.status)] ? str(f.status) : "?"),
+          el("span", "pv-path", str(f.path)),
+          el("span", "pv-add", `+${Number(f.adds) || 0}`), el("span", "pv-del", `−${Number(f.dels) || 0}`));
+        badges(f.flags, row);
+        row.addEventListener("click", () => selectFile(k, 0));
+        insp.files.push({ c, f });
+        insp.rows.push(row);
+        out.push(row);
+      }
+    });
+    if (!insp.files.length) out.push(el("p", "pv-msg k-dim", "No files in this patch."));
+    if (d.truncated === true) out.push(el("div", "pv-cut", "✂ CUT HERE · the rest of this push is not shown"));
+    pvList.replaceChildren(...out);
+    pvList.scrollTop = 0;
+    if (insp.files.length) selectFile(0, 0);
+    else pvMain.replaceChildren(...commitBlock(list(d.commits)[0]));
+  }
+
+  function commitBlock(c) {
+    if (!c || typeof c !== "object") return [el("p", "pv-msg k-dim", "Nothing to show.")];
+    const out = [el("p", "pv-meta", `commit ${str(c.sha)}${c.merge === true ? " (merge)" : ""}`)];
+    if (c.author) out.push(el("p", "pv-meta", `Author: ${str(c.author)}`));
+    if (c.date) out.push(el("p", "pv-meta", `Date:   ${str(c.date)}`));
+    out.push(el("pre", "pv-msgtext", str(c.message)));
+    return out;
+  }
+
+  function selectFile(k, hunk) {
+    if (!insp || k < 0 || k >= insp.files.length) return;
+    const { c, f } = insp.files[k];
+    if (insp.sel >= 0 && insp.rows[insp.sel]) insp.rows[insp.sel].classList.remove("sel");
+    insp.sel = k;
+    insp.rows[k].classList.add("sel");
+    insp.rows[k].scrollIntoView({ block: "nearest" });
+    const out = commitBlock(c);
+    const st = STATUS[str(f.status)] || "changed";
+    const title = el("p", "pv-title", `${st.toUpperCase()} ${str(f.path)}`);
+    out.push(title);
+    if (f.old_path != null) out.push(el("p", "pv-meta", `from ${str(f.old_path)}`));
+    if (c.merge === true) out.push(el("p", "pv-warn", "merge: only changes against every parent are shown"));
+    out.push(el("p", "pv-meta", `+${Number(f.adds) || 0} −${Number(f.dels) || 0}`));
+    for (const fl of list(f.flags)) {
+      const b = FLAGS[str(fl)];
+      if (b) {
+        const p = el("p", "pv-warn");
+        p.append(el("span", "pv-badge", b[0]), document.createTextNode(` ${b[1]}`));
+        out.push(p);
+      }
+    }
+    const hunks = list(f.hunks);
+    insp.hunkEls = [];
+    if (str(f.status) === "B") out.push(el("p", "pv-msg k-dim", "Binary file: its contents are not shown."));
+    else if (!hunks.length) out.push(el("p", "pv-msg k-dim", "No content changes shown (a rename or mode change, an empty file, or cut by the cap)."));
+    for (const h of hunks) {
+      if (!h || typeof h !== "object") continue;
+      const box = el("div", "pv-hunk");
+      if (h.header) box.append(el("div", "pv-hh", str(h.header)));
+      for (const ln of list(h.lines)) {
+        if (!Array.isArray(ln)) continue;
+        const kind = str(ln[0]);
+        const cls = KIND[kind] || "pv-ln ctx";
+        const prefix = typeof ln[2] === "string" ? ln[2] : kind === "\\" ? "\\ " : kind === "✂" ? "✂ " : kind;
+        box.append(el("div", cls, `${prefix}${str(ln[1])}`));
+      }
+      insp.hunkEls.push(box);
+      out.push(box);
+    }
+    pvMain.replaceChildren(...out);
+    insp.hunk = Math.max(0, Math.min(hunk === -1 ? insp.hunkEls.length - 1 : hunk, insp.hunkEls.length - 1));
+    if (hunk === 0 || !insp.hunkEls.length) pvMain.scrollTop = 0;
+    else showHunk();
+  }
+  function showHunk() {
+    const h = insp.hunkEls[insp.hunk];
+    if (h) pvMain.scrollTop = Math.max(0, h.offsetTop - 8);
+  }
+  function stepFile(d) {
+    if (!insp || !insp.files.length) return;
+    selectFile(Math.max(0, Math.min(insp.files.length - 1, insp.sel + d)), 0);
+  }
+  function stepHunk(d) {
+    if (!insp || !insp.files.length) return;
+    const next = insp.hunk + d;
+    if (insp.hunkEls.length && next >= 0 && next < insp.hunkEls.length) {
+      insp.hunk = next;
+      showHunk();
+      return;
+    }
+    // Past the file's first or last hunk: on to the next file that has hunks.
+    for (let k = insp.sel + d; k >= 0 && k < insp.files.length; k += d) {
+      if (list(insp.files[k].f.hunks).length) { selectFile(k, d > 0 ? 0 : -1); if (d > 0) showHunk(); return; }
+    }
+  }
+
+  // Each poll: the card the viewer shows may have gone (decided elsewhere, given up:
+  // close, with a note) or been replaced under the same id (a new fingerprint: read
+  // the new card's patch and hold the keys, as the deck does).
+  function syncInspect() {
+    if (!insp || fault) { updateInspKeys(); return; }
+    const c = inspCard();
+    if (!c) {
+      const quiet = expectGone === insp.id;
+      closeInspect(quiet ? null : "That write is no longer held: the viewer closed.");
+      return;
+    }
+    if (c.fp !== insp.fp) {
+      if (asking("viewer")) cancelAsk();
+      insp.fp = c.fp;
+      insp.holdUntil = Date.now() + HOLD_MS;
+      setTimeout(updateInspKeys, HOLD_MS + 20);
+      pvReason.value = "";
+      loadPatch();
+      inspSay(WHY.changed, "err");
+    }
+    updateInspKeys();
+  }
+
+  function closeInspect(note) {
+    if (screen !== "inspect") return;
+    if (asking("viewer")) cancelAsk();
+    inspSeq++;   // a pending patch answer is dropped
+    insp = null;
+    pvList.replaceChildren();
+    pvMain.replaceChildren();
+    inspSay("", null);
+    go("deck");
+    renderDeckOnly();
+    if (note) flash(note, "err");
+    $("deck-lcd").focus();  // never onto APPROVE
+  }
+  $("btn-inspect").addEventListener("click", openInspect);
+  $("pv-close").addEventListener("click", () => closeInspect());
+  $("pv-decline").addEventListener("click", () => decide("decline", true));
+  $("pv-approve").addEventListener("click", () => decide("approve", true));
+  pvReason.addEventListener("input", updateInspKeys);
+  pvReason.addEventListener("keydown", e => {
+    // As on the deck: Enter in the tape is DECLINE, when DECLINE could be pressed.
+    if (e.key === "Enter") { e.preventDefault(); if (!$("pv-decline").disabled) decide("decline", true); }
+  });
+
   // ---------- leaving the monitor
   function closeConsole() {
     if (screen !== "confirm" && screen !== "log") return;
@@ -616,8 +968,26 @@
   $("svc-update").addEventListener("click", () => openService("update"));
   $("svc-log").addEventListener("click", () => { lastKey = $("svc-log"); openLog(false); });
 
-  // The monitor is modal: Esc backs out, Tab stays inside it.
+  // The monitor and the inspector are modal: Esc backs out, Tab stays inside.
+  // In the inspector, j/k or ↓/↑ move between files and n/p between hunks
+  // (not while typing a reason).
   document.addEventListener("keydown", e => {
+    if (screen === "inspect") {
+      if (e.key === "Escape") { e.preventDefault(); closeInspect(); return; }
+      if (e.key === "Tab") {
+        const items = [pvList, pvMain, pvReason, $("pv-close"), $("pv-decline"), $("pv-approve")].filter(n => !n.hidden && !n.disabled);
+        const first = items[0], last = items[items.length - 1];
+        const inside = $("scr-inspect").contains(document.activeElement);
+        if (e.shiftKey && (document.activeElement === first || !inside)) { e.preventDefault(); last.focus(); }
+        else if (!e.shiftKey && (document.activeElement === last || !inside)) { e.preventDefault(); first.focus(); }
+        return;
+      }
+      if (e.target === pvReason || e.ctrlKey || e.metaKey || e.altKey) return;
+      const move = { j: () => stepFile(1), ArrowDown: () => stepFile(1), k: () => stepFile(-1), ArrowUp: () => stepFile(-1),
+                     n: () => stepHunk(1), p: () => stepHunk(-1) }[e.key];
+      if (move) { e.preventDefault(); move(); }
+      return;
+    }
     if (screen !== "confirm" && screen !== "log") return;
     if (e.key === "Escape") { e.preventDefault(); closeConsole(); return; }
     if (e.key !== "Tab") return;

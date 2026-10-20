@@ -810,6 +810,24 @@ your browser. It shows:
     as `factory approvals approve <id>` does (the same decision file);
     declining needs a reason, which the agent reads. If the card expired or
     a new one replaced it meanwhile, the key says so and decides nothing.
+  - INSPECT, on a held push whose patch the gateway stored (a Passdesk
+    broker that records patches): the unit fills the window with the push's
+    commits (`git log -p --stat --cc`, oldest first) on a green screen,
+    commits and files with their +/- counts on the left, the changes on the
+    right. `j`/`k` or ↓/↑ step through files, `n`/`p` through hunks, Esc
+    closes. Characters that could hide what code does (bidi controls,
+    zero-width and other invisible characters, control characters) are shown
+    as `⟨U+202E⟩`-style tokens and the file gets a badge (BIDI, INVIS, CTRL;
+    LONG for lines over 2000 characters, which are cut; CRLF; BAD for a part
+    that couldn't be read). A big patch shows "TRUNCATED · showing X of Y
+    files" (the gateway caps what it stores, 256 KiB by default), names the
+    files it doesn't show ("NOT SHOWN: …") and ends with "✂ CUT HERE". APPROVE
+    and DECLINE work from there too, for the patch on the screen: if a new
+    card replaces it, the viewer reads the new patch and holds the keys for a
+    moment; if the write goes, the viewer closes and says so. APPROVE on a
+    truncated push, here or on the deck, asks once more ("Approve without
+    seeing N files?") and only CONFIRM APPROVE, which lights after a second,
+    decides.
   - RESTART (`factory restart`) and UPDATE (`factory update --yes`). Neither
     starts on the first press: the unit fills the window with what it would
     do (the running jobs it cancels, the held writes it drops, and for UPDATE
@@ -840,8 +858,8 @@ your browser. It shows:
 
 It is local. Apart from the terminal and the control unit, it only reads the
 state folder (lane transcripts, both audit logs, review packets, approval
-cards) and makes no network connection. The control unit writes only a
-decision file (approve, decline) and its action logs, and runs only
+cards, and for INSPECT the stored patch) and makes no network connection. The
+control unit writes only a decision file (approve, decline) and its action logs, and runs only
 `factory restart`, `factory update --yes` and `factory update --plan` (a fixed
 command line, never a shell; `--factory PATH` runs another `factory`); its fonts and xterm.js are
 vendored (`scripts/dashboard-ui/fonts/`, `scripts/dashboard-ui/vendor/`). It
@@ -886,7 +904,12 @@ served only into the dashboard's frame and refuses to run on its own. Every
 control is a POST carrying the unit's key in a header, checked against this
 run's cookie, `Host` and `Origin`. No single request can start a host
 command: RESTART and UPDATE need a confirm token, good once, for two
-minutes, for that one action.
+minutes, for that one action. INSPECT's patch is read from the broker's state
+folder (`approvals/patches/<sha256>.patch`, named by the card's
+`patch_sha256`), never through a symlink, and only if its SHA-256 matches the
+card; it is parsed and sanitised by the dashboard, and the page only draws the
+result as text. The main page never receives it, and cards, webhooks and audit
+records never carry it.
 
 ## Analytics
 
