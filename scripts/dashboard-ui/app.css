@@ -272,15 +272,18 @@ button { font: inherit; color: inherit; }
 .gate-lcd div { overflow-wrap: anywhere; }
 .gate-hint { margin: 0; letter-spacing: .08em; text-transform: none; font-size: .78rem; }
 .gate-hint:empty { display: none; }
-/* The control unit (cu.html, the second origin) under the gate display. With it the
-   rail is taller, and the gate display gives way first (the unit shows every detail). */
-.rail.has-cu { height: clamp(424px, 40vh, 480px); grid-template-columns: minmax(300px, 1fr) minmax(300px, 1.1fr) minmax(0, 2.4fr); }
-.rail.has-cu > .gate-mod { display: flex; flex-direction: column; gap: 8px; }
-.rail.has-cu .gate-lcd { flex: 0 1 auto; min-height: 3.4rem; overflow: hidden; }
-/* With the unit, the display is a two-line summary: count and countdown, then who */
-.rail.has-cu .gate-lcd .one { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.rail.has-cu .gate-hint { flex: none; text-transform: uppercase; letter-spacing: .14em; font-size: .7rem; }
-.cu-slot { flex: none; height: 270px; min-width: 0; border-radius: 5px; }
+/* The control unit (cu.html, the second origin) under the gate display. The gate
+   column widens so the unit can lay out in two columns; the display shrinks to one
+   line and the unit takes the rest of the module (about 190-210px; the rail's
+   minimum height keeps it at 190 or more: 284 - 24 padding - 22 header - 6 gap
+   - 34 display - 6 gap = 192). */
+.rail.has-cu { height: clamp(284px, 28vh, 320px); grid-template-columns: minmax(420px, 1.35fr) minmax(260px, .85fr) minmax(0, 2.2fr); }
+.rail.has-cu > .gate-mod { display: flex; flex-direction: column; gap: 6px; }
+.rail.has-cu .gate-lcd { flex: none; padding: 5px 10px; }
+.gate-lcd .one { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-transform: uppercase; }
+.rail.has-cu .gate-hint { display: none; }
+.gate-to-cu { margin-left: 6px; color: var(--silk); }
+.cu-slot { flex: 1; min-height: 0; min-width: 0; border-radius: 5px; }
 .cu-frame { display: block; width: 100%; height: 100%; border: 0; background: transparent; }
 /* Expanded for the unit's confirmation and log screens: a fixed layer over the whole
    window (nothing above it in the rail sets transform, filter or contain, which would
@@ -380,7 +383,7 @@ html.cu-open, html.cu-open body { overflow: hidden; }
   /* The rail grows to fit here: the gate module is plain flow, nothing clipped or shrunk */
   .rail.has-cu > .gate-mod { display: grid; align-content: start; overflow: visible; }
   .rail.has-cu .gate-lcd { overflow: visible; min-height: 0; }
-  .cu-slot { height: 270px; }
+  .cu-slot { flex: none; height: 270px; }
   .rail > .printer { min-height: 280px; }  /* beats .rail > .mod's min-height: 0 */
 }
 @media (max-width: 860px) {
