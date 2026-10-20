@@ -39,7 +39,7 @@ from pathlib import Path
 
 from . import egress_guard
 from . import tools  # noqa: F401 - registers every tool
-from .core import auth, config, credentials, plugins, registry
+from .core import approvals, auth, config, credentials, plugins, registry
 from .core import policy as policy_mod
 from .core.errors import Denied
 from .core.net import NO_REDIRECT_OPENER, RefuseRedirects
@@ -177,6 +177,9 @@ def _check_policy_shape(report: Report, pol: dict) -> None:
         "gemini": {"model", "max_prompt_chars"},
         "jira": {"site", "cloud_id", "projects", "max_results", "max_comments"},
         "egress_guard": {"allow_hosts"},  # read by `passdesk egress-guard`, not a tool
+        # patch_max_bytes is core's (git_push's inspectable patch); the rest
+        # are read by an approval plugin (Passdesk Pro).
+        "approvals": {"patch_max_bytes", "tools", "hold_seconds", "expire_seconds"},
     }
     for table, val in pol.items():
         if table not in known:
@@ -190,6 +193,13 @@ def _check_policy_shape(report: Report, pol: dict) -> None:
             if key not in known[table]:
                 report.warn(f"[{table}].{key} is not a setting any tool reads; a typo?",
                             f"known keys: {', '.join(sorted(known[table]))}")
+    appr = pol.get("approvals")
+    if isinstance(appr, dict) and "patch_max_bytes" in appr:
+        value = appr["patch_max_bytes"]
+        lo, hi = approvals.PATCH_MAX_BYTES_MIN, approvals.PATCH_MAX_BYTES_MAX
+        if isinstance(value, bool) or not isinstance(value, int) or not lo <= value <= hi:
+            report.warn(f"[approvals].patch_max_bytes = {value!r} is not a whole number from {lo} to {hi}",
+                        f"git_push uses {approvals.patch_max_bytes(pol)} instead")
     for table in ("web", "git"):
         if not isinstance(pol.get(table), dict):
             report.fail(f"[{table}] is missing; web_fetch and the git tools need it even if its lists are empty")

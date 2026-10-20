@@ -318,4 +318,29 @@ def run_capped(cmd: list[str], cwd: Path, limit: int, timeout: int = 600) -> tup
         return code, out, err.read(64_000).decode("utf-8", "replace")
 
 
+def run_head(cmd: list[str], cwd: Path, keep: int, timeout: int = 600,
+             extra_env: dict | None = None) -> tuple[int, bytes, int, str]:
+    """(exit code, the first `keep` bytes of stdout, stdout's total size in
+    bytes, stderr). Output past `keep` is read and counted, never held."""
+    with tempfile.TemporaryFile() as err:
+        p = subprocess.Popen(cmd, cwd=cwd, env=_env(extra_env), stdin=subprocess.DEVNULL,
+                             stdout=subprocess.PIPE, stderr=err)
+        timed_out = threading.Event()
+        timer = threading.Timer(timeout, lambda: (timed_out.set(), p.kill()))
+        timer.start()
+        try:
+            head = p.stdout.read(keep)
+            total = len(head)
+            while chunk := p.stdout.read(_CHUNK):
+                total += len(chunk)
+            p.stdout.close()
+            code = p.wait()
+        finally:
+            timer.cancel()
+        if timed_out.is_set():
+            raise subprocess.TimeoutExpired(cmd, timeout)
+        err.seek(0)
+        return code, head, total, err.read(64_000).decode("utf-8", "replace")
+
+
 tool_lock = threading.Lock()  # serialize mutating operations on mirrors/workspace
