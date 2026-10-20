@@ -87,6 +87,9 @@ ${B}Usage${N}
                              The whole factory on one screen in your browser: lanes,
                              spend, broker calls, held writes (local, read-only).
                              Prints a link with this run's token; 'gui' also works
+  factory usage [enable|disable]
+                             Your Claude plan's session (5-hour) and weekly usage, recorded
+                             by Claude Code's status line on this machine for the dashboard
   factory packet [id|lane]   A job's review packet: task, branch commits and diffstat,
                              tests, broker calls, cost, report (default: the latest;
                              --list for recent jobs)
@@ -1098,6 +1101,29 @@ cmd_dashboard() {
     --project "$(basename "$(bound_project)")" "$@"
 }
 
+# --- usage -------------------------------------------------------------------------
+# cmd_usage [enable|disable] -> scripts/usage-statusline.py: records your Claude
+# plan's session (5-hour) and weekly (7-day) usage for the dashboard, through
+# Claude Code's status line on this machine (the one supported source of those
+# numbers). enable/disable edit ${CLAUDE_CONFIG_DIR:-~/.claude}/settings.json,
+# keeping a backup and any status line you already had.
+cmd_usage() {
+  local python settings
+  python="$(resolve_python)"
+  settings="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json"
+  case "${1:-show}" in
+    enable)
+      (umask 077 && mkdir -p "$FACTORY_STATE" "$FACTORY_CONFIG")
+      "$python" "$SCRIPTS/usage-statusline.py" enable --settings "$settings" \
+        --state "$FACTORY_STATE" --config "$FACTORY_CONFIG" --python "$python" ;;
+    disable)
+      "$python" "$SCRIPTS/usage-statusline.py" disable --settings "$settings" --config "$FACTORY_CONFIG" ;;
+    show)
+      "$python" "$SCRIPTS/usage-statusline.py" show --state "$FACTORY_STATE" ;;
+    *) die "usage: factory usage [enable|disable]" ;;
+  esac
+}
+
 # --- approvals ---------------------------------------------------------------------
 # cmd_approvals -> the Passdesk Pro approval console (scripts/approvals.py):
 # plain files under the broker state dir, host Python, nothing else.
@@ -1126,6 +1152,7 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
     packet|packets) cmd_packet "$@" ;;
     watch) cmd_watch "$@" ;;
     dashboard|gui) cmd_dashboard "$@" ;;
+    usage) cmd_usage "$@" ;;
     roles) cmd_roles "$@" ;;
     role) cmd_role "$@" ;;
     secret) cmd_secret "$@" ;;

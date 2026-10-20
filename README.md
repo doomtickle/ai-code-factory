@@ -214,6 +214,7 @@ ignores the layout: there is no Herdr to lay out.
 | `factory logs <role>` | Follow a role's transcripts, all its lanes (`factory logs developer-lane2` for one lane); `factory logs broker` / `dispatch` for audit logs |
 | `factory watch` | Live terminal view of the lanes: one pane per active lane (a job running, or finished in the last ten minutes) with the job's status, elapsed time, model and cost in its title and the transcript rendered for reading (tool calls condensed, results dimmed, text wrapped); idle lanes take one status line each. A digit focuses one lane, `a` shows every lane, `p` shows a lane's latest review packet, `q` quits. `--once` prints one plain-text frame |
 | `factory dashboard [--no-open] [--port N]` | The whole factory on one screen in your browser (see "Dashboard"): every lane's live transcript, status, model, cost and timer; today's spend by hour and role; an event printer of broker calls and finished jobs; and the writes held for approval. Local and read-only. `factory gui` is the same command |
+| `factory usage [enable \| disable]` | Your Claude plan's session (5-hour) and weekly (7-day) usage for the dashboard (see "Dashboard"). `enable` adds a status line command to `~/.claude/settings.json` on this machine (backed up; an existing status line keeps showing); `disable` restores it; no argument prints the latest numbers |
 | `factory packet [<job-id> \| latest \| <lane> \| --list]` | A job's review packet: the task, each branch's commits and diffstat against your checked-out branch, the `factory-test` modes it reported, the broker calls its role made, cost, and the role's report with its APPROVED / REVISE verdict. Written after every job; `--list` shows recent ones |
 | `factory roles` | List roles, their project access, lanes and network tools |
 | `factory role new <name> [like]` | Add a role (copied from `reviewer`, or the role you name) |
@@ -799,6 +800,27 @@ command. One limitation: browsers don't separate cookies by port, so another
 web server on `127.0.0.1` that you open in the same browser also receives the
 dashboard's cookie. Harmless while the dashboard only shows; the follow-ups
 that add buttons will also require the token in a request header.
+
+### Plan usage
+
+The dashboard's **Plan usage** module shows how much of your Claude plan's
+session (5-hour) and weekly (7-day) limits you have used, and when each
+resets. Claude Code hands these numbers only to its status line command, so
+`factory usage enable` installs one (`scripts/usage-statusline.py`) in
+`${CLAUDE_CONFIG_DIR:-~/.claude}/settings.json` on this machine. It writes
+the four numbers, nothing else, to `usage.json` in the state folder, never
+reads a credential, and makes no network connection. If you already had a
+status line, it still shows: the factory's runs it after recording.
+`factory usage disable` puts your settings back (a copy of the previous file
+is kept as `settings.json.factory-backup`). Each machine that clones the
+factory runs `factory usage enable` once.
+
+The numbers come from Claude Code sessions on this machine (like a session
+in your editor or terminal), not from the factory's sandboxes, which can't
+write to the host by design. They update after each reply, so with no
+session open the module shows when it last heard, and a window whose reset
+time has passed reads "unknown" rather than a stale number. Pro and Max
+plans only; API-key sessions report nothing.
 
 ## Analytics
 

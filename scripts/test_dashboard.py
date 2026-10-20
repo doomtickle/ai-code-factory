@@ -235,6 +235,31 @@ class HeldTests(unittest.TestCase):
         self.assertIsNotNone(board.lane_detail("developer", self.now))
 
 
+class UsageTests(unittest.TestCase):
+    def test_usage(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fx = Fixture(Path(tmp))
+            board = d.Dashboard(fx.state, fx.roles, "proj")
+            self.assertEqual(board.snapshot(fx.now)["usage"], {"enabled": False, "updated": None, "windows": {}})
+            (fx.state / "usage.json").write_text(json.dumps({
+                "five_hour": {"used_percentage": 23.46, "resets_at": fx.now + 600},
+                "seven_day": {"used_percentage": 41.2, "resets_at": fx.now - 1},   # already reset: unknown
+                "updated": fx.now - 30}))
+            usage = board.snapshot(fx.now)["usage"]
+            self.assertTrue(usage["enabled"])
+            self.assertEqual(usage["windows"]["five_hour"], {"used_percentage": 23.5, "seconds_left": 600})
+            self.assertIsNone(usage["windows"]["seven_day"])
+            self.assertEqual(usage["updated"], fx.now - 30)
+            (fx.state / "usage.json").write_text(json.dumps({"five_hour": {"used_percentage": 140, "resets_at": fx.now + 5},
+                                                             "seven_day": "x", "updated": "soon"}))
+            usage = board.snapshot(fx.now)["usage"]
+            self.assertEqual(usage["windows"]["five_hour"]["used_percentage"], 100.0)
+            self.assertIsNone(usage["windows"]["seven_day"])
+            self.assertIsNone(usage["updated"])
+            (fx.state / "usage.json").write_text("[1, 2]")
+            self.assertEqual(board.snapshot(fx.now)["usage"]["windows"], {"five_hour": None, "seven_day": None})
+
+
 class BrokerEventTests(unittest.TestCase):
     def test_kinds(self):
         self.assertIsNone(d.broker_event({"tool": "git_push", "event": "intent"}))

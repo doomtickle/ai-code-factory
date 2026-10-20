@@ -95,18 +95,38 @@ button { font: inherit; color: inherit; }
 .crt { --c: var(--amber); --glow: var(--amber-glow); --dim: var(--amber-dim); --crt-bg: var(--crt-amber-bg);
   position: relative; flex: 1; min-height: 0; min-width: 0; border-radius: 22px / 18px; overflow: hidden;
   background: radial-gradient(ellipse at 50% 40%, color-mix(in srgb, var(--crt-bg) 70%, var(--c) 6%), var(--crt-bg) 70%);
-  color: var(--c); font-family: var(--f-crt); font-size: 20px; line-height: 1.15; text-shadow: 0 0 3px var(--glow);
+  color: var(--c); font-family: var(--f-crt); font-size: 20px; line-height: 1.15;
+  /* The tube, kept small so text stays crisp: a sub-pixel red/blue convergence fringe
+     (--crt-fx), the phosphor glow, and a faint wide bloom. Text itself is never warped. */
+  --crt-fx: -.6px 0 rgba(255, 40, 90, .3), .6px 0 rgba(40, 150, 255, .3);
+  --bloom: color-mix(in srgb, var(--c) 16%, transparent);
+  text-shadow: var(--crt-fx), 0 0 3px var(--glow), 0 0 10px var(--bloom);
   box-shadow: inset 0 0 60px rgba(0,0,0,.85), inset 0 0 12px rgba(0,0,0,.9); display: flex; flex-direction: column; }
 .crt.green { --c: var(--green); --glow: var(--green-glow); --dim: var(--green-dim); --crt-bg: var(--crt-green-bg); }
-.crt::after { content: ""; position: absolute; inset: 0; pointer-events: none;
-  background: repeating-linear-gradient(180deg, rgba(0,0,0,.16) 0 1px, transparent 1px 3px),
-              radial-gradient(ellipse at center, transparent 55%, rgba(0,0,0,.55) 100%);
+/* Glass over the text, never on it: a "pillow" falloff that darkens toward the
+   rounded corners, a curved specular highlight and a bright rim at the top edge sell
+   the bulge of the tube face; scanlines on top. Static, so the 1500-line monitor
+   scrolls under it without repainting it. */
+.crt::after { content: ""; position: absolute; inset: 0; pointer-events: none; border-radius: inherit;
+  background:
+    radial-gradient(130% 75% at 30% -12%, rgba(255,255,255,.075), rgba(255,255,255,.02) 45%, transparent 65%),
+    repeating-linear-gradient(180deg, rgba(0,0,0,.16) 0 1px, transparent 1px 3px),
+    linear-gradient(90deg, rgba(0,0,0,.38), transparent 4.5%, transparent 95.5%, rgba(0,0,0,.38)),
+    linear-gradient(180deg, rgba(0,0,0,.38), transparent 6%, transparent 94%, rgba(0,0,0,.38)),
+    radial-gradient(ellipse at center, transparent 62%, rgba(0,0,0,.42) 100%);
+  box-shadow: inset 0 0 18px 4px rgba(0,0,0,.5), inset 0 1px 0 rgba(255,255,255,.07), inset 0 0 0 1px rgba(255,255,255,.03);
   animation: flicker 6s infinite; }
 @keyframes flicker { 0%, 97%, 100% { opacity: 1; } 98% { opacity: .85; } }
+/* A very faint band rolling down the tube (mains hum), moved by transform only so the
+   compositor animates it without repainting the text under it. */
+.crt::before { content: ""; position: absolute; left: 0; right: 0; top: 0; height: 24%; pointer-events: none;
+  background: linear-gradient(180deg, transparent, color-mix(in srgb, var(--c) 4%, transparent) 50%, transparent);
+  transform: translateY(-100%); animation: roll 14s linear infinite; will-change: transform; }
+@keyframes roll { to { transform: translateY(420%); } }
 .crt-body { flex: 1; min-height: 0; overflow-y: auto; padding: 16px 20px 10px; scrollbar-width: thin; scrollbar-color: var(--dim) transparent; }
 .crt-body p { margin: 0 0 8px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .crt .a::before { content: "● "; }
-.crt .sub { color: var(--t-tool); text-shadow: 0 0 3px rgba(99, 220, 236, .35); padding-left: 1.4em; }
+.crt .sub { color: var(--t-tool); text-shadow: var(--crt-fx), 0 0 3px rgba(99, 220, 236, .35); padding-left: 1.4em; }
 .crt .banner { border: 1px solid var(--dim); padding: 6px 10px; display: inline-block; margin-bottom: 12px; }
 .crt .c-held { color: var(--t-held); }
 .crt-foot { display: flex; justify-content: space-between; gap: 10px; padding: 8px 6px 0; }
@@ -132,7 +152,9 @@ button { font: inherit; color: inherit; }
 .keycap { display: inline-grid; place-items: center; min-width: 22px; height: 20px; padding: 0 5px; border-radius: 4px; background: linear-gradient(180deg, #ece7d8, var(--key));
   color: var(--key-ink); font-family: var(--f-silk); font-weight: 700; font-size: .75rem; box-shadow: 0 2px 0 var(--key-lo), 0 3px 3px rgba(0,0,0,.5); }
 .lcd-text { flex: 1; min-height: 0; overflow: hidden; padding: 6px 9px; font-family: var(--f-crt); font-size: 18px; line-height: 1.08;
-  display: flex; flex-direction: column; justify-content: flex-end; }
+  display: flex; flex-direction: column; justify-content: flex-end;
+  /* LCDs are flat glass, not tubes: only a faint sheen, painted under the text */
+  background: linear-gradient(160deg, rgba(255,255,255,.09), rgba(255,255,255,0) 38%), linear-gradient(170deg, var(--lcd-bg), var(--lcd-bg-2)); }
 .lcd-text .ln { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: none; }
 .lcd-text .k-start, .lcd-text .k-end { font-weight: 700; text-transform: uppercase; }
 .lcd-text .k-task { opacity: .72; }
@@ -167,6 +189,20 @@ button { font: inherit; color: inherit; }
 .gate-lcd div { overflow-wrap: anywhere; }
 .gate-hint { margin: 0; letter-spacing: .08em; text-transform: none; font-size: .78rem; }
 .gate-hint:empty { display: none; }
+
+/* Plan usage: two LED meters with 7-segment percentages */
+.usage { display: grid; gap: 8px; }
+.usage-row { display: grid; grid-template-columns: 5.6em minmax(0, 1fr) auto; gap: 8px; align-items: center; }
+.usage-row .silk { color: var(--silk); }
+.usage-row .seg-box { min-height: 30px; padding: 3px 6px; }
+.usage-row .resets { grid-column: 2 / -1; margin-top: -4px; }
+.usage-meter { display: grid; grid-template-columns: repeat(20, 1fr); gap: 2px; }
+.usage-meter i { height: 9px; border-radius: 1px; background: var(--led-off); }
+.usage-meter i.on { background: var(--led-green); box-shadow: 0 0 4px var(--led-green); }
+.usage-meter i.on.hot { background: var(--led-amber); box-shadow: 0 0 4px var(--led-amber); }
+.usage-meter i.on.max { background: var(--led-red); box-shadow: 0 0 4px var(--led-red); }
+.usage-off { margin: 0; font-family: var(--f-crt); font-size: 1.05rem; color: var(--silk-dim); }
+.usage-off code { color: var(--silk); font-family: inherit; }
 
 .spend-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .bargraph { display: flex; gap: 2px; align-items: flex-end; flex: 1; min-width: 150px; }
@@ -224,6 +260,7 @@ button { font: inherit; color: inherit; }
 
 @media (prefers-reduced-motion: reduce) {
   .led.blink, .lcd-text .k-held, .crt::after, .pl.new { animation: none !important; }
+  .crt::before { display: none; }
 }
 
 /* Smaller screens: the rack unfolds into a scrolling column */
