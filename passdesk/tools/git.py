@@ -24,13 +24,14 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from ..core import config, credentials, filters
+from ..core import approvals, config, credentials, filters
 from ..core.approvals import require as require_approval
 from ..core.errors import Denied
 from ..core.filters import block_outbound_secrets, find_secrets, sanitize, untrusted
 from ..core.net import NO_REDIRECT_OPENER
 from ..core.registry import register
-from ..core.workspace import copy_workspace_file, factory_dir, install_file, private_tempdir, run, run_capped, tool_lock
+from ..core.workspace import (copy_workspace_file, factory_dir, install_file, private_tempdir, run, run_capped,
+                              run_head, tool_lock)
 
 _BRANCH_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$")
 _REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
@@ -159,6 +160,43 @@ def git_capped(*args: str, cwd: Path, limit: int) -> str | None:
     return out.decode("utf-8", "replace")
 
 
+# What git_push stores for an approver to inspect: oldest commit first, each
+# message indented four spaces (%w) so no message line can start at column 0
+# and pass for a header. Renames stay detected (git's default); no -a, so a
+# binary file is git's one "Binary files ... differ" line, never its bytes.
+PATCH_FORMAT = "commit %H%nAuthor: %an <%ae>%nDate:   %aI%n%n%w(0,4,4)%B%n"
+# --full-index: abbreviated blob names grow with the mirror's object count,
+# which would change the digest of the same bundle over time.
+_PATCH_ARGS = ("log", "-p", "--stat", "--cc", "--reverse", "--full-index", "--no-ext-diff", "--no-textconv",
+               "--no-color", f"--format={PATCH_FORMAT}")
+# Read past the cap, so redaction can't shrink what is kept below it.
+_PATCH_SLACK = 65_536
+
+
+def cap_patch(text: str, rest: int, limit: int) -> tuple[bytes, bool]:
+    """The patch as stored: text redacted, as UTF-8, cut at the last newline
+    at or before limit bytes with one trailer line saying so. rest is how
+    many bytes of git's output were counted but not kept (past text)."""
+    # Line by line: a pattern whose \s* spans "\n" (assigned-secret) would
+    # otherwise merge two patch lines into one and shorten a hunk.
+    data = "\n".join(filters.redact(line) for line in text.split("\n")).encode("utf-8")
+    total = len(data) + rest
+    if total <= limit:
+        return data, False
+    kept = data[:limit].rfind(b"\n") + 1
+    return data[:kept] + f"[passdesk: patch truncated at {kept} of {total} bytes]\n".encode(), True
+
+
+def build_patch(rng: str, cwd: Path, limit: int) -> tuple[bytes, bool]:
+    """The commits in rng as the patch an approver inspects (cap_patch)."""
+    # COLUMNS would change --stat's width, and with it the patch's digest.
+    code, head, total, err = run_head(["git", *_GIT_HARDENING, *_PATCH_ARGS, rng], cwd=cwd,
+                                      keep=limit + _PATCH_SLACK, timeout=300, extra_env={"COLUMNS": None})
+    if code != 0:
+        raise RuntimeError("git log failed:\n" + untrusted("git log", sanitize(err.strip(), 2000)))
+    return cap_patch(head.decode("utf-8", "replace"), total - len(head), limit)
+
+
 def ensure_mirror(repo: str) -> Path:
     path = config.MIRRORS / (repo.replace("/", "__") + ".git")
     if not path.exists():
@@ -263,6 +301,14 @@ def tool_git_push(args: dict, policy: dict) -> str:
         if meta is None:
             raise Denied(f"the commit messages exceed [filters].max_diff_bytes ({max_diff} bytes)")
         block_outbound_secrets("commit messages or author/committer names and emails", meta)
+        # With a hook installed, the person deciding can read the code: the
+        # same mirror and range, written before the lock is released. The
+        # card names the file by digest; it never carries the content.
+        patch_fields = {}
+        if approvals.hook_installed():
+            patch, truncated = build_patch(rng, mirror, approvals.patch_max_bytes(policy))
+            patch_fields = {"patch_sha256": approvals.store_patch(patch), "patch_bytes": len(patch),
+                            "patch_truncated": truncated}
         sha = git("rev-parse", incoming, cwd=mirror).stdout.strip()
         # What a person sees if the deployment holds pushes for approval:
         # only what was verified above, never the content itself.
@@ -274,7 +320,7 @@ def tool_git_push(args: dict, policy: dict) -> str:
     # Outside the tool lock: a pending approval must not block other git calls.
     require_approval({"tool": "git_push", "repo": repo, "branch": branch, "base": base, "head": sha,
                       "commits": count, "shortstat": shortstat, "file_count": len(files), "files": files[:50],
-                      "bundle_sha256": bundle_digest, "secret_scan": "clean"})
+                      "bundle_sha256": bundle_digest, "secret_scan": "clean", **patch_fields})
     with tool_lock:
         mirror = ensure_mirror(repo)
         if git("rev-parse", incoming, cwd=mirror).stdout.strip() != sha:

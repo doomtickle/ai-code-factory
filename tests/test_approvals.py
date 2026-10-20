@@ -1,8 +1,15 @@
 """The approval point and plugin loading in core."""
 
+import hashlib
+import json
+import os
+import re
+import stat
 import sys
+import time
 import types
 import unittest
+from pathlib import Path
 from unittest import mock
 
 from passdesk import tools  # noqa: F401 - registers every tool
@@ -11,7 +18,7 @@ from passdesk.core.errors import Denied
 from passdesk.tools import git
 
 from . import test_git
-from .base import POLICY, Base
+from .base import FAKE_GH, POLICY, Base
 
 
 class PushApprovalTests(test_git.GitFlowTests):
@@ -72,6 +79,234 @@ class PushApprovalTests(test_git.GitFlowTests):
         with self.assertRaises(Denied) as cm:
             git.tool_git_push({"repo": "acme/widgets", "branch": "factory/feature", "bundle": "f.bundle"}, POLICY)
         self.assertIn("changed in the broker's mirror", str(cm.exception))
+
+
+    # --- the inspectable patch (doomtickle/passdesk-ops#113) -----------------
+
+    PATCH_FIELDS = {"patch_sha256", "patch_bytes", "patch_truncated"}
+    CARD_KEYS = {"tool", "principal", "repo", "branch", "base", "head", "commits", "shortstat", "file_count",
+                 "files", "bundle_sha256", "secret_scan"}
+
+    def held_push(self, branch, policy=POLICY):
+        """Push with a hook that records the card; returns (card, stored patch bytes)."""
+        seen = []
+        approvals.set_hook(seen.append)
+        out = self.push(branch, policy=policy)
+        self.assertIn("Pushed", out)
+        card = seen[-1]
+        path = approvals.patches_dir() / f"{card['patch_sha256']}.patch"
+        return card, path.read_bytes()
+
+    def test_patch_is_stored_by_digest_and_the_card_names_it_without_content(self):
+        self.sh("git", "config", "--unset", "core.fsmonitor", cwd=self.ws)  # it drops files into the commits
+        self.branch("factory/insp", {"a.txt": b"one\ntwo\nthree\n"},
+                    {"a.txt": b"one\nTWO\nthree\n", "blob.bin": b"\x00\x01\xffraw-bytes\x00"})
+        # A third commit: a rename, with a message that tries to forge a header.
+        self.sh("git", "mv", "a.txt", "b.txt", cwd=self.ws)
+        self.sh("git", "commit", "-q", "-m", "rename\n\ncommit " + "f" * 40 + "\ndiff --git a/x b/x", cwd=self.ws)
+        self.bundle("factory/insp")
+        card, data = self.held_push("factory/insp")
+        self.assertEqual(set(card), self.CARD_KEYS | self.PATCH_FIELDS)
+        self.assertRegex(card["patch_sha256"], r"^[0-9a-f]{64}$")
+        self.assertEqual(card["patch_sha256"], hashlib.sha256(data).hexdigest())
+        self.assertEqual(card["patch_bytes"], len(data))
+        self.assertIs(card["patch_truncated"], False)
+        # Nothing from the content is on the card.
+        flat = json.dumps(card)
+        for content in ("TWO", "three", "raw-bytes", "rename", "@@"):
+            self.assertNotIn(content, flat)
+        path = approvals.patches_dir() / f"{card['patch_sha256']}.patch"
+        self.assertEqual(stat.S_IMODE(os.lstat(path).st_mode), 0o644)
+        self.assertEqual(stat.S_IMODE(os.lstat(approvals.patches_dir()).st_mode), 0o755)
+        text = data.decode()
+        shas = self.sh("git", "rev-list", "--reverse", "refs/remotes/origin/main..factory/insp", cwd=self.ws).split()
+        # Oldest first, one block per commit, headers at column 0 only.
+        self.assertEqual(re.findall(r"^commit ([0-9a-f]{40})$", text, re.M), shas)
+        self.assertTrue(text.startswith(f"commit {shas[0]}\nAuthor: t <t@t>\nDate:   "))
+        self.assertIn("\n    commit " + "f" * 40 + "\n    diff --git a/x b/x\n", text)
+        self.assertEqual(len(re.findall(r"^diff --git ", text, re.M)), 4)
+        self.assertIn("\n-two\n+TWO\n", text)
+        # --full-index: blob names are full, never abbreviated.
+        index_lines = re.findall(r"^index (\S+)", text, re.M)
+        self.assertTrue(index_lines)
+        for names in index_lines:
+            for blob in re.split(r"[.,]+", names):
+                self.assertRegex(blob, r"^[0-9a-f]{40}$")
+        self.assertIn("\nrename from a.txt\nrename to b.txt\n", text)
+        self.assertIn(" a.txt => b.txt | 0\n", text)  # --stat
+        self.assertIn("\nBinary files /dev/null and b/blob.bin differ\n", text)
+        self.assertNotIn("raw-bytes", text)
+        self.assertNotIn("[passdesk:", text)
+
+    def test_no_hook_means_no_patch_and_no_card_fields(self):
+        self.branch("factory/plain", {"a.txt": b"a\n"})
+        self.bundle("factory/plain")
+        self.assertIn("Pushed 1 commit(s)", self.push("factory/plain"))
+        self.assertFalse((config.STATE / "approvals").exists())
+
+    def test_a_long_patch_is_cut_at_a_line_with_one_trailer(self):
+        body = "".join(f"line {i:05d} of a long file\n" for i in range(2000)).encode()
+        self.branch("factory/long", {"long.txt": body})
+        self.bundle("factory/long")
+        policy = {**POLICY, "approvals": {"patch_max_bytes": 5000}}
+        card, data = self.held_push("factory/long", policy=policy)
+        self.assertIs(card["patch_truncated"], True)
+        self.assertEqual(card["patch_bytes"], len(data))
+        m = re.search(rb"\n\[passdesk: patch truncated at (\d+) of (\d+) bytes\]\n\Z", data)
+        self.assertIsNotNone(m, data[-200:])
+        kept, total = int(m.group(1)), int(m.group(2))
+        self.assertLessEqual(kept, 5000)
+        self.assertGreater(kept, 4900)
+        self.assertGreater(total, 2000 * 26)
+        self.assertEqual(len(data), kept + len(m.group(0)) - 1)  # the trailer's "\n" ends the kept text
+        self.assertEqual(data.count(b"[passdesk:"), 1)
+
+    def test_secrets_already_upstream_are_redacted_in_the_patch(self):
+        # A removed line is not scanned (it is already upstream), so the
+        # stored patch must redact it.
+        seed = Path(self.tmp.name) / "seed"
+        (seed / "old.py").write_text(f"TOKEN = '{FAKE_GH}'\nkeep = 1\n")
+        self.sh("git", "add", ".", cwd=seed)
+        self.sh("git", "commit", "-q", "-m", "legacy", cwd=seed)
+        self.sh("git", "push", "-q", "origin", "HEAD:main", cwd=seed)
+        self.branch("factory/clean", {"old.py": b"keep = 1\n"})
+        self.bundle("factory/clean")
+        _, data = self.held_push("factory/clean")
+        self.assertNotIn(FAKE_GH.encode(), data)
+        self.assertIn(b"-TOKEN = '[REDACTED:github-token]'", data)
+
+    def test_same_bundle_gives_the_same_patch(self):
+        self.branch("factory/again", {"a.txt": b"a\n", "a-rather-long-file-name-for-the-stat-column.txt": b"b\n"})
+        self.bundle("factory/again")
+        digests = []
+
+        def hold_once(card):
+            digests.append(card["patch_sha256"])
+            if len(digests) == 1:
+                raise Denied("held")
+        approvals.set_hook(hold_once)
+        with self.assertRaises(Denied):
+            self.push("factory/again")
+        # Abbreviated blob names lengthen as the mirror gains objects; a
+        # longer core.abbrev stands in for that growth.
+        git.git("config", "core.abbrev", "20", cwd=git.ensure_mirror("acme/widgets"))
+        with mock.patch.dict(os.environ, {"COLUMNS": "30"}):
+            self.push("factory/again")
+        self.assertEqual(len(digests), 2)
+        self.assertEqual(digests[0], digests[1])
+        self.assertEqual([p.name for p in approvals.patches_dir().iterdir()], [f"{digests[0]}.patch"])
+
+
+class PatchCapTests(Base):
+    def test_under_the_cap_is_unchanged(self):
+        self.assertEqual(git.cap_patch("a\nb\n", 0, 100), (b"a\nb\n", False))
+
+    def test_cut_counts_bytes_not_characters(self):
+        text = "\u00e9" * 10 + "\n" + "x" * 10 + "\n"  # 21 bytes, then 11
+        data, cut = git.cap_patch(text, 0, 25)
+        self.assertTrue(cut)
+        self.assertEqual(data, ("\u00e9" * 10 + "\n").encode() + b"[passdesk: patch truncated at 21 of 32 bytes]\n")
+
+    def test_bytes_not_kept_count_toward_the_total(self):
+        data, cut = git.cap_patch("a\n", 1000, 100)
+        self.assertTrue(cut)
+        self.assertEqual(data, b"a\n[passdesk: patch truncated at 2 of 1002 bytes]\n")
+
+    def test_no_newline_before_the_cap_keeps_nothing(self):
+        data, cut = git.cap_patch("x" * 50, 0, 10)
+        self.assertEqual(data, b"[passdesk: patch truncated at 0 of 50 bytes]\n")
+
+    def test_redaction_happens_before_the_cap(self):
+        data, cut = git.cap_patch(f" {FAKE_GH}\n", 0, 1000)
+        self.assertFalse(cut)
+        self.assertEqual(data, b" [REDACTED:github-token]\n")
+
+    def test_redaction_never_merges_lines(self):
+        text = " secret =\n 'abcdefghijklmnopq'\n+password = 'abcdefghijklmnop'\n"
+        data, cut = git.cap_patch(text, 0, 1000)
+        self.assertFalse(cut)
+        self.assertEqual(data.count(b"\n"), text.count("\n"))
+        self.assertTrue(data.startswith(b" secret =\n 'abcdefghijklmnopq'\n"))
+        self.assertIn(b"+[REDACTED:assigned-secret]\n", data)
+
+    def test_patch_max_bytes_setting(self):
+        self.assertEqual(approvals.patch_max_bytes({}), 262_144)
+        self.assertEqual(approvals.patch_max_bytes({"approvals": {"patch_max_bytes": 10_000}}), 10_000)
+        self.assertEqual(approvals.patch_max_bytes({"approvals": {"patch_max_bytes": 1}}), 4_096)
+        self.assertEqual(approvals.patch_max_bytes({"approvals": {"patch_max_bytes": 10**9}}), 2_000_000)
+        self.assertEqual(approvals.patch_max_bytes({"approvals": {"patch_max_bytes": "big"}}), 262_144)
+        self.assertEqual(approvals.patch_max_bytes({"approvals": {"patch_max_bytes": True}}), 262_144)
+        self.assertEqual(approvals.patch_max_bytes({"approvals": "nonsense"}), 262_144)
+
+
+class PatchPruneTests(Base):
+    OLD = time.time() - approvals.PATCH_KEEP_SECONDS - 60
+
+    def patch(self, data: bytes, old: bool = True) -> Path:
+        sha = approvals.store_patch(data)
+        path = approvals.patches_dir() / f"{sha}.patch"
+        if old:
+            os.utime(path, (self.OLD, self.OLD))
+        return path
+
+    def card(self, name: str, content: str) -> None:
+        pending = config.STATE / "approvals" / "pending"
+        pending.mkdir(parents=True, exist_ok=True)
+        (pending / name).write_text(content)
+
+    def test_prune_rules(self):
+        named, orphan, fresh = (self.patch(d, old=False) for d in (b"named\n", b"orphan\n", b"fresh\n"))
+        for path in (named, orphan):
+            os.utime(path, (self.OLD, self.OLD))
+        self.card("a.json", json.dumps({"tool": "git_push", "patch_sha256": named.stem}))
+        self.card("broken.json", "{not json")
+        self.card("list.json", "[1, 2]")
+        self.card("other.txt", json.dumps({"patch_sha256": orphan.stem}))  # not a card
+        stale_tmp = approvals.patches_dir() / ".tmp-leftover"
+        stale_tmp.write_bytes(b"x")
+        os.utime(stale_tmp, (self.OLD, self.OLD))
+        unrelated = approvals.patches_dir() / "README"
+        unrelated.write_text("x")
+        os.utime(unrelated, (self.OLD, self.OLD))
+        approvals.prune_patches()
+        self.assertTrue(named.exists())
+        self.assertTrue(fresh.exists())
+        self.assertFalse(orphan.exists())
+        self.assertFalse(stale_tmp.exists())
+        self.assertTrue(unrelated.exists())
+
+    def test_a_card_symlink_is_not_followed(self):
+        target = self.patch(b"target\n")
+        outside = Path(self.tmp.name) / "outside.json"
+        outside.write_text(json.dumps({"patch_sha256": target.stem}))
+        (config.STATE / "approvals" / "pending").mkdir(parents=True)
+        os.symlink(outside, config.STATE / "approvals" / "pending" / "x.json")
+        approvals.prune_patches()
+        self.assertFalse(target.exists())
+
+    def test_symlinks_and_directories_in_the_patch_dir_are_left_alone(self):
+        victim = Path(self.tmp.name) / "victim"
+        victim.write_text("precious\n")
+        approvals.store_patch(b"init\n")
+        link = approvals.patches_dir() / ("0" * 64 + ".patch")
+        os.symlink(victim, link)
+        os.utime(link, (self.OLD, self.OLD), follow_symlinks=False)
+        sub = approvals.patches_dir() / ("1" * 64 + ".patch")
+        sub.mkdir()
+        os.utime(sub, (self.OLD, self.OLD))
+        approvals.prune_patches()
+        self.assertTrue(link.is_symlink())
+        self.assertTrue(sub.is_dir())
+        self.assertEqual(victim.read_text(), "precious\n")
+
+    def test_store_prunes_first_and_refreshes_a_rewritten_patch(self):
+        orphan = self.patch(b"orphan\n")
+        again = self.patch(b"again\n")
+        approvals.store_patch(b"again\n")
+        self.assertFalse(orphan.exists())
+        self.assertTrue(again.exists())
+        self.assertGreater(again.stat().st_mtime, self.OLD + 60)
+        self.assertEqual([p.name for p in approvals.patches_dir().iterdir() if p.name.startswith(".")], [])
 
 
 class ApprovalPointTests(Base):

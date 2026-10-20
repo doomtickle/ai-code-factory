@@ -2,6 +2,52 @@
 
 Dated entries, for the user to review. Newest first.
 
+## 2026-10-20
+
+- **The approver can read the code: a broker-local patch per held push
+  (doomtickle/passdesk-ops#113).** Until now a person deciding a held
+  `git_push` saw the repo, branch, file names and a shortstat, and approved
+  blind. With an approval hook installed, `git_push` now writes the pushed
+  commits' patch to `STATE/approvals/patches/<sha256>.patch` (content
+  addressed, atomic, 0644) inside the tool lock, from the same mirror and
+  range it secret-scanned, and the card names it by digest. Choices:
+  - **Cards never carry content.** The card gains only `patch_sha256`,
+    `patch_bytes` and `patch_truncated`. The card, the webhook, the audit
+    log and the future Team relay never see the patch; only something on
+    the same machine with the state directory (the factory's dashboard)
+    reads it, and it checks the digest against the card.
+  - **A format a parser can't be fooled by.** `git log -p --stat --cc
+    --reverse` with `%w(0,4,4)%B`, so a commit message can't put a line at
+    column 0 and pass for a `commit` or `diff --git` header. No `-a`: a
+    binary file is git's own one-line notice, never bytes. Renames keep
+    git's default detection. `COLUMNS` is removed from git's environment,
+    since it changes `--stat`'s width and with it the digest, and
+    `--full-index` writes full blob names, since abbreviated ones lengthen
+    as the mirror gains objects; the same bundle gives the same file.
+  - **Capped and redacted.** The text goes through `filters.redact` one
+    line at a time (a removed or context line is never scanned, being
+    upstream already; whole-text redaction could match across a newline and
+    merge two lines, leaving a hunk short of its count), then
+    is cut at the last newline at or before `[approvals] patch_max_bytes`
+    (default 256 KiB, clamped to 4,096-2,000,000 so a console's 2 MiB read
+    cap always holds it) with one trailer line saying how much was kept.
+    git's output past the cap plus a margin is counted, not held.
+  - **Pruning lives in core, ahead of #89.** Before each write, a patch is
+    removed when no `approvals/pending/*.json` card names it and it is over
+    two hours old (so a card the hook has not recorded yet, or a retry,
+    keeps its patch). Unreadable cards are ignored; symlinks and anything
+    but regular files are never followed or removed.
+  - **`[approvals]` is now a core table.** `patch_max_bytes` is core's; the
+    doctor knows the table (with Pro's `tools`, `hold_seconds` and
+    `expire_seconds`) and warns on an out-of-range value instead of calling
+    the table a typo.
+  - **Fail-closed:** if the patch can't be built or stored, the push is
+    refused rather than held without it.
+  - **Nothing changes without a hook:** no git log, no file, no card fields.
+  What would change this: a relay that must show code remotely (it would
+  need its own decision; content is not to leave the machine), or patches
+  big enough that a two-hour orphan window costs real disk.
+
 ## 2026-10-18
 
 - **`github_create_issue`, a core tool with its own allowlist

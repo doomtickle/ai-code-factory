@@ -65,7 +65,11 @@ The package is `passdesk/`:
   in `examples/plugins/`). A deployment may install an approval hook
   that holds pushes and pull requests for a person; the design is in
   `docs/pro-approvals.md` and the hook ships in the commercial
-  `passdesk-pro` package.
+  `passdesk-pro` package. With a hook installed, `git_push` also stores
+  the pushed commits' patch in the state directory
+  (`approvals/patches/<sha256>.patch`, capped by `[approvals]
+  patch_max_bytes`) for the person approving to read; the card carries only
+  its digest and size.
 - `passdesk/tools/`: one module per tool (`web`, `git`, `gemini`, `jira`,
   `npm`, `pip`), each registering its tools with `core.registry`.
 

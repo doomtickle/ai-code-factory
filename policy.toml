@@ -88,6 +88,16 @@ max_diff_bytes = 2_000_000
 # broker copies it into private space, before git reads it.
 max_bundle_bytes = 100_000_000
 
+# [approvals]
+# Read only when an approval hook is installed (e.g. Passdesk Pro, which also
+# reads tools, hold_seconds and expire_seconds here). git_push then stores the
+# pushed commits' patch (oldest first, with --stat, binary files as one line)
+# in the gateway's state directory, approvals/patches/<sha256>.patch, for the
+# person approving to inspect; the card carries only its digest and size,
+# never the content. A longer patch is cut at the last line that fits, with a
+# trailer line saying so. From 4_096 to 2_000_000.
+# patch_max_bytes = 262_144
+
 [gemini]
 # gemini_flash_query. The API key comes from the file at
 # BROKER_GEMINI_SECRET's path (default /etc/factory-broker/secrets/gemini),

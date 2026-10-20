@@ -140,6 +140,18 @@ class PolicyChecks(DoctorBase):
         self.assertWarns(report, "[wep] is not a table")
         self.assertWarns(report, "[web].max_byte is not a setting")
 
+    def test_approvals_is_a_known_table(self):
+        self.policy(GOOD_POLICY + '\n[approvals]\ntools = ["git_push"]\nhold_seconds = 45\n'
+                    "expire_seconds = 1800\npatch_max_bytes = 262_144\n")
+        report = doctor.Report()
+        doctor.check_policy(report, self.policy_path)
+        self.assertEqual(report.messages(doctor.WARN), [])
+        for bad in ("1", '"big"', "99_000_000"):
+            self.policy(GOOD_POLICY + f"\n[approvals]\npatch_max_bytes = {bad}\n")
+            report = doctor.Report()
+            doctor.check_policy(report, self.policy_path)
+            self.assertWarns(report, "[approvals].patch_max_bytes")
+
     def test_shape_errors(self):
         bad = GOOD_POLICY.replace('repos = ["acme/widgets"]', 'repos = ["https://github.com/acme/widgets"]') \
                          .replace('cloud_id = "3f2a9c1e-5b7d-4e8a-9c21-7d4e5f6a8b90"', 'cloud_id = "not-a-uuid"') \

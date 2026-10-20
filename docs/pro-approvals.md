@@ -28,8 +28,34 @@ the code; the decision log records what changed on the way.
   holds only the tools `[approvals] tools` lists; add `github_create_issue`
   there to hold issues too.
 
-The card never carries a credential, and nothing in it comes from the
-network: it is made of what the gateway itself verified. `require` also
+- **The patch to inspect** (doomtickle/passdesk-ops#113). Only when a hook
+  is installed, `git_push` writes the pushed commits' patch to
+  `STATE/approvals/patches/<sha256>.patch` while it still holds the tool
+  lock, from the same mirror and range it scanned:
+  `git log -p --stat --cc --reverse --full-index --no-ext-diff --no-textconv --no-color`
+  with the format `commit %H%nAuthor: %an <%ae>%nDate:   %aI%n%n%w(0,4,4)%B%n`,
+  so every message line is indented four spaces and only a real header
+  starts at column 0. Renames are detected (git's default); there is no
+  `-a`, so a binary file is git's one `Binary files ... differ` line. The
+  text (UTF-8, git's output decoded with replacement) goes through
+  `filters.redact` one line at a time (so redaction never merges lines),
+  then is cut at the last newline at or before
+  `[approvals] patch_max_bytes` (default 262,144; 4,096 to 2,000,000),
+  followed by one line `[passdesk: patch truncated at N of M bytes]`. The
+  file is written atomically, mode 0644, named by the sha256 of its bytes,
+  so the same bundle gives the same name. Before each write, core removes
+  every patch that no `approvals/pending/*.json` card names and that is
+  over two hours old (never following a symlink, ignoring unreadable
+  cards). The card gains three fields and no content: `patch_sha256`,
+  `patch_bytes` (the file's size) and `patch_truncated`. The webhook, the
+  audit log and any future relay see only those; the patch itself is read
+  by a console on the same machine (the AI Code Factory's dashboard), which
+  checks the file's digest against the card. Without a hook, nothing is
+  written and the card is as before. If the patch cannot be built or
+  stored, the push is refused (fail-closed) rather than held without it.
+
+The card never carries a credential or content, and nothing in it comes
+from the network: it is made of what the gateway itself verified. `require` also
 redacts any known secret pattern (`core/filters.py`'s `SECRET_PATTERNS`,
 e.g. a `ghp_...` token) found in a string field - recursively through lists,
 dicts and tuples, non-string values untouched - before the hook sees the
