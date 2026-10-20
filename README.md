@@ -200,7 +200,8 @@ and nothing was ever saved, and you get `watch`, the default.
   dashboard` in the foreground: the browser page shows every lane, and its
   left-hand screen is the Coordinator's terminal (see "Dashboard"). Ctrl-C
   closes the dashboard and the Coordinator's terminal; the factory keeps
-  running, and `factory dashboard` reopens it.
+  running, and `factory dashboard` reopens it. `factory update` restarts the
+  factory but doesn't open the dashboard; run `factory dashboard` after it.
 
 Switching layouts and running `factory start` again cleans up what the other
 layout added (the `factory watch` pane, or the per-role tabs). `--no-ui`
@@ -219,7 +220,7 @@ place to open it in another.
 |---|---|
 | `factory doctor` | Check the machine is ready; prints the fix for each problem (setup runs it first). Once the broker exists, it also runs the gateway's own doctor inside it: policy, tokens and grants, audit log, credentials, a live probe, GitHub access per repo, the policy's hosts against the broker kit, and (Passdesk Pro) a warning for any approval that expired with no decision |
 | `factory setup` | One-time setup (safe to re-run) |
-| `factory update [--yes]` | After pulling changes or editing kits, images or policy: pulls the latest factory, rebuilds, recreates only the sandboxes the changes affect (it lists them and what each loses, then asks), and restarts |
+| `factory update [--yes]` | After pulling changes or editing kits, images or policy: pulls the latest factory, rebuilds, recreates only the sandboxes the changes affect (it lists them and what each loses, then asks), and restarts. With the `web` layout it doesn't open the dashboard (so `factory update --yes` returns): run `factory dashboard` afterwards |
 | `factory start [dir] [--no-ui] [--layout watch\|tabs\|web]` | Start the factory for a project (default: current folder) and open Herdr. `--no-ui` (or `FACTORY_NO_UI=1`) skips Herdr: talk to the Coordinator with `factory chat` in any terminal and follow roles with `factory logs <role>`. `--layout` (or `FACTORY_LAYOUT`) picks the layout, `web` being the dashboard instead of Herdr, and is remembered for next time (see "Layouts") |
 | `factory chat` | Talk to the Coordinator in this terminal (wraps `sbx run --name factory-coordinator`); `factory start` creates the sandbox first. Refuses while the Coordinator is open elsewhere (Herdr, the dashboard) |
 | `factory status` | Project, broker, dispatch bridge, login, roles (with their lanes), sandbox status, and (Passdesk Pro) pending approvals and the oldest one's age |
@@ -776,11 +777,14 @@ your browser. It shows:
 
 - **Terminal 0:** the Coordinator itself, live, on the left-hand screen. Type
   to it as you would in Herdr; every tab you open shows the same session (the
-  last tab you resize or focus sets its size). It attaches when the page
-  first opens. If the Coordinator is already open in Herdr or `factory chat`,
-  the screen says so instead: close it there, then press POWER ON. When the
-  session ends the set powers off; POWER ON starts it again. Ctrl-C on
-  `factory dashboard` hangs up on it, like closing a terminal.
+  last tab you resize or focus sets its size). Opening the page starts
+  nothing: press POWER ON to attach. If the Coordinator is already open in
+  Herdr or `factory chat`, the screen says so instead: close it there, then
+  press POWER ON again. A tab opened later replays the recent output, with
+  its keyboard muted while it does, so the terminal's answers to old
+  queries in that output aren't typed into the Coordinator a second time.
+  When the session ends the set powers off; POWER ON starts it again. Ctrl-C
+  on `factory dashboard` hangs up on it, like closing a terminal.
 - **Lanes:** one module per lane, with a status LED, the live tail of its
   transcript on an LCD (tool calls, errors, branches and held writes in their
   own colors), and its model, cost, context size and elapsed time. A digit key
@@ -794,8 +798,10 @@ your browser. It shows:
   finished jobs.
 - **Front-panel knobs** under the Coordinator's screen: BRIGHT and CONTRAST
   adjust it, and V-HOLD, turned off centre, makes the picture roll like an old
-  set (drag, scroll or use the arrow keys; double-click resets; remembered in
-  your browser).
+  set, and BLOOM sets the phosphor halo around lit text, from none (fully
+  counter-clockwise) to full; it starts at 25%. All four apply to the live
+  terminal too (drag, scroll or use the arrow keys; double-click resets;
+  remembered in your browser).
 - **Lamps:** whether the page can reach the dashboard, whether the dispatch
   bridge is running, and whether anything is held.
 
@@ -814,10 +820,15 @@ The terminal runs exactly one command, `sbx run --name factory-coordinator`,
 in a pseudo-terminal (never a shell, and never a shell when it exits); before
 starting it, it checks `sbx ls -q` and the process list (`ps`) to make sure
 the sandbox exists and no one else has it open. It is served from a second
-port on `127.0.0.1`, a separate browser origin the main page frames. Its
-WebSocket accepts a connection only with that port's `Host` and `Origin`,
-this run's cookie, and a terminal key that only the terminal's own page holds
-(the main page, which shows agent-written text, can't read it). Anyone who
+port on `127.0.0.1`, a separate browser origin the main page frames. The
+terminal's page is served only into that frame (the browser's
+`Sec-Fetch-Dest: iframe` with `Sec-Fetch-Site` same-site or same-origin), not
+to a tab another local page opens, so use a current browser. Its WebSocket
+accepts a connection only with that port's `Host` and `Origin`, this run's
+cookie, and a terminal key that only the terminal's own page holds (the main
+page, which shows agent-written text, can't read it). At most 8 tabs attach
+at once; the dashboard pings each one every 30 seconds and drops one that
+stops answering for a minute. Anyone who
 can type into the terminal can do what the Coordinator can, as in Herdr: keep
 the link to yourself.
 

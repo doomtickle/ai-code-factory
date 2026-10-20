@@ -4,6 +4,9 @@
 // The terminal key arrives in a <meta> only this origin can read, goes out as
 // the WebSocket subprotocol, and the <meta> is removed. No clipboard, link or
 // image addons; OSC 8 links do nothing.
+// Attaching never starts the Coordinator: this page asks for it with a
+// {"type":"power"} message, once on load (only if it is off and not open
+// elsewhere) and whenever the power key is pressed.
 "use strict";
 
 (() => {
@@ -21,7 +24,20 @@
     error: ["TERMINAL 0 · FAULT", "The Coordinator could not be started. Power on to try again."],
     exited: ["TERMINAL 0 · POWERED OFF", "The Coordinator session ended. Power on to start it again."],
     lost: ["TERMINAL 0 · NO SIGNAL", "Lost the dashboard. Reconnecting…"],
+    framed: ["TERMINAL 0 · NOT IN THE DASHBOARD", "Open the Factory dashboard; this page only works inside it."],
   };
+
+  // Opened on its own (not framed by the dashboard): never connect.
+  if (window.top === window) {
+    const show = () => {
+      $("off-title").textContent = REASONS.framed[0];
+      $("off-text").textContent = REASONS.framed[1];
+      $("power").hidden = true;
+      $("off").hidden = false;
+    };
+    if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", show); else show();
+    return;
+  }
 
   // VT323's cell is about 0.4em wide: this keeps 65 or more columns on the
   // narrow Coordinator screen and grows the type on a wide one.
@@ -47,6 +63,12 @@
   term.loadAddon(fit);
 
   let ws = null, running = false, wanted = false, retry = 0, opened = false;
+  // autoTried: the one automatic power-on per page load has been decided.
+  // replayNext: the next binary frame is the server's replay of past output.
+  // muted: that replay is being parsed. xterm.js answers the old terminal
+  // queries in it (DA, DSR, DECRQSS, OSC 10/11); those answers are dropped, not
+  // typed into the Coordinator.
+  let autoTried = false, replayNext = false, muted = false;
   const enc = new TextEncoder();
 
   function show(reason) {
@@ -86,26 +108,51 @@
       if (wanted) { wanted = false; send(JSON.stringify({ type: "power", on: true })); }
     };
     sock.onmessage = ev => {
-      if (typeof ev.data !== "string") { term.write(new Uint8Array(ev.data)); return; }
+      if (typeof ev.data !== "string") {
+        const bytes = new Uint8Array(ev.data);
+        if (replayNext) {
+          replayNext = false;
+          muted = true;
+          term.write(bytes, () => { muted = false; });
+        } else {
+          term.write(bytes);
+        }
+        return;
+      }
       let msg;
       try { msg = JSON.parse(ev.data); } catch (e) { return; }
-      if (!msg || msg.type !== "state") return;
+      if (!msg) return;
+      if (msg.type === "replay") { replayNext = true; return; }
+      if (msg.type !== "state") return;
       if (msg.running && !running) { term.reset(); sendSize(); }
       running = !!msg.running;
-      show(running ? null : (msg.reason || "exited"));
+      const elsewhere = msg.reason === "elsewhere" || msg.elsewhere === true;
+      if (!autoTried) {
+        // Opening the dashboard brings the Coordinator up, once per page load,
+        // and only if it is off and not open in Herdr or `factory chat`.
+        autoTried = true;
+        if (!running && !elsewhere) {
+          send(JSON.stringify({ type: "power", on: true }));
+          return;  // the server answers with the new state
+        }
+      }
+      show(running ? null : (msg.reason || (elsewhere ? "elsewhere" : "exited")));
       if (running) term.focus();
     };
     sock.onclose = () => {
       if (ws !== sock) return;
-      ws = null; running = false;
+      ws = null; running = false; replayNext = false; muted = false;
       show("lost");
       retry = Math.min(retry + 1, 10);
       setTimeout(connect, 500 * retry);
     };
   }
 
-  term.onData(d => send(enc.encode(d)));
-  term.onBinary(d => { const b = new Uint8Array(d.length); for (let i = 0; i < d.length; i++) b[i] = d.charCodeAt(i) & 0xff; send(b); });
+  // A hidden tab can't be typing: anything it would send is an automatic
+  // reply to a query, which the visible tab already answers.
+  const quiet = () => muted || document.hidden;
+  term.onData(d => { if (!quiet()) send(enc.encode(d)); });
+  term.onBinary(d => { if (quiet()) return; const b = new Uint8Array(d.length); for (let i = 0; i < d.length; i++) b[i] = d.charCodeAt(i) & 0xff; send(b); });
   term.onResize(() => sendSize());
 
   $("power").addEventListener("click", () => {

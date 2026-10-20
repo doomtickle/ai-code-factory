@@ -16,11 +16,12 @@ than parsing either command's output.
 
 With --coordinator NAME it also serves Terminal 0, the Coordinator's live
 terminal (dashboard_term.py): one fixed argv, `sbx run --name NAME`, in a PTY
-(no shell), started when the first terminal page connects, refused while the
+(no shell), started only when a page asks (POWER ON), refused while the
 Coordinator is attached anywhere else, and shared by every open tab. It lives
-on a second port (its own origin) the main page frames; a WebSocket there
-needs the right Host and Origin, this run's cookie and the terminal key that
-only the terminal page holds. Besides that, the checks before starting it run
+on a second port (its own origin) the main page frames; the terminal page is
+served only to a same-site iframe load (Sec-Fetch-Dest/Sec-Fetch-Site), and a
+WebSocket there needs the right Host and Origin, this run's cookie and the
+terminal key that only the terminal page holds. Besides that, the checks before starting it run
 `ps -axo pid=,ppid=,args=` and `sbx ls -q` (fixed argv).
 
 The one process it starts is the browser opener, once, at start-up (unless
@@ -489,13 +490,17 @@ def serve(board: Dashboard, port: int = 0, token: str | None = None, term: dt.Te
 
 
 def stop(server, term: dt.Term | None = None) -> None:
-    """Hang up on the Coordinator (if attached) and stop both servers."""
-    if term is not None:
-        term.shutdown()
-    for s in (getattr(server, "term_server", None), server):
-        if s is not None:
-            s.shutdown()
-            s.server_close()
+    """Hang up on the Coordinator (if attached) and stop both servers, even if
+    a second Ctrl-C lands during the hang-up (Term.shutdown still kills and
+    reaps the child before the KeyboardInterrupt propagates)."""
+    try:
+        if term is not None:
+            term.shutdown()
+    finally:
+        for s in (getattr(server, "term_server", None), server):
+            if s is not None:
+                s.shutdown()
+                s.server_close()
 
 
 def is_wsl() -> bool:
@@ -551,11 +556,32 @@ def main(argv=None) -> int:
     if not board.watch.lanes:
         print("no roles or transcripts found", file=sys.stderr)
         return 1
+    # SIGTERM and SIGHUP (the terminal closing) stop it as Ctrl-C does, so the
+    # Coordinator's sbx run is never left behind. Installed before anything
+    # listens or the browser opener starts.
+    for sig in (signal.SIGTERM, signal.SIGHUP):
+        signal.signal(sig, _interrupt)
+    server = None
     try:
         server, url = serve(board, args.port, term=term)
+        return _run(args, server, url, term)
     except OSError as e:
+        if server is not None:
+            raise
         print(f"could not listen on 127.0.0.1:{args.port}: {e}", file=sys.stderr)
         return 1
+    except KeyboardInterrupt:
+        return 0
+    finally:
+        if server is not None:
+            try:
+                stop(server, term)
+            except KeyboardInterrupt:  # a second Ctrl-C: the child is already reaped
+                pass
+
+
+def _run(args, server, url: str, term) -> int:
+    """Print the link, open the browser and serve until Ctrl-C (or SIGTERM/SIGHUP)."""
     print(f"Factory dashboard: {url}")
     print("The link carries this run's access token; it stops working when this command exits.")
     if args.no_open:
@@ -565,20 +591,11 @@ def main(argv=None) -> int:
     else:
         print("Could not start a browser: open the link above in a browser on this machine.")
     if term is not None:
-        print(f"Terminal 0 attaches to {args.coordinator} when the page opens (unless it is open elsewhere).")
+        print(f"Terminal 0 attaches to {args.coordinator} when you press POWER ON on the page "
+              "(unless it is open elsewhere).")
     print("Ctrl-C stops the dashboard" + (" and hangs up on the Coordinator." if term else "."), flush=True)
-    # SIGTERM and SIGHUP (the terminal closing) stop it as Ctrl-C does, so the
-    # Coordinator's sbx run is never left behind.
-    for sig in (signal.SIGTERM, signal.SIGHUP):
-        signal.signal(sig, _interrupt)
-    try:
-        while True:
-            time.sleep(3600)
-    except KeyboardInterrupt:
-        pass
-    finally:
-        stop(server, term)
-    return 0
+    while True:
+        time.sleep(3600)
 
 
 def _interrupt(signum, frame):

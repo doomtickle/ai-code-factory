@@ -5,19 +5,28 @@ out to every browser tab. A second `sbx run --name factory-coordinator` while
 one is attached would start a second Claude process in the same VM, so:
 
 - The server runs one fixed argv, `sbx run --name <coordinator>`, in a
-  pseudo-terminal (no shell; the name is checked against NAME), lazily, when
-  the first terminal connects or a page presses POWER ON. It never falls back
-  to a shell: when the child exits, the pages show the set powered off.
+  pseudo-terminal (no shell; the name is checked against NAME), only when a
+  page asks for it ({"type": "power", "on": true}, the POWER ON button):
+  attaching a page starts nothing. It never falls back to a shell: when the
+  child exits, the pages show the set powered off.
 - Before starting it, it refuses if another process on this machine is
   already running `sbx run --name <coordinator>` (a Herdr pane or `factory
   chat`), and if `sbx ls -q` doesn't list the sandbox.
 - Output goes to every connected page, and the last RING bytes are replayed to
-  a page that connects later; input from any authorized page goes to the PTY;
+  a page that connects later, as a text frame {"type": "replay"} followed by
+  exactly one binary frame (the page mutes its input while it writes that
+  frame, so terminal queries in old output don't answer into the
+  Coordinator's stdin again); input from any authorized page goes to the PTY;
   the most recent page's size is applied (TIOCSWINSZ).
+- Every PING_INTERVAL seconds each page is pinged; one silent for
+  PING_TIMEOUT seconds is dropped, so dead sockets don't hold MAX_CLIENTS.
 
 The terminal lives on its own origin: a second port on 127.0.0.1 serving only
 the terminal page, its script, the vendored xterm.js and the WebSocket. The
-main page embeds it in an iframe. A WebSocket is accepted only when the Host
+main page embeds it in an iframe, and the terminal page (which carries the
+key) is served only to a same-site iframe load (Sec-Fetch-Dest: iframe,
+Sec-Fetch-Site: same-site or same-origin), never to a top-level navigation
+another local page could open. A WebSocket is accepted only when the Host
 names this port, the Origin is exactly this origin, the main dashboard's
 cookie matches, and the subprotocol carries this run's terminal key, which
 only the terminal page knows (the server writes it into the page it serves;
@@ -58,6 +67,11 @@ CLIENT_BACKLOG = 4 * 1024 * 1024  # bytes queued for one page before it is dropp
 WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 PROTOCOL = "factory-term."  # the subprotocol: PROTOCOL + this run's terminal key
 KEY_SLOT = "__TERM_KEY__"   # placeholder in term.html the server fills in
+HTTP_TIMEOUT = 30          # seconds a request on the terminal port may take, before any upgrade
+PING_INTERVAL = 30         # seconds between the server's pings to each page
+PING_TIMEOUT = 60          # seconds without any frame from a page before it is dropped
+FRAME_DESTS = {"iframe"}                       # Sec-Fetch-Dest allowed for /term
+FRAME_SITES = {"same-site", "same-origin"}     # Sec-Fetch-Site allowed for /term
 
 # The terminal origin's only files: path -> (file under UI, content type).
 STATIC = {
@@ -104,9 +118,31 @@ def cookie_matches(headers, name: str, token: str) -> bool:
 # --------------------------------------------------------------------------
 # Is the Coordinator already attached somewhere else?
 
+def runs_sandbox(argv: list, name: str) -> bool:
+    """True if argv is `sbx [global flags] run ...` naming the sandbox: as
+    `--name NAME`, `--name=NAME`, or a bare argument NAME before any `--`
+    (`sbx run` takes a sandbox name positionally too; sbx has no short form
+    of --name). Errs on the side of a match: a second attachment is the harm.
+    Same rule as coordinator_attached in scripts/lib/common.sh."""
+    if not argv or os.path.basename(argv[0]) != "sbx":
+        return False
+    i = 1
+    while i < len(argv) and argv[i].startswith("-"):
+        i += 1
+    if i >= len(argv) or argv[i] != "run":
+        return False
+    for arg in argv[i + 1:]:
+        if arg == "--":
+            break
+        if arg == name or arg == f"--name={name}":
+            return True
+    return False
+
+
 def attached_pids(ps_output: str, name: str, exclude=()) -> list:
-    """PIDs in `ps -axo pid=,ppid=,args=` output running `sbx run --name NAME`,
-    leaving out the pids in exclude and their descendants (our own child)."""
+    """PIDs in `ps -axo pid=,ppid=,args=` output running `sbx run` on sandbox
+    NAME (runs_sandbox), leaving out the pids in exclude and their descendants
+    (our own child)."""
     procs = {}
     for line in ps_output.splitlines():
         parts = line.split(None, 2)
@@ -123,10 +159,7 @@ def attached_pids(ps_output: str, name: str, exclude=()) -> list:
                 changed = True
     out = []
     for pid, (_, argv) in sorted(procs.items()):
-        if pid in ours or len(argv) < 3 or os.path.basename(argv[0]) != "sbx" or argv[1] != "run":
-            continue
-        rest = argv[2:]
-        if (len(rest) >= 2 and rest[0] == "--name" and rest[1] == name) or (rest and rest[0] == f"--name={name}"):
+        if pid not in ours and runs_sandbox(argv, name):
             out.append(pid)
     return out
 
@@ -287,6 +320,7 @@ class Client:
 
     def __init__(self, sock, backlog: int = CLIENT_BACKLOG):
         self.sock, self.backlog = sock, backlog
+        self.last_seen = time.monotonic()  # Term resets it with its own clock
         self.queue: collections.deque = collections.deque()
         self.queued = 0
         self.cond = threading.Condition()
@@ -321,6 +355,13 @@ class Client:
             self.closed = True
             self.cond.notify()
 
+    def kill(self) -> None:
+        """Cut the connection now (a page that stopped answering)."""
+        with self.cond:
+            self.closed = True
+            self.cond.notify()
+        self._shutdown()
+
     def _shutdown(self) -> None:
         try:
             self.sock.shutdown(2)  # socket.SHUT_RDWR: also ends the reader
@@ -352,10 +393,13 @@ class Term:
     """The Coordinator's PTY and the pages attached to it.
 
     argv is the fixed command (coordinator_argv). name is the sandbox; exists
-    and elsewhere are the pre-start checks (injectable for tests)."""
+    and elsewhere are the pre-start checks, and clock, ping_interval and
+    ping_timeout the heartbeat's (all injectable for tests)."""
 
     def __init__(self, argv: list, name: str, exists=None, elsewhere=None,
-                 ring: int = RING, max_clients: int = MAX_CLIENTS, env: dict | None = None):
+                 ring: int = RING, max_clients: int = MAX_CLIENTS, env: dict | None = None,
+                 clock=time.monotonic, ping_interval: float = PING_INTERVAL,
+                 ping_timeout: float = PING_TIMEOUT):
         self.argv, self.name = list(argv), name
         self.exists = exists or (lambda: sandbox_listed(name))
         self.elsewhere = elsewhere or (lambda own: attached_pids(ps_listing(), name, own))
@@ -369,7 +413,10 @@ class Term:
         self.proc = None
         self.master = None
         self.reason = None
-        self.started = False
+        self.closing = False  # set by shutdown(): nothing starts after it
+        self.stopped = threading.Event()
+        self.clock, self.ping_interval, self.ping_timeout = clock, ping_interval, ping_timeout
+        self.dropped: list = []  # pages dropped by the heartbeat, cut on its next round
         self.size = (80, 24)  # cols, rows
 
     # --- state
@@ -385,21 +432,43 @@ class Term:
                 self.clients.remove(c)
 
     # --- pages
-    def attach(self, client: Client, autostart: bool = True) -> bool:
-        """Add a page: it gets the state, then the replay buffer, then live
-        output. The first page ever to attach powers the set on."""
+    def attach(self, client) -> bool:
+        """Add a page: it gets the state, then (if there is any output yet) a
+        {"type": "replay"} text frame followed by exactly one binary frame
+        with the replay buffer, then live output. Starts nothing: the page
+        powers the set on with {"type": "power", "on": true}."""
         with self.lock:
-            if len(self.clients) >= self.max_clients:
+            if self.closing or len(self.clients) >= self.max_clients:
                 return False
-            first = not self.started and autostart
-            if not first:
-                client.text(self.state())
-                if self.buffer:
-                    client.binary(bytes(self.buffer))
+            client.last_seen = self.clock()
+            client.text(self.state())
+            if self.buffer:
+                client.text({"type": "replay"})
+                client.binary(bytes(self.buffer))
             self.clients.append(client)
-        if first:
-            self.power_on()
         return True
+
+    def heartbeat(self) -> None:
+        """One round: cut the pages dropped last round, drop every page silent
+        for ping_timeout (freeing its slot now), and ping the rest."""
+        now = self.clock()
+        with self.lock:
+            cut, self.dropped = self.dropped, []
+            stale = [c for c in self.clients if now - c.last_seen > self.ping_timeout]
+            for c in stale:
+                self.clients.remove(c)
+            live = list(self.clients)
+            self.dropped = stale
+        for c in cut:
+            c.kill()
+        for c in stale:
+            c.close(close_frame(1001, "no answer to ping"))
+        for c in live:
+            c.send(encode_frame(PING, b"factory"))
+
+    def heartbeat_loop(self) -> None:
+        while not self.stopped.wait(self.ping_interval):
+            self.heartbeat()
 
     def detach(self, client: Client) -> None:
         with self.lock:
@@ -410,9 +479,8 @@ class Term:
     # --- the child
     def power_on(self) -> None:
         with self.start_lock:
-            if self.running():
+            if self.closing or self.running():
                 return
-            self.started = True
             reason = self._preflight()
             if reason:
                 with self.lock:
@@ -527,20 +595,17 @@ class Term:
             self.power_on()
 
     def shutdown(self) -> None:
-        """Hang up on the child (SIGHUP, then SIGTERM, then SIGKILL) and drop every page."""
+        """Refuse any further power-on or page, hang up on the child (SIGHUP,
+        then SIGTERM, then SIGKILL) and drop every page. A KeyboardInterrupt
+        (a second Ctrl-C) during the hang-up still ends in SIGKILL and a
+        reap, then propagates."""
+        self.stopped.set()
         with self.start_lock:
+            with self.lock:
+                self.closing = True
             proc = self.proc
             if proc is not None:
-                for sig, wait in ((signal.SIGHUP, 3), (signal.SIGTERM, 3), (signal.SIGKILL, 3)):
-                    try:
-                        os.killpg(proc.pid, sig)
-                    except OSError:
-                        pass
-                    try:
-                        proc.wait(timeout=wait)
-                        break
-                    except subprocess.TimeoutExpired:
-                        continue
+                _hang_up(proc)
         with self.lock:
             clients, self.clients = self.clients, []
         for c in clients:
@@ -549,6 +614,35 @@ class Term:
 
 def _take_tty() -> None:  # in the child, after setsid(): make the PTY its controlling terminal
     fcntl.ioctl(0, termios.TIOCSCTTY, 0)
+
+
+def _hang_up(proc) -> None:
+    try:
+        for sig in (signal.SIGHUP, signal.SIGTERM):
+            _killpg(proc, sig)
+            try:
+                proc.wait(timeout=3)
+                return
+            except subprocess.TimeoutExpired:
+                continue
+    finally:
+        if proc.poll() is None:
+            _killpg(proc, signal.SIGKILL)
+            for _ in range(3):
+                try:
+                    proc.wait(timeout=3)
+                    break
+                except subprocess.TimeoutExpired:
+                    break
+                except KeyboardInterrupt:  # yet another Ctrl-C: the reap still happens
+                    continue
+
+
+def _killpg(proc, sig) -> None:
+    try:
+        os.killpg(proc.pid, sig)
+    except OSError:
+        pass
 
 
 def _reap(proc) -> None:
@@ -569,6 +663,11 @@ def make_handler(term: Term, token: str, cookie: str, key: str, port: int, main_
     class Handler(BaseHTTPRequestHandler):
         server_version = "factory-dashboard-term"
         sys_version = ""
+        # RFC 6455 needs an HTTP/1.1 101. Every response carries Content-Length,
+        # so plain requests may keep the connection alive; timeout bounds the
+        # HTTP phase (StreamRequestHandler applies it), cleared after the 101.
+        protocol_version = "HTTP/1.1"
+        timeout = HTTP_TIMEOUT
 
         def log_message(self, fmt, *args):
             pass
@@ -593,7 +692,10 @@ def make_handler(term: Term, token: str, cookie: str, key: str, port: int, main_
                 self.wfile.write(body)
 
         def refuse(self, code: int, text: str, extra: dict | None = None) -> None:
-            self.send(code, (text + "\n").encode(), "text/plain; charset=utf-8", extra)
+            # Never keep a refused connection alive (say, a POST whose body was not read).
+            self.close_connection = True
+            self.send(code, (text + "\n").encode(), "text/plain; charset=utf-8",
+                      dict(extra or {}, Connection="close"))
 
         def do_GET(self) -> None:
             if self.headers.get("Host", "") not in hosts:
@@ -607,6 +709,12 @@ def make_handler(term: Term, token: str, cookie: str, key: str, port: int, main_
                 self.refuse(403, "no token: open the link 'factory dashboard' printed")
                 return
             if path == "/term":
+                # The page carrying the key: only for the main page's iframe,
+                # never a top-level navigation another local page could open.
+                if (self.headers.get("Sec-Fetch-Dest", "") not in FRAME_DESTS
+                        or self.headers.get("Sec-Fetch-Site", "") not in FRAME_SITES):
+                    self.refuse(403, "the terminal opens inside the dashboard: open the link 'factory dashboard' printed")
+                    return
                 try:
                     html = (UI / "term.html").read_text(encoding="utf-8")
                 except OSError:
@@ -633,13 +741,14 @@ def make_handler(term: Term, token: str, cookie: str, key: str, port: int, main_
 
         def websocket(self) -> None:
             status, detail = upgrade_refusal(self.headers, origins=origins, cookie=cookie, token=token, key=key)
+            if status is None:
+                with term.lock:
+                    if term.closing:
+                        status, detail = 503, "the dashboard is stopping"
+                    elif len(term.clients) >= term.max_clients:
+                        status, detail = 503, "too many terminal pages open"
             if status is not None:
                 self.refuse(status, detail, {"Sec-WebSocket-Version": "13"} if status == 426 else None)
-                return
-            with term.lock:
-                full = len(term.clients) >= term.max_clients
-            if full:
-                self.refuse(503, "too many terminal pages open")
                 return
             self.send_response(101)
             self.send_header("Upgrade", "websocket")
@@ -649,9 +758,11 @@ def make_handler(term: Term, token: str, cookie: str, key: str, port: int, main_
             self.end_headers()
             self.wfile.flush()
             self.close_connection = True
+            self.connection.settimeout(None)  # the heartbeat watches the socket from here on
             client = Client(self.connection)
             if not term.attach(client):
-                client.close(close_frame(1013, "too many terminal pages open"))
+                client.close(close_frame(1001, "the dashboard is stopping") if term.closing
+                             else close_frame(1013, "too many terminal pages open"))
                 client.thread.join(5)
                 return
             try:
@@ -662,11 +773,13 @@ def make_handler(term: Term, token: str, cookie: str, key: str, port: int, main_
 
         def serve_socket(self, client: Client) -> None:
             def control(opcode, payload):
+                client.last_seen = term.clock()  # a PONG (or PING) proves the page is there
                 if opcode == PING:
                     client.send(encode_frame(PONG, payload))
             try:
                 while True:
                     opcode, payload = read_message(self.rfile, control)
+                    client.last_seen = term.clock()
                     if opcode == CLOSE:
                         code = struct.unpack("!H", payload[:2])[0] if len(payload) >= 2 else 1000
                         client.close(close_frame(code if 1000 <= code < 5000 and code not in (1005, 1006) else 1000))
@@ -691,6 +804,7 @@ def serve(term: Term, token: str, cookie: str, main_port: int, port: int = 0, ke
     real_port = server.server_address[1]
     server.RequestHandlerClass = make_handler(term, token, cookie, key, real_port, main_port)
     threading.Thread(target=server.serve_forever, daemon=True).start()
+    threading.Thread(target=term.heartbeat_loop, daemon=True).start()
     return server, key
 
 

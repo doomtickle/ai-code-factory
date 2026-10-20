@@ -128,8 +128,8 @@ Run `factory start --layout tabs` instead (it's remembered for next time) to
 get one tab per role - **developer**, **reviewer**, **researcher** - each
 showing that role's live transcript instead of the Watch pane. Or run
 `factory start --layout web` to skip Herdr: the dashboard opens in your
-browser, with the Coordinator's terminal on its left-hand screen (type
-`/login` there the first time). See "Layouts" in the
+browser, with the Coordinator's terminal on its left-hand screen (press
+POWER ON to attach, and type `/login` there the first time). See "Layouts" in the
 [README](../../README.md#layouts).
 
 ## 6. Give the Coordinator a small first task

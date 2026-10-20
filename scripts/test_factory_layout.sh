@@ -15,9 +15,12 @@ set -euo pipefail
 #    without touching FACTORY_LAYOUT_FILE.
 # 6. "web" (no Herdr; the dashboard holds the Coordinator's terminal) is
 #    accepted, saved and read back like the others.
-# 7. coordinator_attached, which keeps a second `sbx run --name
-#    factory-coordinator` from starting (Herdr's pane, `factory chat`), finds
-#    only that exact command line.
+# 7. coordinator_attached, which keeps a second `sbx run` on
+#    factory-coordinator from starting (Herdr's pane, `factory chat`), finds
+#    every form that names the sandbox (--name NAME, --name=NAME, a bare
+#    positional NAME, global flags before `run`) and nothing else.
+# 8. `factory update` never ends in the foreground dashboard: it passes
+#    --no-dashboard to cmd_start, which then prints how to open it.
 #
 # Sources scripts/lib/common.sh directly (not bin/factory): bin/factory
 # itself sources scripts/lib/roles.sh for every command but "docs"/"help",
@@ -145,10 +148,29 @@ check_attached() { # check_attached LABEL EXPECTED(0|1) PS-LINES...
 check_attached "a Herdr pane's sbx run" 0 "/sbin/init" "sbx run --name factory-coordinator"
 check_attached "a full path, extra args" 0 "/usr/local/bin/sbx run --name factory-coordinator --resume"
 check_attached "--name=" 0 "sbx run --name=factory-coordinator"
+check_attached "positional sandbox name" 0 "sbx run factory-coordinator"
+check_attached "agent then --name" 0 "sbx run claude --name factory-coordinator"
+check_attached "global flag before run" 0 "sbx -D run --name factory-coordinator"
+check_attached "flags before a positional name" 0 "/opt/bin/sbx run -e X=1 factory-coordinator"
+check_attached "after -- (an agent argument)" 1 "sbx run claude -- factory-coordinator"
+check_attached "sbx ls with the name" 1 "sbx ls factory-coordinator"
+check_attached "positional, another sandbox" 1 "sbx --debug run factory-coordinator-old"
 check_attached "another sandbox" 1 "sbx run --name factory-coordinator-old"
 check_attached "grep for it" 1 "grep sbx run --name factory-coordinator"
 check_attached "sbx exec" 1 "sbx exec factory-coordinator true"
 check_attached "nothing" 1 "/usr/bin/sbx daemon start"
+
+# ===========================================================================
+# Part 8: `factory update` doesn't end in the foreground dashboard.
+# ===========================================================================
+grep -q 'cmd_start "$project" --no-dashboard' "$REPO_ROOT/bin/factory" \
+  && ok "bin/factory: cmd_update starts the factory with --no-dashboard" \
+  || bad "bin/factory: cmd_update starts the factory with --no-dashboard"
+awk '/^cmd_start\(\)/,/^}/' "$REPO_ROOT/bin/factory" > "$tmp/cmd_start"
+grep -q -- '--no-dashboard) no_dashboard=1' "$tmp/cmd_start" \
+  && grep -q 'Run ${B}factory dashboard${N} to open it.' "$tmp/cmd_start" \
+  && ok "bin/factory: cmd_start --no-dashboard prints how to open the dashboard instead" \
+  || bad "bin/factory: cmd_start --no-dashboard prints how to open the dashboard instead"
 
 echo "---"
 echo "$pass passed, $fail failed"

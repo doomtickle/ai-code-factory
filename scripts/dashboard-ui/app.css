@@ -159,6 +159,9 @@ button { font: inherit; color: inherit; }
 @keyframes vroll { from { transform: translateY(0); } to { transform: translateY(calc(-100% - var(--vb))); } }
 /* Terminal 0: the live terminal's frame, transparent so the tube shows through */
 .crt-term { flex: 1; min-height: 0; width: 100%; border: 0; display: block; background: transparent; }
+/* BLOOM: app.js sets --bloom-fx (stacked drop-shadows, or none) on the tube. It goes
+   on the transparent layers holding the text, so the halo follows the glyphs. */
+.crt.matrix .crt-term, .crt.matrix .crt-body { filter: var(--bloom-fx, none); }
 .crt-body { flex: 1; min-height: 0; overflow-y: auto; padding: 16px 20px 10px; scrollbar-width: thin; scrollbar-color: var(--dim) transparent; }
 .crt-body p { margin: 0 0 8px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .crt .a::before { content: "● "; }

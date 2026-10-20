@@ -373,15 +373,21 @@
 
   // ---------- front-panel knobs on the Coordinator's monitor
   // BRIGHT and CONTRAST drive CSS filters on the tube; V-HOLD, off-centre, makes the
-  // picture roll like a real set (faster the further you turn it, up or down). Drag,
-  // scroll or use the arrow keys; double-click or Home resets. Settings stay in this
-  // browser only.
+  // picture roll like a real set (faster the further you turn it, up or down); BLOOM
+  // turns the phosphor halo around lit text from none (fully counter-clockwise) to
+  // full. Drag, scroll or use the arrow keys; double-click or Home resets. Settings
+  // stay in this browser only.
   const KNOB_KEY = "fc1984-knobs";
   const DETENT = 12;           // V-HOLD locks within this many steps of centre
-  const knobVals = { bright: 0, contrast: 0, vhold: 0 };
+  // Each knob's range and its reset value. The centred ones sweep -100..100; BLOOM
+  // sweeps 0..100 and starts a quarter of the way round, so the text is still crisp.
+  const KNOBS = { bright: [-100, 100, 0], contrast: [-100, 100, 0], vhold: [-100, 100, 0], bloom: [0, 100, 25] };
+  const knobVals = {};
+  for (const k in KNOBS) knobVals[k] = KNOBS[k][2];
+  const clampKnob = (name, v) => Math.max(KNOBS[name][0], Math.min(KNOBS[name][1], v));
   try {
     const saved = JSON.parse(localStorage.getItem(KNOB_KEY) || "{}");
-    for (const k in knobVals) if (Number.isFinite(saved[k])) knobVals[k] = Math.max(-100, Math.min(100, saved[k]));
+    for (const k in knobVals) if (saved && Number.isFinite(saved[k])) knobVals[k] = clampKnob(k, saved[k]);
   } catch (e) { /* no storage: defaults */ }
   const tube = $("coord-crt"), roll = $("crt-roll"), ghost = $("crt-ghost"), crtBody = $("crt-body");
   const reduceMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -399,9 +405,22 @@
     const speed = Math.abs(v) > 70 ? "fast" : Math.abs(v) > 35 ? "steady" : "slow";
     return `rolling ${v > 0 ? "up" : "down"}, ${speed}`;
   }
+  // BLOOM: the live terminal is a cross-origin frame this page can't style inside,
+  // so the halo is drawn on the frame's pixels from out here: stacked drop-shadows
+  // on a transparent element follow the lit glyphs. 0 is no filter at all.
+  function bloomFilter(v) {
+    if (v <= 0) return "none";
+    const b = v / 100;
+    const glow = (r, a) => `drop-shadow(0 0 ${r.toFixed(1)}px rgba(0, 255, 65, ${a.toFixed(2)}))`;
+    return `${glow(0.6 + 3.4 * b, 0.25 + 0.6 * b)} ${glow(3 + 15 * b, 0.12 + 0.58 * b)}`;
+  }
   function applyKnobs() {
     tube.style.setProperty("--bright", (1 + knobVals.bright / 100 * 0.6).toFixed(3));
     tube.style.setProperty("--contrast", (1 + knobVals.contrast / 100 * 0.5).toFixed(3));
+    tube.style.setProperty("--bloom-fx", bloomFilter(knobVals.bloom));
+    // The placeholder's faint wide text glow is part of the bloom too: it fades out
+    // below the default, so fully counter-clockwise is crisp.
+    tube.style.setProperty("--bloom", `color-mix(in srgb, var(--c) ${Math.round(24 * Math.min(1, knobVals.bloom / 25))}%, transparent)`);
     const v = knobVals.vhold, off = Math.abs(v) >= DETENT;
     const wasRolling = roll.classList.contains("rolling");
     if (off && !wasRolling && !roll.classList.contains("live")) syncGhost();
@@ -413,19 +432,20 @@
       roll.style.setProperty("--roll-still", `${(-t * 45 * Math.sign(v)).toFixed(1)}%`);  // reduced motion: a still slip
     }
     document.querySelectorAll(".knob[data-knob]").forEach(k => {
-      const val = knobVals[k.dataset.knob];
-      k.querySelector("i").style.setProperty("--rot", `${(val * 1.35).toFixed(1)}deg`);
+      const name = k.dataset.knob, val = knobVals[name], [lo, hi] = KNOBS[name];
+      k.querySelector("i").style.setProperty("--rot", `${(-135 + (val - lo) / (hi - lo) * 270).toFixed(1)}deg`);
       k.setAttribute("aria-valuenow", String(Math.round(val)));
-      k.setAttribute("aria-valuetext", k.dataset.knob === "vhold" ? holdText(val) : `${Math.round(val)}`);
+      k.setAttribute("aria-valuetext", name === "vhold" ? holdText(val) : name === "bloom" ? (val ? `${Math.round(val)}%` : "off") : `${Math.round(val)}`);
     });
     try { localStorage.setItem(KNOB_KEY, JSON.stringify(knobVals)); } catch (e) { /* fine */ }
   }
   function setKnob(name, value) {
-    knobVals[name] = Math.max(-100, Math.min(100, Math.round(value)));
+    knobVals[name] = clampKnob(name, Math.round(value));
     applyKnobs();
   }
   document.querySelectorAll(".knob[data-knob]").forEach(k => {
-    const name = k.dataset.knob;
+    const name = k.dataset.knob, [lo, hi, home] = KNOBS[name];
+    const travel = (hi - lo) / 200;  // the same drag turns every knob by the same angle
     let drag = null;
     k.addEventListener("pointerdown", e => {
       if (e.button !== 0) return;
@@ -437,18 +457,18 @@
     k.addEventListener("pointermove", e => {
       if (!drag) return;
       // Up or right turns it clockwise, like reaching for a real knob.
-      setKnob(name, drag.v + (drag.y - e.clientY) * 1.1 + (e.clientX - drag.x) * 0.6);
+      setKnob(name, drag.v + ((drag.y - e.clientY) * 1.1 + (e.clientX - drag.x) * 0.6) * travel);
     });
     const end = () => { drag = null; };
     k.addEventListener("pointerup", end);
     k.addEventListener("pointercancel", end);
     k.addEventListener("wheel", e => { e.preventDefault(); setKnob(name, knobVals[name] - Math.sign(e.deltaY) * 5); }, { passive: false });
-    k.addEventListener("dblclick", () => setKnob(name, 0));
+    k.addEventListener("dblclick", () => setKnob(name, home));
     k.addEventListener("keydown", e => {
       const step = { ArrowUp: 5, ArrowRight: 5, ArrowDown: -5, ArrowLeft: -5, PageUp: 20, PageDown: -20 }[e.key];
       if (step != null) { e.preventDefault(); e.stopPropagation(); setKnob(name, knobVals[name] + step); }
-      else if (e.key === "Home") { e.preventDefault(); e.stopPropagation(); setKnob(name, 0); }
-      else if (e.key === "End") { e.preventDefault(); e.stopPropagation(); setKnob(name, 100); }
+      else if (e.key === "Home") { e.preventDefault(); e.stopPropagation(); setKnob(name, home); }
+      else if (e.key === "End") { e.preventDefault(); e.stopPropagation(); setKnob(name, hi); }
     });
   });
   if (reduceMotion) roll.dataset.still = "1";

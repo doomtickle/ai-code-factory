@@ -52,11 +52,15 @@ def fake_term(**kw):
     return dt.Term([sys.executable, "-u", "-c", FAKE], "factory-coordinator", **kw)
 
 
+POWER_ON = json.dumps({"type": "power", "on": True}).encode()
+
+
 class Collector:
     """A stand-in page: records what a Term sends it."""
 
     def __init__(self):
         self.frames = []
+        self.killed = False
 
     def text(self, obj):
         self.frames.append(("text", obj))
@@ -66,14 +70,24 @@ class Collector:
         self.frames.append(("binary", data))
         return True
 
+    def send(self, frame):
+        self.frames.append(("raw", frame))
+        return True
+
     def close(self, frame=None):
-        pass
+        self.frames.append(("close", frame))
+
+    def kill(self):
+        self.killed = True
 
     def output(self):
         return b"".join(f for k, f in self.frames if k == "binary").decode("utf-8", "replace")
 
     def states(self):
         return [f for k, f in self.frames if k == "text"]
+
+    def pings(self):
+        return sum(1 for k, f in self.frames if k == "raw" and f[0] & 0x0F == dt.PING)
 
 
 # --------------------------------------------------------------------------
@@ -158,6 +172,10 @@ PS = """\
   200   150 sbx run --name factory-coordinator
   201   150 sbx run --name factory-coordinator-old
   202   150 /usr/local/bin/sbx run --name=factory-coordinator --resume
+  203   150 sbx run factory-coordinator
+  204   150 sbx -D run claude --name factory-coordinator
+  205   150 sbx run claude -- --name factory-coordinator
+  206   150 sbx --debug run claude factory-coordinator-old
   300   299 python3 dashboard.py --coordinator factory-coordinator
   400   300 sbx run --name factory-coordinator
   401   400 sbx run --name factory-coordinator
@@ -168,7 +186,23 @@ PS = """\
 
 class ElsewhereTests(unittest.TestCase):
     def test_finds_other_attachments(self):
-        self.assertEqual(dt.attached_pids(PS, "factory-coordinator", [300]), [200, 202])
+        self.assertEqual(dt.attached_pids(PS, "factory-coordinator", [300]), [200, 202, 203, 204])
+
+    def test_forms(self):
+        name = "factory-coordinator"
+        for line, want in (("sbx run --name factory-coordinator", True),
+                           ("sbx run --name=factory-coordinator", True),
+                           ("sbx run factory-coordinator", True),            # positional sandbox name
+                           ("sbx run claude --name factory-coordinator", True),
+                           ("sbx --debug run --name factory-coordinator", True),  # global flag first
+                           ("/opt/bin/sbx run -e X=1 factory-coordinator", True),
+                           ("sbx run claude -- factory-coordinator", False),  # an agent argument
+                           ("sbx run factory-coordinator-old", False),
+                           ("sbx exec factory-coordinator true", False),
+                           ("sbx ls factory-coordinator", False),
+                           ("grep sbx run factory-coordinator", False),
+                           ("sbx", False), ("", False)):
+            self.assertEqual(dt.runs_sandbox(line.split(), name), want, line)
 
     def test_nothing_else(self):
         self.assertEqual(dt.attached_pids(PS, "factory-coordinator", [300, 150]), [])
@@ -179,6 +213,7 @@ class ElsewhereTests(unittest.TestCase):
         t = fake_term(elsewhere=lambda own: dt.attached_pids(PS, "factory-coordinator", own))
         page = Collector()
         t.attach(page)
+        t.control(POWER_ON)
         self.assertFalse(t.running())
         self.assertEqual(page.states()[-1], {"type": "state", "running": False, "reason": "elsewhere"})
 
@@ -187,6 +222,7 @@ class ElsewhereTests(unittest.TestCase):
             t = fake_term(exists=exists)
             page = Collector()
             t.attach(page)
+            t.control(POWER_ON)
             self.assertFalse(t.running())
             self.assertEqual(page.states()[-1]["reason"], reason)
 
@@ -209,15 +245,21 @@ class PtyTests(unittest.TestCase):
         t = self.term
         a = Collector()
         t.resize(100, 30)
-        t.attach(a)  # the first page powers it on
+        t.attach(a)  # attaching starts nothing
+        self.assertFalse(t.running())
+        self.assertEqual(a.frames, [("text", {"type": "state", "running": False, "reason": None})])
+        t.control(POWER_ON)  # the page's POWER ON does
         self.assertTrue(t.running())
-        self.assertEqual(a.states()[0], {"type": "state", "running": True, "reason": None})
+        self.assertEqual(a.states()[1], {"type": "state", "running": True, "reason": None})
         self.assertTrue(dt.wait_for(lambda: "READY 100x30 tty=True" in a.output()), a.output())
 
-        b = Collector()  # a late page gets the state, then the replay
+        b = Collector()  # a late page gets the state, the replay marker, then one replay frame
         t.attach(b)
         self.assertEqual(b.frames[0], ("text", {"type": "state", "running": True, "reason": None}))
-        self.assertIn("READY 100x30", b.output())
+        self.assertEqual(b.frames[1], ("text", {"type": "replay"}))
+        self.assertEqual(b.frames[2][0], "binary")
+        self.assertIn("READY 100x30", b.frames[2][1].decode())
+        self.assertEqual(len(b.frames), 3)
 
         t.write(b"hello\r")
         for page in (a, b):
@@ -226,7 +268,11 @@ class PtyTests(unittest.TestCase):
         t.control(json.dumps({"type": "resize", "cols": 120, "rows": 40}).encode())
         self.assertTrue(dt.wait_for(lambda: "WINCH 120x40" in a.output()), a.output())
         for bad in ({"type": "resize", "cols": 1, "rows": 40}, {"type": "resize", "cols": 501, "rows": 40},
-                    {"type": "resize", "cols": "80", "rows": 24}, {"type": "resize", "cols": True, "rows": 24}):
+                    {"type": "resize", "cols": "80", "rows": 24}, {"type": "resize", "cols": True, "rows": 24},
+                    {"type": "resize", "cols": 80, "rows": False}, {"type": "resize", "cols": 80, "rows": 0},
+                    {"type": "resize", "cols": 80, "rows": 501}, {"type": "resize", "cols": -80, "rows": 24},
+                    {"type": "resize", "cols": 80.0, "rows": 24}, {"type": "resize", "cols": 80, "rows": None},
+                    {"type": "resize", "cols": 80}, {"type": "resize", "cols": 10 ** 30, "rows": 24}):
             t.control(json.dumps(bad).encode())
             self.assertEqual(t.size, (120, 40))
         t.control(b"not json")
@@ -242,7 +288,7 @@ class PtyTests(unittest.TestCase):
         c = Collector()  # a page arriving after the exit: powered off, not restarted
         t.attach(c)
         self.assertFalse(t.running())
-        self.assertEqual(c.states(), [exited])
+        self.assertEqual(c.states(), [exited, {"type": "replay"}])
 
         t.control(json.dumps({"type": "power", "on": True}).encode())
         self.assertTrue(t.running())
@@ -254,6 +300,7 @@ class PtyTests(unittest.TestCase):
         t = fake_term(ring=64)
         self.addCleanup(t.shutdown)
         t.attach(Collector())
+        t.control(POWER_ON)
         for i in range(20):
             t.write(f"line{i}\r".encode())
         late = Collector()
@@ -266,17 +313,90 @@ class PtyTests(unittest.TestCase):
     def test_client_cap(self):
         t = fake_term(max_clients=2)
         self.addCleanup(t.shutdown)
-        self.assertTrue(t.attach(Collector(), autostart=False))
-        self.assertTrue(t.attach(Collector(), autostart=False))
-        self.assertFalse(t.attach(Collector(), autostart=False))
-        self.assertFalse(t.started)
+        self.assertTrue(t.attach(Collector()))
+        self.assertTrue(t.attach(Collector()))
+        self.assertFalse(t.attach(Collector()))
+        self.assertFalse(t.running())
+
+    def test_attach_starts_nothing_and_early_page_gets_no_replay(self):
+        t = self.term
+        early = Collector()
+        t.attach(early)
+        self.assertFalse(t.running())
+        self.assertIsNone(t.proc)
+        t.control(POWER_ON)
+        self.assertTrue(dt.wait_for(lambda: "READY" in early.output()), early.output())
+        self.assertNotIn({"type": "replay"}, early.states())
 
     def test_shutdown_hangs_up(self):
         t = self.term
         t.attach(Collector())
+        t.control(POWER_ON)
         proc = t.proc
         t.shutdown()
         self.assertIsNotNone(proc.poll())
+
+    def test_closing_refuses_power_on_and_pages(self):
+        t = self.term
+        t.shutdown()
+        self.assertTrue(t.closing)
+        t.control(POWER_ON)
+        t.power_on()
+        self.assertFalse(t.running())
+        self.assertFalse(t.attach(Collector()))
+
+    def test_second_interrupt_during_hang_up_still_kills(self):
+        # A child that ignores SIGHUP and SIGTERM; a Ctrl-C lands in the first wait.
+        stubborn = ("import signal, time\n"
+                    "signal.signal(signal.SIGHUP, signal.SIG_IGN)\n"
+                    "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+                    "print('READY', flush=True)\n"
+                    "time.sleep(60)\n")
+        t = dt.Term([sys.executable, "-u", "-c", stubborn], "factory-coordinator",
+                    exists=lambda: True, elsewhere=lambda own: [])
+        self.addCleanup(t.shutdown)
+        page = Collector()
+        t.attach(page)
+        t.control(POWER_ON)
+        self.assertTrue(dt.wait_for(lambda: "READY" in page.output()), page.output())
+        proc = t.proc
+        real_wait = proc.wait
+        calls = []
+
+        def wait(timeout=None):
+            calls.append(timeout)
+            if len(calls) == 1:
+                raise KeyboardInterrupt
+            return real_wait(timeout)
+        proc.wait = wait
+        with self.assertRaises(KeyboardInterrupt):
+            t.shutdown()
+        self.assertIsNotNone(proc.poll(), "the child must be SIGKILLed and reaped")
+        self.assertEqual(proc.returncode, -9)
+
+
+class HeartbeatTests(unittest.TestCase):
+    def test_silent_page_dropped_answering_page_kept(self):
+        now = [1000.0]
+        t = fake_term(clock=lambda: now[0], ping_timeout=60)
+        self.addCleanup(t.shutdown)
+        quiet, chatty = Collector(), Collector()
+        t.attach(quiet)
+        t.attach(chatty)
+        t.heartbeat()
+        self.assertEqual((quiet.pings(), chatty.pings()), (1, 1))
+        now[0] += 45
+        chatty.last_seen = now[0]  # its PONG arrived
+        t.heartbeat()
+        self.assertEqual(t.clients, [quiet, chatty])
+        now[0] += 30  # quiet: 75 s without a frame
+        t.heartbeat()
+        self.assertEqual(t.clients, [chatty])  # its slot is free at once
+        self.assertTrue(any(k == "close" and f for k, f in quiet.frames))
+        self.assertFalse(quiet.killed)
+        t.heartbeat()  # the next round cuts its socket, in case the close frame never got out
+        self.assertTrue(quiet.killed)
+        self.assertFalse(chatty.killed)
 
 
 class SlowClientTests(unittest.TestCase):
@@ -299,10 +419,10 @@ class SlowClientTests(unittest.TestCase):
 class Server:
     """The main dashboard and its terminal origin, with a fake Coordinator."""
 
-    def __init__(self):
+    def __init__(self, **term_kw):
         self.tmp = tempfile.TemporaryDirectory()
         fx = Fixture(Path(self.tmp.name))
-        self.term = fake_term()
+        self.term = fake_term(**term_kw)
         self.main, _ = d.serve(d.Dashboard(fx.state, fx.roles, "proj"), 0, TOKEN, term=self.term)
         self.port = self.main.server_address[1]
         self.tport = self.main.term_server.server_address[1]
@@ -317,7 +437,9 @@ class Server:
     def get(self, path, port=None, headers=None, method="GET"):
         port = port or self.tport
         conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
-        h = {"Host": f"127.0.0.1:{port}", "Cookie": self.cookie}
+        # As the browser loads the terminal page into the main page's iframe.
+        h = {"Host": f"127.0.0.1:{port}", "Cookie": self.cookie,
+             "Sec-Fetch-Dest": "iframe", "Sec-Fetch-Site": "same-site"}
         h.update(headers or {})
         conn.request(method, path, headers={k: v for k, v in h.items() if v is not None})
         resp = conn.getresponse()
@@ -383,6 +505,7 @@ class WsPage:
         self.sock.sendall(client_frame(opcode, payload))
 
     def close(self):
+        self.f.close()  # the socket's fd closes only once its makefile is closed too
         self.sock.close()
 
 
@@ -425,21 +548,32 @@ class WebSocketTests(unittest.TestCase):
             s, f, status, _ = srv.ws(**over)
             s.close()
             self.assertIn(f" {code} ", status, name)
-        self.assertFalse(srv.term.started, "a refused upgrade must not power on the Coordinator")
+        self.assertIsNone(srv.term.proc, "a refused upgrade must not power on the Coordinator")
 
     def test_session(self):
         srv = self.srv
         a = self.page()
-        self.assertIn(" 101 ", a.status)
+        self.assertTrue(a.status.startswith("HTTP/1.1 101 "), a.status)  # RFC 6455 4.2.2
         self.assertEqual(a.headers["sec-websocket-protocol"], f"{dt.PROTOCOL}{srv.key}")
         self.assertEqual(a.headers["sec-websocket-accept"], dt.accept_key(base64.b64encode(b"0123456789abcdef").decode()))
+        self.assertTrue(a.pump_until(lambda: a.states))
+        self.assertEqual(a.states[0], {"type": "state", "running": False, "reason": None})  # attach starts nothing
+        self.assertIsNone(srv.term.proc)
         a.send(dt.TEXT, json.dumps({"type": "resize", "cols": 90, "rows": 20}).encode())
+        a.send(dt.TEXT, POWER_ON)
         self.assertTrue(a.pump_until(lambda: b"READY" in a.out))
-        self.assertEqual(a.states[0], {"type": "state", "running": True, "reason": None})
+        self.assertEqual(a.states[1], {"type": "state", "running": True, "reason": None})
+        self.assertNotIn({"type": "replay"}, a.states)  # an early page has nothing to replay
 
         b = self.page(Origin=f"http://localhost:{srv.tport}", Host=f"localhost:{srv.tport}")
         self.assertIn(" 101 ", b.status)
-        self.assertTrue(b.pump_until(lambda: b"READY" in b.out))  # the replay
+        # A late page: state, the replay marker, then exactly one binary frame with the buffer.
+        self.assertEqual(read_server_frame(b.f), (dt.TEXT, json.dumps({"type": "state", "running": True, "reason": None}).encode()))
+        self.assertEqual(read_server_frame(b.f), (dt.TEXT, b'{"type": "replay"}'))
+        op, replay = read_server_frame(b.f)
+        self.assertEqual(op, dt.BINARY)
+        self.assertIn(b"READY", replay)
+        self.assertTrue(a.out.startswith(replay[:len(a.out)]) or replay.startswith(a.out[:len(replay)]))
 
         b.send(dt.BINARY, b"from b\r")
         self.assertTrue(a.pump_until(lambda: b"ECHO:from b" in a.out))
@@ -464,6 +598,7 @@ class WebSocketTests(unittest.TestCase):
         srv = self.srv
         resp, body = srv.get("/term")
         self.assertEqual(resp.status, 200)
+        self.assertEqual(resp.version, 11)
         self.assertEqual(resp.getheader("Content-Security-Policy"), dt.term_csp(srv.tport, srv.port))
         self.assertIsNone(resp.getheader("X-Frame-Options"))
         self.assertNotIn(dt.KEY_SLOT, body.decode())
@@ -478,6 +613,69 @@ class WebSocketTests(unittest.TestCase):
         self.assertEqual(srv.get("/../dashboard.py")[0].status, 404)
         self.assertEqual(srv.get("/term", method="POST")[0].status, 405)
 
+    def test_term_page_only_for_a_same_site_iframe(self):
+        srv = self.srv
+        cases = {
+            "no Sec-Fetch headers": ({"Sec-Fetch-Dest": None, "Sec-Fetch-Site": None}, 403),
+            "no Sec-Fetch-Dest": ({"Sec-Fetch-Dest": None}, 403),
+            "no Sec-Fetch-Site": ({"Sec-Fetch-Site": None}, 403),
+            "top-level navigation": ({"Sec-Fetch-Dest": "document"}, 403),
+            "window.open from a same-site page": ({"Sec-Fetch-Dest": "document", "Sec-Fetch-Site": "same-site"}, 403),
+            "cross-site iframe": ({"Sec-Fetch-Site": "cross-site"}, 403),
+            "typed in the address bar": ({"Sec-Fetch-Dest": "document", "Sec-Fetch-Site": "none"}, 403),
+            "embed": ({"Sec-Fetch-Dest": "embed"}, 403),
+            "same-site iframe": ({}, 200),
+            "same-origin iframe": ({"Sec-Fetch-Site": "same-origin"}, 200),
+        }
+        for name, (over, code) in cases.items():
+            resp, body = srv.get("/term", headers=over)
+            self.assertEqual(resp.status, code, name)
+            if code != 200:
+                self.assertNotIn(srv.key, body.decode(), name)
+        # Its static files don't carry the key and stay as they are.
+        self.assertEqual(srv.get("/term.js", headers={"Sec-Fetch-Dest": "script", "Sec-Fetch-Site": "same-origin"})[0].status, 200)
+
+    def test_head_term_sends_no_body(self):
+        srv = self.srv
+        resp, body = srv.get("/term", method="HEAD")
+        self.assertEqual(resp.status, 200)
+        self.assertEqual(body, b"")
+        # On the wire, too: headers only, and no key in them.
+        s = socket.create_connection(("127.0.0.1", srv.tport), timeout=5)
+        try:
+            s.sendall((f"HEAD /term HTTP/1.1\r\nHost: 127.0.0.1:{srv.tport}\r\nCookie: {srv.cookie}\r\n"
+                       "Sec-Fetch-Dest: iframe\r\nSec-Fetch-Site: same-site\r\nConnection: close\r\n\r\n").encode())
+            raw = b""
+            while True:
+                chunk = s.recv(65536)
+                if not chunk:
+                    break
+                raw += chunk
+        finally:
+            s.close()
+        head, _, rest = raw.partition(b"\r\n\r\n")
+        self.assertTrue(head.startswith(b"HTTP/1.1 200 "), head)
+        self.assertEqual(rest, b"")
+        self.assertNotIn(srv.key.encode(), raw)
+
+    def test_keep_alive(self):
+        # HTTP/1.1: two requests on one connection, neither hanging.
+        srv = self.srv
+        conn = http.client.HTTPConnection("127.0.0.1", srv.tport, timeout=5)
+        try:
+            for path in ("/term.js", "/term.css"):
+                conn.request("GET", path, headers={"Host": f"127.0.0.1:{srv.tport}", "Cookie": srv.cookie})
+                resp = conn.getresponse()
+                self.assertEqual(resp.status, 200, path)
+                resp.read()
+            conn.request("GET", "/nope", headers={"Host": f"127.0.0.1:{srv.tport}", "Cookie": srv.cookie})
+            resp = conn.getresponse()
+            self.assertEqual(resp.status, 404)
+            self.assertEqual(resp.getheader("Connection"), "close")  # refusals end the connection
+            resp.read()
+        finally:
+            conn.close()
+
     def test_main_page_never_sees_the_key(self):
         srv = self.srv
         resp, body = srv.get("/api/state", port=srv.port)
@@ -487,6 +685,67 @@ class WebSocketTests(unittest.TestCase):
         self.assertNotIn(srv.key, body.decode())
         resp, body = srv.get("/", port=srv.port)
         self.assertNotIn(srv.key, body.decode())
+
+
+class WireLimitTests(unittest.TestCase):
+    def server(self, **kw):
+        srv = Server(**kw)
+        self.addCleanup(srv.close)
+        return srv
+
+    def test_client_cap_on_the_wire(self):
+        srv = self.server(max_clients=2)
+        pages = []
+        for _ in range(2):
+            p = WsPage(srv)
+            self.addCleanup(p.close)
+            self.assertIn(" 101 ", p.status)
+            self.assertTrue(p.pump_until(lambda: p.states))  # attached
+            pages.append(p)
+        s, f, status, _ = srv.ws()
+        s.close()
+        self.assertTrue(status.startswith("HTTP/1.1 503 "), status)
+        pages[0].close()  # a slot frees when a page leaves
+        self.assertTrue(dt.wait_for(lambda: len(srv.term.clients) == 1))
+        p = WsPage(srv)
+        self.addCleanup(p.close)
+        self.assertIn(" 101 ", p.status)
+
+    def test_silent_page_dropped_on_the_wire(self):
+        srv = self.server(ping_interval=0.1, ping_timeout=0.4)
+        quiet, chatty = WsPage(srv), WsPage(srv)
+        for p in (quiet, chatty):
+            self.addCleanup(p.close)
+        self.assertTrue(dt.wait_for(lambda: len(srv.term.clients) == 2))
+        # chatty answers every PING with a PONG; quiet reads but never answers.
+        end = dt.time.monotonic() + 1.5
+        while dt.time.monotonic() < end:
+            op, data = read_server_frame(chatty.f)
+            if op == dt.PING:
+                chatty.send(dt.PONG, data)
+        self.assertEqual(len(srv.term.clients), 1)
+        frames = []
+        while True:  # quiet: its state, some PINGs, then a close frame, then EOF
+            try:
+                op, data = read_server_frame(quiet.f)
+            except ValueError:  # EOF: fewer than two bytes
+                break
+            frames.append((op, data))
+            if op == dt.CLOSE:
+                break
+        self.assertEqual(frames[-1][0], dt.CLOSE)
+        self.assertEqual(struct.unpack("!H", frames[-1][1][:2])[0], 1001)
+        self.assertIn(dt.PING, [op for op, _ in frames])
+
+    def test_http_phase_times_out(self):
+        srv = self.server()
+        handler = srv.main.term_server.RequestHandlerClass
+        self.assertEqual(handler.timeout, dt.HTTP_TIMEOUT)
+        self.assertEqual(handler.protocol_version, "HTTP/1.1")
+        handler.timeout = 0.3  # a connection that never sends a request is closed
+        s = socket.create_connection(("127.0.0.1", srv.tport), timeout=5)
+        self.addCleanup(s.close)
+        self.assertEqual(s.recv(10), b"")
 
 
 class CspTests(unittest.TestCase):
@@ -522,11 +781,14 @@ class VendorTests(unittest.TestCase):
         for name, digest in sums.items():
             data = (vendor / name).read_bytes()
             self.assertNotIn(b"\r\n", data, name)
+            self.assertNotIn(b"sourceMappingURL", data, name)  # the trailers are stripped (vendor README)
             self.assertEqual(hashlib.sha256(data).hexdigest(), digest, name)
         self.assertEqual({p.name for p in vendor.glob("LICENSE-*.txt")}, {"LICENSE-xterm.txt", "LICENSE-addon-fit.txt"})
 
     def test_term_page(self):
         js = (UI / "term.js").read_text()
+        self.assertIn("window.top === window", js)  # refuses to run outside the dashboard
+        self.assertIn('"replay"', js)               # mutes input while the replay is written
         for sink in ("innerHTML", "outerHTML", "insertAdjacentHTML", "document.write", "eval(", "new Function",
                      "ClipboardAddon", "WebLinksAddon", "ImageAddon", "window.open"):
             self.assertNotIn(sink, js, f"term.js uses {sink}")

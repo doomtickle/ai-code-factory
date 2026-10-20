@@ -323,10 +323,13 @@ cmd_start() {
   # pane beside the Coordinator and skips the per-role transcript tabs;
   # "tabs" keeps one tab per role; "web" skips Herdr and ends by running
   # `factory dashboard`, the Coordinator's terminal. --no-ui ignores it.
-  local target="" project current no_ui="${FACTORY_NO_UI:-}" layout_flag="" layout
+  # --no-dashboard (internal, from cmd_update): with "web", finish instead of
+  # running the dashboard in the foreground, so `factory update --yes` returns.
+  local target="" project current no_ui="${FACTORY_NO_UI:-}" layout_flag="" layout no_dashboard=""
   while [ $# -gt 0 ]; do
     case "$1" in
       --no-ui) no_ui=1 ;;
+      --no-dashboard) no_dashboard=1 ;;
       --layout)
         [ $# -ge 2 ] || die "usage: factory start [dir] [--no-ui] [--layout watch|tabs|web]"
         layout_flag="$2"
@@ -370,6 +373,10 @@ cmd_start() {
     FACTORY_LAYOUT=web "$SCRIPTS/02-launch-factory.sh" "$project"
     onboarding_hints
     say ""
+    if [ -n "$no_dashboard" ]; then
+      say "Factory running. Run ${B}factory dashboard${N} to open it."
+      return
+    fi
     say "Factory running. Opening the dashboard: talk to the Coordinator on its screen."
     say "Ctrl-C closes the dashboard (and the Coordinator's terminal); the factory keeps"
     say "running. Reopen it with ${B}factory dashboard${N}; stop everything with ${B}factory stop${N}."
@@ -1083,7 +1090,9 @@ cmd_update() {
   fi
   project="$(bound_project)"
   if [ -n "$project" ] && [ -d "$project" ]; then
-    cmd_start "$project"
+    # Never end an update in the foreground dashboard (layout "web"): scripts
+    # run `factory update --yes` and expect it to return.
+    cmd_start "$project" --no-dashboard
   else
     say ""
     say "${G}Updated.${N} Next: cd into a project and run ${B}factory start${N}"
@@ -1104,7 +1113,7 @@ cmd_watch() {
 # cmd_dashboard -> scripts/dashboard.py: serves the FC-1984 page on 127.0.0.1 with a
 # per-run token, read from the state folder (host Python, stdlib), plus Terminal 0:
 # the Coordinator's terminal on a second port, running the fixed argv
-# 'sbx run --name $COORDINATOR_SANDBOX' (no shell) when the page opens, unless the
+# 'sbx run --name $COORDINATOR_SANDBOX' (no shell) when the page presses POWER ON, unless the
 # Coordinator is open elsewhere. Otherwise it starts only the browser opener, once
 # (none with --no-open). Runs in the foreground; Ctrl-C stops it and hangs up.
 cmd_dashboard() {

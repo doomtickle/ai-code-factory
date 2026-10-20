@@ -208,14 +208,24 @@ sandbox_exists() {
 }
 
 # coordinator_attached -> success if some process on this machine is already
-# running `sbx run --name $COORDINATOR_SANDBOX` (a Herdr pane, `factory chat`,
-# or the dashboard's Terminal 0). A second one would start a second
-# Coordinator in the same VM. Same match as attached_pids in
+# running `sbx run` on $COORDINATOR_SANDBOX (a Herdr pane, `factory chat`, or
+# the dashboard's Terminal 0). A second one would start a second Coordinator
+# in the same VM. It matches `sbx [global flags] run ...` with the name as
+# `--name NAME`, `--name=NAME` or a bare argument before any `--` (`sbx run`
+# takes a sandbox name positionally too; there is no short form of --name),
+# erring towards a match. Same rule as runs_sandbox in
 # scripts/dashboard_term.py.
 coordinator_attached() {
   ps -axo args= 2>/dev/null | awk -v n="$COORDINATOR_SANDBOX" '
-    { b = $1; sub(/.*\//, "", b) }
-    b == "sbx" && $2 == "run" && (($3 == "--name" && $4 == n) || $3 == "--name=" n) { found = 1 }
+    {
+      b = $1; sub(/.*\//, "", b)
+      if (b != "sbx") next
+      i = 2
+      while (i <= NF && substr($i, 1, 1) == "-") i++
+      if ($i != "run") next
+      for (j = i + 1; j <= NF && $j != "--"; j++)
+        if ($j == n || $j == "--name=" n) found = 1
+    }
     END { exit !found }'
 }
 
