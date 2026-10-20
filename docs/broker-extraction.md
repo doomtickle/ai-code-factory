@@ -7,8 +7,10 @@ through it, per-caller tool grants, policy checks, filtering in both
 directions, an audit record for every call, credentials kept out of agent
 sandboxes, and nothing from the workspace ever executed.
 
-Each phase is shippable on its own. Phase 0 is done; Phases 1 to 3 are the
-plan, recorded here so the reasoning survives.
+Each phase is shippable on its own. Phase 0 is done; most of Phases 1 to 3
+are still the plan, recorded here so the reasoning survives, though parts of
+each have landed (Phase 1's policy tooling partly, Phase 3's approvals
+mostly).
 
 ## Where the broker is tied to the factory
 
@@ -66,10 +68,17 @@ All changes stay in this repo, and the factory keeps working throughout.
    - file (today's exception)
    - environment from an external secret manager
    - GitHub App installation tokens: short-lived and scoped per repo, replacing a long-lived PAT
-5. **Policy tooling.**
+5. **Policy tooling (partly done).**
    - A JSON schema for `policy.toml`, checked at load time (bad keys fail the image build, not a tool call).
    - `broker policy validate`.
-   - `broker egress-hosts`, which prints every host the policy can reach, so `kits/broker/spec.yaml` is generated or checked instead of synced by hand.
+   - **Done:** `python3 -m passdesk.doctor --egress-hosts`, run inside the
+     broker sandbox, prints every host the baked-in policy can reach.
+     `factory doctor` calls it and checks the result against
+     `kits/broker/spec.yaml` and `$FACTORY_CONFIG/broker-kit/spec.yaml`
+     (`bin/factory`'s "Passdesk (the gateway)" step), so those kit files are
+     checked against the policy instead of only synced by hand. The same
+     doctor also validates the policy and credential setup live
+     (`--live`), short of a schema checked at build time.
 6. **Audit schema (partly done, passdesk-broker#7).** The caller field moved
    to `principal`, with `role` kept as a duplicate alias until
    `scripts/analytics.py` no longer needs it (it now reads `principal`,
@@ -107,7 +116,20 @@ All changes stay in this repo, and the factory keeps working throughout.
 
 ## Phase 3: extension points
 
-1. **Approvals.** A hook before risky actions (push, opening a PR, a dependency not seen before, a new host): the core holds the call until an external approver answers or a timeout denies it. The core ships the hook and a deny-all default; approvers (chat, web) plug in.
+1. **Approvals (mostly done).** A hook before risky actions (push, opening a
+   PR, a dependency not seen before, a new host): the core holds the call
+   until an external approver answers or a timeout denies it. The core ships
+   the hook and a deny-all default; approvers (chat, web) plug in.
+
+   **Done:** the Passdesk Pro plugin hooks `git_push` and
+   `github_create_pr`, writing a pending card to the broker state directory
+   and holding the call for `[approvals].hold_seconds` before returning it
+   to the agent to retry. People decide from the dashboard's control unit
+   (APPROVE/DECLINE, including the patch INSPECT view) or from
+   `scripts/approvals.py` (`factory approvals`), both writing the same
+   decision file. Still outstanding: this lives in the plugin, not the
+   broker core, so a deployment without Passdesk Pro has no hook at all
+   (not even a deny-all default) and chat-based approvers aren't wired up.
 2. **Admin API.** Read-only endpoints for audit queries, current grants and policy version, on a separate listener from the agent-facing MCP endpoint. A fleet view can build on it.
 3. **Managed policy.** Policy and grants loaded from a signed bundle, so a central team can roll out changes without rebuilding images. Agents still can't influence the policy source.
 

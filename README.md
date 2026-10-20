@@ -82,9 +82,9 @@ dashboard in your browser (or laid out in [Herdr](https://herdr.dev) tabs).
 > on x86_64, including **WSL2 on Windows 11** (step-by-step guide:
 > [docs/setup-wsl.md](docs/setup-wsl.md)). `sbx` and `herdr` don't ship for other
 > platforms (Linux arm64, native Windows) in a form the factory uses. The Linux
-> path is new: it is tested in Ubuntu containers, not yet end to end on a real
-> Linux or WSL machine. `factory doctor` checks a machine and says how to fix
-> what's missing.
+> path now runs end to end on WSL2; native Ubuntu is tested in containers, not
+> yet confirmed end to end on a real Ubuntu machine. `factory doctor` checks a
+> machine and says how to fix what's missing.
 
 ## Requirements
 
@@ -536,10 +536,13 @@ call later; the decision is picked up by the retry.
    (see *Storing credentials once* above). Revoke with `factory secret forget passdesk-license`
    or `factory secret forget approvals-webhook`.
 4. Decide on the dashboard's control unit (APPROVE, or DECLINE with a
-   reason), or with `factory approvals` (list), `factory approvals approve
-   <id>` or `factory approvals decline <id> --reason "..."`; `factory
-   approvals watch` prints cards as they arrive. Decisions are plain files in the
-   broker state folder, so nothing new listens on the network.
+   reason), or with `factory approvals` (list), `factory approvals show <id>`
+   (one card in full; an id prefix works), `factory approvals approve <id>`
+   or `factory approvals decline <id> --reason "..."`; `factory approvals
+   watch` prints cards as they arrive, and `factory approvals summary` prints
+   one line for scripts (pending count and the oldest card's age). Decisions
+   are plain files in the broker state folder, so nothing new listens on the
+   network.
 5. `factory status` shows a line with the pending count and the oldest
    card's age once there is at least one; `factory doctor` warns (without
    failing) about any card that expired with no decision, pointing back at
