@@ -45,11 +45,12 @@ between two reads:
   `uv pip compile --generate-hashes` or `pip-compile --generate-hashes`.
 - `git_push` secret-scans every pushed commit on its own (patch, message,
   author and committer), not just the net diff, and scans and counts binary
-  files as text. Branch names, PR titles and PR bodies are scanned too, so a
+  files as text. Branch names and PR and merge request titles and bodies are scanned too, so a
   credential cannot leave as the name of the thing being pushed.
 - `web_fetch` refuses a hard-coded list of hosts that the egress proxy or
   another broker tool attaches credentials to (GitHub, Atlassian, the
-  Gemini API, the configured private npm registry), even if an operator
+  Gemini API, the configured private npm registry, the configured GitLab
+  `[gitlab].url`), even if an operator
   adds one to `policy.toml`'s `[web].allow_hosts` - it's an unauthenticated
   GET and must not become a way to read those hosts without going through
   the tool whose own allowlist (e.g. `[git].repos`) is meant to gate them.
@@ -402,7 +403,11 @@ the credential files' presence, mode and format (through
 `core/credentials.py`, so a credential delivered only as a Docker secret or
 through `PASSDESK_SECRET_<NAME>_FILE` is found even when nothing sits at the
 configured path), and, with `--live`, whether the gateway answers and
-whether the GitHub token can read and push each repo in `[git].repos`.
+whether the GitHub token (or, for a GitLab project, the `gitlab` token,
+which needs Developer or higher) can read and push each repo in
+`[git].repos`. It also checks `[gitlab].url` and that each host-qualified
+repo is on it, and counts the GitLab host among the hosts the policy can
+reach (`--kit`, `--egress-hosts`).
 
 With `BROKER_DEPLOYMENT=sbx` (the default), `--kit <spec.yaml>` (repeatable)
 also checks an sbx kit's network allowlist against every host the policy

@@ -63,7 +63,7 @@ def check_branch_name(name: str) -> str:
             or name.endswith((".lock", "/", ".")) or "@{" in name):
         raise Denied(f"invalid branch name: {name!r}")
     # Every ref name an agent supplies (fetch and push branch, base, PR head)
-    # is sent to GitHub, and a pushed branch or PR head is published under
+    # is sent to the forge (GitHub or GitLab), and a pushed branch or PR head is published under
     # that name, so a credential in a branch name is refused outright rather
     # than merely redacted on the approval card.
     block_outbound_secrets("branch name", name)
@@ -108,8 +108,9 @@ def check_push_branch(branch: str, policy: dict) -> str:
 
 _GIT_HARDENING = ("-c", "core.hooksPath=/dev/null", "-c", "protocol.ext.allow=never", "-c", "core.fsmonitor=false")
 
-# The only URL prefix git sends the gateway's token to (ensure_mirror's
-# remotes are all under it), and the API endpoint the PR call uses.
+# The only URL prefix git sends the gateway's GitHub token to (GitHub
+# mirrors' remotes are all under it; the GitLab token goes only to
+# [gitlab].url), and the API endpoint the PR call uses.
 GITHUB_GIT_URL = "https://github.com/"
 GITHUB_API = "https://api.github.com"
 # Every GitHub token format (ghp_, github_pat_, ghs_, gho_, ...) is letters,
@@ -119,6 +120,10 @@ _TOKEN_RE = re.compile(r"[A-Za-z0-9_]{20,255}")
 # GitLab tokens (glpat-..., and the newer forms with "." separators): letters,
 # digits, "_", "-" and ".". Same reasons, same floor.
 _GITLAB_TOKEN_RE = re.compile(r"[A-Za-z0-9_.-]{20,255}")
+# A DNS name (or IPv4 address) label by label: no empty, leading-dash or
+# trailing-dash label, and no trailing dot (which would slip past exact-host
+# matches such as web_fetch's denylist).
+_HOST_RE = re.compile(r"(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?")
 # Hosts [gitlab].url may never name: GitHub's own, whose token is a different credential.
 _NOT_GITLAB = ("github.com", "*.github.com", "*.githubusercontent.com")
 
@@ -158,9 +163,9 @@ def gitlab_base(policy: dict) -> str | None:
     except ValueError:
         raise Denied(f"[gitlab].url is not a URL: {url!r}") from None
     host = parts.hostname or ""
-    if (parts.scheme != "https" or not host or parts.username is not None or parts.password is not None
-            or parts.query or parts.fragment or not url.endswith("/") or any(c.isspace() for c in url)
-            or not re.fullmatch(r"[a-z0-9.-]+", host)):
+    if (parts.scheme != "https" or not _HOST_RE.fullmatch(host) or parts.username is not None
+            or parts.password is not None or parts.query or parts.fragment or not url.endswith("/")
+            or any(c.isspace() for c in url) or port == 0):
         raise Denied(f"[gitlab].url must be https://<host>[:port]/[path/], ending in \"/\" (got {url!r})")
     if any(policy_host_allowed(host, [p]) for p in _NOT_GITLAB):
         raise Denied(f"[gitlab].url names {host}, a GitHub host")
@@ -334,6 +339,16 @@ def mirror_name(remote: Remote) -> str:
     return f"gitlab__{host}__{digest}.git"
 
 
+def bundle_stem(repo: str, remote: Remote) -> str:
+    """The start of git_fetch's bundle name: owner__name on GitHub; on GitLab
+    the readable path plus a digest, since "__" can occur inside a GitLab path
+    (a__b/c and a/b__c would otherwise share a bundle)."""
+    if remote.forge == "github":
+        return repo.replace("/", "__")
+    digest = hashlib.sha256(f"{remote.base}\0{remote.path.lower()}".encode()).hexdigest()[:12]
+    return f"{repo.replace('/', '__').replace(':', '_')}__{digest}"
+
+
 def ensure_mirror(repo: str, remote: Remote | None = None) -> Path:
     remote = remote or Remote("github", repo, GITHUB_GIT_URL)
     path = config.MIRRORS / mirror_name(remote)
@@ -352,7 +367,7 @@ def tool_git_fetch(args: dict, policy: dict) -> str:
         mirror = ensure_mirror(repo, remote)
         git("fetch", "--no-tags", "origin", f"+refs/heads/{branch}:refs/remotes/origin/{branch}", cwd=mirror,
             auth=remote)
-        name = f"{repo.replace('/', '__').replace(':', '_')}__{branch.replace('/', '__')}.bundle"
+        name = f"{bundle_stem(repo, remote)}__{branch.replace('/', '__')}.bundle"
         with private_tempdir() as tmp:
             bundle = tmp / name
             git("bundle", "create", "-q", str(bundle), f"refs/remotes/origin/{branch}", cwd=mirror)
@@ -513,9 +528,9 @@ def tool_github_create_pr(args: dict, policy: dict) -> str:
 
 
 _MR_TITLE_MAX = 255  # GitLab's limit
-_MR_BODY_MAX = 1_048_576  # GitLab's description limit
-# Title prefixes GitLab reads as "this merge request is a draft".
-_DRAFT_PREFIXES = ("draft:", "[draft]", "(draft)", "draft -")
+_MR_BODY_MAX = 65536  # GitHub's PR body limit; GitLab's own (1 MiB) is far more than an approver can read
+# Title prefixes GitLab documents as marking a merge request a draft.
+_DRAFT_PREFIXES = ("draft:", "[draft]", "(draft)")
 
 
 def _gitlab_failure(e: urllib.error.HTTPError, repo: str) -> str:
@@ -551,8 +566,11 @@ def tool_gitlab_create_mr(args: dict, policy: dict) -> str:
     if gitlab_token() is None:
         raise Denied("the gateway holds no gitlab credential; the deployment must deliver it "
                      "(README, Configuring credentials)")
+    # The card shows the body's start, and carries its digest so two merge
+    # requests whose bodies differ only past the excerpt never share a card.
     require_approval({"tool": "gitlab_create_mr", "repo": repo, "head": head, "base": base,
-                      "title": title, "body": body[:2000], "draft": draft})
+                      "title": title, "body": body[:2000], "body_sha256": hashlib.sha256(body.encode()).hexdigest(),
+                      "body_chars": len(body), "draft": draft})
     # Read after approval, so a long wait still uses the current token.
     token = gitlab_token()
     if token is None:

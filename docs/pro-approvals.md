@@ -70,9 +70,9 @@ the copy shown to the hook is scrubbed.
 **A `[REDACTED:...]` marker on a card means the real write contains that
 string, and an approver should decline it.** In practice it should never
 appear: every agent-supplied card field is refused by `block_outbound_secrets`
-before `require` is called - the PR title and body (`tools/git.py`,
-`tool_github_create_pr`), and every ref name (`check_branch_name`: the push
-branch, the PR head, and the base of either), so a branch literally named
+before `require` is called - the PR and MR title and body (`tools/git.py`,
+`tool_github_create_pr`, `tool_gitlab_create_mr`), and every ref name
+(`check_branch_name`: the push branch, the PR/MR head, and the base of any), so a branch literally named
 `factory/ghp_...` is denied rather than held. File names are covered by the
 per-commit patch scan. The redaction in `require` is defense in depth for a
 pattern that slipped past those checks, not the first line.

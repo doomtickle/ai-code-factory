@@ -30,14 +30,29 @@ Dated entries, for the user to review. Newest first.
   - **A separate `gitlab_create_mr`, not a renamed or forge-agnostic PR
     tool.** Renaming `github_create_pr` would break grants, audit history
     and approval cards. It takes the same arguments, scans the same fields,
-    makes the same card (tool `gitlab_create_mr`, with `title` as sent,
+    makes the same card (tool `gitlab_create_mr`, with `title` as it will be sent to GitLab,
     `Draft: ` included), and checks the token is there before the hold, so
     nobody approves a call that can't be made. Each PR tool refuses the
     other forge's repos.
-  - **GitLab mirrors are named by digest.** GitHub's mirror name
+  - **GitLab mirrors and bundles are named by digest.** GitHub's mirror name
     (`owner__name`) is unambiguous because owners have no `_`; GitLab paths
     may, so `g/a__b` and `g__a/b` would share a mirror (and its origin).
-    `gitlab__<host>__<sha256(url, lower-cased path)[:32]>.git` can't collide.
+    `gitlab__<host>__<sha256(url, lower-cased path)[:32]>.git` can't collide,
+    and `git_fetch`'s bundle name adds a 12-character digest of the same for
+    the same reason (one project's bundle would overwrite the other's).
+  - **The card carries the body's digest and length.** As for
+    `github_create_issue`: two merge requests whose bodies differ only past
+    the 2,000-character excerpt never share a card, and the approver sees how
+    much they aren't reading. The body is capped at 65,536 characters
+    (GitHub's PR limit), not GitLab's 1 MiB. Only `Draft:`, `[Draft]` and
+    `(Draft)` (GitLab's documented markers, any case) count as already a
+    draft; any other title gets `Draft: `.
+  - **`[gitlab].url`'s host is checked label by label.** No empty, leading-
+    or trailing-dash label, no trailing dot (it slipped past exact-host
+    matches such as `web_fetch`'s denylist; `host_allowed` now also strips a
+    trailing dot from the pattern, not just the host), port 1-65535. An IPv4
+    address is allowed: an internal instance may have no name, and its
+    certificate must verify all the same.
   - **`web_fetch` refuses the `[gitlab].url` host**, read leniently, so even
     a malformed URL keeps its host blocked: a tightening of the
     credentialed-host denylist.

@@ -35,7 +35,7 @@ def load_policy(path: Path | None = None) -> dict:
 def host_allowed(host: str, patterns: list[str]) -> bool:
     host = host.lower().rstrip(".")
     for p in patterns:
-        p = p.lower()
+        p = p.lower().rstrip(".")
         if p.startswith("*."):
             if host.endswith(p[1:]) and host != p[2:]:
                 return True

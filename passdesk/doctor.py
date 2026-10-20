@@ -1029,6 +1029,8 @@ def check_live_gitlab(report: Report, pol: dict, repos: list[str], http=_http) -
                 perms = json.loads(body).get("permissions") or {}
             except (ValueError, AttributeError):
                 perms = {}
+            if not isinstance(perms, dict):
+                perms = {}
             levels = [(p or {}).get("access_level") for p in (perms.get("project_access"), perms.get("group_access"))
                       if isinstance(p, dict)]
             level = max((lv for lv in levels if isinstance(lv, int)), default=None)

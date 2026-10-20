@@ -59,9 +59,13 @@ class NamesTests(GitLabBase):
                           (f"https://{GL}:8443/", f"https://{GL}:8443/"), (f"https://{GL}:443/", f"https://{GL}/"),
                           ("https://acme.net/gitlab/", "https://acme.net/gitlab/")):
             self.assertEqual(git.gitlab_base({"gitlab": {"url": url}}), want, url)
+        # An IPv4 address is a host like any other (its certificate must still verify).
+        self.assertEqual(git.gitlab_base({"gitlab": {"url": "https://10.0.0.5/"}}), "https://10.0.0.5/")
         for bad in (f"http://{GL}/", f"https://{GL}", f"https://me:pw@{GL}/", f"https://{GL}/?x=1/",
                     f"https://{GL}/#f/", "https:///", "https://github.com/", "https://api.github.com/",
-                    f"https://{GL}/ x/", 7, ["https://x/"], "https://[::1/"):
+                    f"https://{GL}/ x/", 7, ["https://x/"], "https://[::1/",
+                    f"https://{GL}./", "https://.acme.net/", "https://a..b/", "https://-a.net/", "https://a-.net/",
+                    f"https://{GL}:0/", f"https://{GL}:70000/", "https://[::1]/", "https://a_b.net/"):
             with self.assertRaises(Denied, msg=bad):
                 git.gitlab_base({"gitlab": {"url": bad}})
 
@@ -92,6 +96,12 @@ class NamesTests(GitLabBase):
         with self.assertRaises(Denied) as cm:
             git.check_repo(f"{GL}/platform/other", GL_POLICY)
         self.assertIn("not in the broker allowlist", str(cm.exception))
+
+    def test_bundles_never_collide(self):
+        pol = {**GL_POLICY, "git": {"repos": [f"{GL}/a__b/c", f"{GL}/a/b__c"]}}
+        stems = {git.bundle_stem(r, git.remote_of(r, pol)) for r in pol["git"]["repos"]}
+        self.assertEqual(len(stems), 2)
+        self.assertEqual(git.bundle_stem("acme/widgets", git.remote_of("acme/widgets", POLICY)), "acme__widgets")
 
     def test_mirrors_never_collide(self):
         names = {git.mirror_name(git.remote_of(r, {**GL_POLICY, "git": {"repos": [r]}}))
@@ -222,11 +232,23 @@ class MergeRequestTests(GitLabBase):
                                                 "title": "Draft: Add the thing", "description": "b"})
         self.assertEqual([{k: v for k, v in c.items() if k != "principal"} for c in cards],
                          [{"tool": "gitlab_create_mr", "repo": PROJECT, "head": "factory/x", "base": "main",
-                           "title": "Draft: Add the thing", "body": "b", "draft": True}])
+                           "title": "Draft: Add the thing", "body": "b",
+                           "body_sha256": __import__("hashlib").sha256(b"b").hexdigest(), "body_chars": 1,
+                           "draft": True}])
+
+    def test_bodies_differing_past_the_excerpt_get_different_cards(self):
+        cards = self.cards()
+        self.open_mr({**MR_ARGS, "body": "x" * 3000})
+        self.open_mr({**MR_ARGS, "body": "x" * 2999 + "y"})
+        self.assertEqual(cards[0]["body"], cards[1]["body"])
+        self.assertNotEqual(cards[0]["body_sha256"], cards[1]["body_sha256"])
+        self.assertEqual(cards[0]["body_chars"], 3000)
 
     def test_draft_prefix_once_and_not_for_ready_mrs(self):
         _, sent = self.open_mr({**MR_ARGS, "title": "Draft: already"})
         self.assertEqual(json.loads(sent[0].data)["title"], "Draft: already")
+        _, sent = self.open_mr({**MR_ARGS, "title": "Draft - not a GitLab marker"})
+        self.assertEqual(json.loads(sent[0].data)["title"], "Draft: Draft - not a GitLab marker")
         _, sent = self.open_mr({**MR_ARGS, "draft": False, "base": "develop"})
         body = json.loads(sent[0].data)
         self.assertEqual((body["title"], body["target_branch"]), ("Add the thing", "develop"))
@@ -244,6 +266,7 @@ class MergeRequestTests(GitLabBase):
                  ({**MR_ARGS, "title": "   "}, "single line"),
                  ({**MR_ARGS, "title": "x" * 250}, "over 255"),
                  ({**MR_ARGS, "title": "ghp_" + "a" * 36}, "secret"),
+                 ({**MR_ARGS, "body": "x" * 65537}, "at most 65536"),
                  ({**MR_ARGS, "body": "key AKIA" + "C" * 16}, "secret")]
         for args, fragment in cases:
             with mock.patch.object(git.NO_REDIRECT_OPENER, "open") as opened, self.assertRaises(Denied) as cm:
@@ -291,6 +314,10 @@ class WebFetchTests(GitLabBase):
         self.assertEqual(web.credentialed_host_tool(GL, GL_POLICY), "git_fetch, git_push or gitlab_create_mr")
         self.assertEqual(web.credentialed_host_tool(GL.upper(), GL_POLICY), "git_fetch, git_push or gitlab_create_mr")
         self.assertIsNone(web.credentialed_host_tool(GL, POLICY))
+        # A trailing dot on either side changes nothing.
+        dotted = {**GL_POLICY, "gitlab": {"url": f"https://{GL}./"}}
+        self.assertIsNotNone(web.credentialed_host_tool(GL, dotted))
+        self.assertIsNotNone(web.credentialed_host_tool(GL + ".", GL_POLICY))
         # Even malformed, the URL's host stays blocked.
         self.assertIsNotNone(web.credentialed_host_tool(GL, {"gitlab": {"url": f"http://{GL}"}}))
         pol = {**GL_POLICY, "web": {**GL_POLICY["web"], "allow_hosts": [GL]}}
@@ -349,6 +376,9 @@ class DoctorTests(GitLabBase):
                  ((200, json.dumps({"permissions": {"project_access": {"access_level": 20}}}).encode()),
                   doctor.FAIL, "but not push"),
                  ((200, b"{}"), doctor.WARN, "could not be confirmed"),
+                 ((200, b'{"permissions": "odd"}'), doctor.WARN, "could not be confirmed"),
+                 ((200, b'{"permissions": {"project_access": {"access_level": "40"}}}'), doctor.WARN,
+                  "could not be confirmed"),
                  ((404, b""), doctor.FAIL, "404"),
                  ((401, b""), doctor.FAIL, "rejects the token")]
         for answer, level, fragment in cases:

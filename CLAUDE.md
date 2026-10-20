@@ -14,7 +14,7 @@ boundary.
   from a caller-writable workspace. A deployment may overlay its own
   `policy.toml` at build time (`policy.local.toml`, merged table by table),
   but the baked-in defaults are never editable at runtime.
-- Real credentials (GitHub, Jira, Gemini, a private package registry) must be
+- Real credentials (GitHub, GitLab, Jira, Gemini, a private package registry) must be
   injected out-of-band, never passed into an agent sandbox in plaintext.
   - GitHub works when the deployment's egress proxy injects the token
     directly (sbx); Passdesk itself never needs to see it. A deployment
