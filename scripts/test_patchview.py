@@ -33,8 +33,8 @@ class Repo:
         self.env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_") and k != "COLUMNS"}
         self.env.update(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1", GIT_AUTHOR_NAME="Dev",
                         GIT_AUTHOR_EMAIL="dev@example.com", GIT_COMMITTER_NAME="Dev",
-                        GIT_COMMITTER_EMAIL="dev@example.com", GIT_AUTHOR_DATE="2026-10-20T12:00:00+00:00",
-                        GIT_COMMITTER_DATE="2026-10-20T12:00:00+00:00")
+                        GIT_COMMITTER_EMAIL="dev@example.com", GIT_AUTHOR_DATE="2026-10-20T12:00:00+02:00",
+                        GIT_COMMITTER_DATE="2026-10-20T12:00:00+02:00")
         self.git("init", "-q", "-b", "main")
 
     def git(self, *args, stdin=None) -> str:
@@ -76,7 +76,7 @@ class RealGitTests(unittest.TestCase):
         self.assertEqual(len(out["commits"]), 1)
         c = out["commits"][0]
         self.assertEqual((c["sha"], c["author"], c["date"], c["merge"]),
-                         (sha, "Dev <dev@example.com>", "2026-10-20T12:00:00+00:00", False))
+                         (sha, "Dev <dev@example.com>", "2026-10-20T12:00:00+02:00", False))
         self.assertEqual(c["message"], "Subject\n\nBody line\ncommit " + "0" * 40
                          + "\ndiff --git a/x b/x\n@@ -1 +1 @@\n\nlast")
         self.assertEqual(len(c["files"]), 1)  # the fake headers in the message made no files
