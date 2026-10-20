@@ -227,7 +227,7 @@ place to open it in another.
 
 | Command | What it does |
 |---|---|
-| `factory doctor` | Check the machine is ready; prints the fix for each problem (setup runs it first). Once the broker exists, it also runs the gateway's own doctor inside it: policy, tokens and grants, audit log, credentials, a live probe, GitHub access per repo, the policy's hosts against the broker kit, and (Passdesk Pro) a warning for any approval that expired with no decision |
+| `factory doctor` | Check the machine is ready; prints the fix for each problem (setup runs it first; the dashboard's DIAG key runs it too). Once the broker exists, it also runs the gateway's own doctor inside it: policy, tokens and grants, audit log, credentials, a live probe, GitHub access per repo, the policy's hosts against the broker kit, and (Passdesk Pro) a warning for any approval that expired with no decision |
 | `factory setup` | One-time setup (safe to re-run) |
 | `factory update [--yes]` | After pulling changes or editing kits, images or policy: pulls the latest factory, rebuilds, recreates only the sandboxes the changes affect (it lists them and what each loses, then asks), and restarts. With the `web` layout it doesn't open the dashboard (so `factory update --yes` returns): run `factory dashboard` afterwards. The dashboard's UPDATE key runs `factory update --yes` after showing the plan |
 | `factory update --plan` | What `factory update` would do, changing nothing but a (hook-free) `git fetch`: the incoming commits, the sandboxes it would recreate and what each loses, the ones the incoming changes may make out of date (a guess from the changed files), and notes such as uncommitted changes that would skip the pull. Tab-separated lines (`commit`, `recreate`, `maybe`, `note`), for the dashboard |
@@ -237,7 +237,7 @@ place to open it in another.
 | `factory status` | Project, broker, dispatch bridge, login, roles (with their lanes), sandbox status, and (Passdesk Pro) pending approvals and the oldest one's age |
 | `factory logs <role>` | Follow a role's transcripts, all its lanes (`factory logs developer-lane2` for one lane); `factory logs broker` / `dispatch` for audit logs |
 | `factory watch` | Live terminal view of the lanes: one pane per active lane (a job running, or finished in the last ten minutes) with the job's status, elapsed time, model and cost in its title and the transcript rendered for reading (tool calls condensed, results dimmed, text wrapped); idle lanes take one status line each. A digit focuses one lane, `a` shows every lane, `p` shows a lane's latest review packet, `q` quits. `--once` prints one plain-text frame |
-| `factory dashboard [--no-open] [--port N]` | The whole factory on one screen in your browser (see "Dashboard"): the Coordinator's live terminal; every lane's live transcript, status, model, cost and timer; today's spend by hour and role; an event printer of broker calls and finished jobs; the writes held for approval; and the control unit, which approves and declines them and restarts or updates the factory (each after a confirm screen). Local. `factory gui` is the same command |
+| `factory dashboard [--no-open] [--port N]` | The whole factory on one screen in your browser (see "Dashboard"): the Coordinator's live terminal; every lane's live transcript, status, model, cost and timer; today's spend by hour and role; an event printer of broker calls and finished jobs; the writes held for approval; and the control unit, which approves and declines them and diagnoses, restarts or updates the factory (each after a confirm screen). Local. `factory gui` is the same command |
 | `factory packet [<job-id> \| latest \| <lane> \| --list]` | A job's review packet: the task, each branch's commits and diffstat against your checked-out branch, the `factory-test` modes it reported, the broker calls its role made, cost, and the role's report with its APPROVED / REVISE verdict. Written after every job; `--list` shows recent ones |
 | `factory roles` | List roles, their project access, lanes and network tools |
 | `factory role new <name> [like]` | Add a role (copied from `reviewer`, or the role you name) |
@@ -845,6 +845,11 @@ your browser. It shows:
     running if you close the dashboard. It runs without a terminal, so
     anything that would ask for a password (say, `sudo` while installing
     tools) fails instead of waiting: run `factory update` in a terminal then.
+  - DIAG (`factory doctor`), after the same confirm screen. It changes
+    nothing, so it cancels no jobs, drops no held writes and leaves the
+    Coordinator's terminal attached; its report scrolls on the same screen
+    and ends with NO PROBLEMS FOUND or PROBLEMS FOUND (each with its fix
+    indented under it). It runs one at a time with RESTART and UPDATE.
   - a blanking plate marked SETUP, where settings will go.
 - **Spend:** today's cost per hour and per role, from `dispatch/audit.jsonl`.
 - **Event printer:** today's broker calls (allowed, denied, held, decided) and
@@ -869,7 +874,7 @@ state folder (lane transcripts, both audit logs, review packets, approval
 cards, and for INSPECT the stored patch), and at start-up the factory's docs,
 and makes no network connection. The
 control unit writes only a decision file (approve, decline) and its action logs, and runs only
-`factory restart`, `factory update --yes` and `factory update --plan` (a fixed
+`factory restart`, `factory update --yes`, `factory update --plan` and `factory doctor` (a fixed
 command line, never a shell; `--factory PATH` runs another `factory`); its fonts and xterm.js are
 vendored (`scripts/dashboard-ui/fonts/`, `scripts/dashboard-ui/vendor/`). It
 binds `127.0.0.1` on a free port (`--port` to choose one) and prints a link
@@ -912,7 +917,7 @@ endpoint that acts; it can't script the unit, and the unit tells it only
 served only into the dashboard's frame and refuses to run on its own. Every
 control is a POST carrying the unit's key in a header, checked against this
 run's cookie, `Host` and `Origin`. No single request can start a host
-command: RESTART and UPDATE need a confirm token, good once, for two
+command: RESTART, UPDATE and DIAG need a confirm token, good once, for two
 minutes, for that one action. INSPECT's patch is read from the broker's state
 folder (`approvals/patches/<sha256>.patch`, named by the card's
 `patch_sha256`), never through a symlink, and only if its SHA-256 matches the

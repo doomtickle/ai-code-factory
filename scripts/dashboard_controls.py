@@ -14,10 +14,11 @@ those requests reach:
   decide   approve or decline one held write: one press, a file write through
            approvals.write_decision(), the same record `factory approvals`
            writes. Exact id, and the card's fingerprint must still match.
-  prepare  the confirm step for RESTART or UPDATE: what the action would do
-           (jobs it cancels, held writes it drops; for UPDATE, the output of
-           the read-only `factory update --plan`) and a single-use token,
-           valid CONFIRM_TTL seconds, for that one action. Runs nothing else.
+  prepare  the confirm step for RESTART, UPDATE or DIAG: what the action would
+           do (jobs it cancels, held writes it drops; for UPDATE, the output
+           of the read-only `factory update --plan`; DIAG stops nothing) and a
+           single-use token, valid CONFIRM_TTL seconds, for that one action.
+           Runs nothing else.
   run      start the action named by a prepared token. So no single request
            ever starts a host command.
   log      the action's output, from an offset.
@@ -27,14 +28,16 @@ those requests reach:
            sanitised here (patchview.py), never by the page. Exact id and
            fingerprint, as decide. The main page never receives it.
 
-An action is one fixed argv, never a shell: [factory, "restart"] or
-[factory, "update", "--yes"], with stdin from /dev/null (so a sudo or
+An action is one fixed argv, never a shell: [factory, "restart"],
+[factory, "update", "--yes"] or, for DIAG, [factory, "doctor"], with stdin from /dev/null (so a sudo or
 confirm prompt fails rather than hangs), FACTORY_NO_ATTACH=1, its output in
 FACTORY_STATE/dashboard/actions/<time>-<action>.log (folder 0700, file 0600)
 and its own session, so it survives the dashboard exiting. One at a time.
-Both stop the Coordinator's sandbox, so before starting, the Coordinator's
-terminal hangs up (Term.hang_up) and refuses POWER ON until the action ends;
-if it was attached and the action succeeded, it attaches again.
+RESTART and UPDATE stop the Coordinator's sandbox, so before starting, the
+Coordinator's terminal hangs up (Term.hang_up) and refuses POWER ON until
+the action ends; if it was attached and the action succeeded, it attaches
+again. DIAG (`factory doctor`) changes nothing and leaves the terminal alone;
+it exits 1 when it finds problems.
 
 After an update that succeeded, the dashboard's own files are compared with
 a digest taken at start-up: changed server code needs the dashboard
@@ -64,7 +67,8 @@ import patchview
 
 SCRIPTS = Path(__file__).resolve().parent
 FACTORY = SCRIPTS.parent / "bin" / "factory"
-ACTIONS = ("restart", "update")
+ACTIONS = ("restart", "update", "doctor")
+HANGS_UP = ("restart", "update")  # the actions that stop the Coordinator's sandbox
 CONFIRM_TTL = 120      # seconds a prepared confirm token stays valid
 PLAN_TIMEOUT = 90      # seconds `factory update --plan` may take
 LOG_CHUNK = 64 * 1024  # most bytes /cu/api/log returns at once
@@ -324,7 +328,7 @@ class Controls:
     def api_prepare(self, body: dict) -> tuple:
         action = body.get("action")
         if action not in ACTIONS:
-            raise Refused(400, "action must be restart or update")
+            raise Refused(400, "action must be restart, update or doctor")
         project = self.bound()
         with self.lock:
             if self.phase == "running":
@@ -332,6 +336,8 @@ class Controls:
         if action == "restart" and not project:
             raise Refused(409, "the factory isn't bound to a project: run 'factory start' in one first")
         _, raw, running = self.gate(self.clock())
+        if action not in HANGS_UP:
+            raw, running = {}, []  # it stops nothing: no jobs or held writes to warn about
         held = []
         for cid, card in raw.items():
             try:
@@ -380,7 +386,7 @@ class Controls:
     def api_run(self, body: dict) -> tuple:
         action, given = body.get("action"), body.get("confirm")
         if action not in ACTIONS:
-            raise Refused(400, "action must be restart or update")
+            raise Refused(400, "action must be restart, update or doctor")
         with self.lock:
             held = self.confirm
             if not isinstance(given, str) or held is None \
@@ -427,7 +433,8 @@ class Controls:
 
     # --- running an action
     def argv(self, action: str) -> list:
-        return [self.factory, "restart"] if action == "restart" else [self.factory, "update", "--yes"]
+        return {"restart": [self.factory, "restart"], "update": [self.factory, "update", "--yes"],
+                "doctor": [self.factory, "doctor"]}[action]
 
     def open_log(self, action: str) -> tuple:
         folder = self.state / "dashboard" / "actions"
@@ -445,7 +452,8 @@ class Controls:
 
     def _run(self, action: str, fd: int) -> None:
         """Run action with its output to fd (its log, opened by api_run; closed here)."""
-        term, attached, code = self.term, False, None
+        term = self.term if action in HANGS_UP else None
+        attached, code = False, None
         try:
             if term is not None:
                 attached = term.running()
