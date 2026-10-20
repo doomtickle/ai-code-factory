@@ -773,6 +773,10 @@ your browser. It shows:
 - **Spend:** today's cost per hour and per role, from `dispatch/audit.jsonl`.
 - **Event printer:** today's broker calls (allowed, denied, held, decided) and
   finished jobs.
+- **Front-panel knobs** under the Coordinator's screen: BRIGHT and CONTRAST
+  adjust it, and V-HOLD, turned off centre, makes the picture roll like an old
+  set (drag, scroll or use the arrow keys; double-click resets; remembered in
+  your browser).
 - **Lamps:** whether the page can reach the dashboard, whether the dispatch
   bridge is running, and whether anything is held.
 

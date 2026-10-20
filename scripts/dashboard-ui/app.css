@@ -112,9 +112,14 @@ button { font: inherit; color: inherit; }
   --bloom: color-mix(in srgb, var(--c) 24%, transparent);
   text-shadow: var(--crt-fx), 0 0 3px var(--glow), 0 0 12px var(--bloom);
   box-shadow: inset 0 0 70px rgba(0,0,0,.9), inset 0 0 14px rgba(0,0,0,.95), 0 0 0 2px #050505, 0 0 24px color-mix(in srgb, var(--c) 10%, transparent);
-  display: flex; flex-direction: column; }
+  display: flex; flex-direction: column;
+  --vig-edge: .48; --vig: .52; --vig-rim: .55; }
 .crt.green { --c: var(--green); --glow: var(--green-glow); --dim: var(--green-dim); --crt-bg: var(--crt-green-bg); }
-.crt.matrix { --c: var(--matrix); --glow: var(--matrix-glow); --dim: var(--matrix-dim); --crt-bg: var(--crt-matrix-bg); }
+.crt.matrix { --c: var(--matrix); --glow: var(--matrix-glow); --dim: var(--matrix-dim); --crt-bg: var(--crt-matrix-bg);
+  --vig-edge: .26; --vig: .3; --vig-rim: .35;
+  box-shadow: inset 0 0 44px rgba(0,0,0,.6), inset 0 0 10px rgba(0,0,0,.8), 0 0 0 2px #050505, 0 0 24px color-mix(in srgb, var(--c) 10%, transparent);
+  /* The front-panel knobs: BRIGHT and CONTRAST set these from app.js */
+  filter: brightness(var(--bright, 1)) contrast(var(--contrast, 1)); }
 /* On the matrix tube everything stays green: shades instead of hues */
 .crt.matrix .sub, .crt.matrix .c-held { color: var(--matrix-pale); text-shadow: var(--crt-fx), 0 0 4px var(--matrix-glow); }
 .crt.matrix .banner { border-color: var(--matrix); box-shadow: 0 0 8px var(--matrix-glow), inset 0 0 8px var(--matrix-glow); }
@@ -127,10 +132,10 @@ button { font: inherit; color: inherit; }
     radial-gradient(130% 75% at 30% -12%, rgba(255,255,255,.1), rgba(255,255,255,.025) 45%, transparent 65%),
     radial-gradient(40% 18% at 82% 92%, rgba(255,255,255,.035), transparent 70%),
     repeating-linear-gradient(180deg, rgba(0,0,0,.22) 0 1px, transparent 1px 3px),
-    linear-gradient(90deg, rgba(0,0,0,.48), transparent 5%, transparent 95%, rgba(0,0,0,.48)),
-    linear-gradient(180deg, rgba(0,0,0,.48), transparent 7%, transparent 93%, rgba(0,0,0,.48)),
-    radial-gradient(ellipse at center, transparent 58%, rgba(0,0,0,.52) 100%);
-  box-shadow: inset 0 0 22px 5px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,255,255,.09), inset 0 0 0 1px rgba(255,255,255,.04);
+    linear-gradient(90deg, rgba(0,0,0,var(--vig-edge)), transparent 5%, transparent 95%, rgba(0,0,0,var(--vig-edge))),
+    linear-gradient(180deg, rgba(0,0,0,var(--vig-edge)), transparent 7%, transparent 93%, rgba(0,0,0,var(--vig-edge))),
+    radial-gradient(ellipse at center, transparent 58%, rgba(0,0,0,var(--vig)) 100%);
+  box-shadow: inset 0 0 22px 5px rgba(0,0,0,var(--vig-rim)), inset 0 1px 0 rgba(255,255,255,.09), inset 0 0 0 1px rgba(255,255,255,.04);
   animation: flicker 6s infinite; }
 @keyframes flicker { 0%, 97%, 100% { opacity: 1; } 98% { opacity: .85; } }
 /* A very faint band rolling down the tube (mains hum), moved by transform only so the
@@ -139,6 +144,15 @@ button { font: inherit; color: inherit; }
   background: linear-gradient(180deg, transparent, color-mix(in srgb, var(--c) 6%, transparent) 50%, transparent);
   transform: translateY(-100%); animation: roll 14s linear infinite; will-change: transform; }
 @keyframes roll { to { transform: translateY(420%); } }
+/* V-HOLD: off-centre, the picture rolls; a copy one frame below (with the black
+   vertical-blanking bar between) makes the roll wrap like a real set. */
+.crt-roll { --vb: 7%; position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.crt-roll > .vblank, .crt-roll > .crt-ghost { display: none; }
+.crt-roll.rolling > .vblank { display: block; position: absolute; left: -2%; right: -2%; top: 100%; height: var(--vb);
+  background: linear-gradient(180deg, #000 0 35%, color-mix(in srgb, var(--c) 18%, #000) 45%, #000 55% 100%); }
+.crt-roll.rolling > .crt-ghost { display: block; position: absolute; left: 0; right: 0; top: calc(100% + var(--vb)); height: 100%; overflow: hidden; }
+.crt-roll.rolling { animation: vroll var(--roll-dur, 6s) linear infinite; animation-direction: var(--roll-dir, normal); will-change: transform; }
+@keyframes vroll { from { transform: translateY(0); } to { transform: translateY(calc(-100% - var(--vb))); } }
 .crt-body { flex: 1; min-height: 0; overflow-y: auto; padding: 16px 20px 10px; scrollbar-width: thin; scrollbar-color: var(--dim) transparent; }
 .crt-body p { margin: 0 0 8px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .crt .a::before { content: "● "; }
@@ -147,19 +161,27 @@ button { font: inherit; color: inherit; }
 .crt .c-held { color: var(--t-held); }
 .crt-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 6px 0; flex-wrap: wrap; }
 /* Front-panel controls under the tube: knurled knobs with an index mark, a badge */
-.knobs { display: flex; align-items: center; gap: 14px; }
-.knob { display: grid; justify-items: center; gap: 3px; }
-.knob i { width: 22px; height: 22px; border-radius: 50%; position: relative;
-  background:
-    repeating-conic-gradient(from 0deg, #3a3c40 0 6deg, #1f2023 6deg 12deg);
-  box-shadow: 0 0 0 2px #0d0e0f, 0 2px 3px rgba(0,0,0,.7), inset 0 1px 0 rgba(255,255,255,.12); }
-.knob i::before { content: ""; position: absolute; inset: 4px; border-radius: 50%;
-  background: radial-gradient(circle at 35% 30%, #55585d, #26282b 70%); box-shadow: inset 0 -1px 2px rgba(0,0,0,.6); }
-.knob i::after { content: ""; position: absolute; left: 50%; top: 3px; width: 2px; height: 6px; margin-left: -1px;
-  background: var(--silk); border-radius: 1px; transform-origin: 1px 8px; }
-.knob.k2 i::after { transform: rotate(-40deg); }
-.knob.k3 i::after { transform: rotate(55deg); }
-.knob .silk { font-size: .58rem; letter-spacing: .1em; }
+.knobs { display: flex; align-items: flex-start; gap: 16px; }
+.knob { display: grid; justify-items: center; gap: 4px; cursor: grab; touch-action: none; user-select: none; border-radius: 6px; padding: 2px; }
+.knob:active { cursor: grabbing; }
+.knob .scale { width: 60px; height: 60px; border-radius: 50%; display: grid; place-items: center; position: relative; }
+/* A 270-degree scale of ticks around the knob (silkscreened on the panel) */
+.knob .scale::before { content: ""; position: absolute; inset: 0; border-radius: 50%;
+  background: repeating-conic-gradient(from -136deg, var(--silk-dim) 0 2.4deg, transparent 2.4deg 27deg);
+  -webkit-mask: radial-gradient(circle, transparent 0 25px, #000 26px 29px, transparent 30px), conic-gradient(from -136deg, #000 0 275deg, transparent 275deg);
+  -webkit-mask-composite: source-in; mask: radial-gradient(circle, transparent 0 25px, #000 26px 29px, transparent 30px), conic-gradient(from -136deg, #000 0 275deg, transparent 275deg);
+  mask-composite: intersect; opacity: .8; }
+.knob i { width: 44px; height: 44px; border-radius: 50%; position: relative; transform: rotate(var(--rot, 0deg));
+  background: repeating-conic-gradient(from 0deg, #3d3f43 0 5deg, #1c1d20 5deg 10deg);
+  box-shadow: 0 0 0 2px #0b0c0d, 0 3px 4px rgba(0,0,0,.75), 0 6px 10px rgba(0,0,0,.4), inset 0 1px 0 rgba(255,255,255,.14); }
+.knob i::before { content: ""; position: absolute; inset: 7px; border-radius: 50%;
+  background: radial-gradient(circle at 35% 28%, #6a6d72, #2e3033 55%, #1d1e21);
+  box-shadow: inset 0 -2px 3px rgba(0,0,0,.65), inset 0 1px 1px rgba(255,255,255,.18), 0 1px 1px rgba(0,0,0,.5); }
+.knob i::after { content: ""; position: absolute; left: 50%; top: 4px; width: 3px; height: 13px; margin-left: -1.5px;
+  background: var(--stripe-2); border-radius: 2px; box-shadow: 0 0 4px rgba(233, 181, 43, .6); }
+.knob:focus-visible { outline: 2px solid var(--stripe-2); outline-offset: 2px; }
+.knob .silk { font-size: .62rem; letter-spacing: .12em; color: var(--silk); }
+
 .badge-plate { font-family: var(--f-silk); font-weight: 700; font-size: .62rem; letter-spacing: .2em; text-transform: uppercase;
   color: #cfc9b6; padding: 2px 8px; border-radius: 2px; background: linear-gradient(180deg, #4a4c50, #2a2c2f);
   box-shadow: inset 0 1px 0 rgba(255,255,255,.18), 0 1px 0 #000; text-shadow: 0 -1px 0 #000; }
@@ -266,8 +288,27 @@ button { font: inherit; color: inherit; }
   padding-top: max(12px, env(safe-area-inset-top, 0px)); padding-bottom: max(12px, env(safe-area-inset-bottom, 0px));
   padding-left: max(12px, env(safe-area-inset-left, 0px)); padding-right: max(12px, env(safe-area-inset-right, 0px)); }
 .monitor { width: min(940px, 100%); height: min(720px, 100%); min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 10px; }
-.monitor .crt-wrap, .monitor .crt { min-width: 0; }
-.monitor .crt-body { overflow-x: hidden; overscroll-behavior: contain; }
+/* The lane monitor uses the lane modules' reflective LCD, enlarged, in a recessed bezel */
+.lcd-bezel { flex: 1; min-height: 0; min-width: 0; display: flex; padding: 12px; border-radius: 8px; background: #0f1011;
+  box-shadow: inset 0 3px 8px rgba(0,0,0,.85), inset 0 0 0 1px #2b2d30, 0 1px 0 rgba(255,255,255,.06); }
+.mon-lcd { flex: 1; min-height: 0; min-width: 0; display: flex; }
+.mon-body { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; padding: 10px 14px;
+  font-family: var(--f-crt); font-size: 19px; line-height: 1.12; color: var(--lcd-ink);
+  scrollbar-width: thin; scrollbar-color: rgba(20, 27, 15, .45) transparent; }
+.mon-body:focus-visible { outline: 2px solid var(--lcd-ink); outline-offset: -4px; }
+.mon-body ::selection { background: var(--lcd-ink); color: var(--lcd-bg); }
+.mon-body p { margin: 0; }
+.mon-body .ln { display: grid; grid-template-columns: 5.2em minmax(0, 1fr); gap: 10px; }
+.mon-body .ts { opacity: .5; }
+.mon-body .tx { white-space: pre-wrap; overflow-wrap: anywhere; }
+.mon-body .k-start .tx, .mon-body .k-end .tx { font-weight: 700; text-transform: uppercase; }
+.mon-body .k-task .tx { opacity: .72; }
+.mon-body .k-tool .tx { color: var(--lcd-blue); }
+.mon-body .k-result .tx { opacity: .62; }
+.mon-body .k-error .tx { background: var(--lcd-red); color: var(--lcd-bg); padding: 0 4px; }
+.mon-body .k-branch .tx, .mon-body .k-packet .tx { color: var(--lcd-purple); }
+.mon-body .k-end .tx { color: var(--lcd-green); }
+.mon-body pre.packet { margin: 0; font: inherit; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; min-width: 0; max-width: 100%; }
 .mon-h { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 0 18px; }
 .mon-h .title { font-family: var(--f-crt); font-size: 1.5rem; color: var(--silk); }
 .mon-h .mon-note { color: var(--led-amber); text-transform: none; letter-spacing: .06em; min-width: 0; overflow-wrap: anywhere; }
@@ -280,6 +321,7 @@ button { font: inherit; color: inherit; }
 @media (prefers-reduced-motion: reduce) {
   .led.blink, .lcd-text .k-held, .crt::after, .pl.new { animation: none !important; }
   .crt::before { display: none; }
+  .crt-roll.rolling { animation: none; transform: translateY(var(--roll-still, 0)); }
 }
 
 /* Smaller screens: the rack unfolds into a scrolling column */

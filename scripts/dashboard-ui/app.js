@@ -373,6 +373,89 @@
     if (state && n >= 1 && n <= Math.min(9, state.lanes.length)) openMon(state.lanes[n - 1].name);
   });
 
+  // ---------- front-panel knobs on the Coordinator's monitor
+  // BRIGHT and CONTRAST drive CSS filters on the tube; V-HOLD, off-centre, makes the
+  // picture roll like a real set (faster the further you turn it, up or down). Drag,
+  // scroll or use the arrow keys; double-click or Home resets. Settings stay in this
+  // browser only.
+  const KNOB_KEY = "fc1984-knobs";
+  const DETENT = 12;           // V-HOLD locks within this many steps of centre
+  const knobVals = { bright: 0, contrast: 0, vhold: 0 };
+  try {
+    const saved = JSON.parse(localStorage.getItem(KNOB_KEY) || "{}");
+    for (const k in knobVals) if (Number.isFinite(saved[k])) knobVals[k] = Math.max(-100, Math.min(100, saved[k]));
+  } catch (e) { /* no storage: defaults */ }
+  const tube = $("coord-crt"), roll = $("crt-roll"), ghost = $("crt-ghost"), crtBody = $("crt-body");
+  const reduceMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  function syncGhost() {  // the copy one frame below, for a seamless roll
+    ghost.replaceChildren(...[...crtBody.childNodes].map(n => n.cloneNode(true)));
+    ghost.scrollTop = crtBody.scrollTop;
+  }
+  new MutationObserver(() => { if (roll.classList.contains("rolling")) syncGhost(); })
+    .observe(crtBody, { childList: true, subtree: true, characterData: true });
+  crtBody.addEventListener("scroll", () => { ghost.scrollTop = crtBody.scrollTop; });
+
+  function holdText(v) {
+    if (Math.abs(v) < DETENT) return "locked";
+    const speed = Math.abs(v) > 70 ? "fast" : Math.abs(v) > 35 ? "steady" : "slow";
+    return `rolling ${v > 0 ? "up" : "down"}, ${speed}`;
+  }
+  function applyKnobs() {
+    tube.style.setProperty("--bright", (1 + knobVals.bright / 100 * 0.6).toFixed(3));
+    tube.style.setProperty("--contrast", (1 + knobVals.contrast / 100 * 0.5).toFixed(3));
+    const v = knobVals.vhold, off = Math.abs(v) >= DETENT;
+    const wasRolling = roll.classList.contains("rolling");
+    if (off && !wasRolling) syncGhost();
+    roll.classList.toggle("rolling", off);
+    if (off) {
+      const t = (Math.abs(v) - DETENT) / (100 - DETENT);       // 0..1 past the detent
+      roll.style.setProperty("--roll-dur", `${(9 - t * 8.2).toFixed(2)}s`);  // 9 s .. 0.8 s a frame
+      roll.style.setProperty("--roll-dir", v > 0 ? "normal" : "reverse");
+      roll.style.setProperty("--roll-still", `${(-t * 45 * Math.sign(v)).toFixed(1)}%`);  // reduced motion: a still slip
+    }
+    document.querySelectorAll(".knob[data-knob]").forEach(k => {
+      const val = knobVals[k.dataset.knob];
+      k.querySelector("i").style.setProperty("--rot", `${(val * 1.35).toFixed(1)}deg`);
+      k.setAttribute("aria-valuenow", String(Math.round(val)));
+      k.setAttribute("aria-valuetext", k.dataset.knob === "vhold" ? holdText(val) : `${Math.round(val)}`);
+    });
+    try { localStorage.setItem(KNOB_KEY, JSON.stringify(knobVals)); } catch (e) { /* fine */ }
+  }
+  function setKnob(name, value) {
+    knobVals[name] = Math.max(-100, Math.min(100, Math.round(value)));
+    applyKnobs();
+  }
+  document.querySelectorAll(".knob[data-knob]").forEach(k => {
+    const name = k.dataset.knob;
+    let drag = null;
+    k.addEventListener("pointerdown", e => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      k.focus();
+      k.setPointerCapture(e.pointerId);
+      drag = { x: e.clientX, y: e.clientY, v: knobVals[name] };
+    });
+    k.addEventListener("pointermove", e => {
+      if (!drag) return;
+      // Up or right turns it clockwise, like reaching for a real knob.
+      setKnob(name, drag.v + (drag.y - e.clientY) * 1.1 + (e.clientX - drag.x) * 0.6);
+    });
+    const end = () => { drag = null; };
+    k.addEventListener("pointerup", end);
+    k.addEventListener("pointercancel", end);
+    k.addEventListener("wheel", e => { e.preventDefault(); setKnob(name, knobVals[name] - Math.sign(e.deltaY) * 5); }, { passive: false });
+    k.addEventListener("dblclick", () => setKnob(name, 0));
+    k.addEventListener("keydown", e => {
+      const step = { ArrowUp: 5, ArrowRight: 5, ArrowDown: -5, ArrowLeft: -5, PageUp: 20, PageDown: -20 }[e.key];
+      if (step != null) { e.preventDefault(); e.stopPropagation(); setKnob(name, knobVals[name] + step); }
+      else if (e.key === "Home") { e.preventDefault(); e.stopPropagation(); setKnob(name, 0); }
+      else if (e.key === "End") { e.preventDefault(); e.stopPropagation(); setKnob(name, 100); }
+    });
+  });
+  if (reduceMotion) roll.dataset.still = "1";
+  applyKnobs();
+
   // ---------- polling
   async function poll() {
     try {
