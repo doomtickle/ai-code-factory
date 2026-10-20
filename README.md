@@ -244,7 +244,7 @@ place to open it in another.
 | `factory docs [--print]` | Open these docs, with guides, as a web page in your browser (offline, works before setup); `--print` writes the HTML to stdout instead |
 | `factory approvals [approve <id> \| decline <id> --reason "..." \| watch]` | List, decide and watch Passdesk Pro approval cards (see "Enabling approvals") |
 | `factory analytics` | Cost, token and performance report from the audit logs (`--json`, `--html`) |
-| `factory secret save <name>` | Store a credential **once** in this machine's keychain (`github`, `jira`, `gemini`, `npm-registry`, `passdesk-license`, `approvals-webhook`); every broker start delivers it, including after `factory update` or `factory reset` |
+| `factory secret save <name>` | Store a credential **once** in this machine's keychain (`github`, `gitlab`, `jira`, `gemini`, `npm-registry`, `passdesk-license`, `approvals-webhook`); every broker start delivers it, including after `factory update` or `factory reset` |
 | `factory secret forget <name>` | Delete a saved credential from the keychain and from the running broker |
 | `factory secret set <name>` | Deliver a credential to the running broker only, without saving it (lost when the broker is recreated); reads from stdin |
 | `factory secret rm <name>` | Remove a credential delivered with `set` |
@@ -345,6 +345,49 @@ developer runs `factory-lane bundle` in its sandbox, which writes the branch
 (only the commits past its base) as a bundle into `.factory/outgoing/` in the
 project (the one project folder it can write) and prints the file name it
 then hands to `git_push`.
+
+### Enabling GitLab
+
+The git tools work with a GitLab instance too, self-hosted or gitlab.com,
+next to (or instead of) GitHub. The developer pushes with `git_push` as on
+GitHub and opens merge requests with `gitlab_create_mr`.
+
+1. In your local `policy.toml` (Local settings), name the instance and list
+   its projects host first, on the same single `repos` line as any GitHub
+   repos:
+   ```toml
+   [gitlab]
+   url = "https://gitlab.acme.net/"
+
+   [git]
+   repos = ["my-org/my-project", "gitlab.acme.net/platform/api", "gitlab.acme.net/platform/tools/cli"]
+   ```
+   The URL must be https and end in `/` (`https://acme.net/gitlab/` for an
+   instance under a path works too).
+2. Add the host to your local broker kit, `broker-kit/spec.yaml`, under
+   `permissions.network.allow` (`- gitlab.acme.net`).
+3. In GitLab, create a **project access token** (project, Settings, Access
+   tokens; a group access token covers several projects) with the
+   **Developer** role, the **api** and **write_repository** scopes, and an
+   expiry date. Don't use a personal access token: `api` on it reaches
+   everything you can. Save it once:
+   ```sh
+   factory secret save gitlab
+   ```
+   sbx can't inject a GitLab token the way it does GitHub's, so the broker
+   holds it: every broker start delivers it from your keychain
+   (`factory-gitlab`) into a file in the broker sandbox only, and the broker
+   sends it to that GitLab URL and nowhere else.
+4. Run `factory update`, then `factory doctor`: it checks the URL, the
+   projects, the kit host and the token, and that the token can push each
+   project.
+
+The same rules hold as on GitHub: only `factory/*` branches, never a
+protected one, no force-push, every commit secret-scanned, and with
+approvals on (Passdesk Pro) every push and merge request waits for you.
+`web_fetch` never reaches the GitLab host. The instance's TLS certificate
+must be one the system trust store accepts; a private CA isn't supported
+yet.
 
 ### Letting the reviewer file issues
 
@@ -514,8 +557,8 @@ issue data the tools ask for.
 
 ### Enabling approvals (Passdesk Pro)
 
-With the Passdesk Pro plugin installed, every `git_push` and
-`github_create_pr` waits for a person: the broker records a card (what,
+With the Passdesk Pro plugin installed, every `git_push`,
+`github_create_pr` and `gitlab_create_mr` waits for a person: the broker records a card (what,
 who, how many commits and files, the secret-scan result) and the agent's
 call proceeds once you approve it, or hears your reason if you decline. A
 call that waits longer than `[approvals].hold_seconds` (45 by default)
@@ -554,7 +597,7 @@ Three roles, split by what each is allowed to do rather than by job title:
 
 | Role | Does | Project access | Lanes | Broker tools |
 |---|---|---|---|---|
-| developer | implements the change, writes and runs its tests, updates the docs | read-only; works in its own clones, hands back `factory/*` branches | 3 | `npm_fetch`, `pip_download`, `git_fetch`, `git_push`, `github_create_pr` |
+| developer | implements the change, writes and runs its tests, updates the docs | read-only; works in its own clones, hands back `factory/*` branches | 3 | `npm_fetch`, `pip_download`, `git_fetch`, `git_push`, `github_create_pr`, `gitlab_create_mr` |
 | reviewer | independent check of correctness, tests, security and docs; runs the tests; APPROVED / REVISE; files issues when asked | read-only | 2 | `npm_fetch`, `github_create_issue` |
 | researcher | looks things up on the web and reports with sources | read-only | 1 | `web_fetch` (`gemini_flash_query` as an opt-in) |
 

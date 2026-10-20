@@ -56,6 +56,10 @@ class ConsoleTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("abcdef0123456789  developer  push factory/x -> acme/widgets (2 commit(s), 3 file(s))", out)
         self.assertIn('draft PR on acme/widgets: factory/y -> main "Add thing"', out)
+        self.put(card("eeee000011112222", tool="gitlab_create_mr", repo="gitlab.acme.net/platform/api",
+                      head="factory/z", title="Draft: Add it", draft=True))
+        code, out, _ = self.run_cli("list")
+        self.assertIn('draft MR on gitlab.acme.net/platform/api: factory/z -> main "Draft: Add it"', out)
         code, out, _ = self.run_cli("show", "abcdef")  # prefix match
         self.assertEqual(code, 0)
         self.assertIn("shortstat      3 files changed", out)

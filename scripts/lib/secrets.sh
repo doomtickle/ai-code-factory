@@ -28,7 +28,7 @@
 # scripts/02-launch-factory.sh).
 # shellcheck shell=bash
 
-readonly FACTORY_SECRET_NAMES="jira gemini npm-registry passdesk-license approvals-webhook"
+readonly FACTORY_SECRET_NAMES="jira gemini npm-registry gitlab passdesk-license approvals-webhook"
 
 # secret_name_valid NAME -> success if NAME is exactly one of
 # FACTORY_SECRET_NAMES (not a substring match: "jira gemini" or "x jira y"

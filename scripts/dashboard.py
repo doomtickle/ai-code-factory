@@ -296,8 +296,9 @@ class Dashboard:
                 "principal": role, "role": role, "lanes": list(running.get(role, [])),
                 "repo": str(card.get("repo") or ""), "branch": str(card.get("branch") or card.get("head") or ""),
                 "base": str(card.get("base") or ""), "title": str(card.get("title") or ""),
-                # A PR card is a draft unless it says otherwise (as `factory approvals` reads it).
-                "draft": card.get("tool") == "github_create_pr" and card.get("draft", True) is not False,
+                # A PR or MR card is a draft unless it says otherwise (as `factory approvals` reads it).
+                "draft": card.get("tool") in ("github_create_pr", "gitlab_create_mr")
+                and card.get("draft", True) is not False,
                 "commits": None if commits is None else int(commits),
                 "file_count": None if file_count is None else int(file_count),
                 "files": [str(f) for f in files[:12]],

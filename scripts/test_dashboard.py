@@ -113,13 +113,14 @@ class SnapshotTests(unittest.TestCase):
     def test_cards_draft_and_fingerprint(self):
         import approvals
         pending = self.fx.state / "broker" / "approvals" / "pending"
-        for cid, extra in (("pr1", {"draft": False}), ("pr2", {}), ("pr3", {"draft": True})):
+        for cid, extra in (("pr1", {"draft": False}), ("pr2", {}), ("pr3", {"draft": True}),
+                           ("mr1", {"tool": "gitlab_create_mr"}), ("mr2", {"tool": "gitlab_create_mr", "draft": False})):
             (pending / f"{cid}.json").write_text(json.dumps(dict({
                 "id": cid, "tool": "github_create_pr", "principal": "developer", "repo": "o/r", "head": "factory/y",
                 "base": "main", "title": "T", "expires": self.fx.now + 60, "nonce": cid + "n"}, **extra)))
         cards = {c["id"]: c for c in self.board.cards(self.fx.now)}
         self.assertEqual({k: v["draft"] for k, v in cards.items()},
-                         {"c0ffee": False, "pr1": False, "pr2": True, "pr3": True})
+                         {"c0ffee": False, "pr1": False, "pr2": True, "pr3": True, "mr1": True, "mr2": False})
         self.assertTrue(all("fp" not in c for c in cards.values()))
         with_fp = {c["id"]: c for c in self.board.cards(self.fx.now, fp=True)}
         raw = json.loads((pending / "pr1.json").read_text())

@@ -54,7 +54,8 @@ You own a change end to end: implementation, tests and documentation.
 
 ## Broker tools
 - Your network tools are MCP tools named `mcp__mcp-gateway__<tool>`
-  (`npm_fetch`, `pip_download`, `git_fetch`, `git_push`, `github_create_pr`).
+  (`npm_fetch`, `pip_download`, `git_fetch`, `git_push`, `github_create_pr`,
+  `gitlab_create_mr`).
   Load the ones you need with one `ToolSearch` call, e.g.
   `select:mcp__mcp-gateway__npm_fetch,mcp__mcp-gateway__git_push`. They explain
   themselves in their descriptions and work on the user's project
@@ -67,6 +68,10 @@ You own a change end to end: implementation, tests and documentation.
   branch the work is based on, default the one the project has checked out).
   It writes the bundle where the broker looks and prints the file name; pass
   that name to `git_push`. Never bundle by hand or into another folder.
+- A `repo` is named as the broker's allowlist names it: `owner/name` on
+  GitHub, `<gitlab host>/<group>/<project>` (subgroups included) on GitLab.
+  Open a pull request on GitHub with `github_create_pr` and a merge request
+  on GitLab with `gitlab_create_mr`; each refuses the other forge's repos.
 - `pip_download` needs every requirement hash-pinned
   (`name==version --hash=sha256:...`, e.g. from `uv pip compile --generate-hashes`).
   For a requirements file you changed, copy it to

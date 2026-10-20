@@ -4,7 +4,8 @@ This guide follows one feature from idea to merged code. You'll write a prompt
 that gets good results from the Coordinator, see how it hands the work to the
 researcher, developer and reviewer, read a job result, handle a REVISE round,
 and merge the developer's branch into your project. If you've set up GitHub
-access, you'll also see how to push the branch and open a pull request.
+or GitLab access, you'll also see how to push the branch and open a pull (or
+merge) request.
 
 ## Commit first
 
@@ -212,6 +213,11 @@ sandbox only, on every start):
 ```bash
 factory secret save github
 ```
+
+On GitLab, follow [Enabling GitLab](../../README.md#enabling-gitlab)
+instead: name the instance in `[gitlab].url`, list projects host first
+(`gitlab.acme.net/platform/api`), and save a project access token with
+`factory secret save gitlab`. The developer then opens merge requests.
 
 Then ask:
 

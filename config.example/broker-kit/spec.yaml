@@ -20,3 +20,5 @@ permissions:
       - example.jfrog.io
       # Each host in [packages].npm_redirect_hosts
       - jfrog-prod-use1-shared-example.s3.amazonaws.com
+      # The host of [gitlab].url, if you use GitLab
+      # - gitlab.example.com

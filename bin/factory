@@ -104,8 +104,9 @@ ${B}Usage${N}
   factory role new <name> [like]
                              Add a role, copied from an existing one (default: reviewer)
   factory secret save <name> Store a credential once in this machine's keychain
-                             (github, jira, gemini, npm-registry, passdesk-license,
-                             approvals-webhook); every broker start then delivers it
+                             (github, gitlab, jira, gemini, npm-registry,
+                             passdesk-license, approvals-webhook); every broker start
+                             then delivers it
   factory secret forget <name>
                              Delete it from the keychain and from the running broker
   factory secret set <name>  Deliver a broker credential to the running broker only
@@ -457,6 +458,13 @@ any_jira_tool_granted() {
 
 # npm_private_registry_needs_token -> success if a role is granted npm_fetch and
 # the policy names a private npm registry (which needs the keychain credential).
+# gitlab_needs_token -> success if [gitlab].url is set in the local policy: the
+# git tools and gitlab_create_mr then need the gitlab credential (a file, as sbx
+# can't inject it).
+gitlab_needs_token() {
+  [ -n "$(policy_string gitlab url)" ]
+}
+
 npm_private_registry_needs_token() {
   local r granted=""
   for r in $(list_roles); do
@@ -526,6 +534,9 @@ onboarding_hints() {
   if npm_private_registry_needs_token && ! keychain_has factory-npm-registry; then
     warn "npm_fetch can't download private npm packages until a token is stored in the keychain (see README: Enabling a private npm registry)"
   fi
+  if gitlab_needs_token && ! keychain_has factory-gitlab; then
+    warn "[gitlab].url is set but no GitLab token is stored: run 'factory secret save gitlab' (see README: Enabling GitLab)"
+  fi
 }
 
 # --- chat --------------------------------------------------------------------------
@@ -576,6 +587,9 @@ cmd_status() {
   fi
   if npm_private_registry_needs_token && ! keychain_has factory-npm-registry; then
     warn "private npm registry keychain entry (\"factory-npm-registry\") not found"
+  fi
+  if gitlab_needs_token && ! keychain_has factory-gitlab; then
+    warn "GitLab keychain entry (\"factory-gitlab\") not found"
   fi
   approvals_status_line
 

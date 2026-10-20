@@ -144,7 +144,7 @@ def load_jobs(dispatch_audit: Path) -> tuple[list[dict], int]:
 
 def load_broker_calls(broker_audit: Path) -> tuple[list[dict], int]:
     records, malformed = read_jsonl(broker_audit)
-    # git_push/github_create_pr write an "intent" record (role + tool, no
+    # git_push, github_create_pr, gitlab_create_mr and github_create_issue write an "intent" record (role + tool, no
     # "decision") before the call runs, in addition to the normal
     # allow/deny/error record once it finishes; skip it so those two tools
     # aren't counted twice.
