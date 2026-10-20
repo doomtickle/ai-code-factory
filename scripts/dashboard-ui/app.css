@@ -86,9 +86,10 @@ button { font: inherit; color: inherit; }
 .seg .on { fill: var(--lcd-ink); } .seg .off { fill: var(--lcd-ghost); }
 
 /* Bays */
-/* The Coordinator runs the full height of the rack, so its replies have room; the
-   lanes and, under them, the rail (spend, events, gate) share the right column. */
-.bays { display: grid; grid-template-columns: minmax(340px, .9fr) minmax(0, 2.2fr); grid-template-rows: minmax(0, 1fr) auto;
+/* The Coordinator runs the full height of the rack and 35% of its width, so its
+   replies have room; the lanes and, under them, the rail (spend, events, gate)
+   share the right column. */
+.bays { display: grid; grid-template-columns: minmax(340px, 35fr) minmax(0, 65fr); grid-template-rows: minmax(0, 1fr) auto;
   grid-template-areas: "crt lanes" "crt rail"; gap: 6px; min-height: 0; }
 .crt-bay { grid-area: crt; }
 .lanes-bay { grid-area: lanes; }
