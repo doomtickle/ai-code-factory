@@ -262,9 +262,39 @@ button, input { font: inherit; color: inherit; }
   .bigkey, .svckey { transition: none; }
 }
 
+/* ---------- wide and short: two columns (the >1280px rail, about 390-560 x 190-210)
+   Left: the header row over the card LCD, which takes the full height and scrolls.
+   Right, 196px: the reason tape, DECLINE / APPROVE, the service row, a thin SETUP plate.
+   Height budget at 190px: 6 + 6 padding, 3 x 4 gaps, then the right column's
+   26 (tape; the header row shares it) + 36 (keys) + 28 (service) + 10 (plate) = 100,
+   + 12 gaps + 12 padding = 124, so 66px spare at 190, which goes between the decide keys and the
+   service row (decisions on top, service and plate at the bottom). The LCD gets 190 - 12 - 26 - 4 = 148px
+   (seven lines). Width: at 392px the left column is 392 - 20 - 8 - 196 = 168px. */
+@media (min-width: 380px) and (max-height: 260px) {
+  .deck .unit { display: grid; grid-template-columns: minmax(0, 1fr) 196px; column-gap: 8px; row-gap: 4px; padding: 6px 10px;
+    grid-template-rows: 26px auto minmax(0, 1fr) auto auto;
+    grid-template-areas: "head tape" "lcd keys" "lcd ." "lcd service" "lcd blank"; }
+  .deck-h { grid-area: head; min-height: 0; }
+  .deck-lcd { grid-area: lcd; min-height: 0; margin: 2px 2px 2px; }
+  .gate-row { grid-area: tape; }
+  .keys { grid-area: keys; gap: 8px; padding: 1px 0 4px; }
+  .bigkey { padding: 9px 4px 8px; letter-spacing: .1em; font-size: .86rem; gap: 6px; }
+  .service { grid-area: service; padding: 3px 5px; gap: 5px; justify-content: space-between; }
+  .service > .silk { display: none; }
+  .svckey { padding: 4px 6px 3px; letter-spacing: .07em; gap: 4px; }  /* RESTART + UPDATE + LOG: about 174 of 186px */
+  .blank { grid-area: blank; height: 10px; }
+  .blank .silk { font-size: .5rem; letter-spacing: .5em; line-height: 1; }
+  .blank::before, .blank::after { width: 7px; height: 7px; margin-top: -3.5px; }
+  /* The header row is narrow here: the title gives way to the selector */
+  .deck-h:has(.sel:not([hidden])) .deck-title { display: none; }
+}
+@media (min-width: 380px) and (max-width: 470px) and (max-height: 260px) {
+  .deck-title { display: none; }
+}
+
 /* ---------- small sizes */
 /* A short rail (or a narrow one): tighter keys, the title gives way to the selector */
-@media (max-height: 230px) {
+@media (max-height: 230px) and (max-width: 379px) {
   .unit { gap: 4px; padding-top: 6px; padding-bottom: 6px; }
   .bigkey { padding: 5px 8px 4px; }
   .keys { padding-bottom: 3px; }
