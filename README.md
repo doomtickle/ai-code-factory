@@ -213,6 +213,7 @@ ignores the layout: there is no Herdr to lay out.
 | `factory status` | Project, broker, dispatch bridge, login, roles (with their lanes), sandbox status, and (Passdesk Pro) pending approvals and the oldest one's age |
 | `factory logs <role>` | Follow a role's transcripts, all its lanes (`factory logs developer-lane2` for one lane); `factory logs broker` / `dispatch` for audit logs |
 | `factory watch` | Live terminal view of the lanes: one pane per active lane (a job running, or finished in the last ten minutes) with the job's status, elapsed time, model and cost in its title and the transcript rendered for reading (tool calls condensed, results dimmed, text wrapped); idle lanes take one status line each. A digit focuses one lane, `a` shows every lane, `p` shows a lane's latest review packet, `q` quits. `--once` prints one plain-text frame |
+| `factory dashboard [--no-open]` | The whole factory on one screen in your browser (see "Dashboard"): every lane's live transcript, status, model, cost and timer; today's spend by hour and role; an event printer of broker calls and finished jobs; and the writes held for approval. Local and read-only |
 | `factory packet [<job-id> \| latest \| <lane> \| --list]` | A job's review packet: the task, each branch's commits and diffstat against your checked-out branch, the `factory-test` modes it reported, the broker calls its role made, cost, and the role's report with its APPROVED / REVISE verdict. Written after every job; `--list` shows recent ones |
 | `factory roles` | List roles, their project access, lanes and network tools |
 | `factory role new <name> [like]` | Add a role (copied from `reviewer`, or the role you name) |
@@ -754,6 +755,36 @@ operations happen in private mirrors inside the broker VM, code moves in and out
 as git bundles, and npm install scripts are disabled. `.factory/` in the project
 is git-ignored automatically (`factory start` creates it, with
 `.factory/outgoing/`, and refuses to run if either is a symlink).
+
+## Dashboard
+
+`factory dashboard` serves a one-screen view of the factory, styled as a
+1984 rack-mounted control unit, and opens it in your browser (on WSL, the
+Windows default browser). It shows:
+
+- **Lanes:** one module per lane, with a status LED, the live tail of its
+  transcript on an LCD (tool calls, errors, branches and held writes in their
+  own colors), and its model, cost, context size and elapsed time. A digit key
+  (or a click) opens the lane's full transcript and its latest review packet.
+- **Write gate:** the pushes and pull requests Passdesk Pro is holding for you,
+  with the command to approve or decline each one.
+- **Spend:** today's cost per hour and per role, from `dispatch/audit.jsonl`.
+- **Event printer:** today's broker calls (allowed, denied, held, decided) and
+  finished jobs.
+- **Lamps:** whether the page can reach the dashboard, whether the dispatch
+  bridge is running, and whether anything is held.
+
+The Coordinator's own panel, and buttons for approving, restarting and
+updating, are coming in follow-ups (doomtickle/passdesk-ops#112); until then
+the panel tells you to use `factory chat` and `factory approvals`.
+
+It is local and read-only. It reads the state folder (lane transcripts, both
+audit logs, review packets, approval cards) and writes nothing, runs no
+command and makes no network connection; its fonts are vendored. It binds
+`127.0.0.1` on a free port (`--port` to choose one) and prints a link
+carrying a token for this run: the browser trades it for a cookie, and every
+request without it is refused. The link stops working when you press Ctrl-C.
+`--no-open` prints the link without opening a browser.
 
 ## Analytics
 

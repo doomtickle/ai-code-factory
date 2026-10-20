@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Factory FC-1984</title>
+<link rel="stylesheet" href="/app.css">
+<script src="/app.js" defer></script>
+</head>
+<body>
+<div class="rack">
+  <header class="plate head">
+    <div class="badge">
+      <span class="name">FACTORY</span>
+      <span class="model"><span class="stripes"></span><span class="silk">FC-1984 · Multi-agent control unit</span></span>
+    </div>
+    <span class="dymo" id="project"></span>
+    <div class="lamps">
+      <div class="lamp"><span class="led" id="lamp-link"></span><span class="silk">Link</span></div>
+      <div class="lamp"><span class="led" id="lamp-bridge"></span><span class="silk">Bridge</span></div>
+      <div class="lamp"><span class="led" id="lamp-gate"></span><span class="silk">Gate</span></div>
+    </div>
+    <div class="readouts">
+      <div class="readout"><span class="silk">Spend today</span><div class="lcd seg-box"><span class="unit">$</span><span id="ro-spend"></span></div></div>
+      <div class="readout"><span class="silk">Jobs</span><div class="lcd seg-box" id="ro-jobs"></div></div>
+      <div class="readout"><span class="silk">Running</span><div class="lcd seg-box" id="ro-run"></div></div>
+      <div class="readout"><span class="silk">Clock</span><div class="lcd seg-box" id="ro-clock"></div></div>
+    </div>
+  </header>
+
+  <div class="bays">
+    <section class="bay crt-bay plate" aria-labelledby="crt-h">
+      <div class="bay-h"><span class="silk" id="crt-h">Terminal 0 · Coordinator</span><span class="rule"></span><span class="led" id="lamp-term"></span></div>
+      <div class="crt-wrap">
+        <div class="crt">
+          <div class="crt-body" id="crt-body">
+            <p class="banner">TERMINAL 0 · NOT CONNECTED</p>
+            <p class="a">The Coordinator joins this screen in the next dashboard update.</p>
+            <p class="a">Until then, talk to it in any terminal:</p>
+            <p class="sub">factory chat</p>
+            <p class="a c-held">Approve held writes with:</p>
+            <p class="sub">factory approvals approve &lt;id&gt;</p>
+            <p class="a">Press 1–9 to open a lane's transcript and review packet here.</p>
+          </div>
+        </div>
+      </div>
+      <div class="crt-foot"><span class="silk">sbx run --name factory-coordinator</span><span class="silk">No shell · exec only</span></div>
+    </section>
+
+    <section class="bay lanes-bay" aria-labelledby="lanes-h">
+      <div class="bay-h plate lanes-h"><span class="silk" id="lanes-h">Lanes</span><span class="rule"></span><span class="silk">Press 1–9 to open a lane · Esc closes</span></div>
+      <div class="lanes" id="lanes"></div>
+    </section>
+
+    <aside class="rail">
+      <section class="plate mod" aria-labelledby="gate-h">
+        <div class="mod-h"><span class="silk" id="gate-h">Write gate</span><span class="right"><span class="led" id="gate-led"></span><span class="silk" id="gate-state">Clear</span></span></div>
+        <div class="lcd gate-lcd" id="gate-lcd" aria-live="polite"></div>
+        <p class="silk gate-hint" id="gate-hint"></p>
+      </section>
+
+      <section class="plate mod" aria-labelledby="spend-h">
+        <div class="mod-h"><span class="silk" id="spend-h">Spend / hour</span><span class="right silk" id="spend-sub"></span></div>
+        <div class="spend-row"><div class="bargraph" id="bargraph" role="img" aria-label="Spend per hour today"></div></div>
+        <div class="roles" id="roles"></div>
+      </section>
+
+      <section class="plate mod printer" aria-labelledby="print-h">
+        <div class="mod-h"><span class="silk" id="print-h">Event printer</span><span class="right silk" id="print-sub"></span></div>
+        <div class="paper-well"><div class="paper" id="paper"></div></div>
+        <div class="head-bar"><i></i></div>
+      </section>
+    </aside>
+  </div>
+</div>
+
+<div class="scrim" id="scrim" hidden>
+  <div class="monitor plate" role="dialog" aria-modal="true" aria-labelledby="mon-title">
+    <div class="mon-h">
+      <span class="led" id="mon-led"></span>
+      <span class="title" id="mon-title"></span>
+      <span class="state-tag" id="mon-state"></span>
+      <span class="right">
+        <button class="tabkey" type="button" data-tab="transcript" aria-pressed="true">Transcript</button>
+        <button class="tabkey" type="button" data-tab="packet" aria-pressed="false">Packet</button>
+        <button class="tabkey" type="button" id="mon-close">Esc</button>
+      </span>
+    </div>
+    <div class="crt-wrap"><div class="crt green"><div class="crt-body" id="mon-body"></div></div></div>
+  </div>
+</div>
+</body>
+</html>
