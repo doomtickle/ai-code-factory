@@ -800,10 +800,15 @@ your browser. It shows:
   queries in that output aren't typed into the Coordinator a second time.
   When the session ends the set powers off; POWER ON starts it again. Ctrl-C
   on `factory dashboard` hangs up on it, like closing a terminal.
-- **Lanes:** one module per lane, with a status LED, the live tail of its
-  transcript on an LCD (tool calls, errors, branches and held writes in their
-  own colors), and its model, cost, context size and elapsed time. A digit key
-  (or a click) opens the lane's full transcript and its latest review packet.
+- **Lanes:** one module per active lane (a job running, or finished in the
+  last ten minutes, as in `factory watch`), sized to share the bay, with a
+  status LED, the live tail of its transcript on an LCD (tool calls, errors,
+  branches and held writes in their own colors), and its model, cost, context
+  size and elapsed time. Idle lanes are chips in a strip under the modules,
+  and with nothing running the bay shows STANDBY. A lane powers on into the
+  bay and down into the strip (no motion with the system's reduced-motion
+  setting), and keeps its number in both forms: a digit key (or a click)
+  opens the lane's full transcript and its latest review packet.
 - **Write gate:** the pushes and pull requests Passdesk Pro is holding for you.
   A held write names the role, not the lane, so when two lanes of one role
   are running both show as held. Under its display is the **control unit**:

@@ -127,9 +127,9 @@ The dashboard is one screen, styled as a 1984 control unit:
 
 - **Terminal 0** (left, full height): the Coordinator. Press POWER ON, then
   talk to it here. Every browser tab you open shows the same session.
-- **Lanes** (right): one module per lane of every role, with its live
-  transcript. Press a lane's number (or click it) for the full transcript and
-  its latest review packet.
+- **Lanes** (right): a module for every lane with a job, with its live
+  transcript; idle lanes wait as chips in a strip under them. Press a lane's
+  number (or click it) for the full transcript and its latest review packet.
 - **Write gate** (bottom right): the pushes and pull requests waiting for you (with
   Passdesk Pro), and under it the **control unit**: APPROVE and DECLINE for
   the selected one, and RESTART and UPDATE for the factory, which show what
