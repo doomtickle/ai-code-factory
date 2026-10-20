@@ -135,7 +135,7 @@
       <li><span>A <strong>Docker account</strong>, for the one-time <code>sbx login</code>.</span></li>
       <li><span>A <strong>Claude Pro or Max</strong> subscription. The agents sign in with it.</span></li>
       <li><span><strong>Homebrew</strong>, for <code>jq</code>. Everything else ships with macOS or the Xcode tools.</span></li>
-      <li><span>Access to the private repo <code>doomtickle/ai-code-factory</code> on GitHub.</span></li>
+      <li><span>Access to <code>doomtickle/ai-code-factory</code> on GitHub (the repo is public).</span></li>
     </ul>
   </section>
 
@@ -155,7 +155,7 @@ brew install jq</pre><button class="copy" type="button">Copy</button></div>
       <li class="step">
         <h3>Give the Mac an SSH key for GitHub</h3>
         <div class="step-body">
-          <p>The repo is private, so cloning needs a key that GitHub knows. If <code>ssh -T git@github.com</code> already greets you by name, skip this step.</p>
+          <p>Cloning over SSH needs a key that GitHub knows. If <code>ssh -T git@github.com</code> already greets you by name, skip this step.</p>
           <div class="cmd"><pre>ssh-keygen -t ed25519 -C "your-email@example.com"
 pbcopy &lt; ~/.ssh/id_ed25519.pub</pre><button class="copy" type="button">Copy</button></div>
           <p>Paste the copied key at <strong>github.com → Settings → SSH and GPG keys → New SSH key</strong>, then check it:</p>
