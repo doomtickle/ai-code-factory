@@ -1,0 +1,27 @@
+/* Terminal 0: the Coordinator's live terminal, framed into the dashboard's
+   matrix tube. The page is transparent so the tube's glass, scanlines,
+   vignette and front-panel knobs (all on the parent page) still apply. */
+@font-face { font-family: "VT323"; font-weight: 400; font-display: block; src: url("/fonts/vt323.woff2") format("woff2"); }
+:root { color-scheme: dark; --matrix: #00ff41; --matrix-glow: rgba(0, 255, 65, .6); --matrix-dim: #0b8a2e; --matrix-pale: #b8ffca; }
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { height: 100%; margin: 0; background: transparent; overflow: hidden; }
+body { color: var(--matrix); font-family: "VT323", ui-monospace, Menlo, Consolas, monospace; }
+#term { position: absolute; inset: 0; padding: 12px 8px 8px 16px; }
+#term .xterm { height: 100%; }
+/* VT323 ships ff/fi/fl ligatures, and the browser's ligature and kerning passes nudge
+   glyphs off xterm's fixed grid (the gap after every "f"). A terminal wants neither. */
+#term .xterm, #term .xterm * { font-variant-ligatures: none !important; font-feature-settings: "liga" 0, "clig" 0, "calt" 0, "kern" 0 !important; font-kerning: none !important; }
+#term .xterm-viewport { background: transparent !important; scrollbar-width: thin; scrollbar-color: var(--matrix-dim) transparent; }
+/* Phosphor: a soft glow. The tube's texture on the glyphs (convergence fringe, beam
+   softness, smear) is the parent's CRT knob, drawn on this frame from out there. */
+/* No glow in here: the dashboard's CRT dial draws it on this frame from outside, so 0 is flat. */
+.off { position: absolute; inset: 0; padding: 16px 20px; font-size: 1.6rem; line-height: 1.15; display: flex; flex-direction: column; align-items: flex-start; gap: 10px;
+  background: rgba(0, 5, 0, .82); text-shadow: 0 0 3px var(--matrix-glow); }
+.off p { margin: 0; white-space: pre-wrap; max-width: 46em; }
+.off .banner { border: 1px solid var(--matrix); padding: 6px 10px; box-shadow: 0 0 8px var(--matrix-glow), inset 0 0 8px var(--matrix-glow); }
+.off .note { color: var(--matrix-pale); }
+.power { font: 700 1rem/1 "VT323", ui-monospace, monospace; font-size: 1.5rem; text-transform: uppercase; letter-spacing: .12em; cursor: pointer;
+  color: #000500; background: var(--matrix); border: 0; border-radius: 3px; padding: 6px 14px 4px; box-shadow: 0 0 10px var(--matrix-glow); }
+.power:focus-visible { outline: 2px solid var(--matrix-pale); outline-offset: 3px; }
+.power:disabled { opacity: .5; cursor: default; }

@@ -67,15 +67,16 @@ ${B}Usage${N}
                              apply the security baseline, put 'factory' on your PATH
   factory update [--yes]     Pull the latest factory, rebuild, recreate whatever
                              sandboxes the changes need, and restart
-  factory start [dir] [--no-ui] [--layout watch|tabs]
+  factory start [dir] [--no-ui] [--layout watch|tabs|web]
                              Start the factory for a project (default: this folder)
                              and open it in Herdr; --no-ui skips Herdr and prints
                              how to reach the Coordinator and follow the roles.
-                             --layout (or FACTORY_LAYOUT) picks the Herdr layout:
+                             --layout (or FACTORY_LAYOUT) picks the layout:
                              "watch" (default) adds a 'factory watch' pane beside
                              the Coordinator; "tabs" keeps one tab per role,
-                             tailing its transcript. Remembered for next time in
-                             $FACTORY_CONFIG/layout
+                             tailing its transcript; "web" skips Herdr and opens
+                             the dashboard, with the Coordinator's terminal in it.
+                             Remembered for next time in $FACTORY_CONFIG/layout
   factory chat               Talk to the Coordinator in this terminal
   factory status             What is running, and for which project
   factory stop               Stop the agents, broker and dispatch bridge
@@ -84,9 +85,10 @@ ${B}Usage${N}
   factory watch              Live view of the lanes: a pane per active lane, idle lanes as
                              one line each, tool calls condensed, status and cost in titles
   factory dashboard [--no-open] [--port N]
-                             The whole factory on one screen in your browser: lanes,
-                             spend, broker calls, held writes (local, read-only).
-                             Prints a link with this run's token; 'gui' also works
+                             The whole factory on one screen in your browser: the
+                             Coordinator's terminal, lanes, spend, broker calls,
+                             held writes (local). Prints a link with this run's
+                             token; 'gui' also works
   factory packet [id|lane]   A job's review packet: task, branch commits and diffstat,
                              tests, broker calls, cost, report (default: the latest;
                              --list for recent jobs)
@@ -319,17 +321,21 @@ cmd_start() {
   # with `sbx run` in any terminal and follow roles with `factory logs`.
   # --layout (or FACTORY_LAYOUT): "watch" (default) adds a `factory watch`
   # pane beside the Coordinator and skips the per-role transcript tabs;
-  # "tabs" keeps one tab per role. --no-ui ignores it (no Herdr at all).
-  local target="" project current no_ui="${FACTORY_NO_UI:-}" layout_flag="" layout
+  # "tabs" keeps one tab per role; "web" skips Herdr and ends by running
+  # `factory dashboard`, the Coordinator's terminal. --no-ui ignores it.
+  # --no-dashboard (internal, from cmd_update): with "web", finish instead of
+  # running the dashboard in the foreground, so `factory update --yes` returns.
+  local target="" project current no_ui="${FACTORY_NO_UI:-}" layout_flag="" layout no_dashboard=""
   while [ $# -gt 0 ]; do
     case "$1" in
       --no-ui) no_ui=1 ;;
+      --no-dashboard) no_dashboard=1 ;;
       --layout)
-        [ $# -ge 2 ] || die "usage: factory start [dir] [--no-ui] [--layout watch|tabs]"
+        [ $# -ge 2 ] || die "usage: factory start [dir] [--no-ui] [--layout watch|tabs|web]"
         layout_flag="$2"
         shift ;;
-      -*) die "usage: factory start [dir] [--no-ui] [--layout watch|tabs]" ;;
-      *) [ -z "$target" ] || die "usage: factory start [dir] [--no-ui] [--layout watch|tabs]"; target="$1" ;;
+      -*) die "usage: factory start [dir] [--no-ui] [--layout watch|tabs|web]" ;;
+      *) [ -z "$target" ] || die "usage: factory start [dir] [--no-ui] [--layout watch|tabs|web]"; target="$1" ;;
     esac
     shift
   done
@@ -338,7 +344,7 @@ cmd_start() {
   [ -d "$target" ] || die "no such directory: $target"
   project="$(cd "$target" && pwd -P)"
   require_sbx
-  [ "$no_ui" = 1 ] || require_herdr
+  [ "$no_ui" = 1 ] || [ "$layout" = web ] || require_herdr
   setup_done || die "the factory is not set up yet: run 'factory setup' first"
   case "$project" in
     /mnt/[a-z]/*) is_wsl && warn "$project is on a Windows drive: sandboxes will be slow and file permissions unreliable. Clone it into the Linux filesystem (e.g. ~/code) instead." ;;
@@ -363,6 +369,18 @@ cmd_start() {
     say "  Watch every lane:         ${B}factory watch${N}"
     say "  Follow one role's log:    ${B}factory logs <role>${N}  (roles: $(list_roles | tr '\n' ' '))"
     say "  Stop everything:          ${B}factory stop${N}"
+  elif [ "$layout" = web ]; then
+    FACTORY_LAYOUT=web "$SCRIPTS/02-launch-factory.sh" "$project"
+    onboarding_hints
+    say ""
+    if [ -n "$no_dashboard" ]; then
+      say "Factory running. Run ${B}factory dashboard${N} to open it."
+      return
+    fi
+    say "Factory running. Opening the dashboard: talk to the Coordinator on its screen."
+    say "Ctrl-C closes the dashboard (and the Coordinator's terminal); the factory keeps"
+    say "running. Reopen it with ${B}factory dashboard${N}; stop everything with ${B}factory stop${N}."
+    cmd_dashboard
   elif [ "${HERDR_ENV:-}" = "1" ]; then
     FACTORY_LAYOUT="$layout" "$SCRIPTS/02-launch-factory.sh" "$project"
     onboarding_hints
@@ -507,6 +525,9 @@ cmd_chat() {
   require_sbx
   sandbox_exists "$COORDINATOR_SANDBOX" \
     || die "the coordinator sandbox doesn't exist yet; run 'factory start' first"
+  # A second 'sbx run' would start a second Coordinator in the same VM.
+  ! coordinator_attached \
+    || die "the Coordinator is already open elsewhere (the dashboard, a Herdr pane or another 'factory chat'); close it there first"
   exec sbx run --name "$COORDINATOR_SANDBOX" "$@"
 }
 
@@ -1069,7 +1090,9 @@ cmd_update() {
   fi
   project="$(bound_project)"
   if [ -n "$project" ] && [ -d "$project" ]; then
-    cmd_start "$project"
+    # Never end an update in the foreground dashboard (layout "web"): scripts
+    # run `factory update --yes` and expect it to return.
+    cmd_start "$project" --no-dashboard
   else
     say ""
     say "${G}Updated.${N} Next: cd into a project and run ${B}factory start${N}"
@@ -1088,14 +1111,16 @@ cmd_watch() {
 
 # --- dashboard ---------------------------------------------------------------------
 # cmd_dashboard -> scripts/dashboard.py: serves the FC-1984 page on 127.0.0.1 with a
-# per-run token, read from the state folder (host Python, stdlib, read-only). The
-# only process it starts is the browser opener, once (none with --no-open). Runs
-# in the foreground; Ctrl-C stops it.
+# per-run token, read from the state folder (host Python, stdlib), plus Terminal 0:
+# the Coordinator's terminal on a second port, running the fixed argv
+# 'sbx run --name $COORDINATOR_SANDBOX' (no shell) when the page presses POWER ON, unless the
+# Coordinator is open elsewhere. Otherwise it starts only the browser opener, once
+# (none with --no-open). Runs in the foreground; Ctrl-C stops it and hangs up.
 cmd_dashboard() {
   local python
   python="$(resolve_python)"
   "$python" "$SCRIPTS/dashboard.py" --state "$FACTORY_STATE" --roles "$ROOT/roles" \
-    --project "$(basename "$(bound_project)")" "$@"
+    --project "$(basename "$(bound_project)")" --coordinator "$COORDINATOR_SANDBOX" "$@"
 }
 
 # --- approvals ---------------------------------------------------------------------

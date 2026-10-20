@@ -35,13 +35,8 @@
         <div class="crt matrix" id="coord-crt">
           <div class="crt-roll" id="crt-roll">
           <div class="crt-body" id="crt-body">
-            <p class="banner">TERMINAL 0 · NOT CONNECTED</p>
-            <p class="a">The Coordinator joins this screen in the next dashboard update.</p>
-            <p class="a">Until then, talk to it in any terminal:</p>
-            <p class="sub">factory chat</p>
-            <p class="a c-held">Approve held writes with:</p>
-            <p class="sub">factory approvals approve &lt;id&gt;</p>
-            <p class="a">Press 1–9 to open a lane's transcript and review packet here.</p>
+            <p class="banner" id="crt-banner">TERMINAL 0 · WARMING UP</p>
+            <p class="a" id="crt-note">Waiting for the dashboard…</p>
           </div>
           <div class="vblank" aria-hidden="true"></div>
           <div class="crt-body crt-ghost" id="crt-ghost" aria-hidden="true"></div>
@@ -54,6 +49,7 @@
           <div class="knob" data-knob="bright" role="slider" tabindex="0" aria-label="Brightness" aria-valuemin="-100" aria-valuemax="100" aria-valuenow="0"><span class="scale"><i></i></span><span class="silk">Bright</span></div>
           <div class="knob" data-knob="contrast" role="slider" tabindex="0" aria-label="Contrast" aria-valuemin="-100" aria-valuemax="100" aria-valuenow="0"><span class="scale"><i></i></span><span class="silk">Contrast</span></div>
           <div class="knob" data-knob="vhold" role="slider" tabindex="0" aria-label="Vertical hold" aria-valuemin="-100" aria-valuemax="100" aria-valuenow="0"><span class="scale"><i></i></span><span class="silk">V-Hold</span></div>
+          <div class="knob" data-knob="crt" role="slider" tabindex="0" aria-label="CRT effect, 0 flat to 10 full tube" aria-valuemin="0" aria-valuemax="10" aria-valuenow="3"><span class="scale"><i></i></span><span class="silk">CRT</span></div>
         </div>
         <span class="silk">No shell · exec only</span>
       </div>

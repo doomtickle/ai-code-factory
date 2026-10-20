@@ -11,6 +11,10 @@ set -euo pipefail
 # 2. When it exists, "factory chat" execs "sbx run --name
 #    factory-coordinator", forwarding any extra arguments.
 # 3. "factory coordinator" is accepted as an alias.
+# 4. When the Coordinator is already open elsewhere (another process runs
+#    `sbx run --name factory-coordinator`: a Herdr pane, the dashboard's
+#    Terminal 0, another `factory chat`), it refuses rather than start a
+#    second Coordinator in the same VM.
 #
 # Drives a fixture checkout (bin/factory + scripts/lib, with a stub
 # broker/tools.txt so the roles.sh submodule check doesn't need the real
@@ -54,13 +58,21 @@ case "$1" in
 esac
 FAKE_SBX
 chmod +x "$bin/sbx"
+# fake ps: prints $FAKE_PS_OUT, so the host's real processes (say, the
+# owner's own Coordinator pane) never decide a test.
+cat > "$bin/ps" <<'FAKE_PS'
+#!/bin/sh
+cat "$FAKE_PS_OUT" 2>/dev/null || true
+FAKE_PS
+chmod +x "$bin/ps"
 
 export PATH="$bin:$PATH"
 export FAKE_SBX_ARGS="$tmp/sbx-args.log"
 export FAKE_SBX_LIST="$tmp/sbx-list"
+export FAKE_PS_OUT="$tmp/ps-out"
 export XDG_STATE_HOME="$tmp/state"
 
-reset_run() { : > "$FAKE_SBX_ARGS"; : > "$FAKE_SBX_LIST"; }
+reset_run() { : > "$FAKE_SBX_ARGS"; : > "$FAKE_SBX_LIST"; : > "$FAKE_PS_OUT"; }
 # run_fixture ARGS... -> the fixture's bin/factory, combined output in $F_OUT,
 # exit status in $F_RC.
 run_fixture() {
@@ -109,6 +121,18 @@ run_fixture coordinator
   || bad "'factory coordinator' alias exits 0 (got $F_RC: $F_OUT)"
 assert_contains "'factory coordinator' alias calls sbx run --name factory-coordinator" \
   "$(cat "$FAKE_SBX_ARGS")" "run --name factory-coordinator"
+
+# ===========================================================================
+# Part 4: the Coordinator is already open elsewhere -> refuses, no sbx run.
+# ===========================================================================
+reset_run
+echo "factory-coordinator" > "$FAKE_SBX_LIST"
+printf '%s\n' "/usr/bin/sbx daemon start" "sbx run --name factory-coordinator" > "$FAKE_PS_OUT"
+run_fixture chat
+[ "$F_RC" -ne 0 ] && ok "open elsewhere: factory chat exits non-zero" \
+  || bad "open elsewhere: factory chat exits non-zero (got 0)"
+assert_contains "open elsewhere: says so" "$F_OUT" "already open elsewhere"
+assert_not_contains "open elsewhere: sbx run was never invoked" "$(cat "$FAKE_SBX_ARGS")" "run "
 
 echo "---"
 echo "$pass passed, $fail failed"

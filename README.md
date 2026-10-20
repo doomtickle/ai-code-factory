@@ -156,10 +156,10 @@ cd ~/code/my-project
 factory start
 ```
 
-`factory start` runs the whole factory for that folder and opens it in Herdr,
-in one of two layouts (see "Layouts" below): by default, one **coordinator**
-tab with the Coordinator (top-left), a host shell (bottom-left) and a live
-`factory watch` pane (right).
+`factory start` runs the whole factory for that folder and opens it in Herdr
+(see "Layouts" below for the others): by default, one **coordinator** tab with
+the Coordinator (top-left), a host shell (bottom-left) and a live `factory
+watch` pane (right). `--layout web` opens it in your browser instead.
 
 The folder must be a git repository, or a folder whose subfolders are git
 repositories: the developer works in clones of them, from what is committed
@@ -184,7 +184,7 @@ every lane with `factory watch` in another.
 
 ### Layouts
 
-`factory start --layout watch|tabs` picks how the coordinator tab looks
+`factory start --layout watch|tabs|web` picks how the factory opens
 (`FACTORY_LAYOUT` works the same way as an environment variable; the flag
 wins over it). Either way sticks for next time, without retyping it: it is
 saved to `~/.config/ai-code-factory/layout`, read by every later `factory
@@ -196,10 +196,23 @@ and nothing was ever saved, and you get `watch`, the default.
   tabs.
 - **tabs**: the Coordinator (top) and a host shell (bottom), plus one tab per
   role showing its live transcripts (all its lanes).
+- **web**: no Herdr. `factory start` starts everything, then runs `factory
+  dashboard` in the foreground: the browser page shows every lane, and its
+  left-hand screen is the Coordinator's terminal (see "Dashboard"). Ctrl-C
+  closes the dashboard and the Coordinator's terminal; the factory keeps
+  running, and `factory dashboard` reopens it. `factory update` restarts the
+  factory but doesn't open the dashboard; run `factory dashboard` after it.
 
 Switching layouts and running `factory start` again cleans up what the other
 layout added (the `factory watch` pane, or the per-role tabs). `--no-ui`
-ignores the layout: there is no Herdr to lay out.
+ignores the layout: there is no Herdr to lay out, and no dashboard.
+
+The Coordinator has one terminal at a time. A second `sbx run --name
+factory-coordinator` would start a second Coordinator in the same sandbox, so
+`factory chat` refuses while it is open elsewhere, `factory start` leaves the
+Herdr pane empty (with a note) while the dashboard holds it, and the dashboard
+shows "open elsewhere" while Herdr or `factory chat` does. Close it in one
+place to open it in another.
 
 ## Commands
 
@@ -207,13 +220,13 @@ ignores the layout: there is no Herdr to lay out.
 |---|---|
 | `factory doctor` | Check the machine is ready; prints the fix for each problem (setup runs it first). Once the broker exists, it also runs the gateway's own doctor inside it: policy, tokens and grants, audit log, credentials, a live probe, GitHub access per repo, the policy's hosts against the broker kit, and (Passdesk Pro) a warning for any approval that expired with no decision |
 | `factory setup` | One-time setup (safe to re-run) |
-| `factory update [--yes]` | After pulling changes or editing kits, images or policy: pulls the latest factory, rebuilds, recreates only the sandboxes the changes affect (it lists them and what each loses, then asks), and restarts |
-| `factory start [dir] [--no-ui] [--layout watch\|tabs]` | Start the factory for a project (default: current folder) and open Herdr. `--no-ui` (or `FACTORY_NO_UI=1`) skips Herdr: talk to the Coordinator with `factory chat` in any terminal and follow roles with `factory logs <role>`. `--layout` (or `FACTORY_LAYOUT`) picks the coordinator tab's layout and is remembered for next time (see "Layouts") |
-| `factory chat` | Talk to the Coordinator in this terminal (wraps `sbx run --name factory-coordinator`); `factory start` creates the sandbox first |
+| `factory update [--yes]` | After pulling changes or editing kits, images or policy: pulls the latest factory, rebuilds, recreates only the sandboxes the changes affect (it lists them and what each loses, then asks), and restarts. With the `web` layout it doesn't open the dashboard (so `factory update --yes` returns): run `factory dashboard` afterwards |
+| `factory start [dir] [--no-ui] [--layout watch\|tabs\|web]` | Start the factory for a project (default: current folder) and open Herdr. `--no-ui` (or `FACTORY_NO_UI=1`) skips Herdr: talk to the Coordinator with `factory chat` in any terminal and follow roles with `factory logs <role>`. `--layout` (or `FACTORY_LAYOUT`) picks the layout, `web` being the dashboard instead of Herdr, and is remembered for next time (see "Layouts") |
+| `factory chat` | Talk to the Coordinator in this terminal (wraps `sbx run --name factory-coordinator`); `factory start` creates the sandbox first. Refuses while the Coordinator is open elsewhere (Herdr, the dashboard) |
 | `factory status` | Project, broker, dispatch bridge, login, roles (with their lanes), sandbox status, and (Passdesk Pro) pending approvals and the oldest one's age |
 | `factory logs <role>` | Follow a role's transcripts, all its lanes (`factory logs developer-lane2` for one lane); `factory logs broker` / `dispatch` for audit logs |
 | `factory watch` | Live terminal view of the lanes: one pane per active lane (a job running, or finished in the last ten minutes) with the job's status, elapsed time, model and cost in its title and the transcript rendered for reading (tool calls condensed, results dimmed, text wrapped); idle lanes take one status line each. A digit focuses one lane, `a` shows every lane, `p` shows a lane's latest review packet, `q` quits. `--once` prints one plain-text frame |
-| `factory dashboard [--no-open] [--port N]` | The whole factory on one screen in your browser (see "Dashboard"): every lane's live transcript, status, model, cost and timer; today's spend by hour and role; an event printer of broker calls and finished jobs; and the writes held for approval. Local and read-only. `factory gui` is the same command |
+| `factory dashboard [--no-open] [--port N]` | The whole factory on one screen in your browser (see "Dashboard"): the Coordinator's live terminal; every lane's live transcript, status, model, cost and timer; today's spend by hour and role; an event printer of broker calls and finished jobs; and the writes held for approval. Local. `factory gui` is the same command |
 | `factory packet [<job-id> \| latest \| <lane> \| --list]` | A job's review packet: the task, each branch's commits and diffstat against your checked-out branch, the `factory-test` modes it reported, the broker calls its role made, cost, and the role's report with its APPROVED / REVISE verdict. Written after every job; `--list` shows recent ones |
 | `factory roles` | List roles, their project access, lanes and network tools |
 | `factory role new <name> [like]` | Add a role (copied from `reviewer`, or the role you name) |
@@ -762,6 +775,16 @@ is git-ignored automatically (`factory start` creates it, with
 factory, styled as a 1984 rack-mounted control unit, and tries to open it in
 your browser. It shows:
 
+- **Terminal 0:** the Coordinator itself, live, on the left-hand screen. Type
+  to it as you would in Herdr; every tab you open shows the same session (the
+  last tab you resize or focus sets its size). Opening the page starts
+  nothing: press POWER ON to attach. If the Coordinator is already open in
+  Herdr or `factory chat`, the screen says so instead: close it there, then
+  press POWER ON again. A tab opened later replays the recent output, with
+  its keyboard muted while it does, so the terminal's answers to old
+  queries in that output aren't typed into the Coordinator a second time.
+  When the session ends the set powers off; POWER ON starts it again. Ctrl-C
+  on `factory dashboard` hangs up on it, like closing a terminal.
 - **Lanes:** one module per lane, with a status LED, the live tail of its
   transcript on an LCD (tool calls, errors, branches and held writes in their
   own colors), and its model, cost, context size and elapsed time. A digit key
@@ -774,23 +797,41 @@ your browser. It shows:
 - **Event printer:** today's broker calls (allowed, denied, held, decided) and
   finished jobs.
 - **Front-panel knobs** under the Coordinator's screen: BRIGHT and CONTRAST
-  adjust it, and V-HOLD, turned off centre, makes the picture roll like an old
-  set (drag, scroll or use the arrow keys; double-click resets; remembered in
-  your browser).
+  adjust it; V-HOLD, turned off centre, makes the picture roll like an old
+  set; and CRT goes from 0, a flat screen, to 10, a full tube (scanlines,
+  aperture grille, colour fringe, beam softness, phosphor glow, rolling band
+  and flicker); it starts at 3. All four apply to the live terminal too (drag,
+  scroll or use the arrow keys; double-click resets; remembered in your
+  browser).
 - **Lamps:** whether the page can reach the dashboard, whether the dispatch
   bridge is running, and whether anything is held.
 
-The Coordinator's own panel, and buttons for approving, restarting and
-updating, are coming in follow-ups (doomtickle/passdesk-ops#112); until then
-the panel tells you to use `factory chat` and `factory approvals`.
+Buttons for approving, restarting and updating are coming in a follow-up
+(doomtickle/passdesk-ops#112); until then use `factory approvals`.
 
-It is local and read-only. While it serves, it reads the state folder (lane
-transcripts, both audit logs, review packets, approval cards) and writes
-nothing, runs no command and makes no network connection; its fonts are
-vendored. It binds `127.0.0.1` on a free port (`--port` to choose one) and
-prints a link carrying a token for this run: the browser trades it for a
-cookie, and every request without it is refused. The link stops working when
-you press Ctrl-C.
+It is local. Apart from the terminal, it only reads: the state folder (lane
+transcripts, both audit logs, review packets, approval cards); it writes
+nothing there and makes no network connection; its fonts and xterm.js are
+vendored (`scripts/dashboard-ui/fonts/`, `scripts/dashboard-ui/vendor/`). It
+binds `127.0.0.1` on a free port (`--port` to choose one) and prints a link
+carrying a token for this run: the browser trades it for a cookie, and every
+request without it is refused. The link stops working when you press Ctrl-C.
+
+The terminal runs exactly one command, `sbx run --name factory-coordinator`,
+in a pseudo-terminal (never a shell, and never a shell when it exits); before
+starting it, it checks `sbx ls -q` and the process list (`ps`) to make sure
+the sandbox exists and no one else has it open. It is served from a second
+port on `127.0.0.1`, a separate browser origin the main page frames. The
+terminal's page is served only into that frame (the browser's
+`Sec-Fetch-Dest: iframe` with `Sec-Fetch-Site` same-site or same-origin), not
+to a tab another local page opens, so use a current browser. Its WebSocket
+accepts a connection only with that port's `Host` and `Origin`, this run's
+cookie, and a terminal key that only the terminal's own page holds (the main
+page, which shows agent-written text, can't read it). At most 8 tabs attach
+at once; the dashboard pings each one every 30 seconds and drops one that
+stops answering for a minute. Anyone who
+can type into the terminal can do what the Coordinator can, as in Herdr: keep
+the link to yourself.
 
 At start-up it starts one thing, the browser opener, and always prints the
 link too, in case no window appears. On WSL it asks Windows to open the link
@@ -801,8 +842,8 @@ is visible for a moment in the opener's command line and stays in your
 browser history, which is fine on a machine only you use: it dies with the
 command. One limitation: browsers don't separate cookies by port, so another
 web server on `127.0.0.1` that you open in the same browser also receives the
-dashboard's cookie. Harmless while the dashboard only shows; the follow-ups
-that add buttons will also require the token in a request header.
+dashboard's cookie. That alone opens nothing that acts: the terminal also
+needs its key, sent in a request header, and checks `Origin`.
 
 ## Analytics
 

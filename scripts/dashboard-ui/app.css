@@ -110,11 +110,10 @@ button { font: inherit; color: inherit; }
   position: relative; flex: 1; min-height: 0; min-width: 0; border-radius: 22px / 18px; overflow: hidden;
   background: radial-gradient(ellipse at 50% 40%, color-mix(in srgb, var(--crt-bg) 70%, var(--c) 6%), var(--crt-bg) 70%);
   color: var(--c); font-family: var(--f-crt); font-size: 1.28rem; line-height: 1.15;
-  /* The tube, kept small so text stays crisp: a sub-pixel red/blue convergence fringe
-     (--crt-fx), the phosphor glow, and a faint wide bloom. Text itself is never warped. */
-  --crt-fx: -.85px 0 rgba(255, 40, 90, .36), .85px 0 rgba(40, 150, 255, .36);
-  --bloom: color-mix(in srgb, var(--c) 24%, transparent);
-  text-shadow: var(--crt-fx), 0 0 3px var(--glow), 0 0 12px var(--bloom);
+  /* The CRT dial (app.js) sets every tube effect on the text: --crt-fx is the red/blue
+     convergence fringe plus the phosphor glow as a text-shadow; 0 is none. */
+  --crt-fx: 0 0 0 transparent;
+  text-shadow: var(--crt-fx);
   box-shadow: inset 0 0 70px rgba(0,0,0,.9), inset 0 0 14px rgba(0,0,0,.95), 0 0 0 2px #050505, 0 0 24px color-mix(in srgb, var(--c) 10%, transparent);
   display: flex; flex-direction: column;
   --vig-edge: .48; --vig: .52; --vig-rim: .55; }
@@ -129,24 +128,28 @@ button { font: inherit; color: inherit; }
 .crt.matrix .banner { border-color: var(--matrix); box-shadow: 0 0 8px var(--matrix-glow), inset 0 0 8px var(--matrix-glow); }
 /* Glass over the text, never on it: a "pillow" falloff that darkens toward the
    rounded corners, a curved specular highlight and a bright rim at the top edge sell
-   the bulge of the tube face; scanlines on top. Static, so the 1500-line monitor
+   the bulge of the tube face; scanlines (and, turned up, an aperture grille) on top,
+   their strength set by the CRT knob (--scan, --scan-w, --mask). Static, so the 1500-line monitor
    scrolls under it without repainting it. */
 .crt::after { content: ""; position: absolute; inset: 0; pointer-events: none; border-radius: inherit;
   background:
     radial-gradient(130% 75% at 30% -12%, rgba(255,255,255,.1), rgba(255,255,255,.025) 45%, transparent 65%),
     radial-gradient(40% 18% at 82% 92%, rgba(255,255,255,.035), transparent 70%),
-    repeating-linear-gradient(180deg, rgba(0,0,0,.22) 0 1px, transparent 1px 3px),
+    repeating-linear-gradient(180deg, rgba(0,0,0,var(--scan, .22)) 0 var(--scan-w, 1px), transparent var(--scan-w, 1px) 3px),
+    repeating-linear-gradient(90deg, rgba(0,0,0,var(--mask, 0)) 0 1px, transparent 1px 3px),
     linear-gradient(90deg, rgba(0,0,0,var(--vig-edge)), transparent 5%, transparent 95%, rgba(0,0,0,var(--vig-edge))),
     linear-gradient(180deg, rgba(0,0,0,var(--vig-edge)), transparent 7%, transparent 93%, rgba(0,0,0,var(--vig-edge))),
     radial-gradient(ellipse at center, transparent 58%, rgba(0,0,0,var(--vig)) 100%);
   box-shadow: inset 0 0 22px 5px rgba(0,0,0,var(--vig-rim)), inset 0 1px 0 rgba(255,255,255,.09), inset 0 0 0 1px rgba(255,255,255,.04);
   animation: flicker 6s infinite; }
+.crt.flat::after { animation: none; }
+.crt.flat::before { display: none; }
 @keyframes flicker { 0%, 97%, 100% { opacity: 1; } 98% { opacity: .85; } }
 /* A very faint band rolling down the tube (mains hum), moved by transform only so the
    compositor animates it without repainting the text under it. */
 .crt::before { content: ""; position: absolute; left: 0; right: 0; top: 0; height: 24%; pointer-events: none;
   background: linear-gradient(180deg, transparent, color-mix(in srgb, var(--c) 6%, transparent) 50%, transparent);
-  transform: translateY(-100%); animation: roll 14s linear infinite; will-change: transform; }
+  opacity: var(--band, .3); transform: translateY(-100%); animation: roll 14s linear infinite; will-change: transform; }
 @keyframes roll { to { transform: translateY(420%); } }
 /* V-HOLD: off-centre, the picture rolls; a copy one frame below (with the black
    vertical-blanking bar between) makes the roll wrap like a real set. */
@@ -154,9 +157,20 @@ button { font: inherit; color: inherit; }
 .crt-roll > .vblank, .crt-roll > .crt-ghost { display: none; }
 .crt-roll.rolling > .vblank { display: block; position: absolute; left: -2%; right: -2%; top: 100%; height: var(--vb);
   background: linear-gradient(180deg, #000 0 35%, color-mix(in srgb, var(--c) 18%, #000) 45%, #000 55% 100%); }
-.crt-roll.rolling > .crt-ghost { display: block; position: absolute; left: 0; right: 0; top: calc(100% + var(--vb)); height: 100%; overflow: hidden; }
+.crt-roll.rolling:not(.live) > .crt-ghost { display: block; position: absolute; left: 0; right: 0; top: calc(100% + var(--vb)); height: 100%; overflow: hidden; }
 .crt-roll.rolling { animation: vroll var(--roll-dur, 6s) linear infinite; animation-direction: var(--roll-dir, normal); will-change: transform; }
 @keyframes vroll { from { transform: translateY(0); } to { transform: translateY(calc(-100% - var(--vb))); } }
+/* Terminal 0: the live terminal's frame, transparent so the tube shows through */
+.crt-term { flex: 1; min-height: 0; width: 100%; border: 0; display: block; background: transparent; }
+/* The live terminal is a cross-origin frame this page can't style inside, so the CRT
+   dial works on its pixels from out here with plain CSS filters (the frame is
+   transparent, so each one follows the lit glyphs): coloured drop-shadows offset left
+   and right are the convergence fringe, blur() is beam softness, wide green
+   drop-shadows are the phosphor glow. No SVG url() filter: if a browser can't apply
+   one to a frame it drops the whole chain. The placeholder gets the same look as a
+   text-shadow plus the blur. */
+.crt.matrix .crt-body { filter: var(--soft-fx, none); }
+.crt.matrix .crt-term { filter: var(--term-fx, none); }
 .crt-body { flex: 1; min-height: 0; overflow-y: auto; padding: 16px 20px 10px; scrollbar-width: thin; scrollbar-color: var(--dim) transparent; }
 .crt-body p { margin: 0 0 8px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .crt .a::before { content: "● "; }
@@ -165,7 +179,7 @@ button { font: inherit; color: inherit; }
 .crt .c-held { color: var(--t-held); }
 .crt-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 6px 0; flex-wrap: wrap; }
 /* Front-panel controls under the tube: knurled knobs with an index mark, a badge */
-.knobs { display: flex; align-items: flex-start; gap: 16px; }
+.knobs { display: flex; align-items: flex-start; gap: 12px; }
 .knob { display: grid; justify-items: center; gap: 4px; cursor: grab; touch-action: none; user-select: none; border-radius: 6px; padding: 2px; }
 .knob:active { cursor: grabbing; }
 .knob .scale { width: 60px; height: 60px; border-radius: 50%; display: grid; place-items: center; position: relative; }
