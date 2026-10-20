@@ -97,8 +97,8 @@ Do exactly that:
 1. On the dashboard, press **POWER ON** under the Coordinator's screen (Terminal
    0, on the left), type `/login` there and sign in with your Claude
    subscription.
-2. Press **RESTART** on the control unit (under the Write gate display, on the
-   right) and then **CONFIRM**, or run `factory start` again in a terminal.
+2. Press **RESTART** on the control unit (bottom right, under the Write gate
+   display) and then **CONFIRM**, or run `factory start` again in a terminal.
 
 ```bash
 factory start
@@ -125,17 +125,20 @@ creates afterwards.
 
 The dashboard is one screen, styled as a 1984 control unit:
 
-- **Terminal 0** (left): the Coordinator. Press POWER ON, then talk to it
-  here. Every browser tab you open shows the same session.
-- **Lanes**: one module per lane of every role, with its live transcript.
-  Press a lane's number (or click it) for the full transcript and its
-  latest review packet.
-- **Write gate** (right): the pushes and pull requests waiting for you (with
+- **Terminal 0** (left, full height): the Coordinator. Press POWER ON, then
+  talk to it here. Every browser tab you open shows the same session.
+- **Lanes** (right): one module per lane of every role, with its live
+  transcript. Press a lane's number (or click it) for the full transcript and
+  its latest review packet.
+- **Write gate** (bottom right): the pushes and pull requests waiting for you (with
   Passdesk Pro), and under it the **control unit**: APPROVE and DECLINE for
   the selected one, and RESTART and UPDATE for the factory, which show what
   they'd do and wait for CONFIRM before running anything.
-- **Spend** and the **event printer**: today's cost, and broker calls and
-  finished jobs as they happen.
+- **Spend** and the **event printer** (under the lanes): today's cost, and
+  broker calls and finished jobs as they happen.
+
+[Use the dashboard](06-dashboard.md) goes through every part and key, and
+which `factory` command each one stands in for.
 
 Prefer the terminal? `factory start --layout watch` (remembered for next
 time) opens Herdr instead, with the Coordinator (top-left), a host shell
@@ -236,6 +239,7 @@ Sandboxes
 ## Next steps
 
 - [Build a feature](02-build-a-feature.md): a feature end to end, from prompt to merge.
+- [Use the dashboard](06-dashboard.md): every part of the dashboard and its keys.
 - To work on another project, run `factory start` in its folder. It offers to
   switch for you, removing the agent sandboxes but keeping your login.
 - [Commands](../../README.md#commands): every `factory` command.
