@@ -26,11 +26,13 @@
       <div class="readout"><span class="silk">Running</span><div class="lcd seg-box" id="ro-run"></div></div>
       <div class="readout"><span class="silk">Clock</span><div class="lcd seg-box" id="ro-clock"></div></div>
     </div>
+    <!-- The docs open in one named tab, which every MANUAL and ? link reuses (same origin: /docs/). -->
+    <a class="tabkey manual" href="/docs/" target="factory-docs">Manual</a>
   </header>
 
   <div class="bays">
     <section class="bay crt-bay plate" aria-labelledby="crt-h">
-      <div class="bay-h"><span class="silk" id="crt-h">Terminal 0 · Coordinator</span><span class="rule"></span><span class="led" id="lamp-term"></span></div>
+      <div class="bay-h"><span class="silk" id="crt-h">Terminal 0 · Coordinator</span><span class="rule"></span><span class="led" id="lamp-term"></span><a class="help" href="/docs/#guide-dashboard:terminal-0-the-coordinator" target="factory-docs" aria-label="Help: Terminal 0">?</a></div>
       <div class="crt-wrap">
         <div class="crt matrix" id="coord-crt">
           <div class="crt-roll" id="crt-roll">
@@ -56,25 +58,25 @@
     </section>
 
     <section class="bay lanes-bay" aria-labelledby="lanes-h">
-      <div class="bay-h plate lanes-h"><span class="silk" id="lanes-h">Lanes</span><span class="rule"></span><span class="silk">Press 1–9 to open a lane · Esc closes</span></div>
+      <div class="bay-h plate lanes-h"><span class="silk" id="lanes-h">Lanes</span><span class="rule"></span><span class="silk">Press 1–9 to open a lane · Esc closes</span><a class="help" href="/docs/#guide-dashboard:lanes" target="factory-docs" aria-label="Help: lanes">?</a></div>
       <div class="lanes" id="lanes"></div>
     </section>
 
     <aside class="rail" id="rail" aria-label="Spend, events and gate">
       <section class="plate mod" aria-labelledby="spend-h">
-        <div class="mod-h"><span class="silk" id="spend-h">Spend / hour</span><span class="right silk" id="spend-sub"></span></div>
+        <div class="mod-h"><span class="silk" id="spend-h">Spend / hour</span><span class="right silk" id="spend-sub"></span><a class="help" href="/docs/#guide-dashboard:spend-and-the-event-printer" target="factory-docs" aria-label="Help: spend">?</a></div>
         <div class="spend-row"><div class="bargraph" id="bargraph" role="img" aria-label="Spend per hour today"></div></div>
         <div class="roles" id="roles"></div>
       </section>
 
       <section class="plate mod printer" aria-labelledby="print-h">
-        <div class="mod-h"><span class="silk" id="print-h">Event printer</span><span class="right silk" id="print-sub"></span></div>
+        <div class="mod-h"><span class="silk" id="print-h">Event printer</span><span class="right silk" id="print-sub"></span><a class="help" href="/docs/#guide-dashboard:spend-and-the-event-printer" target="factory-docs" aria-label="Help: event printer">?</a></div>
         <div class="paper-well"><div class="paper" id="paper"></div></div>
         <div class="head-bar"><i></i></div>
       </section>
 
       <section class="plate mod gate-mod" aria-labelledby="gate-h">
-        <div class="mod-h"><span class="silk" id="gate-h">Write gate</span><span class="right"><span class="led" id="gate-led"></span><span class="silk" id="gate-state">Clear</span><span class="silk gate-to-cu" id="gate-to-cu" hidden>▼ Control unit</span></span></div>
+        <div class="mod-h"><span class="silk" id="gate-h">Write gate</span><span class="right"><span class="led" id="gate-led"></span><span class="silk" id="gate-state">Clear</span><span class="silk gate-to-cu" id="gate-to-cu" hidden>▼ Control unit</span><a class="help" href="/docs/#guide-dashboard:write-gate-and-the-control-unit" target="factory-docs" aria-label="Help: write gate and control unit">?</a></span></div>
         <div class="lcd gate-lcd" id="gate-lcd" aria-live="polite"></div>
         <p class="silk gate-hint" id="gate-hint"></p>
         <!-- The control unit (cu.html, the second origin) is framed in here by app.js. -->

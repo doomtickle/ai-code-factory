@@ -15,6 +15,12 @@ It reuses watch.py's transcript model and approvals.py's card reader rather
 than parsing either command's output. The main page only displays: nothing
 it can reach acts.
 
+The MANUAL key opens the factory's own docs at /docs/: README.md,
+docs/setup-wsl.md and docs/guides/*.md from this checkout, rendered once at
+start-up by docs.py (build_served: separate CSS and JS, so the page runs under
+the same no-inline CSP; no git, no file:// links) and held in memory. Like
+the main page, it only displays and needs this run's cookie.
+
 Every action lives in the control unit (dashboard_controls.py), a page on
 the second origin the main page frames, with its own key. What it writes and
 runs, and nothing else:
@@ -99,9 +105,11 @@ from urllib.parse import parse_qs, urlsplit
 import approvals
 import dashboard_controls as dc
 import dashboard_term as dt
+import docs
 import watch as w
 
 UI = Path(__file__).resolve().parent / "dashboard-ui"
+DOCS_ROOT = Path(__file__).resolve().parent.parent  # the factory checkout
 # The only files the server sends: path -> (file under UI, content type). No path
 # from a request is ever joined onto the filesystem.
 STATIC = {
@@ -122,6 +130,25 @@ def page_csp(term_port: int | None = None) -> str:
     if term_port is None:
         return CSP
     return CSP + f"; frame-src http://127.0.0.1:{term_port} http://localhost:{term_port}"
+# The docs (MANUAL): path -> (file name in the build_served() snapshot, content type).
+DOCS = {
+    "/docs/": ("index.html", "text/html; charset=utf-8"),
+    "/docs/docs.css": ("docs.css", "text/css; charset=utf-8"),
+    "/docs/docs-head.js": ("docs-head.js", "text/javascript; charset=utf-8"),
+    "/docs/docs.js": ("docs.js", "text/javascript; charset=utf-8"),
+}
+
+
+def load_docs(root: Path = DOCS_ROOT):
+    """The docs as served at /docs/ ({file name: bytes}), or why they couldn't be
+    built (a string): the dashboard runs without them then."""
+    try:
+        files, _warnings = docs.build_served(root)
+    except (docs.DocsError, OSError, UnicodeDecodeError) as e:
+        return f"the docs could not be built: {e}"
+    return {name: text.encode("utf-8") for name, text in files.items()}
+
+
 COOKIE = "factory_dashboard"  # prefix: the cookie is COOKIE_<port> (see cookie_name)
 TAIL = 40          # transcript lines per lane in /api/state (taller lane screens)
 FULL = 1500        # transcript lines per lane in /api/lane
@@ -394,7 +421,7 @@ def cookie_name(port: int) -> str:
 
 
 def make_handler(board: Dashboard, token: str, port: int, term: dt.Term | None = None,
-                 term_port: int | None = None):
+                 term_port: int | None = None, manual=None):
     hosts = {f"127.0.0.1:{port}", f"localhost:{port}"}
     cookie = cookie_name(port)
     csp = page_csp(term_port)
@@ -406,7 +433,8 @@ def make_handler(board: Dashboard, token: str, port: int, term: dt.Term | None =
         def log_message(self, fmt, *args):  # quiet: the page polls every 2 s
             pass
 
-        def send(self, code: int, body: bytes, ctype: str, extra: dict | None = None) -> None:
+        def send(self, code: int, body: bytes, ctype: str, extra: dict | None = None,
+                 page_policy: str | None = None) -> None:
             self.send_response(code)
             self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(len(body)))
@@ -417,7 +445,7 @@ def make_handler(board: Dashboard, token: str, port: int, term: dt.Term | None =
             self.send_header("Cross-Origin-Opener-Policy", "same-origin")
             self.send_header("X-Frame-Options", "DENY")
             if ctype.startswith("text/html"):
-                self.send_header("Content-Security-Policy", csp)
+                self.send_header("Content-Security-Policy", page_policy or csp)
             for k, v in (extra or {}).items():
                 self.send_header(k, v)
             self.end_headers()
@@ -466,6 +494,10 @@ def make_handler(board: Dashboard, token: str, port: int, term: dt.Term | None =
                     self.json(detail)
             elif url.path == "/favicon.ico":
                 self.send(204, b"", "text/plain")  # no icon; don't fill the console with 404s
+            elif url.path == "/docs":
+                self.send(303, b"", "text/plain", {"Location": "/docs/"})
+            elif url.path in DOCS:
+                self.manual(url.path)
             elif url.path in STATIC:
                 name, ctype = STATIC[url.path]
                 try:
@@ -479,6 +511,16 @@ def make_handler(board: Dashboard, token: str, port: int, term: dt.Term | None =
 
         do_HEAD = do_GET
 
+        def manual(self, path: str) -> None:
+            """The docs snapshot, under the main page's CSP minus frame-src (it frames nothing)."""
+            if manual is None:
+                self.refuse(404, "this dashboard doesn't serve the docs: run factory docs")
+            elif isinstance(manual, str):
+                self.refuse(503, f"{manual}; run factory docs")
+            else:
+                name, ctype = DOCS[path]
+                self.send(200, manual[name], ctype, page_policy=CSP)
+
         def json(self, obj) -> None:
             self.send(200, json.dumps(obj, ensure_ascii=False).encode("utf-8"), "application/json; charset=utf-8")
 
@@ -491,10 +533,11 @@ def make_handler(board: Dashboard, token: str, port: int, term: dt.Term | None =
 
 
 def serve(board: Dashboard, port: int = 0, token: str | None = None, term: dt.Term | None = None,
-          term_port: int = 0, controls: dc.Controls | None = None) -> tuple:
+          term_port: int = 0, controls: dc.Controls | None = None, manual=None) -> tuple:
     """Start the server on 127.0.0.1 in a background thread: (server, url with token),
     and the second origin on another port (server.term_server): the control
-    unit (with controls) and, with a Term, the Coordinator's terminal."""
+    unit (with controls) and, with a Term, the Coordinator's terminal. manual is
+    load_docs()'s result, served at /docs/ (None: no docs)."""
     token = token or secrets.token_urlsafe(32)
     server = ThreadingHTTPServer(("127.0.0.1", port), BaseHTTPRequestHandler)
     server.daemon_threads = True
@@ -506,7 +549,7 @@ def serve(board: Dashboard, port: int = 0, token: str | None = None, term: dt.Te
         server.server_close()
         raise
     real_term_port = server.term_server.server_address[1]
-    server.RequestHandlerClass = make_handler(board, token, real_port, term, real_term_port)
+    server.RequestHandlerClass = make_handler(board, token, real_port, term, real_term_port, manual)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     return server, f"http://127.0.0.1:{real_port}/?token={token}"
 
@@ -586,9 +629,12 @@ def main(argv=None) -> int:
     for sig in (signal.SIGTERM, signal.SIGHUP):
         signal.signal(sig, _interrupt)
     controls = dc.Controls(board, args.state, term, args.factory)
+    manual = load_docs()
+    if isinstance(manual, str):
+        print(f"warning: MANUAL is off: {manual}", file=sys.stderr)
     server = None
     try:
-        server, url = serve(board, args.port, term=term, controls=controls)
+        server, url = serve(board, args.port, term=term, controls=controls, manual=manual)
         return _run(args, server, url, term)
     except OSError as e:
         if server is not None:

@@ -74,6 +74,15 @@ button { font: inherit; color: inherit; }
 .led.blink { animation: blink 1s steps(1) infinite; }
 @keyframes blink { 50% { background: var(--led-off); box-shadow: inset 0 -2px 3px rgba(0,0,0,.5), 0 0 0 2px #111; } }
 .readouts { display: flex; flex-wrap: wrap; gap: 10px; margin-left: auto; }
+/* MANUAL: a key on the header plate; the docs open in their own tab */
+a.tabkey { display: inline-block; text-decoration: none; }
+.manual { align-self: center; }
+/* ? on each module: a small keycap linking to its part of the dashboard guide */
+.help { display: inline-grid; place-items: center; width: 18px; height: 18px; flex: none; border-radius: 50%; text-decoration: none;
+  font-family: var(--f-silk); font-weight: 700; font-size: .7rem; line-height: 1; color: var(--key-ink);
+  background: linear-gradient(180deg, #ece7d8, var(--key)); box-shadow: 0 2px 0 var(--key-lo); }
+.help:hover { background: linear-gradient(180deg, #ffb35c, var(--stripe-1)); }
+.mod-h .help { margin-left: 4px; }
 .readout { display: grid; gap: 3px; }
 
 /* Reflective LCD glass */

@@ -322,6 +322,36 @@ class LinkBaseTests(Fixture):
                 docs.build_html(self.root, link_base=bad)
 
 
+class ServedTests(Fixture):
+    """build_served(): the dashboard's copy (MANUAL), under a CSP with no inline code."""
+
+    def test_assets_are_separate_files(self):
+        files, warnings = docs.build_served(REPO)
+        self.assertEqual(warnings, [])
+        self.assertEqual(set(files), {"index.html", "docs.css", "docs-head.js", "docs.js"})
+        page = files["index.html"]
+        self.assertIsNone(re.search(r"<script(?![^>]*\ssrc=)", page), "inline script")
+        self.assertIsNone(re.search(r"\sstyle=", page), "inline style attribute")
+        self.assertIsNone(re.search(r"\son[a-z]+=", page), "inline event handler")
+        self.assertNotIn("<style", page)
+        self.assertIn('<script src="docs-head.js"></script>', page)
+        self.assertIn('<link rel="stylesheet" href="docs.css">', page)
+        self.assertIn('<script src="docs.js"></script>', page)
+        self.assertEqual((files["docs.css"], files["docs-head.js"], files["docs.js"]),
+                         (docs.CSS, docs.HEAD_JS, docs.JS))
+
+    def test_repo_files_are_text_and_no_git_runs(self):
+        write(self.root, "scripts/lib/common.sh", "# pins\n")
+        write(self.root, "docs/mac-quickstart.html", "<!doctype html>")
+        write(self.root, "README.md", "# T\n\nPins live in [common.sh](scripts/lib/common.sh).\n")
+        with mock.patch.object(docs.subprocess, "run", side_effect=AssertionError("ran git")):
+            files, _ = docs.build_served(self.root)
+        page = files["index.html"]
+        self.assertNotIn("file://", page)
+        self.assertNotIn("mac-quickstart", page)
+        self.assertIn('<span class="dead-link">common.sh</span>', page)
+
+
 class SlugTests(unittest.TestCase):
     def test_github_slugs(self):
         cases = {
