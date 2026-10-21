@@ -105,8 +105,7 @@ ${B}Usage${N}
                              Add a role, copied from an existing one (default: reviewer)
   factory config init [--force]
                              Write the commented example settings into
-                             $FACTORY_CONFIG (default ~/.config/ai-code-factory/);
-                             refuses to overwrite files unless --force
+                             $FACTORY_CONFIG; refuses to overwrite files unless --force
   factory secret save <name> Store a credential once in this machine's keychain
                              (github, gitlab, jira, gemini, npm-registry,
                              approvals-webhook); every broker start
@@ -1344,8 +1343,12 @@ cmd_config() {
   while IFS= read -r src; do
     files+=("${src#"$ROOT/config.example/"}")
   done < <(find "$ROOT/config.example" -type f | LC_ALL=C sort)
+  [ "${#files[@]}" -gt 0 ] || die "config.example/ in $ROOT is empty"
+  # -L too: a dangling symlink is "absent" to -e, and cp would write through it.
   for rel in "${files[@]}"; do
-    [ ! -e "$FACTORY_CONFIG/$rel" ] || existing+=("$FACTORY_CONFIG/$rel")
+    if [ -e "$FACTORY_CONFIG/$rel" ] || [ -L "$FACTORY_CONFIG/$rel" ]; then
+      existing+=("$FACTORY_CONFIG/$rel")
+    fi
   done
   if [ "${#existing[@]}" -gt 0 ] && [ -z "$force" ]; then
     for dest in "${existing[@]}"; do bad "exists: $dest"; done
@@ -1355,6 +1358,8 @@ cmd_config() {
   for rel in "${files[@]}"; do
     dest="$FACTORY_CONFIG/$rel"
     mkdir -p "$(dirname "$dest")"
+    # --force replaces a symlink itself; cp would write through it to its target.
+    [ ! -L "$dest" ] || rm -f "$dest"
     cp "$ROOT/config.example/$rel" "$dest"
     ok "wrote $dest"
   done

@@ -124,6 +124,8 @@ jobs:
         run: bash scripts/test_factory_restart.sh
       - name: factory GitLab checks
         run: bash scripts/test_factory_gitlab.sh
+      - name: factory config init
+        run: bash scripts/test_factory_config.sh
       # factory-lane runs only inside the Linux sandboxes, so it's tested on Linux.
 
   images:

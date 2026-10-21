@@ -8,7 +8,7 @@ set -euo pipefail
 # 2. A copied example is inert: no active key but the empty [git] repos list, no
 #    active line in broker-kit/spec.yaml, no example host anywhere uncommented.
 # 3. It refuses to overwrite (exit 1, nothing written, files untouched) and
-#    --force overwrites; unknown arguments and subcommands are refused.
+#    --force overwrites; a dangling symlink counts as existing; unknown arguments and subcommands are refused.
 # 4. jira_cloud_id_set rejects an empty, missing, commented-out and all-zero
 #    cloud_id, and accepts a real one.
 #
@@ -64,6 +64,25 @@ assert_eq "force: exit 0" "$rc" 0
 assert_eq "force: overwrites the existing file" \
   "$(cmp "$cfg/policy.toml" "$REPO_ROOT/config.example/policy.toml" && echo same)" same
 assert_eq "force: writes the missing file" "$([ -e "$cfg/roles/developer.conf" ] && echo written)" written
+
+# A dangling symlink counts as existing: nothing is written, and neither the link
+# nor its target is touched. --force replaces the link instead of writing through it.
+lnk="$tmp/xdg-link"
+lcfg="$lnk/ai-code-factory"
+mkdir -p "$lcfg"
+ln -s "$tmp/nowhere/target.toml" "$lcfg/policy.toml"
+rc=0; out="$(XDG_CONFIG_HOME="$lnk" factory config init 2>&1)" || rc=$?
+assert_eq "symlink: a dangling policy.toml link is refused" "$rc" 1
+assert_contains "symlink: names the link" "$out" "exists: $lcfg/policy.toml"
+assert_eq "symlink: nothing else is written" "$(find "$lcfg" -type f | wc -l | tr -d ' ')" 0
+assert_eq "symlink: the link is untouched" "$(readlink "$lcfg/policy.toml")" "$tmp/nowhere/target.toml"
+assert_eq "symlink: the target is not created" "$([ -e "$tmp/nowhere" ] && echo created || echo absent)" absent
+rc=0; XDG_CONFIG_HOME="$lnk" factory config init --force >/dev/null 2>&1 || rc=$?
+assert_eq "symlink: --force exit 0" "$rc" 0
+assert_eq "symlink: --force replaces the link with a regular file" \
+  "$([ -L "$lcfg/policy.toml" ] && echo link || echo file)" file
+assert_eq "symlink: --force never writes through the link" "$([ -e "$tmp/nowhere" ] && echo created || echo absent)" absent
+
 rc=0; factory config init --bogus >/dev/null 2>&1 || rc=$?
 assert_eq "args: unknown flag is refused" "$rc" 1
 rc=0; factory config >/dev/null 2>&1 || rc=$?
