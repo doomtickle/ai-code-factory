@@ -373,11 +373,22 @@ def check_policy(report: Report, path: Path | None = None) -> dict | None:
 
 # --- egress hosts -------------------------------------------------------------------
 
+def _gitlab_only(pol: dict) -> bool:
+    """True when [git].repos lists only GitLab projects: git_fetch and git_push
+    then never reach GitHub."""
+    git = pol.get("git") if isinstance(pol.get("git"), dict) else {}
+    repos = git.get("repos", [])
+    return _is_str_list(repos) and bool(repos) and all(git_tool.is_gitlab_name(r) for r in repos)
+
+
 def egress_hosts(pol: dict, granted: set[str] | None = None) -> list[str]:
     """Every host the policy lets some tool reach. With `granted`, only tools
     in that set count; otherwise every tool does."""
     hosts: set[str] = set()
+    gitlab_only = _gitlab_only(pol)
     for tool, tool_hosts in _TOOL_HOSTS.items():
+        if gitlab_only and tool in ("git_fetch", "git_push"):
+            continue  # every repo is on [gitlab].url, added below
         if granted is None or tool in granted:
             hosts.update(tool_hosts)
     for tool, spec in plugins.declared_tools()[0].items():
@@ -701,7 +712,8 @@ def check_standalone(report: Report, granted: set[str], pol: dict | None = None,
                      "egress hosts against",
                      "drop --kit; standalone has no kit-level network allowlist to check against")
 
-    wanted = bool(_GITHUB_TOOLS & granted)
+    github_tools = _GITHUB_TOOLS - ({"git_fetch", "git_push"} if _gitlab_only(pol or {}) else set())
+    wanted = bool(github_tools & granted)
     if order_error is not None:
         pass  # already reported once, in the Credentials section
     else:
@@ -727,7 +739,7 @@ def check_standalone(report: Report, granted: set[str], pol: dict | None = None,
                                 "token is used")
                 else:
                     report.warn(f"no github credential (checked providers: {order_text}); "
-                                f"{', '.join(sorted(_GITHUB_TOOLS & granted))} return DENIED until it is delivered",
+                                f"{', '.join(sorted(github_tools & granted))} return DENIED until it is delivered",
                                 "deliver a fine-grained GitHub token through one of those providers "
                                 "(README, Configuring credentials)")
             else:

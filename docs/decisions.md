@@ -50,7 +50,12 @@ Dated entries, for the user to review. Newest first.
   - **`[gitlab].url`'s host is checked label by label.** No empty, leading-
     or trailing-dash label, no trailing dot (it slipped past exact-host
     matches such as `web_fetch`'s denylist; `host_allowed` now also strips a
-    trailing dot from the pattern, not just the host), port 1-65535. An IPv4
+    trailing dot from the pattern, not just the host), port 1-65535, and no
+    `..`, `.`, `//`, `@`, `%` or `\` segment in its path (the API URL is built by
+    appending to it). Projects may sit under up to 20 subgroups (GitLab's
+    limit). With only GitLab projects in `[git].repos`, the doctor stops
+    counting github.com among `git_fetch`/`git_push`'s hosts and stops
+    asking for a GitHub token for them. An IPv4
     address is allowed: an internal instance may have no name, and its
     certificate must verify all the same.
   - **`web_fetch` refuses the `[gitlab].url` host**, read leniently, so even

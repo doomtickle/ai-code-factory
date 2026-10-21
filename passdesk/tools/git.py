@@ -52,10 +52,10 @@ from ..core.workspace import (copy_workspace_file, factory_dir, install_file, pr
 _BRANCH_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$")
 _REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 # A GitLab project, host first: the host (and port, if not 443) of [gitlab].url,
-# then 2-20 path segments (group, any subgroups, project). GitLab's own path
+# then 2-22 path segments (group, up to 20 subgroups, project). GitLab's own path
 # rule: letters, digits, "_", "-" and ".", not starting with "-" or ".".
 _GITLAB_SEGMENT = r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,254}"
-_GITLAB_REPO_RE = re.compile(rf"^[A-Za-z0-9.-]+(?::[0-9]{{1,5}})?(?:/{_GITLAB_SEGMENT}){{2,20}}$")
+_GITLAB_REPO_RE = re.compile(rf"^[A-Za-z0-9.-]+(?::[0-9]{{1,5}})?(?:/{_GITLAB_SEGMENT}){{2,22}}$")
 
 
 def check_branch_name(name: str) -> str:
@@ -165,7 +165,8 @@ def gitlab_base(policy: dict) -> str | None:
     host = parts.hostname or ""
     if (parts.scheme != "https" or not _HOST_RE.fullmatch(host) or parts.username is not None
             or parts.password is not None or parts.query or parts.fragment or not url.endswith("/")
-            or any(c.isspace() for c in url) or port == 0):
+            or any(c.isspace() for c in url) or port == 0
+            or any(bad in parts.path for bad in ("//", "/./", "/../", "@", "%", "\\"))):
         raise Denied(f"[gitlab].url must be https://<host>[:port]/[path/], ending in \"/\" (got {url!r})")
     if any(policy_host_allowed(host, [p]) for p in _NOT_GITLAB):
         raise Denied(f"[gitlab].url names {host}, a GitHub host")

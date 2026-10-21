@@ -233,7 +233,7 @@ Set three things:
 1. `[gitlab].url` in your local `policy.toml`: the instance as
    `https://<host>[:port]/`, ending in `/` (a sub-path such as
    `https://example.com/gitlab/` works; `https://gitlab.com/` too). Only
-   https; it must not be a GitHub host. Its host must also be in the
+   https, no `..`, `//`, `@`, `%` or `\` in the path, and not a GitHub host. Its host must also be in the
    deployment's egress allowlist (with sbx, your broker kit).
 2. The projects in `[git].repos`, host first, next to any GitHub repos:
    `"gitlab.example.com/group/project"` or, with subgroups,

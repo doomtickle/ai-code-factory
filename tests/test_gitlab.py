@@ -413,3 +413,95 @@ class DoctorTests(GitLabBase):
         report = doctor.Report()
         doctor.check_secrets(report, GL_POLICY, granted)
         self.assertTrue(any("not a GitLab token" in m for m in report.messages(doctor.FAIL)))
+
+
+class PushTests(GitLabBase):
+    """git_push to a GitLab project: both network git calls (the base fetch and
+    the push itself) carry the GitLab header and never GitHub's, even when the
+    gateway holds both tokens."""
+
+    def sh(self, *cmd, cwd):
+        from passdesk.core import workspace
+        cp = workspace.run(list(cmd), cwd=cwd, extra_env={"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
+                                                           "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"})
+        self.assertEqual(cp.returncode, 0, cp.stderr)
+
+    def test_push_carries_only_the_gitlab_header(self):
+        from passdesk.core import workspace
+        self.write_secret(credentials.secrets_dir() / "github", GH_TOKEN)
+        config.CREDENTIAL_PROVIDERS = "file,env-file"  # standalone: the gateway holds both
+        root = Path(self.tmp.name)
+        origin = root / "origin.git"
+        self.sh("git", "init", "--bare", "-q", "-b", "main", str(origin), cwd=root)
+        seed = root / "seed"
+        self.sh("git", "clone", "-q", str(origin), str(seed), cwd=root)
+        (seed / "README").write_text("hello\n")
+        self.sh("git", "add", ".", cwd=seed)
+        self.sh("git", "commit", "-q", "-m", "init", cwd=seed)
+        self.sh("git", "push", "-q", "origin", "HEAD:main", cwd=seed)
+        self.sh("git", "checkout", "-q", "-b", "factory/feature", cwd=seed)
+        (seed / "feature.txt").write_text("new\n")
+        self.sh("git", "add", "feature.txt", cwd=seed)
+        self.sh("git", "commit", "-q", "-m", "add feature", cwd=seed)
+        outgoing = config.WORKSPACE / ".factory/outgoing"
+        outgoing.mkdir(parents=True, exist_ok=True)
+        self.sh("git", "bundle", "create", "-q", str(outgoing / "f.bundle"), "main..factory/feature", cwd=seed)
+
+        orig = git.ensure_mirror
+
+        def ensure(repo, remote=None):
+            self.assertEqual(remote.forge, "gitlab")
+            path = orig(repo, remote)
+            git.git("remote", "set-url", "origin", str(origin), cwd=path)  # a local stand-in for the project
+            return path
+        runs = []
+        real = workspace.run
+
+        def spy(cmd, cwd=None, timeout=600, extra_env=None):
+            runs.append((cmd, extra_env))
+            return real(cmd, cwd=cwd, timeout=timeout, extra_env=extra_env)
+        with mock.patch.object(git, "ensure_mirror", ensure), mock.patch.object(git, "run", spy):
+            out = git.tool_git_push({"repo": PROJECT, "branch": "factory/feature", "bundle": "f.bundle"}, GL_POLICY)
+        self.assertIn(f"Pushed 1 commit(s) to {PROJECT}:factory/feature", out)
+        authed = [(cmd, env) for cmd, env in runs if env and "GIT_CONFIG_COUNT" in env]
+        self.assertEqual([next(a for a in cmd if a in ("fetch", "push")) for cmd, _ in authed], ["fetch", "push"])
+        for cmd, env in authed:
+            text = json.dumps(env)
+            self.assertIn(f"http.https://{GL}/.extraHeader", text)
+            self.assertIn(GL_B64, text)
+            self.assertFalse(leaks(text, GH_TOKEN, GH_B64), cmd)
+            self.assertNotIn("github.com", text)
+        self.sh("git", "rev-parse", "--verify", "refs/heads/factory/feature", cwd=origin)  # it arrived
+
+
+class StricterNamesTests(GitLabBase):
+    def test_odd_url_paths_are_refused(self):
+        for bad in (f"https://{GL}/../", f"https://{GL}//", f"https://{GL}/x/../", f"https://{GL}/./",
+                    f"https://{GL}/x@y/", f"https://{GL}/%2e%2e/", f"https://{GL}/a\\b/"):
+            with self.assertRaises(Denied, msg=bad):
+                git.gitlab_base({"gitlab": {"url": bad}})
+        self.assertEqual(git.gitlab_base({"gitlab": {"url": f"https://{GL}/a/b/"}}), f"https://{GL}/a/b/")
+
+    def test_twenty_subgroups_fit(self):
+        deepest = GL + "/" + "/".join(f"g{i}" for i in range(21)) + "/project"  # top group + 20 subgroups
+        too_deep = GL + "/" + "/".join(f"g{i}" for i in range(22)) + "/project"
+        self.assertEqual(git.check_repo(deepest, {**GL_POLICY, "git": {**GL_POLICY["git"], "repos": [deepest]}}),
+                         deepest)
+        with self.assertRaises(Denied):
+            git.check_repo(too_deep, {**GL_POLICY, "git": {**GL_POLICY["git"], "repos": [too_deep]}})
+
+
+class GitLabOnlyDoctorTests(GitLabBase):
+    def test_no_github_hosts_or_token_needed_when_every_repo_is_on_gitlab(self):
+        only = {**GL_POLICY, "git": {**GL_POLICY["git"], "repos": [PROJECT]}}
+        hosts = doctor.egress_hosts(only)
+        self.assertIn(GL, hosts)
+        self.assertNotIn("github.com", hosts)
+        self.assertIn("github.com", doctor.egress_hosts(GL_POLICY))  # a GitHub repo listed: still needed
+        self.assertIn("api.github.com", doctor.egress_hosts(only))   # github_create_pr is a tool of its own
+        report = doctor.Report()
+        doctor.check_standalone(report, {"git_fetch", "git_push", "gitlab_create_mr"}, only)
+        self.assertFalse(any("no github credential" in m for m in report.messages(doctor.WARN)), report.items)
+        report = doctor.Report()
+        doctor.check_standalone(report, {"git_fetch", "git_push"}, GL_POLICY)
+        self.assertTrue(any("no github credential" in m for m in report.messages(doctor.WARN)), report.items)
