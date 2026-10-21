@@ -4,9 +4,11 @@ These rules cover the dashboard: `scripts/dashboard.py`, `scripts/dashboard_cont
 `scripts/dashboard_term.py`, `scripts/patchview.py`, and the `dashboard-ui/` front-end
 they serve. Read this before changing any of those files.
 
-Other files in `scripts/` (e.g. `analytics.py`, `approvals.py`, `watch.py`, `docs.py`,
-`start-broker.sh`, `lib/`, the `NN-*.sh` launch scripts) are not dashboard code; they
-follow only the root `CLAUDE.md`.
+Other files in `scripts/` (e.g. `analytics.py`, `watch.py`, `start-broker.sh`,
+`lib/`) are not dashboard code and aren't covered here, except where the rules below
+name them directly: `approvals.py` (`write_decision`), `docs.py` (`build_served()`),
+and `02-launch-factory.sh`/`factory chat` (`coordinator_attached`) must match the
+forms those rules name.
 
 ## Dashboard rules
 

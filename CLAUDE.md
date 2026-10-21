@@ -79,11 +79,13 @@ socket, or host credentials. Full picture: README.md.
   component that acts on agents.
 - The dashboard (`scripts/dashboard.py`, `factory dashboard`) is the one host
   component listening for a browser: binds 127.0.0.1 only, requires a per-run token,
-  and its main page only displays (reaches no endpoint that acts, holds no key).
-  Every action is one fixed argv with no shell, gated by a key in a header (not just
-  a cookie) on a POST or WebSocket with `Origin` checked, plus a confirm step before
-  any host command. Full rules: **`scripts/CLAUDE.md` — read before changing
-  dashboard code** (`scripts/dashboard*.py`, `scripts/patchview.py`).
+  and its main page only displays (reaches no endpoint that acts, holds no key); the
+  cookie alone must never authorize an action. Anything new that lets a page act
+  must meet the same bar: one fixed argv with no shell, a key in a request header
+  (not just the cookie) on a POST or WebSocket with its `Origin` checked, kept out of
+  reach of the page that shows agent-written content, and a confirm step before any
+  host command. Full rules: **`scripts/CLAUDE.md` — read before changing dashboard
+  code** (`scripts/dashboard*.py`, `scripts/patchview.py`).
 - Broker policy is baked into its image, never read from the agent-writable
   workspace. Hosts in `broker/policy.toml` `[web].allow_hosts` must also be in
   `kits/broker/spec.yaml`.
@@ -110,21 +112,25 @@ socket, or host credentials. Full picture: README.md.
   for `[gitlab].url` (owner decision 2026-10-20, doomtickle/passdesk-ops#120 — sbx has
   no `gitlab` service), or the approvals webhook URL the gateway posts held cards to.
   These may be held as plaintext files, **only in the broker sandbox**: kept in the
-  host OS keychain (`factory secret save`) and delivered by `scripts/start-broker.sh`
-  over `sbx exec` **stdin** into `/etc/factory-broker/secrets/` inside the broker
-  sandbox — never argv, an env flag, a log, or git. No keychain (headless Linux):
-  `factory secret set <name>` delivers the same way until the broker is recreated.
-  The broker (`broker/passdesk/`, the `passdesk-broker` submodule) reads the file
-  fresh every call, so rotating the keychain entry and re-running `start-broker.sh`
-  rotates the credential. Do not widen this exception to other credentials or
-  sandboxes without updating this rule.
+  host OS keychain (macOS Keychain / Linux `secret-tool` / the Windows Credential
+  Manager on WSL2, reached through `powershell.exe` with the value only on stdin;
+  `factory secret save`) and delivered by `scripts/start-broker.sh` over `sbx exec`
+  **stdin** into `/etc/factory-broker/secrets/` inside the broker sandbox — never
+  argv, an env flag, a log, or git. No keychain (headless Linux): `factory secret set
+  <name>` delivers the same way until the broker is recreated. That path is outside
+  both the agent-visible workspace and `BROKER_STATE` (the broker state dir, a host
+  bind mount), so no plaintext ever lands on host disk. The broker
+  (`broker/passdesk/`, the `passdesk-broker` submodule) reads the file fresh every
+  call, so rotating the keychain entry and re-running `start-broker.sh` rotates the
+  credential. Do not widen this exception to other credentials or sandboxes without
+  updating this rule.
 - Claude authentication: agents use a Claude Pro/Max subscription. The first `/login`
   in any factory sandbox is stored by sbx as the global `anthropic` secret; every
   sandbox created after uses it (sbx adds the login only at creation, so
   `02-launch-factory.sh` creates role sandboxes only once it's stored). The sandbox
   credentials file isn't verified as a placeholder — treat it as a usable login:
-  never copy `~/.claude` out of a sandbox or into the repo. API-key auth via
-  `sbx secret set anthropic` remains the proxy-injected alternative.
+  never copy anything out of `~/.claude` in a sandbox or into the repo. API-key auth
+  via `sbx secret set anthropic` remains the proxy-injected alternative.
 
 ## Other constraints
 
