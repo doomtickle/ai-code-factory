@@ -317,9 +317,13 @@ class Dashboard:
     def held(cards: list) -> dict:
         """Lane name -> note for each running lane whose role has a write held.
         With one running lane the hold is surely its own (note ""); with several
-        the card can't say which, so each is marked held and the note says so."""
+        the card can't say which, so each is marked held and the note says so.
+        A decided or expired card holds nothing: the broker's hook waits only
+        hold_seconds, so by then the agent's call has returned."""
         out: dict = {}
         for card in cards:
+            if card["decided"] or (card["seconds_left"] is not None and card["seconds_left"] < 0):
+                continue
             lanes = card["lanes"]
             note = "" if len(lanes) == 1 else (
                 f"one of {len(lanes)} running {card['role']} lanes is held; the broker names the role, not the lane")

@@ -82,7 +82,9 @@ written file onto the final name (never replaces it), so a second decision for t
 same id and nonce is refused (`decided`, a 409 naming the verdict that stands) and of
 two at once exactly one wins; a decision with another nonce (an earlier card) is
 set aside under a lock and never blocks the new card. A decided card stays pending
-until the agent retries the call, and the unit shows it as decided with its keys dark.
+until the agent retries the call, and the unit shows it as decided with its keys dark. A decided or expired card never marks a lane HELD
+(`Dashboard.held()`): the broker's hook waits only `hold_seconds`, so the agent's call has
+already returned.
 
 RESTART and UPDATE run host commands, so no single request can start one: a `prepare`
 request shows what it would do (the jobs it cancels, the held writes it drops; for

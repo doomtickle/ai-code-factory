@@ -216,6 +216,25 @@ class HeldTests(unittest.TestCase):
         self.assertEqual(lanes["developer-lane2"]["held_note"], "")
         self.assertEqual(gate[0]["lanes"], ["developer-lane2"])
 
+    def test_decided_and_expired_cards_hold_nothing(self):
+        import approvals
+        write_lane(self.logs, "developer", "20261019-000001-aaaaaa", self.now)
+        self.card("declined", "developer", nonce="n")
+        self.card("expired", "developer", expires=self.now - 5)
+        card = next(c for c in approvals.read_cards(self.state / "broker") if c["id"] == "declined")
+        approvals.write_decision(self.state / "broker", card, "decline", "tester", "no")
+        lanes, gate = self.snap()
+        self.assertEqual(lanes["developer"]["state"], "running")
+        self.assertEqual(lanes["developer"]["held_note"], "")
+        self.assertEqual({c["id"]: (c["decided"], c["seconds_left"] < 0) for c in gate},
+                         {"declined": ("decline", False), "expired": (None, True)})
+        # A live, undecided card beside them still holds the lane.
+        self.card("live", "developer")
+        self.assertEqual(self.snap()[0]["developer"]["state"], "held")
+        # So does the lane detail (Monitor).
+        detail = d.Dashboard(self.state, self.roles, "proj").lane_detail("developer", self.now)
+        self.assertEqual(detail["state"], "held")
+
     def test_card_for_role_with_no_running_lane(self):
         write_lane(self.logs, "developer", "20261019-000001-aaaaaa", self.now)
         self.card("c1", "reviewer")
