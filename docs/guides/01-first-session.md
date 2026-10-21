@@ -31,7 +31,7 @@ indented underneath. Before setup, it's normal to see warnings that `sbx` and
 `herdr` aren't installed yet:
 
 ```text
-==> Factory tools
+==> Tools
   ! sbx 0.45.1 not installed yet ('factory setup' installs it)
   ! herdr 0.9.1 not installed yet ('factory setup' installs it)
 ```
@@ -89,7 +89,7 @@ creates only the Coordinator and tells you so:
 
 ```text
 note: no Claude login is stored yet, so these role sandboxes were not created: developer researcher reviewer
-  Type /login in the Coordinator pane, then run 'factory start' again (e.g. in the Host shell pane).
+  Type /login in the Coordinator (POWER ON on the dashboard), then run 'factory start' again (or press RESTART on the dashboard).
 ```
 
 Do exactly that:
@@ -172,7 +172,7 @@ messages, each tool call and a one-line summary of its result (left out here):
 14:02:11  ▶ job 20261017-140211-a3f9c2 from the Coordinator
 14:02:11     > Add unit tests for slugify in src/utils/slug.ts on a new branch factory/slug-tests.
 14:02:11     preparing lane developer (git clone/fetch from the project)
-14:02:19     model: claude-sonnet-5
+14:02:19     model: claude-sonnet-5-5
 14:06:40  ⎇ branch factory-developer/factory/slug-tests at 3f9c2ab
 14:06:40  ■ job 20261017-140211-a3f9c2 done after 269s
 ```

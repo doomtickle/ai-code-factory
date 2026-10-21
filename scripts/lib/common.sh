@@ -235,6 +235,17 @@ sandbox_running() {
   [ "$(sbx ls 2>/dev/null | awk -v s="$1" '$1 == s { print $3 }')" = running ]
 }
 
+# local_settings_present -> success if the config folder holds any local
+# settings: policy.toml, or a broker-kit/, roles/, projects/ or plugins/ folder.
+local_settings_present() {
+  local d
+  [ -f "$FACTORY_CONFIG/policy.toml" ] && return 0
+  for d in broker-kit roles projects plugins; do
+    [ -d "$FACTORY_CONFIG/$d" ] && return 0
+  done
+  return 1
+}
+
 # claude_login_stored -> success if sbx holds the global Claude login (the first
 # /login in a factory sandbox, or an API key from `sbx secret set anthropic`).
 claude_login_stored() {

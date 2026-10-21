@@ -565,7 +565,7 @@ onboarding_hints() {
     [ -z "$stale" ] || warn "out of date (made from an older image or kit): ${stale% }; run 'factory update' to recreate them"
   fi
   if ! claude_login_stored; then
-    warn "first time: type /login in the Coordinator (POWER ON on the dashboard, or its Herdr pane) to sign in with your Claude subscription, then run 'factory start' again (or press RESTART on the dashboard) to create the role sandboxes"
+    warn "first time: type /login in the Coordinator (POWER ON on the dashboard) to sign in with your Claude subscription, then run 'factory start' again (or press RESTART on the dashboard) to create the role sandboxes"
   fi
   if git_push_enabled; then
     local sbx_secrets
@@ -611,7 +611,7 @@ cmd_status() {
   local project code pid
   project="$(bound_project)"
   say "${B}Project${N}   ${project:-${D}none yet (run factory start)${N}}"
-  if [ -f "$FACTORY_CONFIG/policy.toml" ] || [ -d "$FACTORY_CONFIG/broker-kit" ] || [ -d "$FACTORY_CONFIG/roles" ]; then
+  if local_settings_present; then
     say "${B}Local settings${N} $FACTORY_CONFIG"
   else
     say "${B}Local settings${N} ${D}none (see config.example/)${N}"
@@ -629,7 +629,7 @@ cmd_status() {
     bad "dispatch bridge not running"
   fi
   if claude_login_stored; then ok "Claude login stored"
-  else warn "no Claude login yet: type /login in the Coordinator (the dashboard's Terminal 0 or its Herdr pane), then run 'factory start' again"; fi
+  else warn "no Claude login yet: type /login in the Coordinator (POWER ON on the dashboard), then run 'factory start' again"; fi
 
   local coord_tools
   coord_tools="$(coordinator_broker_tools)"

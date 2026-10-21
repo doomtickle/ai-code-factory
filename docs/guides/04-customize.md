@@ -146,7 +146,7 @@ the repo), edit `roles/<name>/role.conf` instead; a change there to `LANES`,
 The Coordinator's own model is set differently: it defaults to `opus` in
 `kits/coordinator/spec.yaml`, and changing that default needs `factory update`,
 which recreates the Coordinator and discards its conversation history. To
-switch for one session only, type `/model` in the Coordinator pane. If you hit
+switch for one session only, type `/model` in the Coordinator's terminal. If you hit
 your subscription's usage limits, moving the Coordinator to `sonnet` is the
 first thing to try.
 
@@ -171,7 +171,7 @@ factory role new docs-writer developer
 Created roles/docs-writer (copied from developer). Next:
   1. Edit roles/docs-writer/role.conf: DESCRIPTION, WORKSPACE (rw/ro), BROKER_TOOLS, LANES, MODEL and MODELS (optional).
   2. Edit its instructions in roles/docs-writer/instructions.md.
-  3. Re-run ./scripts/02-launch-factory.sh <project-dir>.
+  3. Run 'factory start' again.
 ```
 
 Edit `roles/docs-writer/role.conf`. The Coordinator reads `DESCRIPTION` to
@@ -184,8 +184,8 @@ TEMPLATE="developer"
 WORKSPACE="rw"
 LANES="1"
 BROKER_TOOLS=""
-MODEL="sonnet"
-MODELS="haiku"
+MODEL="claude-sonnet-5-5"
+MODELS="claude-haiku-5-5"
 EFFORT=""
 MAX_SESSION_TOKENS=""
 MAX_TURNS="100"
@@ -246,17 +246,30 @@ it), outside every agent's reach. Start from the example and keep only what you
 need:
 
 ```bash
-mkdir -p ~/.config/ai-code-factory
-cp -R config.example/. ~/.config/ai-code-factory/
+factory config init
 ```
 
-The copied files hold placeholder values (an `example.jfrog.io` registry, an
-`example.atlassian.net` Jira site). Delete the tables and hosts you don't use
-before you run `factory update`.
+It writes the commented example into that folder and refuses to overwrite
+files that are already there unless you pass `--force`. Uncomment only the
+tables and hosts you use (the examples name an `example.jfrog.io` registry and
+an `example.atlassian.net` Jira site) before you run `factory update`.
 
 `roles/<role>.conf` there tunes a role (see [Tune a role](#tune-a-role)); the
 example `roles/developer.conf` is all comments, so it changes nothing until you
-uncomment a line.
+uncomment a line. The keys an override may set are exactly `MODEL`, `MODELS`,
+`EFFORT`, `LANES`, `MAX_SESSION_TOKENS` and `MAX_TURNS` (`ROLE_OVERRIDE_KEYS`
+in `scripts/lib/roles.sh`); any other key stops `factory start`.
+
+`projects/<project-folder-name>.md` there holds notes for one project (its test
+command, say), added to every role's instructions on `factory start`.
+
+`plugins/<module>/` there holds broker plugins: Python packages that add tools
+to the gateway (the broker's `docs/plugin-tools.md` describes the format).
+`factory update` copies the folder into the broker image, and the broker
+sandbox imports each folder name as a module. A plugin runs inside the broker,
+so add only code you wrote or reviewed. `BROKER_TOOLS` in a `role.conf` accepts
+only the names in `broker/tools.txt`, so a role can't be granted a plugin's tool
+that way. `factory status` counts the folder as local settings.
 
 `policy.toml` there overlays the repo's `broker/policy.toml` table by table: a
 key you set replaces the repo's value, and keys you leave out keep it. A list
@@ -278,7 +291,7 @@ allow_hosts = [
 ```
 
 The broker sandbox's own network policy must allow the new host too, so add it
-to your local `broker-kit/spec.yaml` (the copied example has the full file;
+to your local `broker-kit/spec.yaml` (the example has the full file;
 keep its header and replace the hosts under `allow`):
 
 ```yaml
@@ -297,10 +310,11 @@ factory update
 `factory doctor` then checks that every host the policy can reach is in a
 broker kit, and names any that aren't.
 
-> **Warning:** Recreating the broker sandbox deletes a GitHub token stored with
-> `--sandbox factory-broker`, and any credential you delivered with
-> `factory secret set`. Credentials saved with `factory secret save` come back
-> by themselves; for the rest, `factory update` tells you before it removes
+> **Warning:** Recreating the broker sandbox deletes a GitHub token set by hand
+> with `sbx secret set github --sandbox factory-broker`, and any credential you
+> delivered with `factory secret set`. Credentials saved with
+> `factory secret save` (the GitHub token included) come back by themselves on
+> the next broker start; for the rest, `factory update` tells you before it removes
 > anything, and the run that creates the new broker lists what to set again.
 
 The same folder holds your `[git].repos` for pushes, a private npm registry and

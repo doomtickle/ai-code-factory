@@ -398,7 +398,7 @@ done
 
 if [ -n "$roles_waiting_for_login" ]; then
   echo "note: no Claude login is stored yet, so these role sandboxes were not created:$roles_waiting_for_login
-  Type /login in the Coordinator, then run 'factory start' again (e.g. in the Host shell pane)."
+  Type /login in the Coordinator (POWER ON on the dashboard), then run 'factory start' again (or press RESTART on the dashboard)."
 fi
 
 if [ "$LAYOUT" = web ]; then

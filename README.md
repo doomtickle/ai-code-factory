@@ -142,9 +142,13 @@ For a browsable version of these docs, with step-by-step guides, run
 
 `broker/` is the `passdesk-broker` repository as a git submodule; a plain
 `git clone` leaves it empty. `factory setup` (and any other `factory`
-command but `factory docs` and `factory help`) initializes it automatically on first run, so this is optional, but
-you can also clone with `--recurse-submodules` or run
-`git submodule update --init` yourself first. The broker image is always
+command but `factory docs` and `factory help`) makes one quiet attempt to
+initialize it on first run, so you can often skip this step. That attempt
+needs `git` and access to the submodule's URL, and it only runs when `broker/`
+shows no sign of ever being initialized. If the command stops with `missing
+.../broker/tools.txt - run 'git submodule update --init'`, run `git submodule
+update --init` yourself (or clone with `--recurse-submodules` to avoid it).
+The broker image is always
 built from a `git archive` export of the commit this repo pins `broker/` to,
 never from the `broker/` working tree, and `factory setup`/`factory update`
 refuse to go on while `broker/` has uncommitted work, is off its pin, or its
@@ -175,7 +179,7 @@ repositories: the developer works in clones of them, from what is committed
 **The first time**, press POWER ON on the dashboard's Coordinator screen (or
 use the Coordinator pane in Herdr), type `/login` and sign in with your
 Claude subscription, then run `factory start` again (or press RESTART on the
-dashboard; in Herdr, the Host shell pane below the Coordinator works). `sbx` stores the login, but it gives a sandbox the
+dashboard; in the Herdr layouts, the host shell below the Coordinator works). `sbx` stores the login, but it gives a sandbox the
 login only when it creates it, so the first start creates just the Coordinator
 and the second creates the role sandboxes. To switch Claude accounts, run
 `factory reset` and `sbx secret rm anthropic`, then do the same.
@@ -276,8 +280,9 @@ broker sandbox (`factory start`, or `factory update` itself) lists which to set 
 keychain still has an entry for `factory-<name>`, it warns that the next
 `factory start` will deliver that entry again, and how to clear it too.
 
-Inside an existing Herdr pane, `factory start` uses that Herdr session; from a
-normal terminal it uses a dedicated Herdr session named `factory`.
+With `--layout watch` or `tabs`, `factory start` inside an existing Herdr pane
+uses that Herdr session; from a normal terminal it uses a dedicated Herdr
+session named `factory`. The default `web` layout uses no Herdr.
 
 > If you already have `sbx` from Homebrew at a different version, either run
 > `brew uninstall sbx` or put `~/.local/bin` ahead of `/opt/homebrew/bin` in `PATH`.
@@ -307,9 +312,9 @@ factory update
 ```
 
 - `policy.toml` overrides `broker/policy.toml` table by table: a key it sets
-  replaces the repo's value, and keys it leaves out keep it. `factory setup`
-  bakes it into the broker image next to the repo's policy, so agents can't
-  read or change it.
+  replaces the repo's value, and keys it leaves out keep it. `factory update`
+  bakes it into the broker image next to the repo's policy (and recreates the
+  broker sandbox), so agents can't read or change it.
 - `broker-kit/spec.yaml` is a kit adding broker egress hosts that your
   `policy.toml` needs, such as your private registry's host. It applies to the
   broker sandbox only (agent sandboxes still reach only Anthropic), and only
@@ -321,6 +326,12 @@ factory update
   `roles/<role>/role.conf`: only `MODEL`, `MODELS`, `EFFORT`, `LANES`,
   `MAX_SESSION_TOKENS` and `MAX_TURNS`, applied on `factory start` (Roles,
   "Tuning a role locally"). No rebuild.
+- `plugins/<module>/` holds broker plugins (Python packages that add tools to
+  the gateway; see the broker's `docs/plugin-tools.md`). `factory update`
+  copies the folder into the broker image and the broker sandbox imports each
+  folder name as a module. A plugin is code that runs inside the broker, so
+  add only your own. `BROKER_TOOLS` in `role.conf` accepts only the tool names
+  in `broker/tools.txt`, so a role can't be granted a plugin's tool from there.
 
 The folder sits outside the repo on purpose. When the factory works on its own
 repo, the developer's branches can change anything in it once you merge them,
@@ -867,6 +878,89 @@ as git bundles, and npm install scripts are disabled. `.factory/` in the project
 is git-ignored automatically (`factory start` creates it, with
 `.factory/outgoing/`, and refuses to run if either is a symlink).
 
+### Fixing DENIED
+
+Every broker refusal starts with `DENIED by broker policy:` and names the rule.
+Roles report it instead of working around it. Some messages end with "see
+README, Configuring credentials" or mention "the deployment's policy.toml
+overlay": that is the broker's own README. In the factory, the "overlay" is your
+local `policy.toml` (Local settings) and credentials are the keychain commands
+below. Find your message, apply the fix, run `factory update` (it rebuilds the
+broker image, recreates what needs it and restarts), then ask the role again.
+
+**A tool isn't granted to the role** (`principal 'developer' is not granted
+tool 'web_fetch' (see roles/developer/role.conf)`). Add the tool to
+`BROKER_TOOLS` in that file (the Coordinator's is `kits/coordinator/broker.conf`).
+Only names in `broker/tools.txt` are accepted, and a local `roles/<role>.conf`
+can't grant tools. Grant only what the role needs: only the researcher reads
+the web.
+
+```conf
+BROKER_TOOLS="npm_fetch web_fetch"
+```
+
+Then `factory update`. A role that already had broker tools only needs
+`factory start`.
+
+**A host or repo isn't allowed** (`host fastify.dev is not in the web allowlist
+(policy.toml [web].allow_hosts)`, `repo my-org/my-api is not in the broker
+allowlist (policy.toml [git].repos)`, `... is not in [packages].npm_redirect_hosts`).
+Add it in your local `policy.toml`. A list replaces the repo's whole list, so
+repeat the hosts you want to keep (they are in `broker/policy.toml`):
+
+```toml
+[web]
+allow_hosts = ["docs.python.org", "fastify.dev"]   # plus the rest of the repo's list
+
+[git]
+repos = ["my-org/my-api"]
+```
+
+A new web or registry host also goes under `permissions.network.allow` in your
+local `broker-kit/spec.yaml`, or the broker can't reach it (`could not reach
+<host>`). Then `factory update`. If the message says the host "is where the
+deployment's egress proxy or the broker attaches credentials", adding it
+changes nothing: use the tool it names instead of `web_fetch`.
+
+**A secret is missing** (`no Jira credential found`, `no Gemini API key found`,
+`the github credential is not a GitHub token`, or the GitLab or npm equivalents).
+Save it once; every broker start then delivers it:
+
+```sh
+factory secret save jira      # value: you@example.com:TOKEN
+factory secret save gemini    # also: github, gitlab, npm-registry
+```
+
+Then `factory update` (a plain `factory start` delivers it too). With no
+keychain (headless Linux), `factory secret set <name>` delivers it to the
+running broker now; it is lost when the broker is recreated, so run it again
+after `factory update`. Token scopes: *Enabling git push and pull requests*,
+*Enabling GitLab* and *Enabling Jira*.
+
+**Jira isn't configured** (`[jira].site and cloud_id are not set`,
+`[jira].cloud_id is not a valid UUID`). Set both in your local `policy.toml`
+(the `cloudId` comes from `https://<site>/_edge/tenant_info`), grant the tools
+in `kits/coordinator/broker.conf`, and save the token as above:
+
+```toml
+[jira]
+site = "acme.atlassian.net"
+cloud_id = "0f0e0d0c-0b0a-0908-0706-050403020100"   # your own cloudId
+```
+
+```conf
+BROKER_TOOLS="jira_my_issues jira_get_issue"
+```
+
+Then `factory update`: the Coordinator gains broker access only when its
+sandbox is created. Full steps: *Enabling Jira*. `project ABC is not in the
+broker allowlist (policy.toml [jira].projects)` means `[jira].projects` is set
+and doesn't list that project: add it there.
+
+`factory doctor` reports missing credentials, empty `[git].repos`, and policy
+hosts that no broker kit covers. More messages:
+the troubleshooting guide, *"DENIED by broker policy"*.
+
 ## Dashboard
 
 `factory dashboard` (or `factory gui`) serves a one-screen view of the
@@ -1090,9 +1184,11 @@ hasn't dispatched any jobs yet just shows an empty report.
   - **A role:** its lanes' saved sessions; their next tasks start fresh. For
     the developer, also its lane clones: anything it didn't commit to a
     `factory/*` branch (committed branches are already in your project).
-  - **Broker:** a GitHub token stored with `--sandbox factory-broker`, because
-    `sbx rm` deletes secrets scoped to the removed sandbox. Re-add it
-    afterwards; `factory start` reminds you.
+  - **Broker:** a GitHub token set only by hand with `sbx secret set github
+    --sandbox factory-broker`, because `sbx rm` deletes secrets scoped to the
+    removed sandbox. A token saved with `factory secret save github` isn't
+    lost: every broker start restores it from the keychain. Re-add a
+    hand-set one afterwards; `factory start` reminds you.
 
   Sandboxes created before fingerprints existed count as out of date once.
 
