@@ -25,7 +25,8 @@ socket, or host credentials. Full picture: README.md.
   hand back only committed `factory/*` branches as bundles the bridge imports; the
   user merges them. The only writable project path any role mounts is
   `PROJECT/.factory/outgoing`. A role runs up to `LANES` jobs at once, each its own
-  session/transcript. The bridge passes instructions via `--append-system-prompt`
+  session/transcript. The bridge passes each role its instructions (snapshotted
+  into `FACTORY_STATE` by `factory start`) via `--append-system-prompt`
   (a mixin kit's `agentInstructions` aren't reliably loaded).
 - **Broker:** all agent tool traffic (git, package registries, web) goes through the
   Broker microVM (`factory-broker`), reached only as MCP tools via the sbx MCP
