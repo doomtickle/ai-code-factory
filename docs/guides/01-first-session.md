@@ -31,7 +31,7 @@ indented underneath. Before setup, it's normal to see warnings that `sbx` and
 `herdr` aren't installed yet:
 
 ```text
-==> Tools
+==> Factory tools
   ! sbx 0.45.1 not installed yet ('factory setup' installs it)
   ! herdr 0.9.1 not installed yet ('factory setup' installs it)
 ```

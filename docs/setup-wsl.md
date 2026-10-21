@@ -184,8 +184,9 @@ watch` (or `tabs`) opens it instead (README, *Layouts*).
   every time the broker is created, so `factory update` never asks for it again.
   GitLab instead (or too): README, *Enabling GitLab*, and
   `factory secret save gitlab`.
-- **Personal settings** (repos agents may push to, extra hosts): copy
-  `config.example/` to `~/.config/ai-code-factory/` and edit it. README,
+- **Personal settings** (repos agents may push to, extra hosts): run
+  `factory config init` (it writes commented examples to
+  `~/.config/ai-code-factory/`) and uncomment what you need. README,
   *Local settings*.
 - **GitLab, Gemini, Jira, private npm registry, approvals webhook:** WSL usually has no Linux
   keyring, so the factory uses the **Windows Credential Manager** instead

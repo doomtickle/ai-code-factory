@@ -249,10 +249,12 @@ need:
 factory config init
 ```
 
-It writes the commented example into that folder and refuses to overwrite
-files that are already there unless you pass `--force`. Uncomment only the
-tables and hosts you use (the examples name an `example.jfrog.io` registry and
-an `example.atlassian.net` Jira site) before you run `factory update`.
+It writes the example into that folder with every value commented out, so the
+copy changes nothing until you uncomment a line. If any of those files already
+exists it writes nothing and exits 1, unless you pass `--force` to overwrite.
+Uncomment only the tables and hosts you use (the examples name an
+`example.jfrog.io` registry and an `example.atlassian.net` Jira site), then run
+`factory doctor` and `factory update`.
 
 `roles/<role>.conf` there tunes a role (see [Tune a role](#tune-a-role)); the
 example `roles/developer.conf` is all comments, so it changes nothing until you
