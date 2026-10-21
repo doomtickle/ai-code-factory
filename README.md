@@ -126,7 +126,7 @@ Everything is pinned for repeatable setups:
 | Sandbox base images (digests) | `templates/*/Dockerfile`, `broker/Dockerfile` |
 | ruff 0.16.8 | `templates/reviewer/Dockerfile` |
 | yarn 1.22.22 (+ SHA-256) and `factory-test` | `templates/developer/Dockerfile`, `templates/reviewer/Dockerfile` |
-| Chrome for Testing headless shell 156.0.8078.47 (+ SHA-256; its Ubuntu libraries and fonts pinned only by the base image digest) | `templates/developer/Dockerfile`, `templates/reviewer/Dockerfile` |
+| Chrome for Testing headless shell 156.0.8078.47 (linux64 and linux-arm64, each + SHA-256; its Ubuntu libraries and fonts pinned only by the base image digest) | `templates/developer/Dockerfile`, `templates/reviewer/Dockerfile` |
 | Broker code + policy | baked into `factory-broker:v3` at build time |
 | Dispatch bridge runtime | macOS system Python (`/usr/bin/python3`); `python3` on PATH on Linux |
 
