@@ -186,7 +186,7 @@ setup_done() {
 # cmd_doctor -> checks everything setup and start need, printing the fix for
 # each problem. Fails if anything blocks setup. Changes nothing itself.
 cmd_doctor() {
-  local problems=0 missing_pkgs="" os linux="" t out status doctor hosts kit kit_hosts missing h
+  local problems=0 missing_pkgs="" os linux="" t out status doctor hosts kit kit_hosts missing h r
   os="$(uname -s)"
   [ "$os" = Linux ] && linux=1
   # fail SUMMARY [FIX-TEXT...] -> a problem, with its fix indented beneath (multi-line args allowed)
@@ -312,6 +312,16 @@ $(sed -n 's/^[[:space:]]*-[[:space:]]*"\{0,1\}\([^"[:space:]#]*\).*/\1/p' "$kit"
         else fail "in the broker policy but not in the broker kit:$missing" \
           "add them to kits/broker/spec.yaml (or $FACTORY_CONFIG/broker-kit/spec.yaml), then 'factory update'"; fi ;;
     esac
+  fi
+  # This machine's role overrides (FACTORY_CONFIG/roles/<role>.conf), checked
+  # exactly as `factory start` checks them; no step at all without the folder.
+  if [ -d "$FACTORY_CONFIG/roles" ]; then
+    step "Role overrides ($FACTORY_CONFIG/roles)"
+    if out="$( (validate_role_overrides; for r in $(list_roles); do validate_role "$r"; done) 2>&1)"; then
+      ok "role overrides are valid"
+    else
+      fail "${out#error: }" "fix or remove the override, then 'factory start' applies it (docs/guides/04-customize.md)"
+    fi
   fi
   approvals_doctor_check
   # A warning, not a problem (owner decision): the fix is a Pro re-copy or a
@@ -601,7 +611,7 @@ cmd_status() {
   local project code pid
   project="$(bound_project)"
   say "${B}Project${N}   ${project:-${D}none yet (run factory start)${N}}"
-  if [ -f "$FACTORY_CONFIG/policy.toml" ] || [ -d "$FACTORY_CONFIG/broker-kit" ]; then
+  if [ -f "$FACTORY_CONFIG/policy.toml" ] || [ -d "$FACTORY_CONFIG/broker-kit" ] || [ -d "$FACTORY_CONFIG/roles" ]; then
     say "${B}Local settings${N} $FACTORY_CONFIG"
   else
     say "${B}Local settings${N} ${D}none (see config.example/)${N}"
@@ -777,6 +787,8 @@ cmd_roles() {
       "$( [ "$(role_get "$r" WORKSPACE)" = rw ] && echo "branches" || echo "read-only")" \
       "$(lanes_label "$r")" "$(role_get "$r" DESCRIPTION)"
     printf '  %snetwork tools: %s%s\n' "$D" "$(role_get "$r" BROKER_TOOLS | sed 's/ /, /g; s/^$/none/')" "$N"
+    [ ! -f "$(role_override_file "$r")" ] \
+      || printf '  %slocal overrides: %s%s\n' "$D" "$(role_override_file "$r")" "$N"
   done
 }
 

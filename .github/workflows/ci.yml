@@ -76,6 +76,8 @@ jobs:
         run: bash scripts/test_factory_restart.sh
       - name: factory GitLab checks
         run: bash scripts/test_factory_gitlab.sh
+      - name: local role overrides
+        run: bash scripts/test_factory_role_overrides.sh
 
   macos:
     # What a Mac user runs: the system bash (3.2) and the system Python

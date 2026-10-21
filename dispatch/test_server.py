@@ -225,6 +225,90 @@ class RoleTests(Base):
         self.assertNotIn("session:", reviewer)
 
 
+class RoleOverrideTests(Base):
+    """STATE/role-overrides/<role>.conf: this machine's local tuning of a role,
+    snapshotted by start-dispatch.sh and layered over role.conf."""
+
+    def override(self, role, text):
+        path = d.STATE / "role-overrides" / f"{role}.conf"
+        path.parent.mkdir(exist_ok=True)
+        path.write_text(text)
+        return path
+
+    def test_no_overrides_is_unchanged(self):
+        before = d.load_roles()
+        (d.STATE / "role-overrides").mkdir()  # start-dispatch.sh's empty snapshot
+        self.assertEqual(d.load_roles(), before)
+        self.assertEqual(before["tiered"]["models"], ["sonnet", "haiku", "opus"])
+
+    def test_override_is_layered_over_role_conf(self):
+        self.override("tiered", '# cheaper by default\n\nMODEL="claude-haiku-5-5"\n'
+                                '  # indented comment\n'
+                                'MODELS="opus claude-fable-5-1"\nEFFORT="high"\nLANES="4"\n'
+                                'MAX_SESSION_TOKENS="0"\nMAX_TURNS="50"\n')
+        role = d.load_roles()["tiered"]
+        self.assertEqual(role["model"], "claude-haiku-5-5")
+        self.assertEqual(role["models"], ["claude-haiku-5-5", "opus", "claude-fable-5-1"])
+        self.assertEqual(role["effort"], "high")
+        self.assertEqual(role["lanes"], 4)
+        self.assertEqual(role["max_session_tokens"], 0)
+        self.assertEqual(role["max_turns"], 50)
+        # Untouched keys still come from role.conf; other roles are unaffected.
+        self.assertEqual(role["description"], "Picks a model per task")
+        self.assertEqual(d.load_roles()["opuser"]["model"], "opus")
+        self.assertIn("model: claude-haiku-5-5; can also run on: opus, claude-fable-5-1",
+                      d.tool_list_roles({}))
+
+    def test_override_applies_to_delegate(self):
+        self.override("tiered", 'MODELS="claude-fable-5-1"\n')
+        out = json.loads(d.tool_delegate({"role": "tiered", "task": "hard", "model": "claude-fable-5-1",
+                                          "wait_seconds": 30}))
+        self.assertEqual(out["status"], "done")
+        self.assertEqual(self.exec_models(), ["claude-fable-5-1"])
+        with self.assertRaisesRegex(d.Denied, "haiku"):  # dropped by the override
+            d.tool_delegate({"role": "tiered", "task": "x", "model": "haiku"})
+
+    def exec_models(self):
+        return [c[c.index("--model") + 1] if "--model" in c else None for c in self.claude_calls()]
+
+    def test_keys_outside_the_allowlist_are_refused(self):
+        for key in ("BROKER_TOOLS", "WORKSPACE", "TEMPLATE", "DESCRIPTION", "OTHER"):
+            path = self.override("developer", f'LANES="2"\n{key}="git_push"\n')
+            with self.assertRaises(d.Denied) as cm:
+                d.load_roles()
+            self.assertIn(f"{path}: {key} can't be set in a local override", str(cm.exception))
+            out = d.call_tool("list_roles", {})
+            self.assertTrue(out[1] and out[0].startswith("DENIED:"), out)
+
+    def test_malformed_lines_are_refused(self):
+        for line in ("LANES=2", "LANES='2'", "export LANES=\"2\"", "$(reboot)"):
+            path = self.override("developer", line + "\n")
+            with self.assertRaisesRegex(d.Denied, f'{path}: not a KEY="value" line'):
+                d.load_roles()
+
+    def test_override_values_get_role_conf_validation(self):
+        # The same parsing as role.conf: bad names dropped, bad numbers fall back.
+        self.override("tiered", 'MODEL="bad model"\nMODELS="opus bad;name"\nEFFORT="max"\n'
+                                'LANES="9"\nMAX_SESSION_TOKENS="lots"\nMAX_TURNS="-1"\n')
+        role = d.load_roles()["tiered"]
+        self.assertEqual(role["models"], ["opus"])
+        self.assertEqual(role["effort"], "")
+        self.assertEqual(role["lanes"], 1)
+        self.assertEqual(role["max_session_tokens"], d.DEFAULT_MAX_SESSION_TOKENS)
+        self.assertEqual(role["max_turns"], 0)
+
+    def test_override_for_an_unknown_role_is_refused(self):
+        path = self.override("designer", 'LANES="2"\n')
+        with self.assertRaisesRegex(d.Denied, f"{path}: no role named 'designer'"):
+            d.load_roles()
+
+    def test_never_read_from_the_config_folder_or_repo(self):
+        # Only the state snapshot counts: an override anywhere else is ignored.
+        (d.ROOT / "roles" / "tiered" / "override.conf").write_text('MODEL="opus"\n')
+        (d.ROOT / "roles" / "tiered.conf").write_text('MODEL="opus"\n')
+        self.assertEqual(d.load_roles()["tiered"]["model"], "sonnet")
+
+
 class DelegateTests(Base):
     def test_delegate_runs_claude_in_the_role_sandbox(self):
         job_id = self.delegate("developer", "add a feature")

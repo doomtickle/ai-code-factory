@@ -33,9 +33,71 @@ conf_get() {
   sed -n "s/^$2=\"\(.*\)\"[[:space:]]*\$/\1/p" "$1" | tail -n 1
 }
 
-# role_get ROLE KEY -> value of KEY="value" in role.conf (parsed, never sourced)
+# --- Local role overrides ------------------------------------------------------------
+# FACTORY_CONFIG/roles/<role>.conf: this machine's tuning of a role, layered
+# over roles/<role>/role.conf so a user needn't edit their clone. Same
+# KEY="value" format, parsed (never sourced), and only the keys below: nothing
+# that moves the security boundary (BROKER_TOOLS, WORKSPACE, TEMPLATE, ...).
+# validate_role checks the merged values exactly as it checks role.conf's.
+# start-dispatch.sh snapshots the overrides for the bridge
+# (DISPATCH_STATE/role-overrides), so changes apply on the next `factory start`.
+readonly ROLE_OVERRIDE_KEYS="MODEL MODELS EFFORT LANES MAX_SESSION_TOKENS MAX_TURNS"
+
+role_override_file() { printf '%s/roles/%s.conf' "$FACTORY_CONFIG" "$1"; }
+
+# role_conf_file ROLE KEY -> the file ROLE's KEY is read from: its override if
+# that sets KEY (and KEY may be overridden), else roles/ROLE/role.conf
+role_conf_file() {
+  local o
+  o="$(role_override_file "$1")"
+  if in_list "$2" "$ROLE_OVERRIDE_KEYS" && [ -f "$o" ] && grep -q "^$2=\".*\"[[:space:]]*\$" "$o"; then
+    printf '%s' "$o"
+  else
+    printf '%s' "$ROOT/roles/$1/role.conf"
+  fi
+}
+
+# override_note ROLE KEY -> " (set in <override file>)" if ROLE's local
+# override sets KEY, else nothing: for error messages
+override_note() {
+  local f
+  f="$(role_conf_file "$1" "$2")"
+  [ "$f" = "$ROOT/roles/$1/role.conf" ] || printf ' (set in %s)' "$f"
+}
+
+# role_get ROLE KEY -> value of KEY="value" for ROLE: role.conf, with the
+# local override layered on top (both parsed, never sourced)
 role_get() {
-  conf_get "$ROOT/roles/$1/role.conf" "$2"
+  conf_get "$(role_conf_file "$1" "$2")" "$2"
+}
+
+# validate_role_override ROLE -> dies unless ROLE's override (if any) holds
+# only blank lines, comments and KEY="value" lines for ROLE_OVERRIDE_KEYS.
+validate_role_override() {
+  local f line trimmed key
+  f="$(role_override_file "$1")"
+  [ -e "$f" ] || return 0
+  [ -f "$f" ] || die "$f: not a regular file"
+  while IFS= read -r line || [ -n "$line" ]; do
+    trimmed="${line#"${line%%[![:space:]]*}"}"
+    case "$trimmed" in ''|'#'*) continue ;; esac
+    key="$(printf '%s\n' "$line" | sed -n 's/^\([A-Z_][A-Z_]*\)=".*"[[:space:]]*$/\1/p')"
+    [ -n "$key" ] || die "$f: not a KEY=\"value\" line: $line"
+    in_list "$key" "$ROLE_OVERRIDE_KEYS" \
+      || die "$f: $key can't be set in a local override (allowed: $ROLE_OVERRIDE_KEYS); change it in roles/$1/role.conf"
+  done < "$f"
+}
+
+# validate_role_overrides -> dies if an override names no role in roles/.
+validate_role_overrides() {
+  local f r
+  for f in "$FACTORY_CONFIG"/roles/*.conf; do
+    [ -e "$f" ] || continue
+    r="$(basename "$f" .conf)"
+    [ -f "$ROOT/roles/$r/role.conf" ] \
+      || die "$f: no role named '$r' in $ROOT/roles (an override is named <role>.conf; see: factory roles)"
+  done
+  return 0
 }
 
 # coordinator_broker_tools -> value of BROKER_TOOLS="..." in
@@ -92,6 +154,7 @@ validate_role() {
   valid_role_name "$r" || die "invalid role name '$r' (lowercase letters, digits, dashes; not ending in -lane<N>; not: $RESERVED_ROLE_NAMES)"
   [ -f "$ROOT/roles/$r/kit/spec.yaml" ] || die "role $r: missing roles/$r/kit/spec.yaml"
   [ -s "$ROOT/roles/$r/instructions.md" ] || die "role $r: missing or empty roles/$r/instructions.md"
+  validate_role_override "$r"
   in_list "$(role_get "$r" TEMPLATE)" "$KNOWN_TEMPLATES" \
     || die "role $r: TEMPLATE must be one of: $KNOWN_TEMPLATES"
   in_list "$(role_get "$r" WORKSPACE)" "rw ro" || die "role $r: WORKSPACE must be rw or ro"
@@ -100,23 +163,23 @@ validate_role() {
   done
   m="$(role_get "$r" MODEL)"
   [ -z "$m" ] || printf '%s' "$m" | grep -Eq '^[A-Za-z0-9._-]+$' \
-    || die "role $r: MODEL must contain only letters, digits, dots, dashes, underscores"
+    || die "role $r: MODEL must contain only letters, digits, dots, dashes, underscores$(override_note "$r" MODEL)"
   for m in $(role_get "$r" MODELS); do
     printf '%s' "$m" | grep -Eq '^[A-Za-z0-9._-]+$' \
-      || die "role $r: MODELS entries must contain only letters, digits, dots, dashes, underscores"
+      || die "role $r: MODELS entries must contain only letters, digits, dots, dashes, underscores$(override_note "$r" MODELS)"
   done
   m="$(role_get "$r" EFFORT)"
   [ -z "$m" ] || in_list "$m" "low medium high xhigh" \
-    || die "role $r: EFFORT must be low, medium, high or xhigh (or empty)"
+    || die "role $r: EFFORT must be low, medium, high or xhigh (or empty)$(override_note "$r" EFFORT)"
   m="$(role_get "$r" LANES)"
   [ -z "$m" ] || printf '%s' "$m" | grep -Eq '^[1-8]$' \
-    || die "role $r: LANES must be a whole number from 1 to 8 (or empty)"
+    || die "role $r: LANES must be a whole number from 1 to 8 (or empty)$(override_note "$r" LANES)"
   m="$(role_get "$r" MAX_SESSION_TOKENS)"
   [ -z "$m" ] || printf '%s' "$m" | grep -Eq '^[0-9]+$' \
-    || die "role $r: MAX_SESSION_TOKENS must be a whole number of tokens (or empty)"
+    || die "role $r: MAX_SESSION_TOKENS must be a whole number of tokens (or empty)$(override_note "$r" MAX_SESSION_TOKENS)"
   m="$(role_get "$r" MAX_TURNS)"
   [ -z "$m" ] || printf '%s' "$m" | grep -Eq '^[0-9]+$' \
-    || die "role $r: MAX_TURNS must be a whole number of turns (or empty)"
+    || die "role $r: MAX_TURNS must be a whole number of turns (or empty)$(override_note "$r" MAX_TURNS)"
 }
 
 # --- Sandbox fingerprints ------------------------------------------------------------

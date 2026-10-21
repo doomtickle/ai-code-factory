@@ -50,10 +50,20 @@ fi
 # can change what the others are told.
 project_name="$(basename "$PROJECT")"
 notes="$FACTORY_CONFIG/projects/$project_name.md"
-rm -rf "$STATE/instructions.tmp"
-mkdir -p "$STATE/instructions.tmp"
+# This machine's role overrides (FACTORY_CONFIG/roles/<role>.conf, see
+# lib/roles.sh) are snapshotted the same way, once validated: the bridge layers
+# STATE/role-overrides/<role>.conf over roles/<role>/role.conf and never reads
+# FACTORY_CONFIG itself.
+validate_role_overrides
+rm -rf "$STATE/instructions.tmp" "$STATE/role-overrides.tmp"
+mkdir -p "$STATE/instructions.tmp" "$STATE/role-overrides.tmp"
 for role in $(list_roles); do
   validate_role "$role"
+  override="$(role_override_file "$role")"
+  if [ -f "$override" ]; then
+    cp "$override" "$STATE/role-overrides.tmp/$role.conf"
+    echo "Applied local overrides for $role from $override"
+  fi
   cp "$ROOT/roles/$role/instructions.md" "$STATE/instructions.tmp/$role.md"
   if [ -s "$notes" ]; then
     printf '\n# This project (%s)\n' "$project_name" >> "$STATE/instructions.tmp/$role.md"
@@ -69,6 +79,8 @@ done
 [ ! -s "$notes" ] || echo "Added project notes from $notes to the role instructions"
 rm -rf "$STATE/instructions"
 mv "$STATE/instructions.tmp" "$STATE/instructions"
+rm -rf "$STATE/role-overrides"
+mv "$STATE/role-overrides.tmp" "$STATE/role-overrides"
 
 # The factory's own docs, for the Coordinator's factory_docs tool. A snapshot,
 # like the instructions above: the bridge reads this copy, so a role working on
