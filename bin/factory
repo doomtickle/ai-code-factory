@@ -22,11 +22,11 @@ ROOT="$(dirname "$SCRIPTS")"
 # shellcheck source=../scripts/lib/common.sh
 . "$SCRIPTS/lib/common.sh"
 # roles.sh initializes the broker/ submodule if needed and dies without it.
-# 'factory docs' and 'factory help' need neither, so they skip it: they must
+# 'factory docs', 'factory help' and 'factory config' need neither, so they skip it: they must
 # work on a fresh clone, before 'factory setup' (a test sourcing this file
 # always gets roles.sh).
 case "${BASH_SOURCE[0]}:${1:-help}" in
-  "$0":docs|"$0":help|"$0":-h|"$0":--help) ;;
+  "$0":docs|"$0":config|"$0":help|"$0":-h|"$0":--help) ;;
   *)
     # shellcheck source=../scripts/lib/roles.sh
     . "$SCRIPTS/lib/roles.sh" ;;
@@ -103,6 +103,9 @@ ${B}Usage${N}
   factory roles              List roles and what they may do
   factory role new <name> [like]
                              Add a role, copied from an existing one (default: reviewer)
+  factory config init [--force]
+                             Write the commented example settings into
+                             $FACTORY_CONFIG; refuses to overwrite files unless --force
   factory secret save <name> Store a credential once in this machine's keychain
                              (github, gitlab, jira, gemini, npm-registry,
                              approvals-webhook); every broker start
@@ -458,6 +461,14 @@ policy_string() {
   policy_value "$1" "$2" | awk -F'"' '{ print $2 }'
 }
 
+# jira_cloud_id_set -> success if [jira].cloud_id is set to something other
+# than empty or the all-zero placeholder UUID from config.example/.
+jira_cloud_id_set() {
+  local id
+  id="$(policy_string jira cloud_id)"
+  [ -n "$id" ] && [ -n "${id//[0-]/}" ]
+}
+
 git_push_enabled() {
   policy_value git repos | grep -qE '\[.*[^][:space:]].*\]'
 }
@@ -578,7 +589,7 @@ onboarding_hints() {
   fi
   if any_jira_tool_granted; then
     keychain_has factory-jira || warn "Jira tools are granted but no token is stored in the keychain (see README: Enabling Jira)"
-    [ -n "$(policy_string jira cloud_id)" ] || warn "Jira tools are granted but [jira].cloud_id is not set; set it in $FACTORY_CONFIG/policy.toml (see README: Enabling Jira)"
+    jira_cloud_id_set || warn "Jira tools are granted but [jira].cloud_id is not set; set it in $FACTORY_CONFIG/policy.toml (see README: Enabling Jira)"
   fi
   if npm_private_registry_needs_token && ! keychain_has factory-npm-registry; then
     warn "npm_fetch can't download private npm packages until a token is stored in the keychain (see README: Enabling a private npm registry)"
@@ -636,7 +647,7 @@ cmd_status() {
   say "${B}Coordinator broker tools${N} ${coord_tools:-none}"
   if any_jira_tool_granted; then
     keychain_has factory-jira || warn "Jira keychain entry (\"factory-jira\") not found"
-    [ -n "$(policy_string jira cloud_id)" ] || warn "[jira].cloud_id is not set (see README: Enabling Jira)"
+    jira_cloud_id_set || warn "[jira].cloud_id is not set (see README: Enabling Jira)"
   fi
   if npm_private_registry_needs_token && ! keychain_has factory-npm-registry; then
     warn "private npm registry keychain entry (\"factory-npm-registry\") not found"
@@ -1313,6 +1324,49 @@ cmd_approvals() {
   "$python" "$SCRIPTS/approvals.py" --state "$FACTORY_BROKER_STATE" "$@"
 }
 
+# --- config ------------------------------------------------------------------------
+# cmd_config init [--force] -> copies config.example/ into FACTORY_CONFIG. Every
+# placeholder in the example is commented out, so the copy is inert. Writes
+# nothing at all if any target file exists, unless --force.
+cmd_config() {
+  local sub="${1:-}" force="" arg src rel dest
+  local -a files=() existing=()
+  [ $# -eq 0 ] || shift
+  [ "$sub" = init ] || die "usage: factory config init [--force]"
+  for arg in "$@"; do
+    case "$arg" in
+      --force) force=1 ;;
+      *) die "usage: factory config init [--force]" ;;
+    esac
+  done
+  [ -d "$ROOT/config.example" ] || die "no config.example/ in $ROOT"
+  while IFS= read -r src; do
+    files+=("${src#"$ROOT/config.example/"}")
+  done < <(find "$ROOT/config.example" -type f | LC_ALL=C sort)
+  [ "${#files[@]}" -gt 0 ] || die "config.example/ in $ROOT is empty"
+  # -L too: a dangling symlink is "absent" to -e, and cp would write through it.
+  for rel in "${files[@]}"; do
+    if [ -e "$FACTORY_CONFIG/$rel" ] || [ -L "$FACTORY_CONFIG/$rel" ]; then
+      existing+=("$FACTORY_CONFIG/$rel")
+    fi
+  done
+  if [ "${#existing[@]}" -gt 0 ] && [ -z "$force" ]; then
+    for dest in "${existing[@]}"; do bad "exists: $dest"; done
+    die "nothing written; re-run with --force to overwrite the files above"
+  fi
+  step "Config init ($FACTORY_CONFIG)"
+  for rel in "${files[@]}"; do
+    dest="$FACTORY_CONFIG/$rel"
+    mkdir -p "$(dirname "$dest")"
+    # --force replaces a symlink itself; cp would write through it to its target.
+    [ ! -L "$dest" ] || rm -f "$dest"
+    cp "$ROOT/config.example/$rel" "$dest"
+    ok "wrote $dest"
+  done
+  say "Every value in them is commented out: uncomment and fill in only what you need."
+  say "Next: factory doctor"
+}
+
 # --- main ----------------------------------------------------------------------------
 # Guarded so a test can source this file (to call e.g. pull_factory directly)
 # without running main: BASH_SOURCE[0] equals $0 only when run directly.
@@ -1335,6 +1389,7 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
     dashboard|gui) cmd_dashboard "$@" ;;
     roles) cmd_roles "$@" ;;
     role) cmd_role "$@" ;;
+    config) cmd_config "$@" ;;
     secret) cmd_secret "$@" ;;
     analytics) cmd_analytics "$@" ;;
     docs) cmd_docs "$@" ;;
