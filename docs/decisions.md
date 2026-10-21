@@ -4,6 +4,29 @@ Dated entries, for the user to review. Newest first.
 
 ## 2026-10-21
 
+- **One decision per approval card.** A held write's card stays in
+  `approvals/pending/` until the agent retries the call, and the decision
+  file (`approvals/decisions/<id>.json`, tied to the card by its nonce) is
+  what the gateway reads on that retry. The factory's console and dashboard
+  used to overwrite any existing decision, so a second press could silently
+  flip a decline into an approve before the retry, and decided cards looked
+  undecided. Choices:
+  - **A decision is final for its card** (same id and nonce). The factory
+    writes it with a hard link onto the final name (`os.link`), never a
+    replace, so of two concurrent deciders exactly one wins.
+  - **A leftover decision from an older card** with the same id but a
+    different nonce is cleared under a short lock file in the decisions
+    folder, so it never blocks the new card.
+  - **A second decide is refused:** 409 `decided` in the dashboard; exit 1
+    with "already approved/declined by X at T" in `factory approvals`.
+  - **Decided and expired cards are shown as such** and are not counted as
+    pending.
+  - **Consequence:** the gateway's side is unchanged (same file name, format
+    and nonce check). To change your mind before the retry, decline is no
+    longer reversible from the console; the agent's retry gets the first
+    decision. The implementation is in ai-code-factory (`scripts/approvals.py`,
+    the dashboard control unit; branch `factory/gate-decided-cards`).
+
 - **The hold moves from Passdesk Pro into core; the licence is gone
   (doomtickle/passdesk-ops#89, owner decision in passdesk-ops
   `decisions.md` and `docs/strategy/2026-10-lois-merge-plan.md`).** The
