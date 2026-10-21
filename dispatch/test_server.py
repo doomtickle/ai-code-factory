@@ -239,7 +239,7 @@ class RoleOverrideTests(Base):
         before = d.load_roles()
         (d.STATE / "role-overrides").mkdir()  # start-dispatch.sh's empty snapshot
         self.assertEqual(d.load_roles(), before)
-        self.assertEqual(before["tiered"]["models"], ["sonnet", "haiku", "opus"])
+        self.assertEqual(before["tiered"]["models"], ["sonnet", "haiku", "opus", "claude-haiku-5-5"])
 
     def test_override_is_layered_over_role_conf(self):
         self.override("tiered", '# cheaper by default\n\nMODEL="claude-haiku-5-5"\n'
