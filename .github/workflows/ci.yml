@@ -72,6 +72,8 @@ jobs:
         run: bash scripts/test_factory_chat.sh
       - name: factory restart
         run: bash scripts/test_factory_restart.sh
+      - name: factory GitLab checks
+        run: bash scripts/test_factory_gitlab.sh
 
   macos:
     # What a Mac user runs: the system bash (3.2) and the system Python
@@ -112,6 +114,8 @@ jobs:
         run: bash scripts/test_factory_chat.sh
       - name: factory restart
         run: bash scripts/test_factory_restart.sh
+      - name: factory GitLab checks
+        run: bash scripts/test_factory_gitlab.sh
       # factory-lane runs only inside the Linux sandboxes, so it's tested on Linux.
 
   images:
