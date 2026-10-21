@@ -1,4 +1,4 @@
-# AI Code Factory
+# LOIS (the factory)
 
 [![CI](https://github.com/doomtickle/ai-code-factory/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/doomtickle/ai-code-factory/actions/workflows/ci.yml)
 Docs site: <https://doomtickle.github.io/ai-code-factory/> (the same page `factory docs` opens locally)

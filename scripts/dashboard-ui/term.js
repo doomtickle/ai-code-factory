@@ -24,7 +24,7 @@
     error: ["TERMINAL 0 · FAULT", "The Coordinator could not be started. Power on to try again."],
     exited: ["TERMINAL 0 · POWERED OFF", "The Coordinator session ended. Power on to start it again."],
     lost: ["TERMINAL 0 · NO SIGNAL", "Lost the dashboard. Reconnecting…"],
-    framed: ["TERMINAL 0 · NOT IN THE DASHBOARD", "Open the Factory dashboard; this page only works inside it."],
+    framed: ["TERMINAL 0 · NOT IN THE DASHBOARD", "Open the LOIS dashboard; this page only works inside it."],
     service: ["TERMINAL 0 · SERVICE", "The factory is restarting or updating. The Coordinator comes back when it's done."],
   };
 
