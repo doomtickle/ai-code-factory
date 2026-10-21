@@ -68,6 +68,8 @@ jobs:
         run: bash scripts/test_factory_layout.sh
       - name: factory docs
         run: bash scripts/test_factory_docs.sh
+      - name: factory-shot argument handling
+        run: bash scripts/test_factory_shot.sh
       - name: factory chat
         run: bash scripts/test_factory_chat.sh
       - name: factory restart
@@ -110,6 +112,8 @@ jobs:
         run: bash scripts/test_factory_layout.sh
       - name: factory docs
         run: bash scripts/test_factory_docs.sh
+      - name: factory-shot argument handling
+        run: bash scripts/test_factory_shot.sh
       - name: factory chat
         run: bash scripts/test_factory_chat.sh
       - name: factory restart

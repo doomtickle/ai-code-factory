@@ -1,0 +1,168 @@
+#!/usr/bin/env node
+"use strict";
+// factory-shot: render a page to a PNG with the sandbox's headless Chrome, so
+// a role can look at what it built (with Claude Code's Read tool) and keep
+// the picture for the person reviewing.
+//
+//   factory-shot <page> <out.png> [--width N] [--height N] [--full] [--dark] [--wait MS]
+//
+//   <page>    A file path (rendered as file://), or a http://127.0.0.1 /
+//             http://localhost URL (a server you started in this sandbox).
+//             Nothing else: the sandbox has no other network, and this tool
+//             refuses any other scheme or host rather than let a page try.
+//   --width   Viewport width in CSS px (default 1280; 390 is a phone).
+//   --height  Viewport height (default 900).
+//   --full    Capture the whole page, not just the viewport (long guides).
+//   --dark    Emulate prefers-color-scheme: dark (what a theme toggle set to
+//             "system" follows); default is light.
+//   --wait    Milliseconds to let scripts settle after load (default 500).
+//
+// Drives Chrome for Testing's headless shell over the DevTools protocol (a
+// local pipe, no port, no dependency beyond Node's own WebSocket-free
+// pipe transport). Flags the microVM needs: no Chrome sandbox (no user
+// namespaces), no GPU, no /dev/shm. Put the PNGs you want a person to see in
+// your working directory (the role's scratch folder, which the host can open),
+// never in the project. Standard library only; Node 22+.
+
+const { spawn } = require("node:child_process");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
+
+function usage(code) {
+  const text = fs.readFileSync(__filename, "utf8").split("\n")
+    .filter((l) => l.startsWith("//   ")).map((l) => l.slice(3)).join("\n");
+  process.stderr.write(text + "\n");
+  process.exit(code);
+}
+function die(msg) { process.stderr.write(`factory-shot: ${msg}\n`); process.exit(1); }
+
+function parse(argv) {
+  if (argv.length < 2) usage(2);
+  const opts = { page: argv[0], out: argv[1], width: 1280, height: 900, full: false, dark: false, wait: 500 };
+  for (let i = 2; i < argv.length; i++) {
+    const a = argv[i];
+    const num = (name) => {
+      const v = argv[++i];
+      if (!/^\d+$/.test(v || "")) die(`${name} takes a whole number`);
+      return Number(v);
+    };
+    if (a === "--width") opts.width = num(a);
+    else if (a === "--height") opts.height = num(a);
+    else if (a === "--wait") opts.wait = num(a);
+    else if (a === "--full") opts.full = true;
+    else if (a === "--dark") opts.dark = true;
+    else usage(2);
+  }
+  if (!opts.out.endsWith(".png")) die("the output must end in .png");
+  if (opts.width < 100 || opts.width > 4000 || opts.height < 100 || opts.height > 20000) die("--width 100..4000, --height 100..20000");
+  return opts;
+}
+
+function pageUrl(page) {
+  if (/^https?:\/\/|^[a-z][a-z0-9+.-]*:\/\//i.test(page)) {
+    let u;
+    try { u = new URL(page); } catch { die(`not a URL: ${page}`); }
+    if (u.protocol !== "http:" || !["127.0.0.1", "localhost"].includes(u.hostname) || u.username || u.password)
+      die("only a file path or a http://127.0.0.1 / http://localhost URL: the sandbox reaches nothing else");
+    return u.href;
+  }
+  const abs = path.resolve(page);
+  if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) die(`no such file: ${page}`);
+  return "file://" + abs;
+}
+
+// --- DevTools protocol over --remote-debugging-pipe (fds 3 and 4, NUL-delimited JSON)
+class Cdp {
+  constructor(child) {
+    this.child = child;
+    this.next = 1;
+    this.pending = new Map();
+    this.listeners = [];
+    let buf = "";
+    child.stdio[4].on("data", (chunk) => {
+      buf += chunk.toString("utf8");
+      let i;
+      while ((i = buf.indexOf("\0")) >= 0) {
+        const msg = JSON.parse(buf.slice(0, i));
+        buf = buf.slice(i + 1);
+        if (msg.id && this.pending.has(msg.id)) {
+          const { resolve, reject } = this.pending.get(msg.id);
+          this.pending.delete(msg.id);
+          msg.error ? reject(new Error(msg.error.message)) : resolve(msg.result);
+        } else if (msg.method) {
+          for (const fn of this.listeners) fn(msg);
+        }
+      }
+    });
+  }
+  send(method, params = {}, sessionId) {
+    const id = this.next++;
+    const msg = { id, method, params };
+    if (sessionId) msg.sessionId = sessionId;
+    this.child.stdio[3].write(JSON.stringify(msg) + "\0");
+    return new Promise((resolve, reject) => this.pending.set(id, { resolve, reject }));
+  }
+  once(method, sessionId) {
+    return new Promise((resolve) => {
+      const fn = (msg) => {
+        if (msg.method === method && (!sessionId || msg.sessionId === sessionId)) {
+          this.listeners.splice(this.listeners.indexOf(fn), 1);
+          resolve(msg.params);
+        }
+      };
+      this.listeners.push(fn);
+    });
+  }
+}
+
+async function main() {
+  const opts = parse(process.argv.slice(2));
+  const url = pageUrl(opts.page);
+  const chrome = process.env.FACTORY_SHOT_CHROME || "chrome-headless-shell";
+  const profile = fs.mkdtempSync(path.join(os.tmpdir(), "factory-shot."));
+  const args = [
+    "--headless", "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage", "--hide-scrollbars",
+    "--no-first-run", "--no-default-browser-check", "--disable-extensions", "--disable-sync",
+    "--disable-background-networking", "--remote-debugging-pipe", `--user-data-dir=${profile}`,
+    `--window-size=${opts.width},${opts.height}`, "about:blank",
+  ];
+  let child;
+  try {
+    child = spawn(chrome, args, { stdio: ["ignore", "ignore", "ignore", "pipe", "pipe"] });
+  } catch (e) {
+    die(`${chrome} could not start: ${e.message}`);
+  }
+  child.on("error", (e) => die(`${chrome} could not start: ${e.message}`));
+  const timer = setTimeout(() => { child.kill("SIGKILL"); die("timed out after 60 s"); }, 60000);
+  try {
+    const cdp = new Cdp(child);
+    const { targetInfos } = await cdp.send("Target.getTargets");
+    const target = targetInfos.find((t) => t.type === "page") || (await cdp.send("Target.createTarget", { url: "about:blank" }));
+    const { sessionId } = await cdp.send("Target.attachToTarget", { targetId: target.targetId, flatten: true });
+    const s = (m, p) => cdp.send(m, p, sessionId);
+    await s("Page.enable");
+    await s("Emulation.setDeviceMetricsOverride", { width: opts.width, height: opts.height, deviceScaleFactor: 1, mobile: opts.width < 600 });
+    await s("Emulation.setEmulatedMedia", { features: [{ name: "prefers-color-scheme", value: opts.dark ? "dark" : "light" }] });
+    const loaded = cdp.once("Page.loadEventFired", sessionId);
+    const nav = await s("Page.navigate", { url });
+    if (nav.errorText) die(`could not load ${url}: ${nav.errorText}`);
+    await loaded;
+    await new Promise((r) => setTimeout(r, opts.wait));
+    let clip;
+    if (opts.full) {
+      const { cssContentSize } = await s("Page.getLayoutMetrics");
+      const h = Math.min(Math.ceil(cssContentSize.height), 20000);
+      clip = { x: 0, y: 0, width: opts.width, height: h, scale: 1 };
+    }
+    const { data } = await s("Page.captureScreenshot", { format: "png", captureBeyondViewport: !!clip, ...(clip ? { clip } : {}) });
+    fs.writeFileSync(opts.out, Buffer.from(data, "base64"));
+    process.stdout.write(opts.out + "\n");
+  } finally {
+    clearTimeout(timer);
+    child.kill("SIGKILL");
+    fs.rmSync(profile, { recursive: true, force: true });
+  }
+}
+
+main().catch((e) => die(e.message));

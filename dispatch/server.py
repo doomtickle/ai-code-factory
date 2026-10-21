@@ -58,6 +58,11 @@ SERVER_VERSION = "1.0.0"
 ROOT = Path(os.environ.get("DISPATCH_ROOT", "/nonexistent"))
 PROJECT = Path(os.environ.get("DISPATCH_PROJECT", "/nonexistent"))
 STATE = Path(os.environ.get("DISPATCH_STATE", "/nonexistent"))
+# The roles' scratch folders (FACTORY_STATE/roles/<role>): each role's writable
+# primary workspace, mounted at this same path in its sandbox, which the host
+# can open. Passed to a job as FACTORY_SCRATCH so a role knows where to leave
+# files for a person (screenshots, say) without touching the project.
+ROLES_SCRATCH = Path(os.environ.get("DISPATCH_ROLES_SCRATCH", "/nonexistent"))
 PORT = int(os.environ.get("DISPATCH_PORT", "18766"))
 SBX = os.environ.get("DISPATCH_SBX", "sbx")
 
@@ -809,7 +814,8 @@ def write_packet(job: Job) -> None:
 def claude_argv(job: Job, workdir: str, lane_root: str | None, resume: str | None,
                 fresh_id: str | None) -> list:
     argv = [SBX, "exec", "-w", workdir]
-    env = list(ROLE_ENV) + [f"FACTORY_PROJECT={PROJECT}", f"FACTORY_LANE={job.lane}"]
+    env = list(ROLE_ENV) + [f"FACTORY_PROJECT={PROJECT}", f"FACTORY_LANE={job.lane}",
+                            f"FACTORY_SCRATCH={ROLES_SCRATCH / job.role}"]
     if lane_root:
         env.append(f"FACTORY_LANE_ROOT={lane_root}")
     for item in env:

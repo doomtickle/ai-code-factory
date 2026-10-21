@@ -126,6 +126,7 @@ Everything is pinned for repeatable setups:
 | Sandbox base images (digests) | `templates/*/Dockerfile`, `broker/Dockerfile` |
 | ruff 0.16.8 | `templates/reviewer/Dockerfile` |
 | yarn 1.22.22 (+ SHA-256) and `factory-test` | `templates/developer/Dockerfile`, `templates/reviewer/Dockerfile` |
+| Chrome for Testing headless shell 156.0.8078.47 (+ SHA-256; its Ubuntu libraries and fonts pinned only by the base image digest) | `templates/developer/Dockerfile`, `templates/reviewer/Dockerfile` |
 | Broker code + policy | baked into `factory-broker:v3` at build time |
 | Dispatch bridge runtime | macOS system Python (`/usr/bin/python3`); `python3` on PATH on Linux |
 
@@ -1144,6 +1145,7 @@ windows/enable-wsl.ps1       Windows side of that setup: WSL, Ubuntu, nested vir
 templates/<image>/           Pinned images: developer, reviewer (+ruff)
 templates/agent/factory-test Runs tests in a sandbox-local copy (baked into developer and reviewer)
 templates/agent/factory-lane Lane clones: prepare, export bundles, bundle a branch for git_push, check out a branch to review
+templates/agent/factory-shot Renders a page the role built to a PNG with the image's headless Chrome (file:// and loopback only)
 config.example/              Example local settings for ~/.config/ai-code-factory/
 scripts/lib/common.sh        Pinned versions, checksums, names, shared checks
 scripts/lib/roles.sh         Role parsing and validation
