@@ -26,9 +26,18 @@ site = "example.atlassian.net"
 cloud_id = "00000000-0000-0000-0000-000000000000"
 
 [git]
-# GitHub repos (owner/name) agents may fetch from, push to and open PRs on.
+# Repos agents may fetch from, push to and open PRs or merge requests on:
+# GitHub repos as owner/name, GitLab projects host first, e.g.
+#   repos = ["my-org/my-project", "gitlab.example.com/my-group/my-project"]
 # Keep this on a single line: bin/factory's onboarding check depends on it.
 repos = []
+
+# A self-hosted GitLab (or https://gitlab.com/) for the git tools and
+# gitlab_create_mr: https://<host>/, ending in "/". Its token goes in the host
+# keychain (service "factory-gitlab", `factory secret save gitlab`), never
+# here. Its host must also be in broker-kit/spec.yaml. Unset = no GitLab.
+# [gitlab]
+# url = "https://gitlab.example.com/"
 
 # Repos the reviewer may file issues in (github_create_issue). Private
 # trackers only: an issue in a public repo publishes what an agent writes.

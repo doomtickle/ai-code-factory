@@ -70,10 +70,10 @@ def one_line(card):
     if tool == "git_push":
         what = "push {} -> {} ({} commit(s), {} file(s))".format(
             card.get("branch"), card.get("repo"), card.get("commits"), card.get("file_count"))
-    elif tool == "github_create_pr":
-        what = "{}PR on {}: {} -> {} \"{}\"".format(
-            "draft " if card.get("draft", True) else "", card.get("repo"), card.get("head"), card.get("base"),
-            (card.get("title") or "")[:60])
+    elif tool in ("github_create_pr", "gitlab_create_mr"):
+        what = "{}{} on {}: {} -> {} \"{}\"".format(
+            "draft " if card.get("draft", True) else "", "MR" if tool == "gitlab_create_mr" else "PR",
+            card.get("repo"), card.get("head"), card.get("base"), (card.get("title") or "")[:60])
     else:
         what = tool
     return "{}  {:<10} {}  ({} min left)".format(card["id"], who, what, minutes_left(card))

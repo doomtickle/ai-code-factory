@@ -104,8 +104,9 @@ ${B}Usage${N}
   factory role new <name> [like]
                              Add a role, copied from an existing one (default: reviewer)
   factory secret save <name> Store a credential once in this machine's keychain
-                             (github, jira, gemini, npm-registry, passdesk-license,
-                             approvals-webhook); every broker start then delivers it
+                             (github, gitlab, jira, gemini, npm-registry,
+                             passdesk-license, approvals-webhook); every broker start
+                             then delivers it
   factory secret forget <name>
                              Delete it from the keychain and from the running broker
   factory secret set <name>  Deliver a broker credential to the running broker only
@@ -313,6 +314,12 @@ $(sed -n 's/^[[:space:]]*-[[:space:]]*"\{0,1\}\([^"[:space:]#]*\).*/\1/p' "$kit"
     esac
   fi
   approvals_doctor_check
+  # A warning, not a problem (owner decision): the fix is a Pro re-copy or a
+  # policy edit, and `factory update` must stay usable meanwhile.
+  local why
+  if why="$(gitlab_mr_unheld)"; then
+    warn "GitLab merge requests open without approval: $why (see README: Enabling approvals)"
+  fi
 
   say ""
   if [ "$problems" -eq 0 ]; then
@@ -412,16 +419,23 @@ cmd_start() {
 # policy_value SECTION KEY -> the raw value of KEY = ... in [SECTION], from this
 # machine's overlay ($FACTORY_CONFIG/policy.toml) if it sets KEY, else from
 # broker/policy.toml - the same precedence as the broker's load_policy().
-# Best-effort awk, not a TOML parser: good enough for the one-line values these
-# checks read.
+# Best-effort awk, not a TOML parser: good enough for the values these checks
+# read. An array spread over several lines comes back joined on one line (up
+# to its closing "]", comments dropped), so a check never mistakes
+# `tools = [` for an empty list.
 policy_value() {
   local f v
   for f in "$FACTORY_CONFIG/policy.toml" "$ROOT/broker/policy.toml"; do
     [ -f "$f" ] || continue
     if v="$(awk -v s="[$1]" -v k="$2" '
+        more { sub(/#.*/, ""); v = v " " $0; if (index($0, "]")) { print v; found = 1; exit } next }
         index($0, s) == 1 { f = 1; next }
         /^\[/ { f = 0 }
-        f && $0 ~ "^[[:space:]]*"k"[[:space:]]*=" { sub(/^[^=]*=[[:space:]]*/, ""); print; found = 1; exit }
+        f && $0 ~ "^[[:space:]]*"k"[[:space:]]*=" {
+          sub(/^[^=]*=[[:space:]]*/, "")
+          if (substr($0, 1, 1) == "[" && !index($0, "]")) { sub(/#.*/, ""); v = $0; more = 1; next }
+          print; found = 1; exit
+        }
         END { exit !found }' "$f")"; then
       printf '%s\n' "$v"
       return 0
@@ -436,6 +450,13 @@ policy_string() {
 
 git_push_enabled() {
   policy_value git repos | grep -qE '\[.*[^][:space:]].*\]'
+}
+
+# github_repos_listed -> success if some [git].repos entry is a GitHub owner/name
+# (its first segment has no dot or port; a host-qualified entry is on GitLab).
+github_repos_listed() {
+  policy_value git repos | grep -o '"[^"]*"' | tr -d '"' \
+    | awk -F/ 'NF >= 2 && $1 !~ /[.:]/ { f = 1 } END { exit !f }'
 }
 
 # keychain_has SERVICE: scripts/lib/secrets.sh (macOS Keychain, Linux
@@ -453,6 +474,36 @@ any_jira_tool_granted() {
     case " $(role_get "$r" BROKER_TOOLS) " in *" jira_"*) return 0 ;; esac
   done
   return 1
+}
+
+# gitlab_needs_token -> success if the policy sets [gitlab].url: the git tools
+# and gitlab_create_mr then need the gitlab credential (a file, as sbx can't
+# inject it).
+gitlab_needs_token() {
+  # Either TOML string form ("..." or '...'), as long as it isn't empty.
+  policy_value gitlab url | grep -qE "^[[:space:]]*(\"[^\"]+\"|'[^']+')"
+}
+
+# gitlab_mr_unheld -> prints why, and succeeds, when GitLab merge requests would
+# open without approval although Passdesk Pro is installed: gitlab_create_mr is
+# granted and [gitlab].url set, but the local [approvals].tools list leaves it
+# out, or (no list) the installed Pro copy predates it. Silent otherwise, and
+# for tools = [] (holds switched off on purpose).
+gitlab_mr_unheld() {
+  local r granted="" tools
+  for r in $(list_roles); do
+    case " $(role_get "$r" BROKER_TOOLS) " in *" gitlab_create_mr "*) granted=1 ;; esac
+  done
+  [ -n "$granted" ] && [ -d "$FACTORY_CONFIG/plugins/passdesk_pro" ] && gitlab_needs_token || return 1
+  tools="$(policy_value approvals tools || true)"
+  if [ -n "$tools" ]; then
+    case "$tools" in *'"gitlab_create_mr"'*) return 1 ;; esac
+    [ -n "$(printf '%s' "$tools" | tr -d '[] \t')" ] || return 1  # tools = []: nothing is held at all
+    printf '%s\n' "[approvals].tools is set without \"gitlab_create_mr\""
+    return 0
+  fi
+  grep -q gitlab_create_mr "$FACTORY_CONFIG/plugins/passdesk_pro/approvals.py" 2>/dev/null && return 1
+  printf '%s\n' "the installed Passdesk Pro predates gitlab_create_mr (copy the current one into $FACTORY_CONFIG/plugins/, then factory update)"
 }
 
 # npm_private_registry_needs_token -> success if a role is granted npm_fetch and
@@ -515,7 +566,7 @@ onboarding_hints() {
     sbx_secrets="$(sbx secret ls 2>/dev/null || true)"
     if printf '%s\n' "$sbx_secrets" | awk '$1 == "(global)" && $3 == "github" { f = 1 } END { exit !f }'; then
       warn "a global GitHub token is stored, so sbx injects it for every sandbox, not just the broker. Run 'factory secret save github', then remove the global one: sbx secret rm github"
-    elif ! printf '%s\n' "$sbx_secrets" | grep -q " github "; then
+    elif github_repos_listed && ! printf '%s\n' "$sbx_secrets" | grep -q " github "; then
       warn "git push/PR is enabled but no GitHub token is stored: run 'factory secret save github' (see README: Enabling git push and pull requests)"
     fi
   fi
@@ -525,6 +576,13 @@ onboarding_hints() {
   fi
   if npm_private_registry_needs_token && ! keychain_has factory-npm-registry; then
     warn "npm_fetch can't download private npm packages until a token is stored in the keychain (see README: Enabling a private npm registry)"
+  fi
+  if gitlab_needs_token && ! keychain_has factory-gitlab; then
+    warn "[gitlab].url is set but no GitLab token is stored: run 'factory secret save gitlab' (see README: Enabling GitLab)"
+  fi
+  local why
+  if why="$(gitlab_mr_unheld)"; then
+    warn "GitLab merge requests open without approval: $why (see README: Enabling approvals)"
   fi
 }
 
@@ -576,6 +634,13 @@ cmd_status() {
   fi
   if npm_private_registry_needs_token && ! keychain_has factory-npm-registry; then
     warn "private npm registry keychain entry (\"factory-npm-registry\") not found"
+  fi
+  if gitlab_needs_token && ! keychain_has factory-gitlab; then
+    warn "GitLab keychain entry (\"factory-gitlab\") not found"
+  fi
+  local why
+  if why="$(gitlab_mr_unheld)"; then
+    warn "GitLab merge requests open without approval: $why"
   fi
   approvals_status_line
 
@@ -728,7 +793,7 @@ cmd_role() {
 
 # --- secret --------------------------------------------------------------------------
 # For machines with no OS keychain (e.g. WSL2, which has neither macOS
-# Keychain nor secret-tool), so Jira, Gemini, the private npm registry token,
+# Keychain nor secret-tool), so Jira, Gemini, the private npm registry token, the GitLab token,
 # and the Passdesk Pro plugin's license key and approvals webhook URL can
 # still be delivered. Shares its remote delivery/revocation code with
 # scripts/start-broker.sh's keychain-based path (scripts/lib/secrets.sh) and
