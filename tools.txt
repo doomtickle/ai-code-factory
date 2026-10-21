@@ -8,6 +8,7 @@ web_fetch
 git_fetch
 git_push
 github_create_pr
+gitlab_create_mr
 github_create_issue
 gemini_flash_query
 jira_my_issues

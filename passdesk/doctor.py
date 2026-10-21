@@ -4,8 +4,9 @@
 
 It reads the policy (with its local overlay), the state directory (tokens,
 grants, audit log), the workspace's exchange directory, the credential files,
-and, with --live, asks the running broker and GitHub. It changes nothing:
-every check is a read, and the only network traffic is the two --live probes.
+and, with --live, asks the running broker, GitHub and (for projects on
+[gitlab].url) GitLab. It changes nothing: every check is a read, and the only
+network traffic is the --live probes.
 
 Designed to run wherever the broker itself runs (its container, where the
 credentials and the baked-in policy are) but works on a host against a
@@ -44,6 +45,7 @@ from .core import policy as policy_mod
 from .core.errors import Denied
 from .core.net import NO_REDIRECT_OPENER, RefuseRedirects
 from .core.registry import TOOLS
+from .tools import git as git_tool
 from .tools.git import check_branch_name
 from .tools.web import credentialed_host_tool
 
@@ -64,6 +66,7 @@ _TOOL_HOSTS = {
     "git_push": ["github.com"],
     "github_create_pr": ["api.github.com"],
     "github_create_issue": ["api.github.com"],
+    "gitlab_create_mr": [],  # [gitlab].url's host, added by egress_hosts
     "npm_fetch": ["registry.npmjs.org"],
     "pip_download": ["pypi.org", "files.pythonhosted.org"],
     "gemini_flash_query": ["generativelanguage.googleapis.com"],
@@ -71,7 +74,9 @@ _TOOL_HOSTS = {
     "jira_get_issue": ["api.atlassian.com"],
 }
 _SECRET_TOOLS = {"jira": {"jira_my_issues", "jira_get_issue"}, "gemini": {"gemini_flash_query"},
-                 "npm-registry": {"npm_fetch"}}
+                 "npm-registry": {"npm_fetch"}, "gitlab": {"git_fetch", "git_push", "gitlab_create_mr"}}
+# Tools that reach [gitlab].url's host when it is set.
+_GITLAB_TOOLS = {"git_fetch", "git_push", "gitlab_create_mr"}
 _EXCHANGE_DIRS = ("incoming", "outgoing", "npm-mirror", "wheels")
 # Tools that need the "github" credential. In sbx mode this is proxy-injected
 # (never read by the gateway); in standalone mode check_standalone checks it
@@ -171,6 +176,7 @@ def _check_policy_shape(report: Report, pol: dict) -> None:
         "web": {"allow_hosts", "max_bytes"},
         "git": {"repos", "protected_branches", "push_branch_prefix", "default_base"},
         "github": {"issue_repos"},
+        "gitlab": {"url"},
         "packages": {"npm_deny", "npm_allow", "pypi_deny", "pypi_allow", "npm_private_registry",
                      "npm_redirect_hosts"},
         "filters": {"max_commits", "max_diff_bytes", "max_bundle_bytes"},
@@ -222,9 +228,11 @@ def _check_policy_shape(report: Report, pol: dict) -> None:
     git = pol.get("git") if isinstance(pol.get("git"), dict) else {}
     repos = git.get("repos", [])
     if not _is_str_list(repos):
-        report.fail("[git].repos must be a list of \"owner/name\" strings")
+        report.fail("[git].repos must be a list of \"owner/name\" (or \"<gitlab host>/<group>/<project>\") strings")
     else:
         for r in repos:
+            if git_tool.is_gitlab_name(r):
+                continue  # a GitLab project: check_policy checks it against [gitlab].url
             if not _REPO_RE.match(r) or ".." in r:
                 report.fail(f"[git].repos: {r!r} is not owner/name",
                             'e.g. "acme/widgets"; no URL, no .git suffix')
@@ -330,8 +338,28 @@ def check_policy(report: Report, path: Path | None = None) -> dict | None:
     _check_policy_shape(report, pol)
     git = pol.get("git") if isinstance(pol.get("git"), dict) else {}
     if _is_str_list(git.get("repos", [])) and not git.get("repos"):
-        report.info("[git].repos is empty: git_fetch, git_push and github_create_pr return DENIED",
+        report.info("[git].repos is empty: git_fetch, git_push, github_create_pr and gitlab_create_mr return DENIED",
                     "add the repos agents may use, e.g. repos = [\"acme/widgets\"], then rebuild the image")
+    gitlab_ok = True
+    try:
+        gitlab = git_tool.gitlab_base(pol)
+    except Denied as e:
+        gitlab, gitlab_ok = None, False
+        report.fail(str(e), "fix [gitlab].url in the local policy.toml, then rebuild the image")
+    if gitlab_ok and _is_str_list(git.get("repos", [])):
+        on_gitlab = 0
+        for repo in git["repos"]:
+            try:
+                git_tool.check_repo(repo, {**pol, "git": {**git, "repos": [repo]}})
+            except Denied as e:
+                report.fail(f"[git].repos entry {repo!r}: {e}",
+                            "GitHub repos are owner/name; GitLab projects are <host of [gitlab].url>/<group>/<project>")
+                continue
+            on_gitlab += git_tool.is_gitlab_name(repo)
+        if gitlab and not on_gitlab:
+            report.info(f"[gitlab].url is set ({gitlab}) but no [git].repos entry is on it: "
+                        "gitlab_create_mr returns DENIED",
+                        f"add projects as \"{git_tool.gitlab_host(pol)}/<group>/<project>\"")
     gh = pol.get("github") if isinstance(pol.get("github"), dict) else {}
     issue_repos = gh.get("issue_repos", [])
     if not _is_str_list(issue_repos) or any(not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", r)
@@ -345,11 +373,22 @@ def check_policy(report: Report, path: Path | None = None) -> dict | None:
 
 # --- egress hosts -------------------------------------------------------------------
 
+def _gitlab_only(pol: dict) -> bool:
+    """True when [git].repos lists only GitLab projects: git_fetch and git_push
+    then never reach GitHub."""
+    git = pol.get("git") if isinstance(pol.get("git"), dict) else {}
+    repos = git.get("repos", [])
+    return _is_str_list(repos) and bool(repos) and all(git_tool.is_gitlab_name(r) for r in repos)
+
+
 def egress_hosts(pol: dict, granted: set[str] | None = None) -> list[str]:
     """Every host the policy lets some tool reach. With `granted`, only tools
     in that set count; otherwise every tool does."""
     hosts: set[str] = set()
+    gitlab_only = _gitlab_only(pol)
     for tool, tool_hosts in _TOOL_HOSTS.items():
+        if gitlab_only and tool in ("git_fetch", "git_push"):
+            continue  # every repo is on [gitlab].url, added below
         if granted is None or tool in granted:
             hosts.update(tool_hosts)
     for tool, spec in plugins.declared_tools()[0].items():
@@ -360,6 +399,13 @@ def egress_hosts(pol: dict, granted: set[str] | None = None) -> list[str]:
         for h in web.get("allow_hosts", []) if _is_str_list(web.get("allow_hosts", [])) else []:
             if not credentialed_host_tool(h.lstrip("*."), pol):
                 hosts.add(h.lower())
+    if granted is None or _GITLAB_TOOLS & granted:
+        try:
+            base = git_tool.gitlab_base(pol)
+        except Denied:
+            base = None  # check_policy already failed it
+        if base:
+            hosts.add(urllib.parse.urlsplit(base).hostname)
     if granted is None or "npm_fetch" in granted:
         pk = pol.get("packages") if isinstance(pol.get("packages"), dict) else {}
         private = pk.get("npm_private_registry", "")
@@ -666,7 +712,8 @@ def check_standalone(report: Report, granted: set[str], pol: dict | None = None,
                      "egress hosts against",
                      "drop --kit; standalone has no kit-level network allowlist to check against")
 
-    wanted = bool(_GITHUB_TOOLS & granted)
+    github_tools = _GITHUB_TOOLS - ({"git_fetch", "git_push"} if _gitlab_only(pol or {}) else set())
+    wanted = bool(github_tools & granted)
     if order_error is not None:
         pass  # already reported once, in the Credentials section
     else:
@@ -692,7 +739,7 @@ def check_standalone(report: Report, granted: set[str], pol: dict | None = None,
                                 "token is used")
                 else:
                     report.warn(f"no github credential (checked providers: {order_text}); "
-                                f"{', '.join(sorted(_GITHUB_TOOLS & granted))} return DENIED until it is delivered",
+                                f"{', '.join(sorted(github_tools & granted))} return DENIED until it is delivered",
                                 "deliver a fine-grained GitHub token through one of those providers "
                                 "(README, Configuring credentials)")
             else:
@@ -744,9 +791,15 @@ def check_secrets(report: Report, pol: dict | None, granted: set[str],
     if order_error is not None:
         report.fail(str(order_error))
     paths = {"jira": config.JIRA_SECRET_PATH, "gemini": config.GEMINI_SECRET_PATH,
-             "npm-registry": config.NPM_REGISTRY_SECRET_PATH}
+             "npm-registry": config.NPM_REGISTRY_SECRET_PATH, "gitlab": credentials.secrets_dir() / "gitlab"}
     pk = (pol or {}).get("packages") if isinstance((pol or {}).get("packages"), dict) else {}
     private_registry = bool(pk.get("npm_private_registry")) if isinstance(pk.get("npm_private_registry", ""), str) else False
+    try:
+        gitlab_set = bool(git_tool.gitlab_base(pol or {}))
+    except Denied:
+        gitlab_set = True  # malformed but meant: check_policy failed it; still check the credential
+    # A credential only some deployments need counts as wanted only when its feature is configured.
+    configured = {"npm-registry": private_registry, "gitlab": gitlab_set}
     if not any(p.parent.is_dir() for p in paths.values()):
         # Running on a host: the credential files exist only where the
         # broker itself runs, so their absence here says nothing.
@@ -755,7 +808,7 @@ def check_secrets(report: Report, pol: dict | None, granted: set[str],
         return
     for name, path in paths.items():
         tools_using = _SECRET_TOOLS[name]
-        wanted = bool(tools_using & granted) and (name != "npm-registry" or private_registry)
+        wanted = bool(tools_using & granted) and configured.get(name, True)
         try:
             st = os.lstat(path)
         except FileNotFoundError:
@@ -776,6 +829,10 @@ def check_secrets(report: Report, pol: dict | None, granted: set[str],
             if value is not None and name == "jira" and not _JIRA_SECRET_RE.match(value):
                 report.fail("the jira credential is not in the form you@example.com:TOKEN",
                             "have the deployment re-deliver it in that form")
+                continue
+            if value is not None and name == "gitlab" and not git_tool._GITLAB_TOKEN_RE.fullmatch(value):
+                report.fail("the gitlab credential is not a GitLab token (20-255 letters, digits, '_', '-' or '.')",
+                            "have the deployment re-deliver a project access token")
                 continue
             if value is not None:
                 extra = "" if wanted else " (no granted tool uses it)"
@@ -804,6 +861,10 @@ def check_secrets(report: Report, pol: dict | None, granted: set[str],
         if name == "jira" and not _JIRA_SECRET_RE.match(value):
             report.fail("the jira credential is not in the form you@example.com:TOKEN",
                         "have the deployment re-deliver it in that form")
+            continue
+        if name == "gitlab" and not git_tool._GITLAB_TOKEN_RE.fullmatch(value):
+            report.fail("the gitlab credential is not a GitLab token (20-255 letters, digits, '_', '-' or '.')",
+                        "have the deployment re-deliver a project access token")
             continue
         extra = "" if wanted else " (no granted tool uses it)"
         report.ok(f"{name} credential present{extra}")
@@ -895,7 +956,12 @@ def check_live(report: Report, pol: dict | None, url: str, http=_http) -> None:
     repos = git.get("repos", []) if _is_str_list(git.get("repos", [])) else []
     if not repos:
         return
+    gitlab_repos = [r for r in repos if git_tool.is_gitlab_name(r)]
+    if gitlab_repos:
+        check_live_gitlab(report, pol or {}, gitlab_repos, http)
     for repo in repos:
+        if git_tool.is_gitlab_name(repo):
+            continue
         api = f"https://api.github.com/repos/{repo}"
         try:
             code, body = http(api, headers={"Accept": "application/vnd.github+json"})
@@ -929,6 +995,74 @@ def check_live(report: Report, pol: dict | None, url: str, http=_http) -> None:
                         _github_token_hint("the deployment must re-attach the token"))
         else:
             report.warn(f"GitHub answered HTTP {code} for {repo}")
+
+
+# GitLab's access levels: 30 is Developer, the least that may push a branch.
+_GITLAB_DEVELOPER = 30
+
+
+def check_live_gitlab(report: Report, pol: dict, repos: list[str], http=_http) -> None:
+    """Can the gateway's gitlab credential read and push each GitLab project?
+    The token goes only to [gitlab].url's API, never redirected (_http); it
+    is never printed."""
+    try:
+        base = git_tool.gitlab_base(pol)
+    except Denied:
+        return  # check_policy already failed it
+    if not base:
+        return  # check_policy already failed each of these entries
+    reasons: list[str] = []
+    try:
+        token = credentials.get("gitlab", on_unusable=lambda name, provider, reason: reasons.append(reason))
+    except credentials.CredentialError as e:
+        report.fail(str(e))
+        return
+    for reason in reasons:
+        report.warn(reason)
+    if token is None or not git_tool._GITLAB_TOKEN_RE.fullmatch(token):
+        report.warn(f"no usable gitlab credential: skipped the access check for {len(repos)} GitLab project(s)",
+                    "deliver a project access token as the gitlab credential (README, Configuring credentials)")
+        return
+    host = urllib.parse.urlsplit(base).hostname
+    for repo in repos:
+        try:
+            remote = git_tool.remote_of(repo, pol)
+        except Denied:
+            continue  # check_policy already failed it
+        api = f"{base}api/v4/projects/{urllib.parse.quote(remote.path, safe='')}"
+        try:
+            code, body = http(api, headers={"Accept": "application/json", "Authorization": f"Bearer {token}"})
+        except (urllib.error.URLError, OSError, ValueError) as e:
+            report.fail(f"cannot reach {host} to check {repo}: {getattr(e, 'reason', e)}",
+                        f"is {host} in the deployment's egress allowlist? run this from where the broker runs")
+            return
+        if code == 200:
+            try:
+                perms = json.loads(body).get("permissions") or {}
+            except (ValueError, AttributeError):
+                perms = {}
+            if not isinstance(perms, dict):
+                perms = {}
+            levels = [(p or {}).get("access_level") for p in (perms.get("project_access"), perms.get("group_access"))
+                      if isinstance(p, dict)]
+            level = max((lv for lv in levels if isinstance(lv, int)), default=None)
+            if level is not None and level >= _GITLAB_DEVELOPER:
+                report.ok(f"GitLab token can read and push {repo}")
+            elif level is not None:
+                report.fail(f"GitLab token can read {repo} but not push to it (access level {level})",
+                            "the project access token needs the Developer role (and the api and "
+                            "write_repository scopes)")
+            else:
+                report.warn(f"GitLab token can read {repo}; its push access could not be confirmed",
+                            "the project access token needs the Developer role and the api and write_repository scopes")
+        elif code == 404:
+            report.fail(f"GitLab returns 404 for {repo}: it does not exist, or the token has no access to it",
+                        "check the group/project path, and that the token belongs to this project (or its group)")
+        elif code in (401, 403):
+            report.fail(f"GitLab rejects the token for {repo} (HTTP {code})",
+                        "the token may have expired or been revoked: create a new one and deliver it again")
+        else:
+            report.warn(f"GitLab answered HTTP {code} for {repo}")
 
 
 # --- CLI ----------------------------------------------------------------------------
@@ -997,7 +1131,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--kit", type=Path, action="append", default=[],
                         help="an sbx kit spec.yaml whose network allowlist must cover the policy's hosts (repeatable)")
     parser.add_argument("--live", action="store_true",
-                        help="also probe the running broker and GitHub access for each [git].repos entry")
+                        help="also probe the running broker and GitHub or GitLab access for each [git].repos entry")
     parser.add_argument("--url", default="", help=f"broker MCP URL for --live (default: http://127.0.0.1:{config.PORT}/mcp)")
     parser.add_argument("--egress-hosts", action="store_true",
                         help="print every host the policy can reach, one per line, and exit")

@@ -17,16 +17,19 @@ the code; the decision log records what changed on the way.
   plugin registers what it provides (today: an approval hook). The image
   takes an optional `plugins` build context on `PYTHONPATH`; with nothing
   named, nothing loads and the gateway behaves exactly as before.
-- **Two call sites.** `git_push` builds its card after every check has
+- **The call sites.** `git_push` builds its card after every check has
   passed (bundle verified, every commit secret-scanned, limits applied) and
   calls `require` *outside* the tool lock, so a pending approval never
   blocks another role's git call; it then re-takes the lock, confirms the
-  ref it validated is unchanged, and pushes. `github_create_pr` calls
-  `require` after the title and body pass the secret scan, and
+  ref it validated is unchanged, and pushes. `github_create_pr` and
+  `gitlab_create_mr` call `require` after the title and body pass the
+  secret scan (`gitlab_create_mr` also after confirming the gateway holds a
+  `gitlab` token), and
   `github_create_issue` after its title, body and labels pass it and the
   labels are confirmed to exist (its card carries a `body_sha256`). Pro
-  holds only the tools `[approvals] tools` lists; add `github_create_issue`
-  there to hold issues too.
+  holds only the tools `[approvals] tools` lists (its default holds
+  `git_push`, `github_create_pr` and `gitlab_create_mr`); add
+  `github_create_issue` there to hold issues too.
 
 - **The patch to inspect** (doomtickle/passdesk-ops#113). Only when a hook
   is installed, `git_push` writes the pushed commits' patch to
@@ -67,9 +70,9 @@ the copy shown to the hook is scrubbed.
 **A `[REDACTED:...]` marker on a card means the real write contains that
 string, and an approver should decline it.** In practice it should never
 appear: every agent-supplied card field is refused by `block_outbound_secrets`
-before `require` is called - the PR title and body (`tools/git.py`,
-`tool_github_create_pr`), and every ref name (`check_branch_name`: the push
-branch, the PR head, and the base of either), so a branch literally named
+before `require` is called - the PR and MR title and body (`tools/git.py`,
+`tool_github_create_pr`, `tool_gitlab_create_mr`), and every ref name
+(`check_branch_name`: the push branch, the PR/MR head, and the base of any), so a branch literally named
 `factory/ghp_...` is denied rather than held. File names are covered by the
 per-commit patch scan. The redaction in `require` is defense in depth for a
 pattern that slipped past those checks, not the first line.

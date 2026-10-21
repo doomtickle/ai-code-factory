@@ -102,7 +102,7 @@ Docker secret at `/run/secrets/<name>`, or a file named by
 from a plain environment variable, never from the workspace. Rules:
 
 - Use a name of your own (e.g. `status-api`). Never read another tool's
-  credential (`github`, `jira`, `gemini`, `npm-registry`).
+  credential (`github`, `gitlab`, `jira`, `gemini`, `npm-registry`).
 - Send it only with `passdesk.core.net.NO_REDIRECT_OPENER`, so a redirect
   can't carry it to another host.
 - Don't put it in the text you return, in a `Denied` message or in an

@@ -24,7 +24,10 @@ page yet; the isolation check is how you confirm it on yours.
   the agent could reach services listening on your machine through the
   bridge address. An older engine rejects the option and nothing starts,
   which is the safe failure.
-- **A GitHub repository** and a fine-grained token for it (below).
+- **A GitHub repository** and a fine-grained token for it (below). For a
+  GitLab project instead, set `[gitlab].url`, list the project host first
+  and deliver a `gitlab` project access token: README, "Configuring
+  credentials", GitLab. This walkthrough uses GitHub.
 - **A Claude Pro or Max subscription, or an Anthropic API key**, for the
   agent.
 - This repository, cloned: the image is built from it until the published

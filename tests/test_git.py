@@ -38,8 +38,8 @@ class GitFlowTests(Base):
         config.MIRRORS = root / "mirrors"
         self._orig_ensure = git.ensure_mirror
 
-        def ensure_local(repo):
-            path = self._orig_ensure(repo)
+        def ensure_local(repo, remote=None):
+            path = self._orig_ensure(repo, remote)
             git.git("remote", "set-url", "origin", str(self.origin), cwd=path)
             return path
         git.ensure_mirror = ensure_local

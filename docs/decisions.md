@@ -4,6 +4,66 @@ Dated entries, for the user to review. Newest first.
 
 ## 2026-10-20
 
+- **GitLab, self-hosted or gitlab.com (doomtickle/passdesk-ops#120).** The
+  owner needs the factory on a self-hosted GitLab as well as GitHub.
+  Choices:
+  - **The `gitlab` token is a file credential (owner decision).** sbx can
+    proxy-inject GitHub but not GitLab, so the token can't stay outside the
+    gateway as GitHub's does. The owner approved widening CLAUDE.md's
+    file-credential exception to it. It is handled exactly as a gateway-held
+    GitHub token: to git only as an extraHeader scoped to `[gitlab].url`
+    (Basic `oauth2:<token>`) in one child's environment, redirects refused,
+    no credential helper, trace switches removed; to the API only as a Bearer
+    header through `NO_REDIRECT_OPENER`; redacted once read. The two forges'
+    tokens never cross. The README says to use a project (or group) access
+    token with the Developer role, `api` and `write_repository`: creating a
+    merge request needs `api`, which on a personal token reaches everything
+    its owner can.
+  - **One `[git].repos`, host-qualified names.** A GitLab project is listed
+    as `<host>/<group>/.../<project>`. A first segment with a dot or a port
+    can't be a GitHub owner (letters, digits and dashes), so the name alone
+    says the forge, `git_fetch` and `git_push` stay one pair of tools with
+    every check they had, and a host-qualified name must be on
+    `[gitlab].url` or it is refused. `[gitlab].url` itself must be https,
+    end in `/`, carry no credentials, query or fragment, and not be a
+    GitHub host.
+  - **A separate `gitlab_create_mr`, not a renamed or forge-agnostic PR
+    tool.** Renaming `github_create_pr` would break grants, audit history
+    and approval cards. It takes the same arguments, scans the same fields,
+    makes the same card (tool `gitlab_create_mr`, with `title` as it will be sent to GitLab,
+    `Draft: ` included), and checks the token is there before the hold, so
+    nobody approves a call that can't be made. Each PR tool refuses the
+    other forge's repos.
+  - **GitLab mirrors and bundles are named by digest.** GitHub's mirror name
+    (`owner__name`) is unambiguous because owners have no `_`; GitLab paths
+    may, so `g/a__b` and `g__a/b` would share a mirror (and its origin).
+    `gitlab__<host>__<sha256(url, lower-cased path)[:32]>.git` can't collide,
+    and `git_fetch`'s bundle name adds a 12-character digest of the same for
+    the same reason (one project's bundle would overwrite the other's).
+  - **The card carries the body's digest and length.** As for
+    `github_create_issue`: two merge requests whose bodies differ only past
+    the 2,000-character excerpt never share a card, and the approver sees how
+    much they aren't reading. The body is capped at 65,536 characters
+    (GitHub's PR limit), not GitLab's 1 MiB. Only `Draft:`, `[Draft]` and
+    `(Draft)` (GitLab's documented markers, any case) count as already a
+    draft; any other title gets `Draft: `.
+  - **`[gitlab].url`'s host is checked label by label.** No empty, leading-
+    or trailing-dash label, no trailing dot (it slipped past exact-host
+    matches such as `web_fetch`'s denylist; `host_allowed` now also strips a
+    trailing dot from the pattern, not just the host), port 1-65535, and no
+    `..`, `.`, `//`, `@`, `%` or `\` segment in its path (the API URL is built by
+    appending to it). Projects may sit under up to 20 subgroups (GitLab's
+    limit). With only GitLab projects in `[git].repos`, the doctor stops
+    counting github.com among `git_fetch`/`git_push`'s hosts and stops
+    asking for a GitHub token for them. An IPv4
+    address is allowed: an internal instance may have no name, and its
+    certificate must verify all the same.
+  - **`web_fetch` refuses the `[gitlab].url` host**, read leniently, so even
+    a malformed URL keeps its host blocked: a tightening of the
+    credentialed-host denylist.
+  - **Not done:** a private CA for the instance (the system trust store
+    must accept its certificate; documented), and GitLab issues (the owner
+    doesn't need them).
 - **The approver can read the code: a broker-local patch per held push
   (doomtickle/passdesk-ops#113).** Until now a person deciding a held
   `git_push` saw the repo, branch, file names and a shortstat, and approved

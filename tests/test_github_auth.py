@@ -90,8 +90,8 @@ class GitHubTokenTests(Base):
         """Point ensure_mirror at `url` and scope the token to it, as for github.com."""
         orig = git.ensure_mirror
 
-        def ensure(repo):
-            path = orig(repo)
+        def ensure(repo, remote=None):
+            path = orig(repo, remote)
             git.git("remote", "set-url", "origin", url, cwd=path)
             return path
         p = mock.patch.object(git, "ensure_mirror", ensure)

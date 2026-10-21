@@ -35,7 +35,9 @@ allow_hosts = [
 max_bytes = 500_000
 
 [git]
-# GitHub repos (owner/name) agents may fetch from, push to and open PRs on.
+# Repos agents may fetch from, push to and open PRs or merge requests on:
+# GitHub repos as owner/name, and projects on the GitLab named by
+# [gitlab].url host first, e.g. "gitlab.example.com/group/sub/project".
 # Empty means git tools are disabled.
 # Keep this on a single line: some deployments' onboarding tooling parses it
 # (e.g. the AI Code Factory's bin/factory).
@@ -46,6 +48,16 @@ protected_branches = ["main", "master", "release/*"]
 push_branch_prefix = "factory/"
 # Base branch used when a tool call does not name one.
 default_base = "main"
+
+[gitlab]
+# A GitLab instance (self-hosted, or https://gitlab.com/) for git_fetch,
+# git_push and gitlab_create_mr: https://<host>[:port]/, ending in "/" (a
+# sub-path such as https://example.com/gitlab/ works). "" disables GitLab.
+# Set it in your local policy.toml, with its host in your deployment's egress
+# allowlist, and deliver a `gitlab` credential (a project access token; see
+# README, Configuring credentials). web_fetch never reaches this host. Its
+# TLS certificate must be one the system trust store accepts.
+url = ""
 
 [github]
 # Repos (owner/name) github_create_issue may file issues in. Empty disables

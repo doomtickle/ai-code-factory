@@ -1,10 +1,11 @@
 # Passdesk
 
 Passdesk is an MCP gateway that sits between one or more coding agents and
-the outside world (GitHub, npm, PyPI, docs sites, Jira, Gemini). Agents never
+the outside world (GitHub, a self-hosted or gitlab.com GitLab, npm, PyPI,
+docs sites, Jira, Gemini). Agents never
 get direct network egress; every tool call goes through Passdesk, which:
 
-- holds the real credentials (GitHub token, Jira/Gemini/private-registry
+- holds the real credentials (GitHub and GitLab tokens, Jira/Gemini/private-registry
   secrets) so no agent sandbox ever sees them
 - identifies the caller and grants only the tools that caller has been given
 - checks every call against `policy.toml` (allowed hosts, repos, branches,
@@ -14,7 +15,7 @@ get direct network egress; every tool call goes through Passdesk, which:
   secrets, caps size, marks fetched content as untrusted)
 - writes an audit record for every call, plus an "intent" record *before*
   running a tool that writes to an external system (`git_push`,
-  `github_create_pr`, `github_create_issue`), so the attempt is on record even if the call fails
+  `github_create_pr`, `gitlab_create_mr`, `github_create_issue`), so the attempt is on record even if the call fails
   partway through. A call that writes externally is refused if that intent
   record can't be written.
 
@@ -44,11 +45,12 @@ between two reads:
   `uv pip compile --generate-hashes` or `pip-compile --generate-hashes`.
 - `git_push` secret-scans every pushed commit on its own (patch, message,
   author and committer), not just the net diff, and scans and counts binary
-  files as text. Branch names, PR titles and PR bodies are scanned too, so a
+  files as text. Branch names and PR and merge request titles and bodies are scanned too, so a
   credential cannot leave as the name of the thing being pushed.
 - `web_fetch` refuses a hard-coded list of hosts that the egress proxy or
   another broker tool attaches credentials to (GitHub, Atlassian, the
-  Gemini API, the configured private npm registry), even if an operator
+  Gemini API, the configured private npm registry, the configured GitLab
+  `[gitlab].url`), even if an operator
   adds one to `policy.toml`'s `[web].allow_hosts` - it's an unauthenticated
   GET and must not become a way to read those hosts without going through
   the tool whose own allowlist (e.g. `[git].repos`) is meant to gate them.
@@ -222,6 +224,49 @@ The token is still read fresh on every call. With `sbx`, a `github` file is
 ignored (the `proxy` provider answers first) unless
 `PASSDESK_CREDENTIAL_PROVIDERS` is set to leave `proxy` out.
 
+### GitLab
+
+GitLab works with any deployment, sbx included, and nothing proxy-injects
+its token, so Passdesk always holds it (owner decision, `docs/decisions.md`).
+Set three things:
+
+1. `[gitlab].url` in your local `policy.toml`: the instance as
+   `https://<host>[:port]/`, ending in `/` (a sub-path such as
+   `https://example.com/gitlab/` works; `https://gitlab.com/` too). Only
+   https, no `..`, `//`, `@`, `%` or `\` in the path, and not a GitHub host. Its host must also be in the
+   deployment's egress allowlist (with sbx, your broker kit).
+2. The projects in `[git].repos`, host first, next to any GitHub repos:
+   `"gitlab.example.com/group/project"` or, with subgroups,
+   `"gitlab.example.com/group/sub/project"`. A name whose first segment has
+   a dot or a port is a GitLab project and must be on `[gitlab].url`; any
+   other is `owner/name` on GitHub.
+3. The `gitlab` credential, delivered like the files below
+   (`$BROKER_SECRETS_DIR/gitlab`, `/run/secrets/gitlab` or
+   `PASSDESK_SECRET_GITLAB_FILE`): a **project access token** (or a group
+   access token for several projects) with the **Developer** role and the
+   **api** and **write_repository** scopes, and an expiry date. Avoid a
+   personal access token: `api` on it reaches everything you can. Passdesk
+   refuses a value that isn't 20-255 letters, digits, `_`, `-` or `.`.
+
+The token is handled like a gateway-held GitHub token, scoped to the
+`[gitlab].url` prefix instead: git gets an
+`http.<gitlab url>.extraHeader` of `Authorization: Basic
+base64("oauth2:<token>")` in its environment only, with redirects refused;
+`gitlab_create_mr` sends `Authorization: Bearer <token>` to
+`<gitlab url>api/v4/` and refuses redirects; it is redacted everywhere once
+read. GitHub's token is never sent to GitLab, nor GitLab's to GitHub.
+`gitlab_create_mr` opens a draft by default (the title gets GitLab's
+`Draft: ` prefix), is held for approval like `github_create_pr` when an
+approval hook is installed (with Passdesk Pro, `[approvals].tools` must list
+it if you set that list yourself), and refuses a GitHub repo, as
+`github_create_pr` refuses a GitLab project. `web_fetch` refuses the
+`[gitlab].url` host. The doctor checks the policy, the credential and, with
+`--live`, that the token can read and push each project (Developer or
+higher).
+
+The instance's TLS certificate must be one the broker's system trust store
+accepts: a private CA is not supported yet.
+
 Jira, Gemini and a private npm registry credential are read from files
 instead (see CLAUDE.md's "Credentials" rule for why), fresh on every call,
 at the paths in the table above (`BROKER_JIRA_SECRET`,
@@ -234,7 +279,7 @@ these are stored in the host keychain and delivered by
 to that path before the broker's first call that needs it.
 
 Every credential is looked up by name (`jira`, `gemini`, `npm-registry`,
-`github`) through `passdesk/core/credentials.py`, which asks
+`github`, `gitlab`) through `passdesk/core/credentials.py`, which asks
 each provider in `PASSDESK_CREDENTIAL_PROVIDERS` in turn and takes the
 first value found:
 
@@ -358,7 +403,11 @@ the credential files' presence, mode and format (through
 `core/credentials.py`, so a credential delivered only as a Docker secret or
 through `PASSDESK_SECRET_<NAME>_FILE` is found even when nothing sits at the
 configured path), and, with `--live`, whether the gateway answers and
-whether the GitHub token can read and push each repo in `[git].repos`.
+whether the GitHub token (or, for a GitLab project, the `gitlab` token,
+which needs Developer or higher) can read and push each repo in
+`[git].repos`. It also checks `[gitlab].url` and that each host-qualified
+repo is on it, and counts the GitLab host among the hosts the policy can
+reach (`--kit`, `--egress-hosts`).
 
 With `BROKER_DEPLOYMENT=sbx` (the default), `--kit <spec.yaml>` (repeatable)
 also checks an sbx kit's network allowlist against every host the policy
