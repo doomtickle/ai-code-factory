@@ -2,30 +2,147 @@
 
 ## Architecture Overview
 
-This repository manages a multi-agent coding system orchestrated by Herdr and isolated by Docker Sandboxes (`sbx`).
-Every agent (the Coordinator and each role) runs inside its own hypervisor microVM. Agents have zero direct access to the host kernel, host Docker socket, or host credentials.
-The Coordinator runs in its own microVM with the project as its workspace (so Claude opens there) but cannot modify it: `kits/coordinator` installs root-owned Claude managed settings denying Edit/Write/NotebookEdit/Bash/PowerShell/Monitor/EnterWorktree. It acts only through the dispatch bridge (`dispatch/server.py`, host, 127.0.0.1), whose capabilities are: running `claude -p` in existing role sandboxes via `sbx exec` with a fixed argv; running `factory-lane prepare`/`export` (`templates/agent/factory-lane`) in an rw role's sandbox via `sbx exec` with a fixed argv; and one fixed, hook-free `git fetch` (`core.hooksPath=/dev/null`, `core.fsmonitor=false`, no shell, never `--prune`) of an exported bundle's `factory/*` branches into `refs/remotes/factory-<lane>/` of the project's repos. It also serves the Coordinator a read-only `factory_docs` tool over the factory's own markdown (README, `docs/setup-wsl.md`, `docs/guides/`), read from a snapshot `factory start` copies into `FACTORY_STATE` (like role instructions), never from the repo. Roles are data: `roles/<name>/role.conf` + `roles/<name>/instructions.md` + `roles/<name>/kit/`.
-No role sandbox mounts the project writable: every role gets a scratch dir (`FACTORY_STATE/roles/<name>`) as its writable primary workspace and the project `:ro`. rw roles (`WORKSPACE="rw"`, the developer) work in private git clones ("lanes") on their sandbox's own disk and hand back only committed `factory/*` branches, as bundles the bridge imports; the user merges them. The only writable project path any role mounts is `PROJECT/.factory/outgoing` (rw roles, for `git_push` bundles and `npm_fetch` lockfiles). A role runs up to `LANES` jobs at once (lane 1 = `<role>`, lane k = `<role>-lane<k>`), each with its own session and transcript, all in the role's one sandbox. The bridge passes each role its instructions (snapshotted into `FACTORY_STATE` by `factory start`) via `--append-system-prompt`, because a mixin kit's `agentInstructions` aren't reliably loaded.
-All agent tool traffic (git, package registries, web) goes through the Broker microVM (`factory-broker`), which agents reach only as MCP tools via the sbx MCP gateway. The Broker identifies the calling role by its token, grants only that role's `BROKER_TOOLS`, applies `broker/policy.toml`, filters content in both directions, and writes the audit log. The Broker's code lives in its own repository (`passdesk-broker`), included here as a git submodule at `broker/`; the sandbox name (`factory-broker`) and its paths (`/opt/factory-broker`, `/etc/factory-broker`) are unchanged.
+Multi-agent coding system orchestrated by Herdr, isolated by Docker Sandboxes (`sbx`):
+every agent runs in its own microVM with zero access to the host kernel, host Docker
+socket, or host credentials. Full picture: README.md.
+
+- **Coordinator:** own microVM, project as workspace, but cannot modify it —
+  `kits/coordinator` installs root-owned Claude managed settings denying
+  Edit/Write/NotebookEdit/Bash/PowerShell/Monitor/EnterWorktree. It acts only through
+  the dispatch bridge (`dispatch/server.py`, host, 127.0.0.1).
+- **Bridge's only capabilities:** `claude -p` in an existing role sandbox
+  (`sbx exec`, fixed argv); `factory-lane prepare`/`export`
+  (`templates/agent/factory-lane`) in an rw role's sandbox (`sbx exec`, fixed argv);
+  one fixed, hook-free `git fetch` (`core.hooksPath=/dev/null`,
+  `core.fsmonitor=false`, no shell, never `--prune`) of a bundle's `factory/*`
+  branches into `refs/remotes/factory-<lane>/`; and a read-only `factory_docs` tool
+  serving the factory's own markdown from a `FACTORY_STATE` snapshot `factory start`
+  makes, never the repo.
+- **Roles are data:** `roles/<name>/role.conf` + `instructions.md` + `kit/`. No role
+  mounts the project writable — each gets a scratch dir
+  (`FACTORY_STATE/roles/<name>`) plus the project `:ro`. rw roles (`WORKSPACE="rw"`,
+  the developer) work in private git clones ("lanes") on their sandbox's own disk and
+  hand back only committed `factory/*` branches as bundles the bridge imports; the
+  user merges them. The only writable project path any role mounts is
+  `PROJECT/.factory/outgoing`. A role runs up to `LANES` jobs at once, each its own
+  session/transcript. The bridge passes each role its instructions (snapshotted
+  into `FACTORY_STATE` by `factory start`) via `--append-system-prompt`
+  (a mixin kit's `agentInstructions` aren't reliably loaded).
+- **Broker:** all agent tool traffic (git, package registries, web) goes through the
+  Broker microVM (`factory-broker`), reached only as MCP tools via the sbx MCP
+  gateway. It grants only the calling role's `BROKER_TOOLS` (by token), applies
+  `broker/policy.toml`, filters content both ways, and audit-logs. Its code is the
+  `passdesk-broker` repo, included here as a git submodule at `broker/`; sandbox name
+  (`factory-broker`) and paths (`/opt/factory-broker`, `/etc/factory-broker`) are
+  unchanged.
 
 ## Operational Constraints
 
-- All agent sandboxes must be spun up using `sbx run` or `sbx create`.
-- Default network policy must remain locked-down. Never set default network policies to open.
-- Agent kits (`roles/*/kit`, `kits/coordinator`) must allow only Anthropic hosts. New outbound capabilities are added as Broker tools with policy checks and audit logging, never as agent egress rules. Role kits also deny Claude Code's built-in `WebFetch` (every role) and `WebSearch` (every role but the researcher) through root-owned managed settings: `WebSearch` is served by the model API, so it is the one web read that does not pass the Broker, and only the role that cannot write to the project may use it, as leads to verify through `web_fetch`.
-- The Broker must never execute agent-controlled content: no git hooks or repo-local git config from the workspace, no package install scripts, no binaries or interpreters from the workspace. Code crosses the boundary as git bundles or plain files. Dependencies cross it as lockfile-pinned, hash-verified tarballs (`npm_fetch`) or wheels (`pip_download`) that roles install offline in their own sandbox.
-- No role sandbox mounts the project read-write, and nothing a role controls runs on the host: a writable `.git` (hooks, `core.fsmonitor`) would let a role run commands on the host the next time the user runs git. rw roles work in lane clones; their work reaches the host only as `factory/*` branches the bridge imports with hooks and fsmonitor forced off. The only writable project path any role mounts is `.factory/outgoing`; `02-launch-factory.sh` creates it (git-ignored) and refuses symlinks there. The project must be a git repo or a folder of git repos (`project_repos` in `scripts/lib/common.sh`, `dispatch/server.py` and `factory-lane`, kept identical) for rw roles to run.
-- The developer and reviewer images carry a pinned headless Chrome (`chrome-headless-shell`, driven by `templates/agent/factory-shot` over the DevTools pipe) so a role can render what it built and look at the PNG. It is not a network capability: the kits are unchanged, so the browser reaches nothing but `file://` and loopback, and `factory-shot` refuses any other URL before starting it. Screenshots go to the role's scratch folder (`FACTORY_SCRATCH`, the sandbox's writable workspace the host can open), never into the project or a branch.
-- Roles never install dependencies into the project folder: it is shared with the host, whose `node_modules` holds the host platform's native binaries. They run tests with `factory-test` (`templates/agent/factory-test`), which works in a sandbox-local copy of the project, lane or review checkout, so read-only roles can run tests too.
-- Never type into agent terminals (e.g. `herdr pane send-text/send-keys` into a sandbox pane): if the sandbox session exits, the pane is a host shell. Agents are driven only through the dispatch bridge.
-- The dispatch bridge must stay minimal: no shell, no arbitrary sbx, herdr or git commands, only allowlisted roles from `roles/`. Its only git commands are the fixed hook-free bundle fetch above, a `for-each-ref` listing of the imported refs (same flags) and, for the job's review packet, a read-only `log` and `diff --stat` of each imported branch against the host's `HEAD` (same flags, plus `--no-ext-diff --no-textconv`, since a branch's `.gitattributes` could name a driver); it never checks out, merges or writes a working tree. It is the one custom component on the host that acts on agents.
-- The dashboard (`scripts/dashboard.py`, `factory dashboard`) is the one host component that listens for a browser. It binds 127.0.0.1 only, requires its per-run token (swapped for an HttpOnly, SameSite=Strict cookie named `factory_dashboard_<port>`) on every request, refuses any `Host` that isn't itself, serves only an allowlist of its own files under a CSP with no inline script or style (plus the factory's own docs at `/docs/` for the MANUAL key: README, `docs/setup-wsl.md` and `docs/guides/` from the factory checkout, rendered once at start-up by `docs.py` `build_served()` with CSS and JS as separate files, held in memory, served under the same CSP minus `frame-src`, no git run and no `file://` links), and is GET-only on its main port. Its state view only reads the state folder; at start-up it starts the browser opener (fixed argv, no shell: `rundll32.exe url.dll,FileProtocolHandler <url>` then `wslview` on WSL, else Python's `webbrowser`; never `explorer.exe`, `cmd.exe` or `powershell -Command`). Agent-written text reaches the main page only as JSON and is inserted with `textContent`, never as HTML. Cookies ignore ports, so any other server on 127.0.0.1 the browser visits also receives the cookie: the cookie alone must never authorize an action. The main page only displays: it reaches no endpoint that acts and holds no key. Its actions are Terminal 0 and the control unit. Terminal 0 is the Coordinator's terminal (`scripts/dashboard_term.py`, enabled by `--coordinator NAME`, which bin/factory passes): it runs exactly the fixed argv `sbx run --name <NAME>` (NAME matches `[a-z0-9][a-z0-9-]*`) in a PTY, no shell and never a shell fallback, only when a page explicitly asks (`{"type":"power","on":true}`; attaching a page starts nothing), only after `sbx ls -q` lists the sandbox and `ps -axo pid=,ppid=,args=` shows no other `sbx run` naming it (`--name NAME`, `--name=NAME` or positional; one attachment: a second would start a second Coordinator in the same VM; `factory chat` and the Herdr pane in `02-launch-factory.sh` refuse likewise via `coordinator_attached`, which must match the same forms as `runs_sandbox`), and never once shutdown has begun. It fans that one PTY out to every tab; a tab that attaches late gets the ring buffer as a `{"type":"replay"}` text frame followed by exactly one binary frame, during which the page mutes its input so terminal query replies in old output aren't sent to the Coordinator again. It is served from a second 127.0.0.1 port, its own origin, which the main page frames (main CSP adds only `frame-src` for that port; the iframe is `sandbox="allow-scripts allow-same-origin"`); the terminal page's CSP allows framing only by the main port, and that page (the one carrying the key) is served only with `Sec-Fetch-Dest: iframe` and `Sec-Fetch-Site` `same-site` or `same-origin`, never to a top-level navigation. Its WebSocket is accepted only with that port's `Host`, an `Origin` exactly `http://127.0.0.1:<termport>` or `http://localhost:<termport>`, the main cookie, and a per-run terminal key in `Sec-WebSocket-Protocol` (`factory-term.<key>`), which the server writes only into the terminal page it serves, so the main page (which shows agent text) never has it. Every other control lives in the control unit (`scripts/dashboard_controls.py`, served by `dashboard_term.py` on that same second origin, which runs whenever the dashboard does, with or without `--coordinator`): a page at `/cu` the main page frames in the rail, with its own per-run key (never the terminal's). That page is served only to a same-site iframe load (the same `Sec-Fetch-Dest`/`Sec-Fetch-Site` rule as the terminal page), under a CSP with no inline script or style that allows `connect-src` only to its own origin and framing only by the main port; its script refuses to run top-level, reads its key from the page and removes it from the DOM. Every action is a POST to `/cu/api/<name>` with a JSON body, read only when `Host` and `Origin` name the second origin exactly, `Sec-Fetch-Site` (if sent) is `same-origin`, exactly one dashboard cookie matches, the key is in the `X-Factory-Control` header (compared in constant time), the `Content-Type` is JSON and the body is at most 8 KiB; every other method (`OPTIONS` included) is refused, and no response carries CORS headers. The main page can't script the frame (another origin) and never posts to it; the frame may tell it exactly three strings by `postMessage` (`cu:expand`, `cu:collapse`, `cu:reload`), accepted only from that frame's window and origin. Agent-written strings (card titles, branches, the action log) are inserted as text only. APPROVE and DECLINE are one press each, as `factory approvals approve` is one command: a decision file written through `approvals.write_decision` (exact card id, the card's fingerprint `sha256(id NUL nonce)[:16]` must still match, never an expired card, a decline needs a reason). RESTART and UPDATE run host commands, so no single request can start one: a `prepare` request shows what it would do (the jobs it cancels, the held writes it drops; for UPDATE the read-only `factory update --plan`) and returns a single-use token valid for 120 s and bound to that action, and only a `run` request carrying it starts the fixed argv `<factory> restart` or `<factory> update --yes` (no shell; stdin `/dev/null`; its own session; output to a 0600 log under `FACTORY_STATE/dashboard/actions/`), one at a time, after hanging up Terminal 0 and holding its POWER ON until the action ends. DIAG (doomtickle/passdesk-ops#118) runs `factory doctor` through the same `prepare`/`run` token and the same runner (fixed argv `<factory> doctor`, logged the same way, one at a time with RESTART and UPDATE); doctor changes nothing, so its `prepare` lists no jobs or held writes and it leaves Terminal 0 attached. INSPECT (doomtickle/passdesk-ops#113) shows a held push's patch, and acts on nothing: `POST /cu/api/patch {"id", "fp"}` behind the same checks finds the card exactly as a decision does (exact id, fingerprint, `gone`/`changed`/`ambiguous` are 409), takes the card's `patch_sha256` only if it fullmatches `[0-9a-f]{64}` (else 400; a card without one is a 404), reads `approvals/patches/<sha>.patch` from the broker's state folder with every component below it opened `O_NOFOLLOW` (the broker can write there), a regular file only (non-blocking open, so a FIFO can't hang it) of at most 2 MiB, and serves it only if its SHA-256 matches the card (else 409). The dashboard parses and sanitises it itself (`scripts/patchview.py`: hunks consumed by their header counts, never by what a line looks like; bidi, invisible, control characters made visible `⟨U+XXXX⟩` tokens and flagged, lines cut at 2000 characters, the response capped at about 3 MiB), so the page only draws text with `textContent`, and nothing from the patch reaches an attribute, URL, class name or title. The main page never receives the patch: the main page's state carries no patch field (the unit's state has only `patch` and `patch_truncated` booleans per card, never the digest), and the patch never goes into a card, webhook or audit record. When the patch is truncated the response names the card's files it doesn't show (`files_missing`, sanitised) and its last hunk ends with a "✂ CUT HERE" line. APPROVE and DECLINE inside the viewer are the same `decide` request, sent with the fingerprint of the card whose patch is on the screen, held 2.5 s after that card changes; APPROVE on a truncated push (in the viewer, or on the deck when the card's `patch_truncated` is set) first asks "Approve without seeing N files?" with CANCEL and CONFIRM APPROVE (dark for 1 s), and the card changing or going cancels the question. An unexpected exception in any control is a 500 with a fixed message, and only its type is logged. Settings, when they come, go in the control unit too, and anything that moves the security boundary (broker policy and hosts, credentials, kits) is shown there read-only, never edited. Anything new that lets a page act must meet the same bar: one fixed argv with no shell, a key in a request header (not just the cookie) on a POST or WebSocket with its `Origin` checked, kept out of reach of the page that shows agent-written content, and a confirm step before any host command.
-- Broker policy is baked into its image, never read from the agent-writable workspace. Hosts in `broker/policy.toml` `[web].allow_hosts` must also be in `kits/broker/spec.yaml`.
-- The factory is project- and organization-agnostic: it must work on any repo, personal or work. Nothing specific to one organization (private registry URLs, Jira sites, repo names) is committed. Those settings live in the local config folder `FACTORY_CONFIG` (`scripts/lib/common.sh`, `~/.config/ai-code-factory/`, outside the repo and every agent workspace): `policy.toml` overlays `broker/policy.toml` and is baked into the broker image, `broker-kit/` is a mixin adding the broker egress hosts it needs, and `projects/<name>.md` holds per-project notes (e.g. the test command) that `start-dispatch.sh` appends to role instructions. `config.example/` holds placeholders only. Features that need such settings must be inert when they are absent.
-- The GitHub token is scoped to the Broker sandbox (`sbx secret set github --sandbox factory-broker`), never global. When the host keychain holds `factory-github` (`factory secret save github`), `scripts/start-broker.sh` re-registers it, broker-scoped and over stdin, on every broker start (`github_sync_from_keychain`), so recreating the broker never drops it.
-- Real credentials (GitHub, Anthropic) must be injected out-of-band by the host egress proxy, never passed into a sandbox in plaintext. Register them on the host with `sbx secret set <service>` (global scope is the default); never commit them to git or pass them as environment flags, CLI arguments, or files inside a sandbox.
-  - **Named exception:** credentials `sbx` cannot proxy-inject (currently Jira, Gemini, a read-only token for the private npm registry named by `[packages].npm_private_registry`, a GitLab project access token for the instance named by `[gitlab].url` (owner decision 2026-10-20, doomtickle/passdesk-ops#120; sbx has no `gitlab` service), and the approvals webhook URL the gateway posts held cards to, since none has an `sbx secret set` service) may be held as plaintext files, and only in the **broker sandbox**. They live in the host OS keychain (macOS Keychain / Linux `secret-tool` / the Windows Credential Manager on WSL2, reached through `powershell.exe` with the value only on stdin; `factory secret save` stores them), and `scripts/start-broker.sh` delivers each one over `sbx exec` **stdin** into a file under `/etc/factory-broker/secrets/` inside the broker sandbox - never argv, an env flag, a log, or git. On machines without any of these (headless Linux), `factory secret set <name>` delivers the value the same way, until the broker is recreated. That path is outside both the agent-visible workspace and `BROKER_STATE` (the broker state dir, a host bind mount), so no plaintext ever lands on host disk. The broker (`broker/passdesk/`, the `passdesk-broker` submodule) reads the file fresh on every call, so rotating the keychain entry and re-running `start-broker.sh` rotates the credential. Do not widen this exception to other credentials or other sandboxes without updating this rule.
-- Claude authentication: agents use a Claude Pro/Max subscription. The first `/login` in any factory sandbox is stored by sbx as the global `anthropic` service secret ("oauth configured") and every sandbox created after that uses it: sbx adds the login only at creation, so `02-launch-factory.sh` creates role sandboxes only once the login is stored. The sandbox still holds a credentials file whose contents have not been verified as a placeholder, so treat sandboxes as holding a usable login: never copy anything out of `~/.claude` in a sandbox or into the repo. API-key auth via `sbx secret set anthropic` remains the proxy-injected alternative.
-- Runtime state (audit logs, transcripts, token hashes, tool grants, roles' scratch dirs) lives in `FACTORY_STATE` (`scripts/lib/common.sh`, `~/.local/state/ai-code-factory/`), never in the repo or any other agent workspace: the broker re-reads grants and token hashes on every call, and the factory may work on its own repo.
+- Spin up all agent sandboxes with `sbx run`/`sbx create` only.
+- Default network policy stays locked-down; never set it to open.
+- Agent kits (`roles/*/kit`, `kits/coordinator`) allow only Anthropic hosts; new
+  outbound capability = a Broker tool with policy checks and audit logging, never an
+  agent egress rule. Managed settings also deny built-in `WebFetch` (every role) and
+  `WebSearch` (every role but researcher): `WebSearch` bypasses the Broker (served by
+  the model API), so only the role that can't write the project gets it, to verify
+  leads via `web_fetch`.
+- The Broker never executes agent-controlled content: no git hooks or repo-local git
+  config from the workspace, no package install scripts, no binaries/interpreters from
+  the workspace. Code crosses as git bundles or plain files; dependencies cross as
+  lockfile-pinned, hash-verified tarballs (`npm_fetch`) or wheels (`pip_download`)
+  roles install offline in their own sandbox.
+- No role sandbox mounts the project read-write, and nothing a role controls runs on
+  the host (a writable `.git` would let hooks/fsmonitor run host commands on the next
+  git run). rw roles work in lane clones; work reaches the host only as `factory/*`
+  branches the bridge imports with hooks/fsmonitor forced off. The only writable
+  project path any role mounts is `.factory/outgoing` (`02-launch-factory.sh` creates
+  it, git-ignored, refuses symlinks). The project must be a git repo or folder of git
+  repos (`project_repos` in `scripts/lib/common.sh`, `dispatch/server.py`,
+  `factory-lane` — kept identical) for rw roles to run.
+- Developer/reviewer images carry a pinned headless Chrome (`chrome-headless-shell`,
+  via `templates/agent/factory-shot`/DevTools) for rendering and screenshotting work —
+  not a network capability: kits unchanged, the browser reaches only `file://` and
+  loopback, `factory-shot` refuses other URLs. Screenshots go to `FACTORY_SCRATCH`,
+  never the project or a branch.
+- Roles never install dependencies into the project folder (shared with host, whose
+  `node_modules` holds host-native binaries). Tests run via `factory-test`
+  (`templates/agent/factory-test`) in a sandbox-local copy of the project/lane/review
+  checkout, so read-only roles can test too.
+- Never type into agent terminals (e.g. `herdr pane send-text/send-keys`): if the
+  sandbox session exits, the pane is a host shell. Agents are driven only through the
+  dispatch bridge.
+- The dispatch bridge stays minimal: no shell, no arbitrary sbx/herdr/git commands,
+  only allowlisted roles from `roles/`. Its only git commands: the fixed bundle fetch
+  above, a `for-each-ref` listing of imported refs (same flags), and for the review
+  packet a read-only `log` + `diff --stat` of each imported branch vs host `HEAD`
+  (same flags plus `--no-ext-diff --no-textconv`, since `.gitattributes` could name a
+  driver) — never checkout, merge, or write a working tree. The one custom host
+  component that acts on agents.
+- The dashboard (`scripts/dashboard.py`, `factory dashboard`) is the one host
+  component listening for a browser: binds 127.0.0.1 only, requires a per-run token,
+  and its main page only displays (reaches no endpoint that acts, holds no key); the
+  cookie alone must never authorize an action. Anything new that lets a page act
+  must meet the same bar: one fixed argv with no shell, a key in a request header
+  (not just the cookie) on a POST or WebSocket with its `Origin` checked, kept out of
+  reach of the page that shows agent-written content, and a confirm step before any
+  host command. Full rules: **`scripts/CLAUDE.md` — read before changing dashboard
+  code** (`scripts/dashboard*.py`, `scripts/patchview.py`).
+- Broker policy is baked into its image, never read from the agent-writable
+  workspace. Hosts in `broker/policy.toml` `[web].allow_hosts` must also be in
+  `kits/broker/spec.yaml`.
+- The factory is project/org-agnostic: nothing org-specific (registry URLs, Jira
+  sites, repo names) is committed — such settings live in `FACTORY_CONFIG`
+  (`scripts/lib/common.sh`, `~/.config/ai-code-factory/`, outside repo/workspace):
+  `policy.toml` overlays `broker/policy.toml` (baked into the broker image),
+  `broker-kit/` mixes in broker egress hosts, `projects/<name>.md` holds per-project
+  notes `start-dispatch.sh` appends to role instructions. `config.example/` holds
+  placeholders only; features needing these settings must be inert when absent.
+
+### Credentials
+
+- The GitHub token is scoped to the Broker sandbox (`sbx secret set github --sandbox
+  factory-broker`), never global. `scripts/start-broker.sh` re-registers a host-keychain
+  `factory-github` entry, broker-scoped and over stdin, on every broker start
+  (`github_sync_from_keychain`), so recreating the broker never drops it.
+- Real credentials (GitHub, Anthropic) are injected out-of-band by the host egress
+  proxy, never passed into a sandbox in plaintext. Register via `sbx secret set
+  <service>` (global scope default); never commit them to git or pass them as env
+  flags, CLI args, or files inside a sandbox.
+- **Named exception:** `sbx` can't proxy-inject Jira, Gemini, a read-only private npm
+  registry token (`[packages].npm_private_registry`), a GitLab project access token
+  for `[gitlab].url` (owner decision 2026-10-20, doomtickle/passdesk-ops#120 — sbx has
+  no `gitlab` service), or the approvals webhook URL the gateway posts held cards to.
+  These may be held as plaintext files, **only in the broker sandbox**: kept in the
+  host OS keychain (macOS Keychain / Linux `secret-tool` / the Windows Credential
+  Manager on WSL2, reached through `powershell.exe` with the value only on stdin;
+  `factory secret save`) and delivered by `scripts/start-broker.sh` over `sbx exec`
+  **stdin** into `/etc/factory-broker/secrets/` inside the broker sandbox — never
+  argv, an env flag, a log, or git. No keychain (headless Linux): `factory secret set
+  <name>` delivers the same way until the broker is recreated. That path is outside
+  both the agent-visible workspace and `BROKER_STATE` (the broker state dir, a host
+  bind mount), so no plaintext ever lands on host disk. The broker
+  (`broker/passdesk/`, the `passdesk-broker` submodule) reads the file fresh every
+  call, so rotating the keychain entry and re-running `start-broker.sh` rotates the
+  credential. Do not widen this exception to other credentials or sandboxes without
+  updating this rule.
+- Claude authentication: agents use a Claude Pro/Max subscription. The first `/login`
+  in any factory sandbox is stored by sbx as the global `anthropic` secret; every
+  sandbox created after uses it (sbx adds the login only at creation, so
+  `02-launch-factory.sh` creates role sandboxes only once it's stored). The sandbox
+  credentials file isn't verified as a placeholder — treat it as a usable login:
+  never copy anything out of `~/.claude` in a sandbox or into the repo. API-key auth
+  via `sbx secret set anthropic` remains the proxy-injected alternative.
+
+## Other constraints
+
+- Runtime state (audit logs, transcripts, token hashes, tool grants, roles' scratch
+  dirs) lives in `FACTORY_STATE` (`scripts/lib/common.sh`,
+  `~/.local/state/ai-code-factory/`), never in the repo or any agent workspace: the
+  broker re-reads grants/hashes on every call, and the factory may work on its own
+  repo.
 - Scripts must be POSIX-compliant Bash with `set -euo pipefail`.
-- This repo is shared with the team, so every setup must be repeatable: pin container images by digest, tools by exact version (with checksums for downloads), and keep pins in `scripts/lib/common.sh` or the relevant Dockerfile. In `.github/workflows/`, pin actions by full commit SHA (tag in a comment), runners by OS version and Python by exact version. Flag anything that cannot be pinned.
+- This repo is shared with the team, so every setup must be repeatable: pin container
+  images by digest, tools by exact version (with checksums for downloads), and keep
+  pins in `scripts/lib/common.sh` or the relevant Dockerfile. In `.github/workflows/`,
+  pin actions by full commit SHA (tag in a comment), runners by OS version, and Python
+  by exact version. Flag anything that cannot be pinned.
