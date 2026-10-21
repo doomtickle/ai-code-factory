@@ -247,6 +247,7 @@ place to open it in another.
 | `factory packet [<job-id> \| latest \| <lane> \| --list]` | A job's review packet: the task, each branch's commits and diffstat against your checked-out branch, the `factory-test` modes it reported, the broker calls its role made, cost, and the role's report with its APPROVED / REVISE verdict. Written after every job; `--list` shows recent ones |
 | `factory roles` | List roles, their project access, lanes and network tools |
 | `factory role new <name> [like]` | Add a role (copied from `reviewer`, or the role you name) |
+| `factory config init [--force]` | Write the example settings (`config.example/`) into this machine's config folder (`~/.config/ai-code-factory/`, or `$XDG_CONFIG_HOME/ai-code-factory/`) with every value commented out, so the copy changes nothing until you uncomment a line. Writes nothing and exits 1 if any target file (or symlink) already exists; `--force` overwrites |
 | `factory docs [--print]` | Open these docs, with guides, as a web page in your browser (offline, works before setup); `--print` writes the HTML to stdout instead |
 | `factory approvals [approve <id> \| decline <id> --reason "..." \| watch]` | List, decide and watch the gateway's approval cards (see "Enabling approvals") |
 | `factory analytics` | Cost, token and performance report from the audit logs (`--json`, `--html`) |
@@ -301,8 +302,8 @@ repos agents may push to, live in the factory config folder on your machine,
 it). Start from the example:
 
 ```sh
-mkdir -p ~/.config/ai-code-factory
-cp -R config.example/. ~/.config/ai-code-factory/   # then edit, keeping only what you need
+factory config init   # writes commented examples; uncomment only what you need
+factory doctor
 factory update
 ```
 
