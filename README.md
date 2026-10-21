@@ -23,10 +23,12 @@ dashboard in your browser (or laid out in [Herdr](https://herdr.dev) tabs).
 - **Isolation:** agents have no access to the host kernel, the host Docker socket,
   or host credentials. Egress is default-deny: agent VMs can reach only Anthropic.
 - **Coordinator:** runs in a VM that opens in your project but can't change it:
-  Claude's editing tools and shell are disabled by root-owned managed settings.
-  It is briefed on the factory and its roles before any task, whatever the
-  project: a root-owned managed `CLAUDE.md` from its kit, plus the dispatch
-  bridge's MCP instructions, which list the current roles.
+  Claude's editing tools and shell are disabled by root-owned managed settings,
+  which also raise Claude Code's MCP tool idle timeout so a long `delegate` or
+  `wait_for_job` wait doesn't trip its own abort. It is briefed on the factory
+  and its roles before any task, whatever the project: a root-owned managed
+  `CLAUDE.md` from its kit, plus the dispatch bridge's MCP instructions, which
+  list the current roles.
   It acts only through the dispatch bridge's tools, which can do one thing: run
   a task as `claude -p` inside an existing role sandbox (fixed arguments, no
   shell), and, for the developer, bring the branches it committed back into
@@ -818,6 +820,11 @@ written at setup) and only applied when its sandbox is created. It defaults to
 switch models for that session. To change the default,
 edit that `"model"` value, then run `factory update` to recreate the Coordinator
 with the new setting; recreating it discards its conversation history.
+The same managed settings also set `CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT` to
+660000 (ms), since the Coordinator's `delegate` and `wait_for_job` calls can
+legitimately block up to the dispatch bridge's 600 s maximum wait
+(`MAX_WAIT_SECONDS` in `dispatch/server.py`) and Claude Code's default idle
+abort is shorter than that; changing it needs the same `factory update`.
 
 **Remove a role:** delete `roles/<role>/` and run `factory start`. It closes the role's
 tab (`tabs` layout; it drops out of `factory watch`'s lane list either way) and removes

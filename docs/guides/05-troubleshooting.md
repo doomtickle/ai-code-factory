@@ -299,6 +299,27 @@ back. If the whole factory is unresponsive, `factory restart` (RESTART on the
 dashboard) restarts everything; running jobs are lost, but saved sessions, branches already
 brought back and logs are kept.
 
+### "sent no response or progress for ...s; aborting"
+
+```text
+MCP server "mcp-gateway" tool "wait_for_job" sent no response or progress for 329s; aborting.
+If this server is configured in your MCP settings, set a per-server "timeout" (ms) to
+allow longer silent runs for just this server; otherwise set
+CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT (ms) globally (0 disables).
+```
+
+**Cause:** this is Claude Code's own idle-tool abort, not a dispatch bridge
+error. `delegate` and `wait_for_job` can legitimately block up to the bridge's
+600 s maximum wait, which is longer than Claude Code's default silent-tool
+timeout. The Coordinator's kit already raises
+`CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT` to 660000 ms in its managed settings
+(`kits/coordinator/spec.yaml`) to prevent this; seeing the message anyway means
+the Coordinator's sandbox was created before that setting existed.
+**Fix:** run `factory update` to recreate the Coordinator with the current
+kit. This discards the Coordinator's conversation history (role sessions,
+branches already brought back and logs are kept), so note any open status
+first if you want to carry it into the new session.
+
 ### Costs keep climbing
 
 Each job result shows `cost_usd` and `context_tokens`. Every turn of a resumed
