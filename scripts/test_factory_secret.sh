@@ -31,14 +31,21 @@ set -euo pipefail
 #    running broker and not marked manual, "github" becomes the
 #    broker-scoped sbx secret (on stdin, never global), and a service name
 #    that isn't ours never reaches PowerShell.
+# 9. secret_sync_from_keychain and github_sync_from_keychain against stubbed
+#    secret-tool (Linux) and security (macOS) commands: a found entry is
+#    delivered; a definite "not found" revokes the broker's file; a locked or
+#    unavailable keychain (an error on stderr, a non-44 exit from security,
+#    or a locked item behind a silent secret-tool exit 1) leaves the file
+#    and the GitHub token alone and prints one warning naming the secret,
+#    never the value.
 #
 # Drives the real bin/factory as a subprocess (not sourced, since the
 # command dispatch under test runs only in that mode - see the guard at the
 # bottom of bin/factory), against a disposable FACTORY_STATE and a fake sbx
 # on PATH that records every invocation's argv and the last call's stdin.
-# No sbx, docker, or network access needed. There is no secret-tool/security
-# binary on PATH either, so keychain_lookup (scripts/lib/secrets.sh) always
-# reports "no value" here - exactly the state this test needs for part 5.
+# No sbx, docker, or network access needed. Until part 9 installs stubs,
+# FACTORY_KEYCHAIN=none, so keychain_lookup (scripts/lib/secrets.sh) always
+# reports "not stored" - exactly the state this test needs for part 5.
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
@@ -469,6 +476,109 @@ reset_fakes; reset_ps
 run_factory_with_stdin 'x' secret save jira
 assert_contains "save with no keychain: says what to do instead" "$F_OUT" "no keychain"
 assert_empty "save with no keychain: PowerShell is never called" "$(cat "$FAKE_PS_ARGS")"
+
+# ===========================================================================
+# Part 9: found / not found / locked through stubbed secret-tool and
+# security. FAKE_KEYRING picks what the stubs report:
+#   found          the entry exists and is readable;
+#   absent         no such entry (secret-tool: silent exit 1, empty search;
+#                  security: exit 44 "could not be found");
+#   locked         an error (secret-tool: D-Bus message on stderr, exit 1;
+#                  security: exit 36, "User interaction is not allowed");
+#   locked-silent  secret-tool only: the unlock prompt was dismissed, so
+#                  lookup exits 1 silently but search lists the locked item.
+# Each stub logs its argv to $FAKE_KEYRING_ARGS.
+# ===========================================================================
+install_good_fake_sbx
+cat > "$tmp/bin/secret-tool" <<'FAKE_ST'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >> "$FAKE_KEYRING_ARGS"
+case "$1:$FAKE_KEYRING" in
+  lookup:found) printf '%s' "$FAKE_KEYRING_VALUE" ;;
+  lookup:absent|lookup:locked-silent) exit 1 ;;
+  lookup:locked|search:locked)
+    echo "secret-tool: Cannot autolaunch D-Bus without X11 \$DISPLAY" >&2; exit 1 ;;
+  search:found) printf '[/org/freedesktop/secrets/collection/login/7]\nsecret = %s\n' "$FAKE_KEYRING_VALUE" ;;
+  search:absent) ;;
+  search:locked-silent) printf '[/org/freedesktop/secrets/collection/login/7]\nlabel = x\n' ;;
+  *) exit 1 ;;
+esac
+FAKE_ST
+cat > "$tmp/bin/security" <<'FAKE_SEC'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >> "$FAKE_KEYRING_ARGS"
+case "$FAKE_KEYRING" in
+  found) case " $* " in *" -w "*) printf '%s\n' "$FAKE_KEYRING_VALUE" ;; esac ;;
+  absent)
+    echo "security: SecKeychainSearchCopyNext: The specified item could not be found in the keychain." >&2
+    exit 44 ;;
+  *) echo "security: SecKeychainItemCopyContent: User interaction is not allowed." >&2; exit 36 ;;
+esac
+FAKE_SEC
+chmod +x "$tmp/bin/secret-tool" "$tmp/bin/security"
+export FAKE_KEYRING_ARGS="$tmp/keyring-args.log" FAKE_KEYRING_VALUE="kr-secret-9"
+rm -rf "$MARKER_DIR"
+
+for backend in secret-tool macos; do
+  export FACTORY_KEYCHAIN="$backend"
+
+  reset_fakes; : > "$FAKE_KEYRING_ARGS"
+  FAKE_KEYRING=found run_sync jira
+  assert_eq "$backend found: exits 0" "$S_RC" "0"
+  assert_eq "$backend found: the value is delivered on stdin" "$(cat "$FAKE_SBX_STDIN" 2>/dev/null)" "kr-secret-9"
+  assert_contains "$backend found: delivered as jira" "$(cat "$FAKE_SBX_ARGS")" "exec -i factory-broker"
+  assert_not_contains "$backend found: never revokes" "$(cat "$FAKE_SBX_ARGS")" "rm -f"
+  assert_not_contains "$backend found: the value never appears in sbx's argv" "$(cat "$FAKE_SBX_ARGS")" "kr-secret-9"
+  assert_not_contains "$backend found: the value is never printed" "$S_OUT" "kr-secret-9"
+
+  reset_fakes; : > "$FAKE_KEYRING_ARGS"
+  FAKE_KEYRING=absent run_sync jira
+  assert_eq "$backend not found: exits 0" "$S_RC" "0"
+  assert_contains "$backend not found: the stale file is revoked" \
+    "$(cat "$FAKE_SBX_ARGS")" "exec factory-broker rm -f /etc/factory-broker/secrets/jira"
+  assert_not_contains "$backend not found: no warning" "$S_OUT" "warning"
+
+  reset_fakes; : > "$FAKE_KEYRING_ARGS"
+  FAKE_KEYRING=locked run_sync gitlab
+  assert_eq "$backend locked: exits 0 (start-up goes on)" "$S_RC" "0"
+  assert_empty "$backend locked: the credential is kept (sbx never called)" "$(cat "$FAKE_SBX_ARGS")"
+  assert_contains "$backend locked: warns, naming the secret" "$S_OUT" "could not read factory-gitlab from the keychain"
+  assert_contains "$backend locked: says how to fix it" "$S_OUT" "To fix: unlock"
+  assert_eq "$backend locked: exactly one line of output" "$(printf '%s\n' "$S_OUT" | wc -l | tr -d ' ')" "1"
+  assert_not_contains "$backend locked: the backend's own error is not passed on" "$S_OUT" "interaction is not allowed"
+  assert_not_contains "$backend locked: no D-Bus noise either" "$S_OUT" "D-Bus"
+
+  # github: found re-registers; locked leaves sbx alone and warns, and does
+  # not abort under set -e (start-broker.sh and bin/factory run with it).
+  reset_fakes
+  FAKE_KEYRING=found run_github_sync
+  assert_eq "$backend github found: the token reaches sbx on stdin" "$(cat "$FAKE_SBX_SECRET_STDIN" 2>/dev/null)" "kr-secret-9"
+  reset_fakes
+  set +e
+  G_OUT="$( ( set -e
+    . "$REPO_ROOT/scripts/lib/common.sh"; . "$REPO_ROOT/scripts/lib/secrets.sh"
+    FAKE_KEYRING=locked github_sync_from_keychain; echo "still running" ) 2>&1 )"
+  set -e
+  assert_empty "$backend github locked: the existing token is left alone" "$(cat "$FAKE_SBX_ARGS")"
+  assert_contains "$backend github locked: warns, naming factory-github" "$G_OUT" "could not read factory-github"
+  assert_contains "$backend github locked: not fatal under set -e" "$G_OUT" "still running"
+  reset_fakes
+  FAKE_KEYRING=absent run_github_sync
+  assert_empty "$backend github not found: leaves sbx alone" "$(cat "$FAKE_SBX_ARGS")"
+  assert_empty "$backend github not found: no warning" "$G_OUT"
+done
+
+export FACTORY_KEYCHAIN=secret-tool
+reset_fakes; : > "$FAKE_KEYRING_ARGS"
+FAKE_KEYRING=locked-silent run_sync npm-registry
+assert_eq "secret-tool locked item, prompt dismissed: exits 0" "$S_RC" "0"
+assert_empty "secret-tool locked item, prompt dismissed: the credential is kept" "$(cat "$FAKE_SBX_ARGS")"
+assert_contains "secret-tool locked item, prompt dismissed: warns" "$S_OUT" "could not read factory-npm-registry"
+assert_not_contains "secret-tool: search is never asked to unlock (no second prompt)" "$(cat "$FAKE_KEYRING_ARGS")" "--unlock"
+assert_value_not_leaked "keychain sync: the value lands nowhere else under the temp dir" "kr-secret-9"
+export FACTORY_KEYCHAIN=none
 
 echo "---"
 echo "$pass passed, $fail failed"
