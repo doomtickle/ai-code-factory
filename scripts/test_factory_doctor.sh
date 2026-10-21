@@ -45,7 +45,7 @@ assert_not_contains() {
 sys="$tmp/sys"
 mkdir -p "$sys"
 for t in bash sh env cat dirname basename readlink grep mkdir sed tr tail head ls rm mv cp chmod sleep id uname \
-  git curl jq openssl column python3 awk cut sort mktemp ps wc timeout printf test find seq; do
+  git curl jq openssl column python3 awk cut sort mktemp ps wc timeout printf test find seq sw_vers; do
   p="$(command -v "$t" 2>/dev/null)" || continue
   ln -sf "$p" "$sys/$t"
 done
@@ -107,7 +107,7 @@ assert_contains "doctor has a broker/ submodule step" "$out" "==> Gateway source
 assert_contains "doctor says broker/ is not checked out" "$out" "the broker/ submodule (passdesk-broker) is not checked out"
 assert_contains "doctor shows git's own error" "$out" "does not exist"
 assert_contains "doctor shows the canonical URL" "$out" "$CANON"
-assert_contains "doctor shows the exact command" "$out" "-c submodule.broker.url=$CANON submodule update --init broker"
+assert_contains "doctor shows the exact command" "$out" "config submodule.broker.url $CANON && git -C "
 assert_contains "doctor keeps checking after the failure" "$out" "==> Docker"
 assert_contains "doctor counts it as a problem" "$out" "problem(s) found."
 assert_not_contains "doctor never hits a missing roles.sh function" "$out" "command not found"
@@ -121,6 +121,8 @@ case "$cmd" in
               else bad "the printed command fetches broker/ ($cmd)"; fi ;;
   *) bad "the printed command was found in doctor's output" ;;
 esac
+assert_eq "the printed command persists the URL for a later plain submodule update" \
+  "$(git -C "$tmp/fresh" config submodule.broker.url)" "$tmp/sub"
 
 make_checkout "$tmp/fresh2" "../passdesk-broker.git"
 run_in "$tmp/fresh2" setup
@@ -227,7 +229,7 @@ assert_not_contains "no credential-store step without secret-tool" "$(cat "$tmp/
 mkdir -p "$tmp/bin-st"
 cp "$st/secret-tool" "$tmp/bin-st/secret-tool"
 RC=0
-env PATH="$tmp/bin-st:$stubs:$sys" HOME="$tmp/home" XDG_STATE_HOME="$tmp/state" XDG_CONFIG_HOME="$tmp/config" \
+env PATH="$tmp/bin-st:$stubs:$sys" FACTORY_KEYCHAIN=secret-tool HOME="$tmp/home" XDG_STATE_HOME="$tmp/state" XDG_CONFIG_HOME="$tmp/config" \
   "$tmp/fresh4/bin/factory" doctor > "$tmp/out" 2>&1 || RC=$?
 assert_contains "doctor probes secret-tool when present" "$(cat "$tmp/out")" "==> Credential store (secret-tool)"
 assert_contains "doctor warns, with the reason, when it can't reach a keyring" "$(cat "$tmp/out")" "can't reach a keyring: secret-tool: Cannot autolaunch D-Bus"

@@ -359,10 +359,12 @@ broker_initialized() {
 readonly BROKER_CANONICAL_URL="https://github.com/doomtickle/passdesk-broker.git"
 
 # broker_init_command ROOT -> the command that fetches broker/ at its pin from
-# the canonical URL, whatever .gitmodules says (the -c is for this one run;
-# no config is written).
+# the canonical URL, whatever .gitmodules says. The URL is written to the
+# clone's config first, so a later plain "git submodule update --init" (as
+# "factory update" runs) doesn't copy the fork's URL from .gitmodules.
 broker_init_command() {
-  printf "git -C %q -c submodule.broker.url=%s submodule update --init broker" "$1" "$BROKER_CANONICAL_URL"
+  printf "git -C %q config submodule.broker.url %s && git -C %q submodule update --init broker" \
+    "$1" "$BROKER_CANONICAL_URL" "$1"
 }
 
 # broker_submodule_init ROOT -> try to initialize the broker/ submodule. On
