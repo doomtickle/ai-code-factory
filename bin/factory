@@ -472,6 +472,19 @@ github_repos_listed() {
 # keychain_has SERVICE: scripts/lib/secrets.sh (macOS Keychain, Linux
 # secret-tool, or the Windows Credential Manager on WSL2).
 
+# keychain_warn_missing SERVICE MESSAGE -> warn MESSAGE if the keychain has
+# no SERVICE; if it is locked or unavailable (keychain_has status 2), say
+# that instead, since whether SERVICE is stored can't be told.
+keychain_warn_missing() {
+  local rc=0
+  keychain_has "$1" || rc=$?
+  case "$rc" in
+    0) ;;
+    1) warn "$2" ;;
+    *) warn "the keychain is locked or unavailable, so $1 couldn't be checked; unlock it and run this again" ;;
+  esac
+}
+
 # any_jira_tool_granted -> success if the Coordinator or any role is granted a
 # jira_* broker tool (jira_my_issues, jira_get_issue). Other broker tools
 # (web_fetch, npm_fetch, ...) don't need a Jira token, so warning on any
@@ -577,14 +590,14 @@ onboarding_hints() {
     fi
   fi
   if any_jira_tool_granted; then
-    keychain_has factory-jira || warn "Jira tools are granted but no token is stored in the keychain (see README: Enabling Jira)"
+    keychain_warn_missing factory-jira "Jira tools are granted but no token is stored in the keychain (see README: Enabling Jira)"
     [ -n "$(policy_string jira cloud_id)" ] || warn "Jira tools are granted but [jira].cloud_id is not set; set it in $FACTORY_CONFIG/policy.toml (see README: Enabling Jira)"
   fi
-  if npm_private_registry_needs_token && ! keychain_has factory-npm-registry; then
-    warn "npm_fetch can't download private npm packages until a token is stored in the keychain (see README: Enabling a private npm registry)"
+  if npm_private_registry_needs_token; then
+    keychain_warn_missing factory-npm-registry "npm_fetch can't download private npm packages until a token is stored in the keychain (see README: Enabling a private npm registry)"
   fi
-  if gitlab_needs_token && ! keychain_has factory-gitlab; then
-    warn "[gitlab].url is set but no GitLab token is stored: run 'factory secret save gitlab' (see README: Enabling GitLab)"
+  if gitlab_needs_token; then
+    keychain_warn_missing factory-gitlab "[gitlab].url is set but no GitLab token is stored: run 'factory secret save gitlab' (see README: Enabling GitLab)"
   fi
   local why
   if why="$(gitlab_mr_unheld)"; then
@@ -635,14 +648,14 @@ cmd_status() {
   coord_tools="$(coordinator_broker_tools)"
   say "${B}Coordinator broker tools${N} ${coord_tools:-none}"
   if any_jira_tool_granted; then
-    keychain_has factory-jira || warn "Jira keychain entry (\"factory-jira\") not found"
+    keychain_warn_missing factory-jira "Jira keychain entry (\"factory-jira\") not found"
     [ -n "$(policy_string jira cloud_id)" ] || warn "[jira].cloud_id is not set (see README: Enabling Jira)"
   fi
-  if npm_private_registry_needs_token && ! keychain_has factory-npm-registry; then
-    warn "private npm registry keychain entry (\"factory-npm-registry\") not found"
+  if npm_private_registry_needs_token; then
+    keychain_warn_missing factory-npm-registry "private npm registry keychain entry (\"factory-npm-registry\") not found"
   fi
-  if gitlab_needs_token && ! keychain_has factory-gitlab; then
-    warn "GitLab keychain entry (\"factory-gitlab\") not found"
+  if gitlab_needs_token; then
+    keychain_warn_missing factory-gitlab "GitLab keychain entry (\"factory-gitlab\") not found"
   fi
   local why
   if why="$(gitlab_mr_unheld)"; then
@@ -896,7 +909,13 @@ cmd_secret_forget() {
   keychain_name_valid "$name" \
     || die "unknown secret '$name' (one of: $FACTORY_KEYCHAIN_NAMES)"
   keychain_delete "factory-$name"
-  ! keychain_has "factory-$name" || die "could not delete factory-$name from the keychain"
+  local rc=0
+  keychain_has "factory-$name" || rc=$?
+  case "$rc" in
+    1) ;;
+    0) die "could not delete factory-$name from the keychain" ;;
+    *) die "keychain locked; could not confirm the delete of factory-$name" ;;
+  esac
   ok "deleted factory-$name from the keychain"
   if command -v sbx >/dev/null 2>&1 && sandbox_running "$BROKER_SANDBOX"; then
     if [ "$name" = github ]; then

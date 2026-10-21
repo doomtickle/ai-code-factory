@@ -388,6 +388,7 @@ cat > "$tmp/bin/powershell.exe" <<'FAKE_PS'
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >> "$FAKE_PS_ARGS"
+if [ -n "${FAKE_PS_FAIL:-}" ]; then echo "powershell.exe: cannot start" >&2; exit 1; fi
 script="${*: -1}"
 op="$(printf '%s' "$script" | sed -n 's/.*op=\([a-z]*\).*/\1/p' | head -n1)"
 svc="$(printf '%s' "$script" | grep -o "Retrieve('factory-[a-z-]*'" | head -n1 | sed "s/Retrieve('//; s/'//")"
@@ -487,6 +488,10 @@ assert_empty "save with no keychain: PowerShell is never called" "$(cat "$FAKE_P
 #                  security: exit 36, "User interaction is not allowed");
 #   locked-silent  secret-tool only: the unlock prompt was dismissed, so
 #                  lookup exits 1 silently but search lists the locked item.
+#   search-error   secret-tool only: lookup exits 1 silently, then search
+#                  fails with a D-Bus error on stderr (after printing a
+#                  "secret = <value>" line, to check it goes nowhere);
+#   search-silent  secret-tool only: lookup and search both exit 1 silently.
 # Each stub logs its argv to $FAKE_KEYRING_ARGS.
 # ===========================================================================
 install_good_fake_sbx
@@ -496,12 +501,16 @@ set -euo pipefail
 printf '%s\n' "$*" >> "$FAKE_KEYRING_ARGS"
 case "$1:$FAKE_KEYRING" in
   lookup:found) printf '%s' "$FAKE_KEYRING_VALUE" ;;
-  lookup:absent|lookup:locked-silent) exit 1 ;;
+  lookup:absent|lookup:locked-silent|lookup:search-error|lookup:search-silent) exit 1 ;;
   lookup:locked|search:locked)
     echo "secret-tool: Cannot autolaunch D-Bus without X11 \$DISPLAY" >&2; exit 1 ;;
   search:found) printf '[/org/freedesktop/secrets/collection/login/7]\nsecret = %s\n' "$FAKE_KEYRING_VALUE" ;;
   search:absent) ;;
   search:locked-silent) printf '[/org/freedesktop/secrets/collection/login/7]\nlabel = x\n' ;;
+  search:search-error)
+    printf 'secret = %s\n' "$FAKE_KEYRING_VALUE"
+    echo "secret-tool: org.freedesktop.DBus.Error.NoReply: Did not receive a reply" >&2; exit 1 ;;
+  search:search-silent) exit 1 ;;
   *) exit 1 ;;
 esac
 FAKE_ST
@@ -577,7 +586,76 @@ assert_eq "secret-tool locked item, prompt dismissed: exits 0" "$S_RC" "0"
 assert_empty "secret-tool locked item, prompt dismissed: the credential is kept" "$(cat "$FAKE_SBX_ARGS")"
 assert_contains "secret-tool locked item, prompt dismissed: warns" "$S_OUT" "could not read factory-npm-registry"
 assert_not_contains "secret-tool: search is never asked to unlock (no second prompt)" "$(cat "$FAKE_KEYRING_ARGS")" "--unlock"
+
+# A failed 'secret-tool search' after a silent lookup miss is not "empty":
+# whether it errors loudly or silently, the file is kept.
+for mode in search-error search-silent; do
+  reset_fakes; : > "$FAKE_KEYRING_ARGS"
+  FAKE_KEYRING=$mode run_sync jira
+  assert_eq "secret-tool $mode: exits 0" "$S_RC" "0"
+  assert_empty "secret-tool $mode: the credential is kept (sbx never called)" "$(cat "$FAKE_SBX_ARGS")"
+  assert_contains "secret-tool $mode: warns" "$S_OUT" "could not read factory-jira"
+  assert_not_contains "secret-tool $mode: the search's error is not passed on" "$S_OUT" "NoReply"
+  assert_not_contains "secret-tool $mode: the search's listing is not passed on" "$S_OUT" "kr-secret-9"
+  set +e
+  ( . "$REPO_ROOT/scripts/lib/common.sh"; . "$REPO_ROOT/scripts/lib/secrets.sh"
+    FAKE_KEYRING=$mode keychain_lookup factory-jira ) >/dev/null 2>&1
+  L_RC=$?
+  set -e
+  assert_eq "secret-tool $mode: keychain_lookup returns 2 (undetermined)" "$L_RC" "2"
+done
 assert_value_not_leaked "keychain sync: the value lands nowhere else under the temp dir" "kr-secret-9"
+
+# 'factory secret forget' with a locked keychain can't confirm the delete:
+# it says so and leaves the broker's copy alone.
+reset_fakes
+FAKE_KEYRING=locked run_factory secret forget jira
+[ "$F_RC" -ne 0 ] && ok "forget, keychain locked: exits non-zero" || bad "forget, keychain locked: exits non-zero (got 0)"
+assert_contains "forget, keychain locked: says the delete couldn't be confirmed" "$F_OUT" "keychain locked; could not confirm the delete"
+assert_not_contains "forget, keychain locked: never claims it deleted" "$F_OUT" "deleted factory-jira"
+assert_empty "forget, keychain locked: the broker's file is left alone" "$(cat "$FAKE_SBX_ARGS")"
+
+# doctor/status: a locked keychain is reported as locked, not as a missing token.
+run_warn_missing() { # run_warn_missing MODE -> output in $W_OUT
+  W_OUT="$( ( . "$REPO_ROOT/bin/factory"
+    FAKE_KEYRING=$1 keychain_warn_missing factory-jira "no token is stored" ) 2>&1 )"
+}
+run_warn_missing absent
+assert_contains "doctor, no entry: says no token is stored" "$W_OUT" "no token is stored"
+run_warn_missing locked
+assert_contains "doctor, keychain locked: says it is locked" "$W_OUT" "keychain is locked or unavailable, so factory-jira couldn't be checked"
+assert_not_contains "doctor, keychain locked: doesn't claim no token is stored" "$W_OUT" "no token is stored"
+run_warn_missing found
+assert_empty "doctor, entry found: no warning" "$W_OUT"
+
+# The WSL2 Credential Manager (the Part 8 fake PowerShell): no entry is
+# "not stored" (1) and revokes; a failing PowerShell is "undetermined" (2)
+# and keeps the file.
+export FACTORY_KEYCHAIN=wincred
+rm -f "$tmp/wincred/factory-gemini"
+set +e
+( . "$REPO_ROOT/scripts/lib/common.sh"; . "$REPO_ROOT/scripts/lib/secrets.sh"
+  keychain_lookup factory-gemini ) >/dev/null 2>&1
+L_RC=$?
+set -e
+assert_eq "wincred, no entry: keychain_lookup returns 1" "$L_RC" "1"
+reset_fakes
+run_sync gemini
+assert_contains "wincred, no entry: the stale file is revoked" \
+  "$(cat "$FAKE_SBX_ARGS")" "exec factory-broker rm -f /etc/factory-broker/secrets/gemini"
+printf 'wc-secret-2' > "$tmp/wincred/factory-gemini"
+set +e
+( . "$REPO_ROOT/scripts/lib/common.sh"; . "$REPO_ROOT/scripts/lib/secrets.sh"
+  FAKE_PS_FAIL=1 keychain_lookup factory-gemini ) >/dev/null 2>&1
+L_RC=$?
+set -e
+assert_eq "wincred, PowerShell fails: keychain_lookup returns 2" "$L_RC" "2"
+reset_fakes
+FAKE_PS_FAIL=1 run_sync gemini
+assert_empty "wincred, PowerShell fails: the credential is kept (sbx never called)" "$(cat "$FAKE_SBX_ARGS")"
+assert_contains "wincred, PowerShell fails: warns" "$S_OUT" "could not read factory-gemini"
+assert_contains "wincred, PowerShell fails: the hint is about PowerShell" "$S_OUT" "powershell.exe"
+rm -f "$tmp/wincred/factory-gemini"
 export FACTORY_KEYCHAIN=none
 
 echo "---"

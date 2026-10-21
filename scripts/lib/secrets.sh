@@ -109,13 +109,30 @@ try { \$v.Remove(\$v.Retrieve('$service', 'factory')) } catch {}
 $body"
 }
 
+# keychain_search_empty SERVICE -> success only if 'secret-tool search'
+# exits 0, prints nothing on stderr and lists no item (no "[" line) for
+# SERVICE; a search that fails in any way is not taken as "empty". The
+# listing can hold "secret = <value>", so stdout goes straight to grep -c
+# (which reads it all, so secret-tool never gets SIGPIPE) and only the count
+# is kept; stderr goes to a temp file that is removed before returning.
+keychain_search_empty() {
+  local errf res count status
+  errf="$(mktemp)" || return 1
+  res="$(secret-tool search service "$1" 2>"$errf" | { grep -c '^\[' || :; }
+         echo " ${PIPESTATUS[0]}")"
+  if [ -s "$errf" ]; then rm -f "$errf"; return 1; fi
+  rm -f "$errf"
+  count="${res%%[!0-9]*}"; status="${res##*[!0-9]}"
+  [ "$status" = 0 ] && [ "$count" = 0 ]
+}
+
 # keychain_lookup SERVICE -> value on stdout. Exit status tells the cases
 # apart, so a locked keychain is never mistaken for a cleared entry:
 #   0  found (a non-empty value is on stdout);
 #   1  definitely not stored: secret-tool exiting 1 with nothing on stderr
-#      and no locked item listed by 'secret-tool search', macOS `security`
-#      exiting 44 (errSecItemNotFound), the Credential Manager reporting no
-#      such entry - or no OS keychain on this machine at all;
+#      and then a clean, empty 'secret-tool search' (keychain_search_empty),
+#      macOS `security` exiting 44 (errSecItemNotFound), the Credential
+#      Manager reporting no such entry - or no OS keychain here at all;
 #   2  undetermined: the keychain is locked, unavailable (no Secret Service,
 #      no D-Bus session), the user denied the prompt, or anything else.
 # Nothing the backend prints is passed on; secret-tool's stderr is read only
@@ -133,10 +150,9 @@ keychain_lookup() {
       err="$(cat "$errf")"; rm -f "$errf"
       # A locked item whose unlock prompt was dismissed also comes back as a
       # silent exit 1: list it without unlocking (or prompting) to be sure.
-      # grep reads the whole listing, so secret-tool never gets SIGPIPE.
-      if [ "$rc" = 1 ] && [ -z "$err" ] && [ -z "$value" ] \
-         && ! secret-tool search service "$1" 2>/dev/null | grep '^\[' >/dev/null; then
-        return 1
+      if [ "$rc" = 1 ] && [ -z "$err" ] && [ -z "$value" ]; then
+        keychain_search_empty "$1" && return 1
+        return 2
       fi ;;
     wincred)
       # The lookup script exits 0 with no output when there is no entry.
@@ -163,11 +179,16 @@ keychain_unavailable_warning() {
        "To fix: $hint, then run 'factory start' again" >&2
 }
 
-# keychain_has SERVICE -> success if the keychain holds an entry. On macOS
-# this checks existence only, without reading the value (no Keychain prompt).
+# keychain_has SERVICE -> 0 if the keychain holds an entry, 1 if it
+# definitely doesn't, 2 if that can't be told (locked or unavailable), as
+# keychain_lookup. On macOS this checks existence only, without reading the
+# value (no Keychain prompt).
 keychain_has() {
+  local rc=0
   case "$(keychain_backend)" in
-    macos) security find-generic-password -s "$1" >/dev/null 2>&1 ;;
+    macos)
+      security find-generic-password -s "$1" >/dev/null 2>&1 || rc=$?
+      case "$rc" in 0) return 0 ;; 44) return 1 ;; *) return 2 ;; esac ;;
     none) return 1 ;;
     *) keychain_lookup "$1" >/dev/null ;;
   esac
