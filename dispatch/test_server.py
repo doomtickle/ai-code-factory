@@ -129,6 +129,7 @@ class Base(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         root = Path(self.tmp.name)
         d.ROOT, d.PROJECT, d.STATE = root / "repo", root / "project", root / "state"
+        d.ROLES_SCRATCH = root / "scratch"
         for p in (d.ROOT / "roles", d.PROJECT / ".git", d.STATE / "logs", d.STATE / "sessions",
                   d.STATE / "instructions"):
             p.mkdir(parents=True)  # PROJECT/.git: a (stub) repo, so rw roles may run
@@ -232,8 +233,9 @@ class DelegateTests(Base):
         self.assertEqual(report["report"], "REPORT: did add a feature")
         exec_call = self.claude_calls()[0]
         lane = "/home/agent/lanes/developer"
-        self.assertEqual(exec_call[:13], ["exec", "-w", lane, "-e", "CLAUDE_CODE_DISABLE_AUTO_MEMORY=1",
+        self.assertEqual(exec_call[:15], ["exec", "-w", lane, "-e", "CLAUDE_CODE_DISABLE_AUTO_MEMORY=1",
                                           "-e", f"FACTORY_PROJECT={d.PROJECT}", "-e", "FACTORY_LANE=developer",
+                                          "-e", f"FACTORY_SCRATCH={d.ROLES_SCRATCH / 'developer'}",
                                           "-e", f"FACTORY_LANE_ROOT={lane}", "factory-developer", "claude"])
         self.assertEqual(exec_call[exec_call.index("-p") + 1], "add a feature")
         self.assertNotIn("--resume", exec_call)
@@ -799,9 +801,10 @@ class LaneTests(Base):
     def test_env_and_workdir_for_ro_roles(self):
         self.wait(self.delegate("reviewer", "look"))
         call = self.claude_calls()[0]
-        self.assertEqual(call[:9], ["exec", "-w", str(d.PROJECT), "-e", "CLAUDE_CODE_DISABLE_AUTO_MEMORY=1",
-                                    "-e", f"FACTORY_PROJECT={d.PROJECT}", "-e", "FACTORY_LANE=reviewer"])
-        self.assertEqual(call[9], "factory-reviewer")
+        self.assertEqual(call[:11], ["exec", "-w", str(d.PROJECT), "-e", "CLAUDE_CODE_DISABLE_AUTO_MEMORY=1",
+                                     "-e", f"FACTORY_PROJECT={d.PROJECT}", "-e", "FACTORY_LANE=reviewer",
+                                     "-e", f"FACTORY_SCRATCH={d.ROLES_SCRATCH / 'reviewer'}"])
+        self.assertEqual(call[11], "factory-reviewer")
         self.assertFalse(any(a.startswith("FACTORY_LANE_ROOT=") for a in call))
         self.assertEqual(self.lane_calls("prepare") + self.lane_calls("export"), [])
         report = self.wait(next(iter(d._jobs)))

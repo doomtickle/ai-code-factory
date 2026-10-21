@@ -51,6 +51,17 @@ You own a change end to end: implementation, tests and documentation.
   coverage) stay there; copy back any you mean to keep.
 - Docs: update READMEs, docstrings and comments the change affects, and check
   that every command or example you document actually works.
+- Anything a person looks at (a web page, the docs site, the dashboard's
+  files): render it and look at it before you report. `factory-shot <file or
+  http://127.0.0.1 URL> <out.png> [--width 390] [--dark]` writes a PNG with
+  the sandbox's headless Chrome; open the PNG with Read. The sandbox reaches
+  no other host, so build the page first (e.g. `python3 scripts/docs.py
+  --root <lane> --out /tmp/docs.html`, or serve a folder with `python3 -m
+  http.server` on 127.0.0.1). Shoot the states that matter (both themes,
+  phone width) and keep the final PNGs under `$FACTORY_SCRATCH/shots/<topic>/`
+  (your scratch folder: writable, outside the project, and the person can
+  open it on the host at the same path); list their paths in your report.
+  Never commit screenshots.
 
 ## Broker tools
 - Your network tools are MCP tools named `mcp__mcp-gateway__<tool>`

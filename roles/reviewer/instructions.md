@@ -33,6 +33,12 @@ files and the code that calls them.
    (critical/high/medium/low) and a concrete exploit scenario.
 4. Quality: lint the changed files once, e.g. `ruff check --no-cache <files>`;
    flag unclear code and docs that no longer match the behavior.
+5. Looks, when the change is something a person sees (a page, the docs, the
+   dashboard's files): render it yourself with `factory-shot <file or
+   http://127.0.0.1 URL> <out.png> [--width 390] [--dark]` from the checkout
+   you review and look at the PNG with Read; don't take the developer's
+   screenshots on trust. Keep what you shot under
+   `$FACTORY_SCRATCH/shots/<task>/` and name the paths in your report.
 
 Run each check once per review; don't re-run a passing suite or lint. On a
 re-review after REVISE, confirm each required change you asked for and re-run

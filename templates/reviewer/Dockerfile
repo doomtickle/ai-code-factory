@@ -31,9 +31,39 @@ RUN curl -fsSLo /tmp/yarn.tgz "https://registry.npmjs.org/yarn/-/yarn-${YARN_VER
  && npm install -g --ignore-scripts --no-audit --no-fund /tmp/yarn.tgz \
  && rm /tmp/yarn.tgz \
  && [ "$(yarn --version)" = "${YARN_VERSION}" ]
-# Last, so editing the scripts reuses the cached yarn layer. factory-lane
+# Last, so editing the scripts reuses the cached layers above. factory-lane
 # manages the role's private git clones of the read-only project (lanes) and
 # the reviewer's checkouts of branches to review.
+# Chrome for Testing's headless shell, so a role can render a page it built
+# (the docs, the dashboard files) to a PNG and look at it with Read. It loads
+# file:// and localhost only: the sandbox's network policy (the kit) is
+# unchanged, so it can't fetch anything else. Pinned by exact version and
+# SHA-256 (the builds are immutable per version; to upgrade, pick a version
+# from https://googlechromelabs.github.io/chrome-for-testing/ and record the
+# zip's sha256sum). Its runtime libraries and the two font packages come from
+# the Ubuntu repositories the pinned base image is configured with, at
+# whatever version those serve at build time: like git in the broker image,
+# the base digest is their pin. `factory-shot` (below) wraps the flags it
+# needs inside a microVM (no Chrome sandbox, no GPU, no /dev/shm).
+ARG CHROME_VERSION=156.0.8078.47
+ARG CHROME_SHA256=0d5acc62c3e213f8c87d3c298d66ffcf9a236d12ea4b9f85318bf85dbc279daa
+USER root
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      libasound2t64 libatk-bridge2.0-0t64 libatk1.0-0t64 libatspi2.0-0t64 libcairo2 libcups2t64 \
+      libdbus-1-3 libdrm2 libexpat1 libgbm1 libglib2.0-0t64 libnspr4 libnss3 libpango-1.0-0 \
+      libx11-6 libxcb1 libxcomposite1 libxdamage1 libxext6 libxfixes3 libxkbcommon0 libxrandr2 \
+      fonts-liberation fonts-dejavu-core \
+ && rm -rf /var/lib/apt/lists/* \
+ && curl -fsSLo /tmp/chs.zip "https://storage.googleapis.com/chrome-for-testing-public/${CHROME_VERSION}/linux64/chrome-headless-shell-linux64.zip" \
+ && echo "${CHROME_SHA256}  /tmp/chs.zip" | sha256sum -c - \
+ && unzip -q /tmp/chs.zip -d /opt \
+ && rm /tmp/chs.zip \
+ && mv /opt/chrome-headless-shell-linux64 /opt/chrome-headless-shell \
+ && chmod -R a+rX /opt/chrome-headless-shell \
+ && ln -s /opt/chrome-headless-shell/chrome-headless-shell /usr/local/bin/chrome-headless-shell \
+ && [ "$(chrome-headless-shell --version 2>/dev/null | grep -o "[0-9][0-9.]*")" = "${CHROME_VERSION}" ]
+COPY --chmod=0555 templates/agent/factory-shot /usr/local/bin/factory-shot
 COPY --chmod=0555 templates/agent/factory-test /usr/local/bin/factory-test
 COPY --chmod=0555 templates/agent/factory-lane /usr/local/bin/factory-lane
 USER agent
