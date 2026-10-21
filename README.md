@@ -301,8 +301,8 @@ repos agents may push to, live in the factory config folder on your machine,
 it). Start from the example:
 
 ```sh
-mkdir -p ~/.config/ai-code-factory
-cp -R config.example/. ~/.config/ai-code-factory/   # then edit, keeping only what you need
+factory config init   # writes commented examples; uncomment only what you need
+factory doctor
 factory update
 ```
 

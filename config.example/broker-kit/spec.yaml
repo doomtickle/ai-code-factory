@@ -1,7 +1,8 @@
 # Example local broker kit: extra egress hosts for the broker sandbox only
-# (agent sandboxes still reach only Anthropic). Copy to
-# ~/.config/ai-code-factory/broker-kit/spec.yaml alongside policy.toml. It is
-# applied when the broker sandbox is created, so after changing it run
+# (agent sandboxes still reach only Anthropic). `factory config init` copies
+# it to ~/.config/ai-code-factory/broker-kit/spec.yaml alongside policy.toml.
+# Every host below is a commented placeholder: uncomment the ones you use. It
+# is applied when the broker sandbox is created, so after changing it run
 #   factory update
 # (it recreates the broker sandbox when this kit changes)
 schemaVersion: "2"
@@ -13,12 +14,12 @@ version: "1.0.0"
 requires:
   agent: shell
 
-permissions:
-  network:
-    allow:
+# permissions:
+#   network:
+#     allow:
       # The host of [packages].npm_private_registry in your local policy.toml
-      - example.jfrog.io
+      # - example.jfrog.io
       # Each host in [packages].npm_redirect_hosts
-      - jfrog-prod-use1-shared-example.s3.amazonaws.com
+      # - jfrog-prod-use1-shared-example.s3.amazonaws.com
       # The host of [gitlab].url, if you use GitLab
       # - gitlab.example.com
