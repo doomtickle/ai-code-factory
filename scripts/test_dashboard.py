@@ -136,6 +136,7 @@ class SnapshotTests(unittest.TestCase):
         card = snap["gate"][0]
         self.assertEqual((card["id"], card["principal"], card["commits"], card["files"]), ("c0ffee", "developer", 2, ["a", "b", "c"]))
         self.assertGreater(card["seconds_left"], 1700)
+        self.assertEqual((card["decided"], card["decided_by"], card["decided_at"]), (None, None, None))
         self.assertFalse(snap["bridge"])
 
     def test_events(self):

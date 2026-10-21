@@ -283,5 +283,24 @@ assert_not_contains "run_or_die cuts the earlier lines" "$out" "line 5"
 fn "run_or_die 'could not do it' '$loud/succeed'"
 [ "$RC" -eq 0 ] && [ ! -s "$tmp/out" ] && ok "run_or_die is silent on success" || bad "run_or_die is silent on success"
 
+# --- Part 7: approval counts in status and doctor -------------------------------
+# approvals_summary prints "pending oldest expired_unhandled decided"; pending
+# counts only undecided cards, so a decided card waiting for the agent's retry
+# is reported apart, never as needing the owner.
+fn "approvals_summary() { echo '2 7 0 1'; }; approvals_status_line"
+assert_contains "status counts undecided cards as pending" "$(cat "$tmp/out")" "2 pending (oldest 7 min); 1 decided, waiting for the agent's retry"
+fn "approvals_summary() { echo '0 -1 0 1'; }; approvals_status_line"
+out="$(cat "$tmp/out")"
+assert_contains "a decided card alone is not pending" "$out" "none pending; 1 decided, waiting for the agent's retry"
+assert_not_contains "a decided card alone has no oldest age" "$out" "oldest"
+fn "approvals_summary() { echo '0 -1 0 0'; }; approvals_status_line"
+[ "$RC" -eq 0 ] && [ ! -s "$tmp/out" ] && ok "no line when nothing is held" || bad "no line when nothing is held"
+fn "approvals_summary() { echo '1 3 0'; }; approvals_status_line"
+assert_contains "a three-field summary still reads" "$(cat "$tmp/out")" "1 pending (oldest 3 min) - factory approvals"
+fn "approvals_summary() { echo '0 -1 0 3'; }; approvals_doctor_check"
+[ "$RC" -eq 0 ] && [ ! -s "$tmp/out" ] && ok "doctor doesn't warn about decided cards" || bad "doctor doesn't warn about decided cards"
+fn "approvals_summary() { echo '1 40 1 0'; }; approvals_doctor_check"
+assert_contains "doctor still warns about an expired undecided card" "$(cat "$tmp/out")" "1 expired approval(s) with no decision"
+
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

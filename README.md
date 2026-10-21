@@ -595,17 +595,27 @@ and there is no licence. They are off until you list the tools to hold.
    (one card in full; an id prefix works), `factory approvals approve <id>`
    or `factory approvals decline <id> --reason "..."`; `factory approvals
    watch` prints cards as they arrive, and `factory approvals summary` prints
-   one line for scripts (pending count and the oldest card's age). Decisions
-   are plain files in the broker state folder, so nothing new listens on the
-   network.
+   one line for scripts (undecided count, the oldest undecided card's age,
+   expired cards with no decision, and decided cards waiting for a retry).
+   Decisions are plain files in the broker state folder, so nothing new
+   listens on the network.
+   A decision is final for its card: the card stays listed until the agent
+   retries the held call (the retry picks the decision up, or the broker
+   files the card away once it expires), and meanwhile `factory approvals`
+   marks it "approved by X at T; waiting for the agent to retry" (or
+   declined). Approving or declining it again is refused, here and on the
+   dashboard, rather than changing the first decision; of two people
+   deciding at once, exactly one decision is written.
    The list is the whole switch: a tool left out is not held, so list
    `gitlab_create_mr` for GitLab merge requests to wait for you.
    `factory status` and `factory doctor` warn (without failing) if merge
    requests would open unheld while other writes are held.
-5. `factory status` shows a line with the pending count and the oldest
-   card's age once there is at least one; `factory doctor` warns (without
-   failing) about any card that expired with no decision, pointing back at
-   `factory approvals`. Both are silent when the plugin isn't in use.
+5. `factory status` shows a line with the pending count (cards no one has
+   decided) and the oldest one's age, plus how many decided cards are waiting
+   for the agent's retry, once there is at least one card; `factory doctor`
+   warns (without failing) about any card that expired with no decision,
+   pointing back at `factory approvals`. Both are silent when holds aren't in
+   use.
 
 ## Roles
 
@@ -900,8 +910,12 @@ your browser. It shows:
     base, PR title, commits and files, time left; ◀ ▶ step through several),
     a reason field, and DECLINE and APPROVE keys. One press decides, exactly
     as `factory approvals approve <id>` does (the same decision file);
-    declining needs a reason, which the agent reads. If the card expired or
-    a new one replaced it meanwhile, the key says so and decides nothing.
+    declining needs a reason, which the agent reads. A decided card stays on
+    the gate until the agent retries the call, shown as "APPROVED, waiting
+    for the agent's retry" or "DECLINED" with who decided and when, and both
+    keys dark: one decision per card. An expired card shows EXPIRED with its
+    keys dark. If the card expired, was decided elsewhere, or a new one
+    replaced it meanwhile, the unit says so in words and decides nothing.
   - INSPECT, on a held push whose patch the gateway stored (a Passdesk
     broker that records patches): the unit fills the window with the push's
     commits (`git log -p --stat --cc`, oldest first) on a green screen,

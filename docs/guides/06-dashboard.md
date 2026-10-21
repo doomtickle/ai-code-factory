@@ -138,8 +138,18 @@ writes.
 - **DECLINE** refuses it. Type a reason first: it's required, and the agent
   reads it.
 
-If the write expired, or a newer one replaced it while you were reading, the
-key says so and decides nothing. Check the new card and press again.
+A decision is final for that card. The card stays on the gate until the
+agent retries its call (the retry picks your decision up), and meanwhile it
+reads **APPROVED, waiting for the agent's retry** or **DECLINED**, with who
+decided and when, and both keys are dark. Pressing again, here or with
+`factory approvals`, never changes the first decision; if two people decide
+at once, only one decision is written and the other is told who got there
+first.
+
+An expired card reads **EXPIRED** with its keys dark: the agent's retry
+makes a fresh card. If a newer write replaced the card while you were
+reading, or it was decided elsewhere, the unit says so in words and decides
+nothing. Check the new card and press again.
 
 > **Note:** A held write names the role, not the lane. If two lanes of the
 > developer are running, both show as HELD.

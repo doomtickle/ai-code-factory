@@ -2,7 +2,7 @@
 its routes in dashboard_term.py): every refusal of POST /cu/api/* (Host,
 Origin, Sec-Fetch-Site, cookie, key, content type, size, body, methods),
 approve/decline (exact id, gone, changed, expired, reason rules, the decision
-file), INSPECT's patch (digest, symlinks, names, size, fingerprint, the
+file, one decision per card), INSPECT's patch (digest, symlinks, names, size, fingerprint, the
 response), the prepare -> run confirm step (single use, expiry, bound to one
 action), one action at a time, the action's log, the Coordinator terminal's
 hang-up and hold around an action, the reload digest, and the /cu page's
@@ -359,7 +359,97 @@ class DecideTests(unittest.TestCase):
         self.assertEqual(code, 200, out)
         rec = json.loads((self.decisions / "pr1.json").read_text())
         self.assertEqual((rec["decision"], rec["reason"]), ("decline", "too[31m big, split it"))
-        self.assertEqual(self.decide(id="pr1", fp=fp, verdict="decline", reason="y" * 500)[0], 200)
+        write_card(e.fx.state, "pr2", e.fx.now)
+        self.assertEqual(self.decide(id="pr2", fp=self.fp("pr2"), verdict="decline", reason="y" * 500)[0], 200)
+
+    def test_second_decide_is_refused_both_orders(self):
+        e = self.env
+        for first, second in (("approve", "decline"), ("decline", "approve")):
+            cid = f"{first}1"
+            write_card(e.fx.state, cid, e.fx.now)
+            fp = self.fp(cid)
+            code, out, _ = self.decide(id=cid, fp=fp, verdict=first, reason="first")
+            self.assertEqual(code, 200, out)
+            before = (self.decisions / f"{cid}.json").read_text()
+            for verdict in (second, first):  # the other verdict, or the same again
+                code, out, _ = self.decide(id=cid, fp=fp, verdict=verdict, reason="second")
+                self.assertEqual(code, 409, out)
+                self.assertEqual((out["error"], out["decided"], out["decided_by"]), ("decided", first, "tester"))
+                self.assertIsInstance(out["decided_at"], float)
+                self.assertNotIn("nonce", json.dumps(out))
+                self.assertEqual((self.decisions / f"{cid}.json").read_text(), before, "the first decision stands")
+
+    def test_a_decision_that_lands_first_wins(self):
+        # Someone decides (the CLI, another tab) between this request's check and its write.
+        e = self.env
+        write_card(e.fx.state, "pr1", e.fx.now)
+        raw = json.loads((self.pending / "pr1.json").read_text())
+        real_read, real_write, calls = approvals.read_decision, approvals.write_decision, []
+
+        def first_read_misses(state, card):  # the API's own check, before the other decision lands
+            calls.append(card["id"])
+            return None if len(calls) == 1 else real_read(state, card)
+
+        def racing(state, card, verdict, approver, reason=""):
+            real_write(state, card, "decline", "sam", "no")
+            return real_write(state, card, verdict, approver, reason)
+        with mock.patch.object(approvals, "read_decision", side_effect=first_read_misses), \
+                mock.patch.object(approvals, "write_decision", side_effect=racing):
+            code, out, _ = self.decide(id="pr1", fp=approvals.card_fingerprint(raw), verdict="approve")
+        self.assertEqual((code, out["error"], out["decided"], out["decided_by"]), (409, "decided", "decline", "sam"))
+        self.assertEqual(json.loads((self.decisions / "pr1.json").read_text())["approver"], "sam")
+
+    def test_concurrent_decides_yield_one_decision(self):
+        import threading
+        e = self.env
+        write_card(e.fx.state, "pr1", e.fx.now)
+        fp = self.fp("pr1")
+        start, results = threading.Barrier(8), []
+
+        def press(verdict):
+            start.wait()
+            results.append(e.controls.api("decide", {"id": "pr1", "fp": fp, "verdict": verdict, "reason": "r"}))
+        threads = [threading.Thread(target=press, args=(("approve", "decline")[i % 2],)) for i in range(8)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        ok = [out for code, out in results if code == 200]
+        refused = [out for code, out in results if code == 409]
+        self.assertEqual((len(ok), len(refused)), (1, 7), results)
+        rec = json.loads((self.decisions / "pr1.json").read_text())
+        self.assertEqual(rec["decision"], ok[0]["verdict"])
+        for out in refused:
+            self.assertEqual((out["error"], out["decided"]), ("decided", rec["decision"]))
+
+    def test_other_nonce_decision_does_not_block(self):
+        e = self.env
+        write_card(e.fx.state, "pr1", e.fx.now)
+        self.decisions.mkdir(parents=True)
+        (self.decisions / "pr1.json").write_text(json.dumps({"id": "pr1", "nonce": "an-earlier-card",
+                                                             "decision": "decline", "approver": "x", "ts": 1}))
+        card = {c["id"]: c for c in self.state()["cards"]}["pr1"]
+        self.assertIsNone(card["decided"])
+        code, out, _ = self.decide(id="pr1", fp=self.fp("pr1"), verdict="approve")
+        self.assertEqual(code, 200, out)
+        self.assertEqual(json.loads((self.decisions / "pr1.json").read_text())["nonce"], "nonce-pr1")
+
+    def test_state_shows_decided_and_expired_cards(self):
+        e = self.env
+        write_card(e.fx.state, "pr1", e.fx.now)
+        write_card(e.fx.state, "pr2", e.fx.now)
+        write_card(e.fx.state, "old", e.fx.now, expires=e.fx.now - 5)
+        self.decide(id="pr1", fp=self.fp("pr1"), verdict="approve")
+        self.decide(id="pr2", fp=self.fp("pr2"), verdict="decline", reason="no")
+        cards = {c["id"]: c for c in self.state()["cards"]}
+        self.assertEqual((cards["pr1"]["decided"], cards["pr1"]["decided_by"]), ("approve", "tester"))
+        self.assertAlmostEqual(cards["pr1"]["decided_at"], time.time(), delta=60)
+        self.assertEqual(cards["pr2"]["decided"], "decline")
+        self.assertEqual((cards["old"]["decided"], cards["old"]["decided_by"], cards["old"]["decided_at"]),
+                         (None, None, None))
+        self.assertLess(cards["old"]["seconds_left"], 0)
+        code, out, _ = self.decide(id="old", fp=self.fp("old"), verdict="decline", reason="late")
+        self.assertEqual((code, out), (409, {"error": "expired"}))
 
     def test_gone_changed_expired(self):
         e = self.env
@@ -1147,14 +1237,16 @@ class KeySeparationTests(unittest.TestCase):
 class CuScriptTests(unittest.TestCase):
     """cu.js itself, under node with a fake DOM (scripts/test_cu_page.js)."""
 
-    def test_approve_unseen_asks_twice(self):
+    def test_page_script(self):
         here = Path(__file__).resolve().parent
         proc = __import__("subprocess").run(["node", str(here / "test_cu_page.js"), str(UI / "cu.js")],
                                             capture_output=True, text=True, timeout=60)
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(json.loads(proc.stdout.strip().splitlines()[-1]),
                          ["plain approve", "deck asks, arms, confirms", "cancel, fp change and gone cancel the question",
-                          "viewer asks with the count", "viewer: fp change cancels"])
+                          "viewer asks with the count", "viewer: fp change cancels",
+                          "decided card shows its state, keys dark", "expired card shows EXPIRED, keys dark",
+                          "refusals shown as text", "decline without a reason says so", "agent strings stay text"])
 
 
 class RealPageTests(unittest.TestCase):

@@ -613,8 +613,10 @@ npm_private_registry_needs_token() {
   [ -n "$(policy_string packages npm_private_registry)" ]
 }
 
-# approvals_summary -> prints "pending oldest_min expired_unhandled" from
-# scripts/approvals.py summary (see its --help). Fails with nothing printed
+# approvals_summary -> prints "pending oldest_min expired_unhandled decided" from
+# scripts/approvals.py summary (see its --help): pending counts only cards no
+# one has decided; decided ones wait for the agent's retry, not for a person.
+# Fails with nothing printed
 # when holds aren't in use (no approvals dir yet, or ever) or python3
 # isn't available; never dies, so callers stay inert rather than erroring.
 approvals_summary() {
@@ -625,15 +627,23 @@ approvals_summary() {
 }
 
 # approvals_status_line -> for `factory status`: one line when there is at
-# least one pending approval, nothing otherwise (holds off, or no pending cards).
+# least one undecided or decided-but-not-yet-retried card, nothing otherwise
+# (holds off, or no cards).
 approvals_status_line() {
-  local out pending oldest
+  local out pending oldest decided line
   out="$(approvals_summary)" || return 0
   set -- $out
   pending="${1:-0}"
-  [ "${pending:-0}" -gt 0 ] || return 0
   oldest="${2:-0}"
-  say "${B}Approvals:${N} $pending pending (oldest $oldest min) - factory approvals"
+  decided="${4:-0}"
+  [ "${pending:-0}" -gt 0 ] || [ "${decided:-0}" -gt 0 ] || return 0
+  if [ "${pending:-0}" -gt 0 ]; then
+    line="$pending pending (oldest $oldest min)"
+  else
+    line="none pending"
+  fi
+  [ "${decided:-0}" -gt 0 ] && line="$line; $decided decided, waiting for the agent's retry"
+  say "${B}Approvals:${N} $line - factory approvals"
 }
 
 # approvals_doctor_check -> for `factory doctor`: warn (not fail) about any

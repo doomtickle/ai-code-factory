@@ -284,7 +284,10 @@ class Dashboard:
         name, which is the role (developer), never the lane (developer-lane2),
         so "lanes" lists every running lane of that role: any of them may be
         the one waiting. With fp (the control unit only, never the main
-        page's /api/state), each card also carries approvals.card_fingerprint."""
+        page's /api/state), each card also carries approvals.card_fingerprint.
+        A card someone has decided stays pending until the agent retries the
+        call: "decided" is then "approve" or "decline", with "decided_by"
+        and "decided_at" (else all three are None)."""
         running = self.running()
         out = []
         for card in approvals.read_cards(self.state / "broker"):
@@ -304,6 +307,7 @@ class Dashboard:
                 "file_count": None if file_count is None else int(file_count),
                 "files": [str(f) for f in files[:12]],
                 "seconds_left": None if expires is None else int(expires - now),
+                **approvals.decided(self.state / "broker", card),
             })
             if fp:
                 out[-1]["fp"] = approvals.card_fingerprint(card)

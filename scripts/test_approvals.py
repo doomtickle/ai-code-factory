@@ -26,6 +26,11 @@ def card(cid="abcdef0123456789", tool="git_push", **over):
     return base
 
 
+def decision_files(folder):
+    """Decision files in folder (its lock file left out), sorted."""
+    return sorted(p.name for p in folder.iterdir() if p.name != ".write.lock") if folder.is_dir() else []
+
+
 class ConsoleTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -97,10 +102,55 @@ class ConsoleTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("expired", err)
 
+    def test_cli_refuses_a_second_decision(self):
+        for first, second, args in (("approve", "decline", ["--reason", "no"]), ("decline", "approve", [])):
+            cid = "{}0000000000".format(first)
+            self.put(card(cid))
+            extra = ["--reason", "first"] if first == "decline" else []
+            code, _, _ = self.run_cli(first, cid, "--as", "alice", *extra)
+            self.assertEqual(code, 0)
+            code, out, err = self.run_cli(second, cid, "--as", "bob", *args)
+            self.assertEqual(code, 1)
+            self.assertEqual(out, "")
+            self.assertRegex(err, r"already {} by alice at \d{{4}}-\d\d-\d\d \d\d:\d\d; waiting for the agent to retry".format(
+                "approved" if first == "approve" else "declined"))
+            rec = json.loads((self.state / "approvals" / "decisions" / "{}.json".format(cid)).read_text())
+            self.assertEqual((rec["decision"], rec["approver"]), (first, "alice"))
+
+    def test_cli_reports_a_decision_that_lands_first(self):
+        # Someone else decides between this console's check and its write.
+        self.put(card())
+        theirs = {"id": "abcdef0123456789", "nonce": "n0nce", "decision": "decline", "approver": "sam", "ts": 0}
+        with unittest.mock.patch.object(approvals, "write_decision", side_effect=approvals.AlreadyDecided(theirs)):
+            code, _, err = self.run_cli("approve", "abcdef0123456789")
+        self.assertEqual(code, 1)
+        self.assertIn("already declined by sam at", err)
+
+    def test_list_and_show_mark_decided_and_expired_cards(self):
+        now = time.time()
+        self.put(card("aaaa000000000000"))
+        self.put(card("bbbb000000000000"))
+        self.put(card("cccc000000000000", expires=now - 120))
+        approvals.write_decision(self.state, card("bbbb000000000000"), "approve", "alice")
+        code, out, _ = self.run_cli("list")
+        self.assertEqual(code, 0)
+        lines = out.splitlines()
+        a = lines.index(next(l for l in lines if l.startswith("aaaa")))
+        self.assertFalse(lines[a + 1].startswith("    ["), "an undecided card has no note")
+        self.assertRegex(out, r"bbbb000000000000 .*\n    \[approved by alice at .*; waiting for the agent to retry\]")
+        self.assertRegex(out, r"cccc000000000000 .*\n    \[expired; the agent's retry will make a fresh card\]")
+        code, out, _ = self.run_cli("show", "bbbb")
+        self.assertIn("decided        approve", out)
+        self.assertIn("decided_by     alice", out)
+        self.assertRegex(out, r"decided_at     \d{4}-\d\d-\d\d \d\d:\d\d")
+        code, out, _ = self.run_cli("show", "aaaa")
+        self.assertIn("decided        no", out)
+        self.assertNotIn("decided_by", out)
+
     def test_summary_none_pending(self):
         code, out, _ = self.run_cli("summary")
         self.assertEqual(code, 0)
-        self.assertEqual(out, "0 -1 0\n")
+        self.assertEqual(out, "0 -1 0 0\n")
 
     def test_summary_several_with_oldest_age(self):
         now = time.time()
@@ -108,7 +158,7 @@ class ConsoleTests(unittest.TestCase):
         self.put(card("bbbb000000000000", created=now - 120, expires=now + 600))  # 2 min old
         code, out, _ = self.run_cli("summary")
         self.assertEqual(code, 0)
-        self.assertEqual(out, "2 15 0\n")
+        self.assertEqual(out, "2 15 0 0\n")
 
     def test_summary_expired_unhandled_vs_expired_but_decided(self):
         now = time.time()
@@ -120,7 +170,8 @@ class ConsoleTests(unittest.TestCase):
             json.dumps({"id": "bbbb000000000000", "nonce": "n0nce", "decision": "approve"}))
         code, out, _ = self.run_cli("summary")
         self.assertEqual(code, 0)
-        self.assertEqual(out, "2 30 1\n")
+        # bbbb is decided: waiting for the agent's retry, not for a person.
+        self.assertEqual(out, "1 30 1 1\n")
 
     def test_summary_stale_decision_nonce_still_counts_as_unhandled(self):
         # A retry after expiry mints a fresh nonce; a decision for the old
@@ -133,7 +184,7 @@ class ConsoleTests(unittest.TestCase):
             json.dumps({"id": "aaaa000000000000", "nonce": "stale-nonce", "decision": "approve"}))
         code, out, _ = self.run_cli("summary")
         self.assertEqual(code, 0)
-        self.assertEqual(out, "1 30 1\n")
+        self.assertEqual(out, "1 30 1 0\n")
 
     def test_summarize_with_injectable_now(self):
         # A fixed `now` far from wall-clock time makes the expected ages exact,
@@ -142,7 +193,7 @@ class ConsoleTests(unittest.TestCase):
         self.put(card("aaaa000000000000", created=now - 600, expires=now - 1))  # expired, no decision
         self.put(card("bbbb000000000000", created=now - 1200, expires=now + 600))  # 20 min old, not expired
         self.assertEqual(approvals.summarize(self.state, now=now),
-                          {"pending": 2, "oldest_minutes": 20, "expired_unhandled": 1})
+                          {"pending": 2, "oldest_minutes": 20, "expired_unhandled": 1, "decided": 0})
 
     def test_missing_state_dir(self):
         code, _, err = self.run_cli_with_state(self.state / "missing")
@@ -189,7 +240,7 @@ class SharedWriterTests(unittest.TestCase):
                          {"id": c["id"], "nonce": "n0nce", "decision": "decline", "approver": "alice",
                           "reason": "too big"})
         self.assertGreaterEqual(rec["ts"], before)
-        self.assertEqual(list(path.parent.iterdir()), [path])  # no .tmp left behind
+        self.assertEqual(decision_files(path.parent), [path.name])  # no .tmp left behind
         with self.assertRaises(ValueError):
             approvals.write_decision(self.state, c, "maybe", "alice")
 
@@ -198,8 +249,7 @@ class SharedWriterTests(unittest.TestCase):
             with self.assertRaises(ValueError, msg=repr(cid)):
                 approvals.write_decision(self.state, card(cid), "approve", "alice")
         approvals.write_decision(self.state, card("A-z_09" + "a" * 58), "approve", "alice")  # 64: fine
-        self.assertEqual([p.name for p in (self.state / "approvals" / "decisions").iterdir()],
-                         ["A-z_09" + "a" * 58 + ".json"])
+        self.assertEqual(decision_files(self.state / "approvals" / "decisions"), ["A-z_09" + "a" * 58 + ".json"])
 
     def test_non_text_ids_are_skipped(self):
         pending = self.state / "approvals" / "pending"
@@ -222,30 +272,89 @@ class SharedWriterTests(unittest.TestCase):
         self.assertIn("cannot decide bad.id", err.getvalue())
         self.assertFalse((self.state / "approvals" / "decisions" / "bad.id.json").exists())
 
-    def test_concurrent_writers_and_cleanup(self):
+    def test_concurrent_writers_exactly_one_wins(self):
         import threading
-        c = card()
-        errors = []
-
-        def write(name):
-            try:
-                for _ in range(50):
-                    approvals.write_decision(self.state, c, "approve", name)
-            except Exception as e:  # noqa: BLE001 - any failure fails the test
-                errors.append(e)
-        threads = [threading.Thread(target=write, args=(n,)) for n in ("alice", "bob", "carol")]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join()
-        self.assertEqual(errors, [])
         folder = self.state / "approvals" / "decisions"
-        self.assertEqual([p.name for p in folder.iterdir()], ["{}.json".format(c["id"])])  # no temp files left
-        self.assertIn(json.loads((folder / "{}.json".format(c["id"])).read_text())["approver"], {"alice", "bob", "carol"})
-        with unittest.mock.patch.object(approvals.os, "replace", side_effect=OSError("disk full")):
+        for round_ in range(20):
+            c = card("race{:02d}".format(round_), nonce="n{}".format(round_))
+            if round_ % 2:  # half the rounds start from an earlier card's decision (another nonce)
+                folder.mkdir(parents=True, exist_ok=True)
+                (folder / "{}.json".format(c["id"])).write_text(json.dumps({"id": c["id"], "nonce": "old",
+                                                                             "decision": "decline"}))
+            start = threading.Barrier(6)
+            won, lost, errors = [], [], []
+
+            def write(name, verdict):
+                start.wait()
+                try:
+                    won.append(approvals.write_decision(self.state, c, verdict, name, "r"))
+                except approvals.AlreadyDecided as e:
+                    lost.append(e.decision)
+                except Exception as e:  # noqa: BLE001 - any other failure fails the test
+                    errors.append(e)
+            threads = [threading.Thread(target=write, args=("p{}".format(i), ("approve", "decline")[i % 2]))
+                       for i in range(6)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+            self.assertEqual(errors, [])
+            self.assertEqual(len(won), 1, "exactly one decision is written")
+            self.assertEqual(len(lost), 5)
+            rec = json.loads((folder / "{}.json".format(c["id"])).read_text())
+            self.assertEqual(rec, won[0])
+            for d in lost:  # every loser is told what stands
+                self.assertEqual((d["decision"], d["approver"], d["nonce"]), (rec["decision"], rec["approver"], c["nonce"]))
+        self.assertEqual(decision_files(folder), sorted("race{:02d}.json".format(i) for i in range(20)))
+
+    def test_a_failed_write_leaves_nothing(self):
+        c = card()
+        folder = self.state / "approvals" / "decisions"
+        with unittest.mock.patch.object(approvals.os, "link", side_effect=OSError("disk full")):
             with self.assertRaises(OSError):
                 approvals.write_decision(self.state, c, "decline", "dave", "no")
-        self.assertEqual([p.name for p in folder.iterdir()], ["{}.json".format(c["id"])])  # the temp is cleaned up
+        self.assertEqual(decision_files(folder), [])  # the temp is cleaned up
+        approvals.write_decision(self.state, c, "approve", "erin")  # and nothing blocks a real decision
+
+    def test_second_decision_is_refused_both_orders(self):
+        folder = self.state / "approvals" / "decisions"
+        for first, second in (("approve", "decline"), ("decline", "approve")):
+            c = card("{}first".format(first))
+            rec = approvals.write_decision(self.state, c, first, "alice", "r1")
+            with self.assertRaises(approvals.AlreadyDecided) as cm:
+                approvals.write_decision(self.state, c, second, "bob", "r2")
+            self.assertEqual(cm.exception.decision, rec)
+            with self.assertRaises(approvals.AlreadyDecided):  # nor the same verdict again
+                approvals.write_decision(self.state, c, first, "bob", "r2")
+            on_disk = json.loads((folder / "{}.json".format(c["id"])).read_text())
+            self.assertEqual((on_disk["decision"], on_disk["approver"], on_disk["reason"]), (first, "alice", "r1"))
+            self.assertEqual(approvals.decided(self.state, c)["decided"], first)
+
+    def test_other_nonce_decision_does_not_block_a_new_card(self):
+        folder = self.state / "approvals" / "decisions"
+        folder.mkdir(parents=True)
+        old = {"id": "abcdef0123456789", "nonce": "earlier", "decision": "decline", "approver": "x", "ts": 1.0}
+        (folder / "abcdef0123456789.json").write_text(json.dumps(old))
+        c = card()  # same id, nonce "n0nce"
+        self.assertIsNone(approvals.read_decision(self.state, c))
+        self.assertEqual(approvals.decided(self.state, c), {"decided": None, "decided_by": None, "decided_at": None})
+        rec = approvals.write_decision(self.state, c, "approve", "alice")
+        self.assertEqual(json.loads((folder / "abcdef0123456789.json").read_text()), rec)
+        self.assertEqual(approvals.decided(self.state, c)["decided_by"], "alice")
+        # An unreadable file in the way is not this card's decision either.
+        c2 = card("ffff000011112222")
+        (folder / "ffff000011112222.json").write_text("{not json")
+        approvals.write_decision(self.state, c2, "decline", "bob", "no")
+        self.assertEqual(approvals.decided(self.state, c2)["decided"], "decline")
+
+    def test_lock_file_must_be_a_regular_file(self):
+        folder = self.state / "approvals" / "decisions"
+        folder.mkdir(parents=True)
+        os.symlink(str(self.state / "elsewhere"), str(folder / ".write.lock"))
+        with self.assertRaises(OSError):
+            approvals.write_decision(self.state, card(), "approve", "alice")
+        self.assertFalse((self.state / "elsewhere").exists())  # the symlink was not followed
+        self.assertEqual(decision_files(folder), [])
 
     def test_cli_writes_the_same_record(self):
         c = card()

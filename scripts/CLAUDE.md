@@ -77,7 +77,12 @@ branches, the action log) are inserted as text only.
 APPROVE and DECLINE are one press each, as `factory approvals approve` is one command:
 a decision file written through `approvals.write_decision` (exact card id, the card's
 fingerprint `sha256(id NUL nonce)[:16]` must still match, never an expired card, a
-decline needs a reason).
+decline needs a reason). One decision per card: `write_decision` hard-links a fully
+written file onto the final name (never replaces it), so a second decision for the
+same id and nonce is refused (`decided`, a 409 naming the verdict that stands) and of
+two at once exactly one wins; a decision with another nonce (an earlier card) is
+set aside under a lock and never blocks the new card. A decided card stays pending
+until the agent retries the call, and the unit shows it as decided with its keys dark.
 
 RESTART and UPDATE run host commands, so no single request can start one: a `prepare`
 request shows what it would do (the jobs it cancels, the held writes it drops; for
