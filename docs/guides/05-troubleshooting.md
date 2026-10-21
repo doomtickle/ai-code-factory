@@ -97,6 +97,17 @@ git init && git add -A && git commit -m "Initial commit"
 factory start
 ```
 
+### "is a git repository with no commits yet"
+
+```text
+error: /Users/you/code/my-api is a git repository with no commits yet, so the developer has nothing to branch from. Make the first commit there (git -C '/Users/you/code/my-api' commit --allow-empty -m 'Initial commit'), then run 'factory start' again.
+```
+
+**Cause:** the developer clones your project and branches from its `HEAD`; a
+repository with no commits has none. In a folder of repositories, the message
+names the one that is empty.
+**Fix:** make the first commit it names, then run `factory start` again.
+
 ### "created with an older layout"
 
 ```text

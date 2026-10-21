@@ -27,8 +27,11 @@ cd ~/code/ai-code-factory
 ```
 
 Each check prints a ✓, a `!` (a warning) or a ✗ (a problem) with the fix
-indented underneath. Before setup, it's normal to see warnings that `sbx` and
-`herdr` aren't installed yet:
+indented underneath, grouped under `==>` headings: Platform, Tools, Gateway
+source (broker/ submodule), Docker, Factory tools, and Passdesk (the gateway).
+If `broker/` is empty, the doctor tries once to initialize that submodule; if
+it can't, it prints the exact `git submodule update --init` fix. Before setup,
+it's normal to see warnings that `sbx` and `herdr` aren't installed yet:
 
 ```text
 ==> Factory tools
@@ -45,7 +48,7 @@ Fix every ✗ and run the doctor again until it ends with `No problems found.`
 ```
 
 Setup runs the doctor again, installs the pinned `sbx` and `herdr`, signs you in
-to Docker (a browser window opens), builds the sandbox images, applies the
+to Docker if `sbx` isn't signed in yet (a browser window opens), builds the sandbox images, applies the
 security baseline, and links `factory` into `~/.local/bin`. It is safe to run
 again. When it finishes you'll see:
 
@@ -60,7 +63,9 @@ Setup complete. Next: cd into a project and run factory start
 
 The project must be a git repository, or a folder whose immediate subfolders
 are git repositories. The developer works in git clones of it, so it only
-ever sees what you have committed.
+ever sees what you have committed. Every repository needs at least one commit:
+`factory start` refuses a repository with none and prints the
+`git commit --allow-empty` command to run first.
 
 ```bash
 cd ~/code/my-api
