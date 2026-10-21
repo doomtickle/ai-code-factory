@@ -921,7 +921,7 @@ CSS = THEME_CSS + r"""
   --line: #cfc9b0; --line-soft: #e2ddc8;
   --accent: #9c4209; --accent-strong: #7a3005; --accent-soft: #f3e4d2;
   --chip: var(--paper-bar);
-  --code-bg: var(--lcd-bg); --code-fg: var(--lcd-ink); --code-dim: #4b5a3c; --code-line: #a9b48c;
+  --code-bg: var(--lcd-bg); --code-fg: var(--lcd-ink); --code-dim: #374424; --code-line: #a9b48c;
   --warn: #8a5a00; --warn-soft: #f3e2c3; --ok: #1d6a3a; --ok-soft: #dbeee0; --imp: #9a2d1f; --imp-soft: #f6ddd6;
   --sidebar-surface: var(--paper); --sidebar-line: var(--line);
   --shadow: 0 1px 2px rgba(40, 32, 10, .10), 0 10px 28px rgba(40, 32, 10, .14);
@@ -937,7 +937,7 @@ CSS = THEME_CSS + r"""
     --accent: var(--stripe-1); --accent-strong: var(--stripe-2);
     --accent-soft: color-mix(in srgb, var(--stripe-1) 20%, var(--case));
     --chip: var(--case-hi);
-    --code-bg: var(--crt-amber-bg); --code-fg: var(--amber); --code-dim: var(--amber-dim); --code-line: #3a2a05;
+    --code-bg: var(--crt-amber-bg); --code-fg: var(--amber); --code-dim: #b08a3a; --code-line: #3a2a05;
     --warn: var(--led-amber); --warn-soft: color-mix(in srgb, var(--led-amber) 18%, var(--case));
     --ok: var(--led-green); --ok-soft: color-mix(in srgb, var(--led-green) 16%, var(--case));
     --imp: var(--led-red); --imp-soft: color-mix(in srgb, var(--led-red) 16%, var(--case));
@@ -960,7 +960,7 @@ CSS = THEME_CSS + r"""
   --accent: var(--stripe-1); --accent-strong: var(--stripe-2);
   --accent-soft: color-mix(in srgb, var(--stripe-1) 20%, var(--case));
   --chip: var(--case-hi);
-  --code-bg: var(--crt-amber-bg); --code-fg: var(--amber); --code-dim: var(--amber-dim); --code-line: #3a2a05;
+  --code-bg: var(--crt-amber-bg); --code-fg: var(--amber); --code-dim: #b08a3a; --code-line: #3a2a05;
   --warn: var(--led-amber); --warn-soft: color-mix(in srgb, var(--led-amber) 18%, var(--case));
   --ok: var(--led-green); --ok-soft: color-mix(in srgb, var(--led-green) 16%, var(--case));
   --imp: var(--led-red); --imp-soft: color-mix(in srgb, var(--led-red) 16%, var(--case));
