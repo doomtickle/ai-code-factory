@@ -30,16 +30,20 @@ RUN curl -fsSLo /tmp/yarn.tgz "https://registry.npmjs.org/yarn/-/yarn-${YARN_VER
 # Chrome for Testing's headless shell, so a role can render a page it built
 # (the docs, the dashboard files) to a PNG and look at it with Read. It loads
 # file:// and localhost only: the sandbox's network policy (the kit) is
-# unchanged, so it can't fetch anything else. Pinned by exact version and
-# SHA-256 (the builds are immutable per version; to upgrade, pick a version
-# from https://googlechromelabs.github.io/chrome-for-testing/ and record the
-# zip's sha256sum). Its runtime libraries and the two font packages come from
+# unchanged, so it can't fetch anything else. The image is built for the
+# host's architecture (amd64 on WSL2/Linux, arm64 on Apple silicon), so the
+# zip is chosen by `dpkg --print-architecture` and each one is pinned by exact
+# version and its own SHA-256 (the builds are immutable per version; to
+# upgrade, pick a version from
+# https://googlechromelabs.github.io/chrome-for-testing/ that lists both
+# linux64 and linux-arm64, and record both zips' sha256sum). Its runtime libraries and the two font packages come from
 # the Ubuntu repositories the pinned base image is configured with, at
 # whatever version those serve at build time: like git in the broker image,
 # the base digest is their pin. `factory-shot` (below) wraps the flags it
 # needs inside a microVM (no Chrome sandbox, no GPU, no /dev/shm).
 ARG CHROME_VERSION=156.0.8078.47
-ARG CHROME_SHA256=0d5acc62c3e213f8c87d3c298d66ffcf9a236d12ea4b9f85318bf85dbc279daa
+ARG CHROME_SHA256_AMD64=0d5acc62c3e213f8c87d3c298d66ffcf9a236d12ea4b9f85318bf85dbc279daa
+ARG CHROME_SHA256_ARM64=955059fa7020d7be85eb503e21339fd4d718f51f5996d3b60633fbf908bda132
 USER root
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
@@ -48,11 +52,16 @@ RUN apt-get update \
       libx11-6 libxcb1 libxcomposite1 libxdamage1 libxext6 libxfixes3 libxkbcommon0 libxrandr2 \
       fonts-liberation fonts-dejavu-core \
  && rm -rf /var/lib/apt/lists/* \
- && curl -fsSLo /tmp/chs.zip "https://storage.googleapis.com/chrome-for-testing-public/${CHROME_VERSION}/linux64/chrome-headless-shell-linux64.zip" \
- && echo "${CHROME_SHA256}  /tmp/chs.zip" | sha256sum -c - \
+ && case "$(dpkg --print-architecture)" in \
+      amd64) chs_platform=linux64; chs_sha256="${CHROME_SHA256_AMD64}" ;; \
+      arm64) chs_platform=linux-arm64; chs_sha256="${CHROME_SHA256_ARM64}" ;; \
+      *) echo "no Chrome for Testing build for $(dpkg --print-architecture)" >&2; exit 1 ;; \
+    esac \
+ && curl -fsSLo /tmp/chs.zip "https://storage.googleapis.com/chrome-for-testing-public/${CHROME_VERSION}/${chs_platform}/chrome-headless-shell-${chs_platform}.zip" \
+ && echo "${chs_sha256}  /tmp/chs.zip" | sha256sum -c - \
  && unzip -q /tmp/chs.zip -d /opt \
  && rm /tmp/chs.zip \
- && mv /opt/chrome-headless-shell-linux64 /opt/chrome-headless-shell \
+ && mv "/opt/chrome-headless-shell-${chs_platform}" /opt/chrome-headless-shell \
  && chmod -R a+rX /opt/chrome-headless-shell \
  && ln -s /opt/chrome-headless-shell/chrome-headless-shell /usr/local/bin/chrome-headless-shell \
  && [ "$(chrome-headless-shell --version 2>/dev/null | grep -o "[0-9][0-9.]*")" = "${CHROME_VERSION}" ]

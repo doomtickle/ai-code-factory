@@ -23,10 +23,12 @@ dashboard in your browser (or laid out in [Herdr](https://herdr.dev) tabs).
 - **Isolation:** agents have no access to the host kernel, the host Docker socket,
   or host credentials. Egress is default-deny: agent VMs can reach only Anthropic.
 - **Coordinator:** runs in a VM that opens in your project but can't change it:
-  Claude's editing tools and shell are disabled by root-owned managed settings.
-  It is briefed on the factory and its roles before any task, whatever the
-  project: a root-owned managed `CLAUDE.md` from its kit, plus the dispatch
-  bridge's MCP instructions, which list the current roles.
+  Claude's editing tools and shell are disabled by root-owned managed settings,
+  which also raise Claude Code's MCP tool idle timeout so a long `delegate` or
+  `wait_for_job` wait doesn't trip its own abort. It is briefed on the factory
+  and its roles before any task, whatever the project: a root-owned managed
+  `CLAUDE.md` from its kit, plus the dispatch bridge's MCP instructions, which
+  list the current roles.
   It acts only through the dispatch bridge's tools, which can do one thing: run
   a task as `claude -p` inside an existing role sandbox (fixed arguments, no
   shell), and, for the developer, bring the branches it committed back into
@@ -126,7 +128,7 @@ Everything is pinned for repeatable setups:
 | Sandbox base images (digests) | `templates/*/Dockerfile`, `broker/Dockerfile` |
 | ruff 0.16.8 | `templates/reviewer/Dockerfile` |
 | yarn 1.22.22 (+ SHA-256) and `factory-test` | `templates/developer/Dockerfile`, `templates/reviewer/Dockerfile` |
-| Chrome for Testing headless shell 156.0.8078.47 (+ SHA-256; its Ubuntu libraries and fonts pinned only by the base image digest) | `templates/developer/Dockerfile`, `templates/reviewer/Dockerfile` |
+| Chrome for Testing headless shell 156.0.8078.47 (linux64 and linux-arm64, each + SHA-256; its Ubuntu libraries and fonts pinned only by the base image digest) | `templates/developer/Dockerfile`, `templates/reviewer/Dockerfile` |
 | Broker code + policy | baked into `factory-broker:v3` at build time |
 | Dispatch bridge runtime | macOS system Python (`/usr/bin/python3`); `python3` on PATH on Linux |
 
@@ -630,9 +632,9 @@ model of that tier):
 | Agent | Model | Why |
 |---|---|---|
 | Coordinator | `opus` | Few calls, but its task specs and batching set the cost and quality of all the work below it |
-| developer | `sonnet` | Most of the tokens; Sonnet is built for everyday agentic coding |
+| developer | `claude-sonnet-5-5` | Most of the tokens; Sonnet is built for everyday agentic coding |
 | reviewer | `opus` | Independent judgment and security review, and a different model from the one that wrote the code |
-| researcher | `sonnet` | Judges sources and resists text planted in web pages; low volume |
+| researcher | `claude-sonnet-5-5` | Judges sources and resists text planted in web pages; low volume |
 
 If you hit your subscription's usage limits, move the Coordinator to `sonnet`
 first.
@@ -649,9 +651,17 @@ the model and effort it ran with:
 
 | Role | Default | Coordinator may also pick |
 |---|---|---|
-| developer | `sonnet` | `haiku` (prose and push chores only, never code), `opus` |
-| reviewer | `opus` | `sonnet` (small, low-risk diffs) |
-| researcher | `sonnet` | `opus` (no `haiku`: this role reads untrusted web pages) |
+| developer | `claude-sonnet-5-5` | `claude-haiku-5-5` (prose and push chores only, never code), `opus` |
+| reviewer | `opus` | `claude-sonnet-5-5` (small, low-risk diffs) |
+| researcher | `claude-sonnet-5-5` | `opus` (no `haiku`: this role reads untrusted web pages) |
+
+The developer's and reviewer's/researcher's sonnet entries are pinned to the
+full model id `claude-sonnet-5-5` rather than the alias `sonnet`, and the
+developer's haiku entry to the full id `claude-haiku-5-5` rather than the
+alias `haiku`: the Claude Code CLI in the pinned role image resolves `sonnet`
+to the older `claude-sonnet-5` and `haiku` to the older
+`claude-haiku-4-5-20251001`. Opus is left as the alias: it already resolves
+to `claude-opus-5-5`.
 
 A resumed session keeps the model it was saved with, and each model has its own
 prompt cache, so a task on a different model from the role's saved session
@@ -824,6 +834,11 @@ written at setup) and only applied when its sandbox is created. It defaults to
 switch models for that session. To change the default,
 edit that `"model"` value, then run `factory update` to recreate the Coordinator
 with the new setting; recreating it discards its conversation history.
+The same managed settings also set `CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT` to
+660000 (ms), since the Coordinator's `delegate` and `wait_for_job` calls can
+legitimately block up to the dispatch bridge's 600 s maximum wait
+(`MAX_WAIT_SECONDS` in `dispatch/server.py`) and Claude Code's default idle
+abort is shorter than that; changing it needs the same `factory update`.
 
 **Remove a role:** delete `roles/<role>/` and run `factory start`. It closes the role's
 tab (`tabs` layout; it drops out of `factory watch`'s lane list either way) and removes

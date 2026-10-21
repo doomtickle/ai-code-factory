@@ -140,7 +140,7 @@ class Base(unittest.TestCase):
                            "tester": conf("Tests things", "rw", ""),
                            "opuser": conf("Uses a pinned model", "rw", "", model="opus", turns="7"),
                            "tiered": conf("Picks a model per task", "rw", "", model="sonnet",
-                                          models="haiku opus bad;name"),
+                                          models="haiku opus bad;name claude-haiku-5-5"),
                            "builder": conf("Builds in parallel", "rw", "", lanes="2"),
                            "dev-lane2": conf("Named like a lane", "rw", ""),
                            "Bad_Name": conf("x", "rw", ""),
@@ -393,9 +393,11 @@ class DelegateTests(Base):
                 for c in self.claude_calls()]
 
     def test_allowed_models_include_the_default_and_skip_bad_names(self):
-        self.assertEqual(d.load_roles()["tiered"]["models"], ["sonnet", "haiku", "opus"])
+        self.assertEqual(d.load_roles()["tiered"]["models"],
+                          ["sonnet", "haiku", "opus", "claude-haiku-5-5"])
         self.assertEqual(d.load_roles()["developer"]["models"], [])
-        self.assertIn("model: sonnet; can also run on: haiku, opus", d.tool_list_roles({}))
+        self.assertIn("model: sonnet; can also run on: haiku, opus, claude-haiku-5-5",
+                       d.tool_list_roles({}))
 
     def test_delegate_can_pick_an_allowed_model(self):
         out = json.loads(d.tool_delegate({"role": "tiered", "task": "rename", "model": "haiku",
@@ -404,6 +406,17 @@ class DelegateTests(Base):
         self.assertEqual(self.exec_models(), ["haiku"])
         meta = json.loads((d.STATE / "sessions" / "tiered.json").read_text())
         self.assertEqual(meta["model"], "haiku")
+
+    def test_delegate_can_pick_an_allowed_model_by_full_id(self):
+        # A hyphenated full model id (e.g. claude-haiku-5-5, used to bypass an
+        # alias the CLI resolves to an older model) must validate and pass
+        # through like any alias.
+        out = json.loads(d.tool_delegate({"role": "tiered", "task": "rename",
+                                          "model": "claude-haiku-5-5", "wait_seconds": 30}))
+        self.assertEqual(out["status"], "done")
+        self.assertEqual(self.exec_models(), ["claude-haiku-5-5"])
+        meta = json.loads((d.STATE / "sessions" / "tiered.json").read_text())
+        self.assertEqual(meta["model"], "claude-haiku-5-5")
 
     def test_delegate_refuses_a_model_the_role_does_not_allow(self):
         for role, model in (("tiered", "bad;name"), ("tiered", "claude-x"), ("developer", "opus")):
