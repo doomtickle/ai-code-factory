@@ -479,7 +479,7 @@ class OutputTests(unittest.TestCase):
         self.assertIn('@media (prefers-color-scheme: dark)', page)
         self.assertIn(':root:not([data-theme="light"])', page)
         self.assertIn(':root[data-theme="dark"]', page)
-        self.assertIn("--accent: #0d6e7a", page)
+        self.assertIn("--stripe-1: #e2701f", page)  # the console's accent, not a docs-only color
         self.assertIn("prefers-reduced-motion", page)
         for landmark in ("<main", "<nav class=\"sidebar\"", "<header class=\"topbar\"", 'role="search"'):
             self.assertIn(landmark, page)
@@ -490,6 +490,63 @@ class OutputTests(unittest.TestCase):
         ids = re.findall(r'\sid="([^"]+)"', self.page)
         dupes = sorted({i for i in ids if ids.count(i) > 1})
         self.assertEqual(dupes, [])
+
+
+class ThemeTests(unittest.TestCase):
+    """The docs can't drift from the dashboard's theme.css (doomtickle/passdesk-ops#131)."""
+
+    def test_theme_css_is_inlined_verbatim(self):
+        theme = (REPO / "scripts" / "dashboard-ui" / "theme.css").read_text(encoding="utf-8")
+        self.assertIn(theme, docs.CSS)
+        self.assertIn(theme, docs.THEME_CSS)
+
+    def test_no_external_font_or_stylesheet(self):
+        page, _ = docs.build_html(REPO)
+        self.assertIsNone(re.search(r'@font-face[^}]*url\(\s*["\']?(https?:)?//', page), "external font URL")
+        self.assertNotRegex(page, r'(?i)<link[^>]+stylesheet')
+        files, _ = docs.build_served(REPO)
+        self.assertIsNone(re.search(r'(https?:)?//', files["docs.css"]), "external URL in docs.css")
+
+    def test_served_fonts_stay_root_relative(self):
+        files, _ = docs.build_served(REPO)
+        self.assertIn('url("/fonts/vt323.woff2")', files["docs.css"])
+        self.assertNotIn('url("fonts/', files["docs.css"])
+
+    def test_out_build_names_fonts_relative(self):
+        page, _ = docs.build_html(REPO, link_base="https://github.com/doomtickle/ai-code-factory/blob/abc123/")
+        for name in ("vt323.woff2", "barlow-condensed-600.woff2", "barlow-condensed-700.woff2", "dotgothic16.woff2"):
+            self.assertIn(f'url("fonts/{name}")', page)
+        self.assertNotIn('url("/fonts/', page)
+
+    def test_local_build_stays_root_relative(self):
+        # factory docs (--out, no --link-base): fonts fail to load from file://
+        # and fall back to the system stack (font-display: swap); acceptable
+        # by owner decision, so this build must NOT rewrite the urls.
+        page, _ = docs.build_html(REPO)
+        self.assertIn('url("/fonts/vt323.woff2")', page)
+        self.assertNotIn('url("fonts/', page)
+
+
+class DoctorMarkTests(unittest.TestCase):
+    """The README's / guides' ✓ ! ✗ status marks render as LED dots (.mk)."""
+
+    def test_ok_warn_fail_marks_become_led_dots(self):
+        html = docs.render_code("text", ["  ✓ broker running (127.0.0.1:18765)",
+                                          "  ! sbx 0.45.1 not installed yet",
+                                          "  ✗ Claude login missing"])
+        self.assertIn('<span class="mk mk-ok" aria-hidden="true">', html)
+        self.assertIn('<span class="mk mk-warn" aria-hidden="true">', html)
+        self.assertIn('<span class="mk mk-fail" aria-hidden="true">', html)
+        self.assertIn('<span class="sr-only">✓</span> broker running (127.0.0.1:18765)', html)
+
+    def test_marks_only_at_line_start(self):
+        html = docs.render_code("text", ["not a mark: a ✓ midline"])
+        self.assertNotIn('class="mk', html)
+        self.assertIn("a ✓ midline", html)
+
+    def test_marks_survive_in_real_docs(self):
+        page, _ = docs.build_html(REPO)
+        self.assertIn('class="mk mk-ok"', page)
 
 
 if __name__ == "__main__":

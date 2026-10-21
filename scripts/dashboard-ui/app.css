@@ -4,31 +4,8 @@
    event printer and the write gate with the control unit (bottom right). One committed look: brushed gunmetal, silkscreen labels,
    LEDs, 7-segment LCDs, color CRT phosphors. Fonts are vendored (fonts/README.md). */
 
-@font-face { font-family: "VT323"; font-weight: 400; font-display: swap; src: url("/fonts/vt323.woff2") format("woff2"); }
-@font-face { font-family: "Barlow Condensed"; font-weight: 600; font-display: swap; src: url("/fonts/barlow-condensed-600.woff2") format("woff2"); }
-@font-face { font-family: "Barlow Condensed"; font-weight: 700; font-display: swap; src: url("/fonts/barlow-condensed-700.woff2") format("woff2"); }
-@font-face { font-family: "DotGothic16"; font-weight: 400; font-display: swap; src: url("/fonts/dotgothic16.woff2") format("woff2"); }
+@import "/theme.css";
 
-:root {
-  color-scheme: dark;
-  --case: #26272a; --case-hi: #34363a; --case-lo: #161719; --seam: #0d0e0f;
-  --silk: #e6dfcb; --silk-dim: #aaa48f; --stripe-1: #e2701f; --stripe-2: #e9b52b;
-  --lcd-bg: #c4cda8; --lcd-bg-2: #adb894; --lcd-ink: #080c05; --lcd-ghost: rgba(20, 27, 15, .09);
-  /* Printed-ink colors on the LCD glass, dark enough to read on the reflective background */
-  --lcd-blue: #0b2c6b; --lcd-red: #7a1209; --lcd-amber: #5a3600; --lcd-purple: #3b1263; --lcd-green: #0c4a13;
-  /* Color-CRT phosphors: accents on top of the base amber or green */
-  --t-user: #fff3d6; --t-tool: #63dcec; --t-ok: #8cff8f; --t-err: #ff6e5a; --t-held: #ffd84d; --t-branch: #ff86de;
-  --amber: #ffb000; --amber-glow: rgba(255, 176, 0, .55); --amber-dim: #8a6100; --crt-amber-bg: #140d02;
-  --green: #45ff7d; --green-glow: rgba(69, 255, 125, .5); --green-dim: #1f8a45; --crt-green-bg: #021207;
-  /* The Coordinator's tube: classic black-and-green "matrix" phosphor */
-  --matrix: #00ff41; --matrix-glow: rgba(0, 255, 65, .6); --matrix-dim: #0b8a2e; --matrix-pale: #b8ffca; --crt-matrix-bg: #000500;
-  --led-green: #4dff6a; --led-amber: #ffae1a; --led-red: #ff4433; --led-off: #3b3e42;
-  --paper: #f2efe2; --paper-bar: #d6e8d0; --ink: #2b2b36; --ink-red: #b3261e;
-  --key: #dcd6c5; --key-lo: #9b9584; --key-ink: #2a2924;
-  --f-silk: "Barlow Condensed", "Arial Narrow", "Helvetica Neue", Arial, sans-serif;
-  --f-crt: "VT323", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-  --f-dot: "DotGothic16", ui-monospace, Menlo, Consolas, monospace;
-}
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
 /* Every size below is in rem, so this one rule scales the whole panel with the window. */

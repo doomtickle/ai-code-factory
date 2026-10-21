@@ -99,6 +99,8 @@ STATIC = {
     # The control unit's (cu.html is served at /cu, like term.html at /term).
     "/cu.js": ("cu.js", "text/javascript; charset=utf-8"),
     "/cu.css": ("cu.css", "text/css; charset=utf-8"),
+    # cu.css imports this (same origin, allowed by style-src 'self').
+    "/theme.css": ("theme.css", "text/css; charset=utf-8"),
     "/fonts/barlow-condensed-600.woff2": ("fonts/barlow-condensed-600.woff2", "font/woff2"),
     "/fonts/barlow-condensed-700.woff2": ("fonts/barlow-condensed-700.woff2", "font/woff2"),
     "/fonts/dotgothic16.woff2": ("fonts/dotgothic16.woff2", "font/woff2"),

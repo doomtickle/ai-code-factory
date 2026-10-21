@@ -11,6 +11,8 @@ on:
       - README.md
       - docs/**
       - scripts/docs.py
+      - scripts/dashboard-ui/theme.css
+      - scripts/dashboard-ui/fonts/*.woff2
       - .github/workflows/docs.yml
   workflow_dispatch:
 
@@ -30,10 +32,11 @@ jobs:
           persist-credentials: false
       - name: Build the docs page
         run: |
-          mkdir -p _site
+          mkdir -p _site/fonts
           python3 scripts/docs.py --root . --out _site/index.html \
             --link-base "https://github.com/${GITHUB_REPOSITORY}/blob/${GITHUB_SHA}/"
           cp docs/mac-quickstart.html _site/
+          cp scripts/dashboard-ui/fonts/*.woff2 _site/fonts/
           touch _site/.nojekyll
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:

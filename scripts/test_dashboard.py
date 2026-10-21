@@ -465,6 +465,21 @@ class ServerTests(unittest.TestCase):
         self.assertEqual((resp.status, resp.getheader("Location")), (303, "/docs/"))
         self.assertEqual(self.get("/docs/", host="evil.example")[0].status, 403)
 
+    def test_docs_css_shares_the_theme(self):
+        # The manual can't drift from the console it documents (doomtickle/passdesk-ops#131):
+        # its CSS carries the same tokens as app.css, inlined from theme.css at build time.
+        theme = (UI / "theme.css").read_text(encoding="utf-8")
+        _resp, css = self.get("/docs/docs.css")
+        self.assertIn(theme, css.decode())
+
+    def test_theme_css_served(self):
+        resp, body = self.get("/theme.css")
+        self.assertEqual(resp.status, 200)
+        self.assertEqual(resp.getheader("Content-Type"), "text/css; charset=utf-8")
+        self.assertIn(b":root", body)
+        self.assertIn(b"--stripe-1", body)
+        self.assertEqual(self.get("/theme.css", cookie=False)[0].status, 403)
+
     def test_favicon_is_empty(self):
         self.assertEqual(self.get("/favicon.ico")[0].status, 204)
         self.assertEqual(self.get("/favicon.ico", cookie=False)[0].status, 403)

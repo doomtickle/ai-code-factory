@@ -49,7 +49,9 @@ underneath them.
 - **MANUAL** opens these docs in a tab of their own. The **?** on each module
   opens its part of this guide, in the same tab. The docs are the ones in your
   factory checkout when the dashboard started; restart `factory dashboard` to
-  see edits.
+  see edits. The manual shares this console's look (case, paper, stripes);
+  its theme button, top right of the page, is the same three-way
+  system/light/dark toggle.
 
 ## Terminal 0: the Coordinator
 
