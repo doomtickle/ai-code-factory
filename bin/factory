@@ -991,45 +991,74 @@ cmd_secret_save() {
   fi
 }
 
-# secret_forget_broker_copy NAME -> remove the running broker's copy of NAME
-# (the file, or the broker-scoped sbx secret). Nothing to do if it isn't running.
+# secret_forget_broker_copy NAME -> remove the broker's copy of NAME (the file,
+# or the broker-scoped sbx secret). Status: 0 removed; 1 it could not be
+# removed (it may still be active); 2 not attempted, because sbx is missing or
+# the broker isn't running (the copy is untouched). Never prints a value.
 secret_forget_broker_copy() {
-  local name="$1"
-  command -v sbx >/dev/null 2>&1 && sandbox_running "$BROKER_SANDBOX" || return 0
+  local name="$1" listing
+  command -v sbx >/dev/null 2>&1 && sandbox_running "$BROKER_SANDBOX" || return 2
   if [ "$name" = github ]; then
-    sbx secret rm github --sandbox "$BROKER_SANDBOX" -f >/dev/null 2>&1 || true
+    if ! sbx secret rm github --sandbox "$BROKER_SANDBOX" -f >/dev/null 2>&1; then
+      # sbx may refuse because there is nothing to remove; trust only a listing.
+      listing="$(sbx secret ls 2>/dev/null)" || return 1
+      if printf '%s\n' "$listing" | awk -v s="$BROKER_SANDBOX" '$1 == s && $3 == "github" { f = 1 } END { exit !f }'; then
+        return 1
+      fi
+    fi
     ok "removed the broker's GitHub token"
   else
-    secret_revoke_file "$BROKER_SANDBOX" "$name" \
-      || die "could not remove '$name' from the broker sandbox; it may still be active"
+    secret_revoke_file "$BROKER_SANDBOX" "$name" >/dev/null 2>&1 || return 1
     secret_unmark_manual "$name"
     ok "removed '$name' from the broker sandbox"
   fi
 }
 
+# secret_forget_die NAME BROKER_STATUS KEYCHAIN_PROBLEM FIX -> die with a
+# message that says truthfully what happened to the broker's copy
+# (secret_forget_broker_copy's status) and what happened to the keychain entry.
+secret_forget_die() {
+  local name="$1" brc="$2" problem="$3" fix="$4" head
+  case "$brc" in
+    0) head="the broker's copy of '$name' is revoked, but factory-$name could not be deleted from the keychain ($problem)" ;;
+    2) head="the broker isn't running, so its copy of '$name' was NOT touched and may still be active in the stopped broker; factory-$name could not be deleted from the keychain either ($problem)" ;;
+    *) head="could not remove '$name' from the broker sandbox, so it may still be active; factory-$name could not be deleted from the keychain either ($problem)" ;;
+  esac
+  case "$brc" in
+    2) die "$head. $fix, then run 'factory secret forget $name' again before the next 'factory start'" ;;
+    *) die "$head. $fix, then run 'factory secret forget $name' again" ;;
+  esac
+}
+
 # cmd_secret_forget NAME -> delete factory-<NAME> from the keychain, and its
 # copy in the running broker. If the keychain entry can't be deleted (locked, or
 # the delete failed), the broker copy is still removed first: forget is how a
-# leaked token is killed.
+# leaked token is killed. What was and wasn't revoked is always stated.
 cmd_secret_forget() {
   [ $# -eq 1 ] || die "usage: factory secret forget <name>"
   local name="$1"
   keychain_name_valid "$name" \
     || die "unknown secret '$name' (one of: $FACTORY_KEYCHAIN_NAMES)"
   keychain_delete "factory-$name"
-  local rc=0
+  local rc=0 brc=0
   keychain_has "factory-$name" || rc=$?
   case "$rc" in
     1) ;;
     0)
-      secret_forget_broker_copy "$name"
-      die "the broker's copy of '$name' is revoked, but factory-$name could not be deleted from the keychain, so the next 'factory start' would deliver it again. Delete it by hand (e.g. in your keychain app), then run 'factory secret forget $name' again" ;;
+      secret_forget_broker_copy "$name" || brc=$?
+      secret_forget_die "$name" "$brc" "the delete failed, so the next 'factory start' would deliver it again" \
+        "Delete it by hand (e.g. in your keychain app)" ;;
     *)
-      secret_forget_broker_copy "$name"
-      die "the broker's copy of '$name' is revoked, but factory-$name could not be deleted from the keychain because the keychain is locked or unavailable. Unlock it, then run 'factory secret forget $name' again" ;;
+      secret_forget_broker_copy "$name" || brc=$?
+      secret_forget_die "$name" "$brc" "the keychain is locked or unavailable" "Unlock it" ;;
   esac
   ok "deleted factory-$name from the keychain"
-  secret_forget_broker_copy "$name"
+  secret_forget_broker_copy "$name" || brc=$?
+  case "$brc" in
+    0) ;;
+    2) warn "the broker isn't running, so its copy of '$name' was not touched and may still be active; start the broker and run 'factory secret forget $name' again to remove it" ;;
+    *) die "deleted factory-$name from the keychain, but could not remove '$name' from the broker sandbox; it may still be active" ;;
+  esac
 }
 
 cmd_secret_rm() {

@@ -618,7 +618,7 @@ assert_contains "forget, keychain locked: removes the broker's file anyway" \
   "$(cat "$FAKE_SBX_ARGS")" "exec factory-broker rm -f /etc/factory-broker/secrets/jira"
 assert_contains "forget, keychain locked: says the broker copy is revoked" "$F_OUT" "the broker's copy of 'jira' is revoked"
 assert_contains "forget, keychain locked: says the keychain entry couldn't be deleted because it is locked" \
-  "$F_OUT" "factory-jira could not be deleted from the keychain because the keychain is locked"
+  "$F_OUT" "factory-jira could not be deleted from the keychain (the keychain is locked or unavailable)"
 assert_contains "forget, keychain locked: says to unlock and run forget again" \
   "$F_OUT" "Unlock it, then run 'factory secret forget jira' again"
 assert_not_contains "forget, keychain locked: never claims the keychain entry was deleted" "$F_OUT" "deleted factory-jira from"
@@ -654,6 +654,74 @@ for name in jira github; do
   assert_not_contains "forget $name, delete fails: never claims the keychain entry was deleted" "$F_OUT" "deleted factory-$name from"
   assert_not_contains "forget $name, delete fails: never prints the value" "$F_OUT" "kr-secret-9"
 done
+
+# The message must match what really happened to the broker's copy. A fake sbx
+# whose broker is stopped (FAKE_SBX_STATE), whose removals fail (FAKE_SBX_RM_FAIL)
+# and whose 'secret ls' lists what FAKE_SBX_SECRETS holds.
+cat > "$tmp/bin/sbx" <<'FAKE_SBX_VARIANT'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >> "$FAKE_SBX_ARGS"
+case "$1" in
+  version) echo "sbx version: v0.45.1 testcommit" ;;
+  ls) echo "factory-broker   template   ${FAKE_SBX_STATE:-running}" ;;
+  exec) [ -z "${FAKE_SBX_RM_FAIL:-}" ] || exit 1 ;;
+  secret)
+    case "${2:-}" in
+      rm) [ -z "${FAKE_SBX_RM_FAIL:-}" ] || exit 1 ;;
+      ls) printf '%s\n' "${FAKE_SBX_SECRETS:-}" ;;
+    esac ;;
+esac
+FAKE_SBX_VARIANT
+chmod +x "$tmp/bin/sbx"
+GITHUB_LISTED='SCOPE  SECRET  SERVICE
+factory-broker   -   github'
+
+for mode in locked found; do
+  # Broker stopped: nothing was revoked, and the message must not claim it was.
+  reset_fakes
+  FAKE_SBX_STATE=stopped FAKE_KEYRING=$mode run_factory secret forget jira
+  [ "$F_RC" -ne 0 ] && ok "forget jira, keychain $mode, broker stopped: exits non-zero" || bad "forget jira, keychain $mode, broker stopped: exits non-zero (got 0)"
+  assert_not_contains "forget jira, keychain $mode, broker stopped: sbx is never asked to remove anything" \
+    "$(cat "$FAKE_SBX_ARGS")" "rm -f"
+  assert_contains "forget jira, keychain $mode, broker stopped: says the broker's copy was NOT touched" "$F_OUT" "its copy of 'jira' was NOT touched"
+  assert_not_contains "forget jira, keychain $mode, broker stopped: does not claim revocation" "$F_OUT" "is revoked"
+  assert_contains "forget jira, keychain $mode, broker stopped: says to re-run forget before the next start" \
+    "$F_OUT" "run 'factory secret forget jira' again before the next 'factory start'"
+  assert_not_contains "forget jira, keychain $mode, broker stopped: never prints the value" "$F_OUT" "kr-secret-9"
+
+  # Broker running but the removal fails: not "revoked" either.
+  reset_fakes
+  FAKE_SBX_RM_FAIL=1 FAKE_KEYRING=$mode run_factory secret forget jira
+  [ "$F_RC" -ne 0 ] && ok "forget jira, keychain $mode, removal fails: exits non-zero" || bad "forget jira, keychain $mode, removal fails: exits non-zero (got 0)"
+  assert_contains "forget jira, keychain $mode, removal fails: says it may still be active" "$F_OUT" "could not remove 'jira' from the broker sandbox, so it may still be active"
+  assert_not_contains "forget jira, keychain $mode, removal fails: does not claim revocation" "$F_OUT" "is revoked"
+  assert_not_contains "forget jira, keychain $mode, removal fails: never prints the value" "$F_OUT" "kr-secret-9"
+
+  # github: a failing 'sbx secret rm' that leaves the token listed is a failure.
+  reset_fakes
+  FAKE_SBX_RM_FAIL=1 FAKE_SBX_SECRETS="$GITHUB_LISTED" FAKE_KEYRING=$mode run_factory secret forget github
+  [ "$F_RC" -ne 0 ] && ok "forget github, keychain $mode, rm fails and token stays: exits non-zero" || bad "forget github, keychain $mode, rm fails and token stays: exits non-zero (got 0)"
+  assert_contains "forget github, keychain $mode, rm fails and token stays: says it may still be active" "$F_OUT" "may still be active"
+  assert_not_contains "forget github, keychain $mode, rm fails and token stays: does not claim revocation" "$F_OUT" "is revoked"
+  assert_not_contains "forget github, keychain $mode, rm fails and token stays: does not claim removal" "$F_OUT" "removed the broker's GitHub token"
+done
+
+# github, unlocked and deleted, but 'sbx secret rm' fails and the token is still listed.
+reset_fakes
+FAKE_SBX_RM_FAIL=1 FAKE_SBX_SECRETS="$GITHUB_LISTED" FAKE_KEYRING=absent run_factory secret forget github
+[ "$F_RC" -ne 0 ] && ok "forget github, deleted, rm fails and token stays: exits non-zero" || bad "forget github, deleted, rm fails and token stays: exits non-zero (got 0)"
+assert_not_contains "forget github, deleted, rm fails and token stays: does not claim removal" "$F_OUT" "removed the broker's GitHub token"
+# ...but a refusal because nothing is stored is not a failure.
+reset_fakes
+FAKE_SBX_RM_FAIL=1 FAKE_SBX_SECRETS="SCOPE  SECRET  SERVICE" FAKE_KEYRING=absent run_factory secret forget github
+assert_eq "forget github, deleted, rm refuses and nothing is listed: exits 0" "$F_RC" "0"
+# Entry deleted, broker stopped: succeeds but warns the broker copy was not touched.
+reset_fakes
+FAKE_SBX_STATE=stopped FAKE_KEYRING=absent run_factory secret forget jira
+assert_eq "forget jira, deleted, broker stopped: exits 0" "$F_RC" "0"
+assert_contains "forget jira, deleted, broker stopped: warns its copy was not touched" "$F_OUT" "its copy of 'jira' was not touched"
+install_good_fake_sbx
 
 # Unlocked, with the entry deleted: both steps are reported, in order.
 reset_fakes
