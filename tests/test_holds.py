@@ -310,6 +310,28 @@ class HoldTests(HoldBase):
         holds.hook(CARD)  # git_push passes straight through
         self.assertEqual(self.audit_events(), [])
 
+    def test_a_pending_card_with_an_unreadable_expiry_is_discarded_not_wedged(self):
+        self.policy["approvals"]["hold_seconds"] = 0
+        cid = holds.card_id(CARD)
+        pend = config.STATE / "approvals" / "pending" / f"{cid}.json"
+        pend.parent.mkdir(parents=True)
+        pend.write_text(json.dumps({**CARD, "id": cid, "nonce": "n1", "created": time.time(), "expires": None}))
+        self.decide(cid, nonce="n1")  # a decision for the broken card is voided with it
+        with self.assertRaises(Denied) as cm:
+            holds.hook(CARD)  # a fresh card, not a crash
+        self.assertIn("held for approval", str(cm.exception))
+        self.assertEqual(self.audit_events(), ["approval-discarded", "approval-requested"])
+        fresh = json.loads(pend.read_text())
+        self.assertNotEqual(fresh["nonce"], "n1")
+        self.assertGreater(fresh["expires"], time.time())
+        self.assertFalse((config.STATE / "approvals" / "decisions" / f"{cid}.json").exists())
+
+    def test_odd_seconds_values_fall_back_to_the_defaults(self):
+        for bad in ("abc", None, [1], True, {"x": 1}):
+            hold, expire, _ = holds.settings({"approvals": {"hold_seconds": bad, "expire_seconds": bad}})
+            self.assertEqual((hold, expire), (45, 1800), bad)
+        self.assertEqual(holds.settings({"approvals": {"hold_seconds": 7.9, "expire_seconds": 100}})[:2], (7, 100))
+
     def test_settings_default_to_off(self):
         self.assertEqual(holds.settings({}), (45, 1800, []))
         self.assertEqual(holds.settings({"approvals": {"tools": []}})[2], [])
@@ -403,6 +425,38 @@ class NotifyTests(HoldBase):
     def test_a_non_https_webhook_is_ignored(self):
         self.write_webhook("http://hooks.example.invalid/abc")
         self.assertIsNone(notify.webhook_url())
+
+    def test_a_webhook_with_userinfo_is_refused_before_urllib_can_echo_it(self):
+        # urllib raises InvalidURL quoting the netloc, password included,
+        # for a URL like this; it must never get that far.
+        self.write_webhook("https://user:s3cret-pw@ntfy.example.invalid/topic")
+        self.assertIsNone(notify.webhook_url())
+        self.assertFalse(notify.usable_url("https://@host/"))
+        self.assertFalse(notify.usable_url("https:///path"))
+        self.assertTrue(notify.usable_url("https://hooks.example.invalid/abc"))
+
+    def test_an_http_client_exception_is_logged_by_type_only(self):
+        import http.client
+        url = "https://hooks.example.invalid/abc"
+        with mock.patch.object(notify.NO_REDIRECT_OPENER, "open",
+                               side_effect=http.client.BadStatusLine(f"garbage from {url}")):
+            self.assertFalse(notify.send(CARD, "abc", 30, url=url))
+        record = self.audit_records()[-1]
+        self.assertEqual(record["event"], "approval-notify-failed")
+        self.assertEqual(record["reason"], "BadStatusLine")
+        self.assertNotIn(url, json.dumps(record))
+
+    def test_the_thread_never_raises(self):
+        # Even an exception type nothing anticipated must not reach
+        # threading.excepthook (whose traceback would print the URL).
+        self.write_webhook("https://hooks.example.invalid/abc")
+        import http.client
+        with mock.patch.object(notify.NO_REDIRECT_OPENER, "open", side_effect=http.client.InvalidURL("x")):
+            seen = []
+            with mock.patch.object(threading, "excepthook", lambda args: seen.append(args)):
+                notify.send_async(CARD, "abc", 30).join(5)
+        self.assertEqual(seen, [])
+        self.assertEqual(self.audit_events(), ["approval-notify-failed"])
 
     def test_summary_names_the_essentials(self):
         text = notify.summary(CARD, "abc", 30)

@@ -74,12 +74,21 @@ def settings(policy: dict) -> tuple[int, int, list[str]]:
     defaults above; `tools` is empty (holds off) unless the policy lists
     tool names."""
     a = policy.get("approvals", {}) if isinstance(policy.get("approvals"), dict) else {}
-    hold = max(0, int(a.get("hold_seconds", 45)))
-    expire = max(60, int(a.get("expire_seconds", 1800)))
+    hold = max(0, _seconds(a.get("hold_seconds"), 45))
+    expire = max(60, _seconds(a.get("expire_seconds"), 1800))
     tools = a.get("tools", [])
     if not isinstance(tools, list):
         tools = []
     return hold, expire, [t for t in tools if isinstance(t, str) and t]
+
+
+def _seconds(value, default: int) -> int:
+    """A whole number of seconds, or the default for anything else (a bool,
+    a string, a list): the doctor reports the odd value; the hold must not
+    crash on it."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return default
+    return int(value)
 
 
 def enabled(policy: dict) -> bool:
@@ -199,10 +208,23 @@ def _ensure_pending(card: dict, cid: str, expire: int, now: float) -> dict:
     thread, so a slow webhook never eats into the hold."""
     with _lock:
         existing = _read(_path("pending", cid))
-        if existing and float(existing.get("expires", 0)) > now:
-            return existing
         if existing:
-            _expire_pending(cid, existing.get("nonce"), now)
+            try:
+                expires = float(existing.get("expires", 0))
+            except (TypeError, ValueError):
+                expires = None
+            if expires is not None and expires > now:
+                return existing
+            if expires is None:
+                # An unreadable expiry would wedge the card: every retry
+                # would fail here and the sweep skips it. Discard it and
+                # start over; the decision (if any) can't be trusted either.
+                _remove(_path("pending", cid))
+                _remove(_path("decisions", cid))
+                audit({"event": "approval-discarded", "id": cid, "tool": existing.get("tool"),
+                       "reason": "the pending card's expiry is unreadable"})
+            else:
+                _expire_pending(cid, existing.get("nonce"), now)
         # The nonce ties a decision to this card, not an earlier one with the
         # same id; timestamps would do that only if the clock never jumped.
         pending = {**card, "id": cid, "nonce": secrets.token_hex(8), "created": now, "expires": now + expire}

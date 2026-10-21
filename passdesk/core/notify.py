@@ -13,9 +13,11 @@ webhook never eats into the hold (doomtickle/passdesk-ops#14).
 
 from __future__ import annotations
 
+import http.client
 import json
 import threading
 import urllib.error
+import urllib.parse
 import urllib.request
 
 from . import config, credentials
@@ -29,13 +31,25 @@ CREDENTIAL = "approvals-webhook"
 MAX_SUMMARY_LEN = 2800
 
 
+def usable_url(url: str | None) -> bool:
+    """https, and no userinfo: none of the supported services puts a
+    password in the URL, and urllib would echo one in an InvalidURL."""
+    if not url or not url.startswith("https://"):
+        return False
+    try:
+        parts = urllib.parse.urlsplit(url)
+    except ValueError:
+        return False
+    return bool(parts.hostname) and parts.username is None and parts.password is None
+
+
 def webhook_url() -> str | None:
-    """The delivered URL, or None if there is none or it isn't https."""
+    """The delivered URL, or None if there is none or it isn't usable."""
     try:
         url = credentials.get(CREDENTIAL)
     except credentials.CredentialError:
         return None
-    return url if url and url.startswith("https://") else None
+    return url if usable_url(url) else None
 
 
 def summary(card: dict, cid: str, expires_in_minutes: int) -> str:
@@ -72,8 +86,15 @@ def send(card: dict, cid: str, expires_in_minutes: int, url: str | None = None) 
     try:
         with NO_REDIRECT_OPENER.open(req, timeout=10) as resp:
             ok = 200 <= resp.status < 300
-    except (urllib.error.URLError, OSError, ValueError) as e:
+    except urllib.error.URLError as e:
+        # HTTPError's reason is the status phrase, URLError's the OS error:
+        # neither carries the URL.
         audit({"event": "approval-notify-failed", "id": cid, "reason": str(getattr(e, "reason", e))[:300]})
+        return False
+    except (http.client.HTTPException, OSError, ValueError) as e:
+        # Anything else (a bad status line, an InvalidURL) may quote the
+        # URL in its message, so only the type is recorded.
+        audit({"event": "approval-notify-failed", "id": cid, "reason": type(e).__name__})
         return False
     if not ok:
         audit({"event": "approval-notify-failed", "id": cid, "reason": f"HTTP {resp.status}"})

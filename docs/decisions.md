@@ -36,6 +36,18 @@ Dated entries, for the user to review. Newest first.
   - **Policy checks.** The doctor fails a `tools` that isn't a list of
     names or a negative `hold_seconds`/`expire_seconds`, and warns about a
     tool name it doesn't know.
+  - **Security review findings fixed before merge:** a webhook URL with
+    userinfo is refused (urllib would echo the password in an
+    `InvalidURL`), `send` catches `http.client.HTTPException` too and
+    records only the exception type for anything but a `URLError`, so the
+    thread never raises; `settings` falls back to the defaults for a
+    `hold_seconds`/`expire_seconds` that isn't a number (the doctor
+    reports it; the server and the doctor no longer crash on it); a
+    pending card whose `expires` is unreadable is discarded
+    (`approval-discarded`) and replaced instead of wedging every retry.
+    Noted, not changed: `holds._read` and the doctor's card reads follow
+    symlinks and would block on a FIFO; both need write access to the
+    state directory, which the threat model excludes.
   - **Not here:** the in-gateway approver CLI (doomtickle/passdesk-ops#60)
     is a follow-up; the denial message still names `factory approvals` as
     the example console.
