@@ -141,6 +141,24 @@ assert_contains "roles.sh shows git's error too" "$out" "does not exist"
 assert_contains "roles.sh shows the canonical URL" "$out" "$CANON"
 assert_contains "roles.sh shows the exact command" "$out" "submodule update --init broker"
 
+# A clone made with a token in its origin URL: git prints the resolved
+# submodule URL with the userinfo in its error. None of it may reach the output
+# (doctor, or the roles.sh die message the dashboard DIAG log also shows).
+make_checkout "$tmp/tokenclone" "../passdesk-broker.git"
+git -C "$tmp/tokenclone" remote add origin "https://user:sekrit@127.0.0.1:1/factory.git"
+GIT_ALLOW_PROTOCOL=file:https run_in "$tmp/tokenclone" doctor
+out="$(cat "$tmp/out")"
+assert_contains "token clone: git's error reaches doctor, with the host" "$out" "https://127.0.0.1:1/passdesk-broker.git"
+assert_not_contains "token clone: doctor does not print the password" "$out" "sekrit"
+assert_not_contains "token clone: doctor does not print the user" "$out" "user:"
+make_checkout "$tmp/tokenclone2" "../passdesk-broker.git"
+git -C "$tmp/tokenclone2" remote add origin "https://user:p@ss@127.0.0.1:1/factory.git"
+GIT_ALLOW_PROTOCOL=file:https run_in "$tmp/tokenclone2" roles
+out="$(cat "$tmp/out")"
+assert_not_contains "token clone: roles.sh die message does not print the password" "$out" "p@ss"
+assert_not_contains "token clone: roles.sh die message does not print the password tail" "$out" "ss@"
+assert_contains "token clone: roles.sh die message still shows git's error" "$out" "127.0.0.1:1/passdesk-broker.git"
+
 # ===========================================================================
 # Part 2: an empty broker/ that can be fetched is initialized by doctor
 # ===========================================================================

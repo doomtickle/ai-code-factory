@@ -367,12 +367,21 @@ broker_init_command() {
     "$1" "$BROKER_CANONICAL_URL" "$1"
 }
 
+# redact_url_userinfo -> stdin to stdout with the user:password@ part of any
+# scheme://user:password@host URL removed. git prints the resolved submodule
+# URL in its errors, and it inherits the userinfo of a clone made with a token
+# in its origin URL.
+redact_url_userinfo() {
+  sed -E 's#(://)[^/[:space:]]*@#\1#g'
+}
+
 # broker_submodule_init ROOT -> try to initialize the broker/ submodule. On
-# failure, print git's own error (all of it) on stdout and fail.
+# failure, print git's own error (all of it, credentials in URLs removed) on
+# stdout and fail.
 broker_submodule_init() {
   local err
   err="$(git "${BROKER_GIT_SAFE[@]}" -C "$1" submodule update --init --quiet -- broker 2>&1 >/dev/null)" && return 0
-  printf '%s' "$err"
+  printf '%s' "$err" | redact_url_userinfo
   return 1
 }
 
@@ -381,7 +390,7 @@ broker_submodule_init() {
 broker_missing_message() {
   printf '%s/broker/tools.txt is missing: the broker/ submodule (passdesk-broker) is not checked out.\n' "$1"
   if [ -n "${2:-}" ]; then
-    printf 'git said:\n%s\n' "$(printf '%s\n' "$2" | sed 's/^/  /')"
+    printf 'git said:\n%s\n' "$(printf '%s\n' "$2" | redact_url_userinfo | sed 's/^/  /')"
   fi
   printf '.gitmodules gives its URL relative to this repo'"'"'s origin, so a clone from a fork or mirror looks\n'
   printf 'for a passdesk-broker that does not exist there. Fetch it from %s instead:\n' "$BROKER_CANONICAL_URL"
