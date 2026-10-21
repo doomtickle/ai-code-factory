@@ -22,11 +22,13 @@ ROOT="$(dirname "$SCRIPTS")"
 # shellcheck source=../scripts/lib/common.sh
 . "$SCRIPTS/lib/common.sh"
 # roles.sh initializes the broker/ submodule if needed and dies without it.
-# 'factory docs' and 'factory help' need neither, so they skip it: they must
+# 'factory docs', 'factory help' and 'factory config' need neither, so they skip it: they must
 # work on a fresh clone, before 'factory setup' (a test sourcing this file
-# always gets roles.sh).
+# always gets roles.sh). 'doctor' and 'setup' skip it too: cmd_doctor checks
+# the submodule itself, reports what it finds, and loads roles.sh only when
+# broker/ is usable (see doctor_load_roles).
 case "${BASH_SOURCE[0]}:${1:-help}" in
-  "$0":docs|"$0":help|"$0":-h|"$0":--help) ;;
+  "$0":docs|"$0":config|"$0":help|"$0":-h|"$0":--help|"$0":doctor|"$0":setup) ;;
   *)
     # shellcheck source=../scripts/lib/roles.sh
     . "$SCRIPTS/lib/roles.sh" ;;
@@ -103,6 +105,9 @@ ${B}Usage${N}
   factory roles              List roles and what they may do
   factory role new <name> [like]
                              Add a role, copied from an existing one (default: reviewer)
+  factory config init [--force]
+                             Write the commented example settings into
+                             $FACTORY_CONFIG; refuses to overwrite files unless --force
   factory secret save <name> Store a credential once in this machine's keychain
                              (github, gitlab, jira, gemini, npm-registry,
                              approvals-webhook); every broker start
@@ -137,6 +142,12 @@ cmd_setup() {
   step "Installing pinned tools (sbx $SBX_VERSION, herdr $HERDR_VERSION)"
   "$SCRIPTS/install-prereqs.sh"
   export PATH="$HOME/.local/bin:$PATH"
+
+  if sbx_not_signed_in; then
+    step "Signing in to Docker (sbx)"
+    say "Not signed in yet; a browser window opens:"
+    sbx login || die "sbx login failed: run 'sbx login' yourself, then 'factory setup' again"
+  fi
 
   step "Building sandbox images"
   local log
@@ -184,7 +195,34 @@ setup_done() {
 
 # --- doctor ------------------------------------------------------------------------
 # cmd_doctor -> checks everything setup and start need, printing the fix for
-# each problem. Fails if anything blocks setup. Changes nothing itself.
+# each problem. Fails if anything blocks setup. Changes nothing itself, except
+# that it tries once to initialize the broker/ submodule, as every command that
+# loads roles.sh does.
+#
+# doctor_load_roles -> load scripts/lib/roles.sh (the role helpers) once broker/
+# is usable; roles.sh dies without broker/tools.txt, so doctor checks that first.
+doctor_load_roles() {
+  declare -F list_roles >/dev/null && return 0
+  # shellcheck source=../scripts/lib/roles.sh
+  . "$SCRIPTS/lib/roles.sh"
+}
+
+# doctor_secret_tool_probe -> a read-only lookup of a name nothing stores.
+# A working secret-tool answers "not found" with exit 1 and no message; one with
+# no D-Bus session or no keyring service prints why on stderr. Prints that text
+# and fails when it can't answer, and prints nothing and succeeds otherwise.
+doctor_secret_tool_probe() {
+  local err status=0
+  if command -v timeout >/dev/null 2>&1; then
+    err="$(timeout 10 secret-tool lookup service factory-doctor-probe 2>&1 >/dev/null </dev/null)" || status=$?
+  else
+    err="$(secret-tool lookup service factory-doctor-probe 2>&1 >/dev/null </dev/null)" || status=$?
+  fi
+  if [ "$status" -eq 124 ]; then err="timed out after 10 seconds (is a keyring prompt waiting?)"; fi
+  if [ -n "$err" ]; then printf '%s' "$err"; return 1; fi
+  return 0
+}
+
 cmd_doctor() {
   local problems=0 missing_pkgs="" os linux="" t out status doctor hosts kit kit_hosts missing h r
   os="$(uname -s)"
@@ -221,6 +259,34 @@ cmd_doctor() {
     if [ -n "$linux" ]; then say "      Install them: sudo apt-get update && sudo apt-get install -y$missing_pkgs"
     else say "      Install them with Homebrew: brew install${missing_pkgs/bsdextrautils/}"; fi
   fi
+
+  if [ "$(keychain_backend)" = secret-tool ]; then
+    step "Credential store (secret-tool)"
+    if out="$(doctor_secret_tool_probe)"; then ok "secret-tool answers"
+    else
+      warn "secret-tool is installed but can't reach a keyring: ${out:-no reason given}"
+      say "      'factory secret save' will fail until it can. Start a keyring (e.g. gnome-keyring) in a desktop"
+      say "      session, or skip the keychain: 'factory secret set <name>' delivers a credential without one."
+    fi
+  fi
+
+  step "Gateway source (broker/ submodule)"
+  local roles_ready="" git_err=""
+  if [ -f "$ROOT/broker/tools.txt" ]; then
+    ok "broker/ is checked out"
+    roles_ready=1
+  elif ! command -v git >/dev/null 2>&1; then
+    warn "skipped: needs git"
+  else
+    if ! broker_initialized "$ROOT"; then git_err="$(broker_submodule_init "$ROOT")" || true; fi
+    if [ -f "$ROOT/broker/tools.txt" ]; then
+      ok "broker/ was empty; initialized it"
+      roles_ready=1
+    else
+      fail "$(broker_missing_message "$ROOT" "$git_err" | head -n1)" "$(broker_missing_message "$ROOT" "$git_err" | sed -n '2,$p')"
+    fi
+  fi
+  [ -z "$roles_ready" ] || doctor_load_roles
 
   step "Docker (builds the sandbox images)"
   if ! command -v docker >/dev/null 2>&1; then
@@ -315,7 +381,10 @@ $(sed -n 's/^[[:space:]]*-[[:space:]]*"\{0,1\}\([^"[:space:]#]*\).*/\1/p' "$kit"
   fi
   # This machine's role overrides (FACTORY_CONFIG/roles/<role>.conf), checked
   # exactly as `factory start` checks them; no step at all without the folder.
-  if [ -d "$FACTORY_CONFIG/roles" ]; then
+  if [ -d "$FACTORY_CONFIG/roles" ] && [ -z "$roles_ready" ]; then
+    step "Role overrides ($FACTORY_CONFIG/roles)"
+    warn "skipped: needs the broker/ submodule (see above)"
+  elif [ -d "$FACTORY_CONFIG/roles" ]; then
     step "Role overrides ($FACTORY_CONFIG/roles)"
     if out="$( (validate_role_overrides; for r in $(list_roles); do validate_role "$r"; done) 2>&1)"; then
       ok "role overrides are valid"
@@ -327,7 +396,7 @@ $(sed -n 's/^[[:space:]]*-[[:space:]]*"\{0,1\}\([^"[:space:]#]*\).*/\1/p' "$kit"
   # A warning, not a problem (owner decision): the fix is a Pro re-copy or a
   # policy edit, and `factory update` must stay usable meanwhile.
   local why
-  if why="$(gitlab_mr_unheld)"; then
+  if [ -n "$roles_ready" ] && why="$(gitlab_mr_unheld)"; then
     warn "GitLab merge requests open without approval: $why (see README: Enabling approvals)"
   fi
 
@@ -341,6 +410,18 @@ $(sed -n 's/^[[:space:]]*-[[:space:]]*"\{0,1\}\([^"[:space:]#]*\).*/\1/p' "$kit"
 }
 
 # --- start -------------------------------------------------------------------------
+# require_project_commits PROJECT -> die, naming the repo, if any repository
+# the roles would work in (project_repos) has no commits: the lane clone and
+# the review packet both need a HEAD, and would fail much later without one.
+require_project_commits() {
+  local project="$1" repo dir
+  for repo in $(project_repos "$project"); do
+    dir="$project/$repo"
+    git "${BROKER_GIT_SAFE[@]}" -C "$dir" rev-parse --verify --quiet 'HEAD^{commit}' >/dev/null 2>&1 \
+      || die "$dir is a git repository with no commits yet, so the developer has nothing to branch from. Make the first commit there (git -C '$dir' commit --allow-empty -m 'Initial commit'), then run 'factory start' again."
+  done
+}
+
 cmd_start() {
   # --no-ui (or FACTORY_NO_UI=1): everything but Herdr. Talk to the Coordinator
   # with `sbx run` in any terminal and follow roles with `factory logs`.
@@ -373,6 +454,7 @@ cmd_start() {
   require_sbx
   [ "$no_ui" = 1 ] || [ "$layout" = web ] || require_herdr
   setup_done || die "the factory is not set up yet: run 'factory setup' first"
+  require_project_commits "$project"
   case "$project" in
     /mnt/[a-z]/*) is_wsl && warn "$project is on a Windows drive: sandboxes will be slow and file permissions unreliable. Clone it into the Linux filesystem (e.g. ~/code) instead." ;;
   esac
@@ -456,6 +538,14 @@ policy_value() {
 # policy_string SECTION KEY -> the string value of KEY = "..." in [SECTION]
 policy_string() {
   policy_value "$1" "$2" | awk -F'"' '{ print $2 }'
+}
+
+# jira_cloud_id_set -> success if [jira].cloud_id is set to something other
+# than empty or the all-zero placeholder UUID from config.example/.
+jira_cloud_id_set() {
+  local id
+  id="$(policy_string jira cloud_id)"
+  [ -n "$id" ] && [ -n "${id//[0-]/}" ]
 }
 
 git_push_enabled() {
@@ -591,7 +681,7 @@ onboarding_hints() {
   fi
   if any_jira_tool_granted; then
     keychain_warn_missing factory-jira "Jira tools are granted but no token is stored in the keychain (see README: Enabling Jira)"
-    [ -n "$(policy_string jira cloud_id)" ] || warn "Jira tools are granted but [jira].cloud_id is not set; set it in $FACTORY_CONFIG/policy.toml (see README: Enabling Jira)"
+    jira_cloud_id_set || warn "Jira tools are granted but [jira].cloud_id is not set; set it in $FACTORY_CONFIG/policy.toml (see README: Enabling Jira)"
   fi
   if npm_private_registry_needs_token; then
     keychain_warn_missing factory-npm-registry "npm_fetch can't download private npm packages until a token is stored in the keychain (see README: Enabling a private npm registry)"
@@ -649,7 +739,7 @@ cmd_status() {
   say "${B}Coordinator broker tools${N} ${coord_tools:-none}"
   if any_jira_tool_granted; then
     keychain_warn_missing factory-jira "Jira keychain entry (\"factory-jira\") not found"
-    [ -n "$(policy_string jira cloud_id)" ] || warn "[jira].cloud_id is not set (see README: Enabling Jira)"
+    jira_cloud_id_set || warn "[jira].cloud_id is not set (see README: Enabling Jira)"
   fi
   if npm_private_registry_needs_token; then
     keychain_warn_missing factory-npm-registry "private npm registry keychain entry (\"factory-npm-registry\") not found"
@@ -901,8 +991,25 @@ cmd_secret_save() {
   fi
 }
 
+# secret_forget_broker_copy NAME -> remove the running broker's copy of NAME
+# (the file, or the broker-scoped sbx secret). Nothing to do if it isn't running.
+secret_forget_broker_copy() {
+  local name="$1"
+  command -v sbx >/dev/null 2>&1 && sandbox_running "$BROKER_SANDBOX" || return 0
+  if [ "$name" = github ]; then
+    sbx secret rm github --sandbox "$BROKER_SANDBOX" -f >/dev/null 2>&1 || true
+    ok "removed the broker's GitHub token"
+  else
+    secret_revoke_file "$BROKER_SANDBOX" "$name" \
+      || die "could not remove '$name' from the broker sandbox; it may still be active"
+    secret_unmark_manual "$name"
+    ok "removed '$name' from the broker sandbox"
+  fi
+}
+
 # cmd_secret_forget NAME -> delete factory-<NAME> from the keychain, and its
-# copy in the running broker (the file, or the broker-scoped sbx secret).
+# copy in the running broker. A locked keychain can't confirm the delete, but
+# the broker copy is still removed first: forget is how a leaked token is killed.
 cmd_secret_forget() {
   [ $# -eq 1 ] || die "usage: factory secret forget <name>"
   local name="$1"
@@ -914,20 +1021,12 @@ cmd_secret_forget() {
   case "$rc" in
     1) ;;
     0) die "could not delete factory-$name from the keychain" ;;
-    *) die "keychain locked; could not confirm the delete of factory-$name" ;;
+    *)
+      secret_forget_broker_copy "$name"
+      die "the broker's copy of '$name' is revoked, but factory-$name could not be deleted from the keychain because the keychain is locked or unavailable. Unlock it, then run 'factory secret forget $name' again" ;;
   esac
   ok "deleted factory-$name from the keychain"
-  if command -v sbx >/dev/null 2>&1 && sandbox_running "$BROKER_SANDBOX"; then
-    if [ "$name" = github ]; then
-      sbx secret rm github --sandbox "$BROKER_SANDBOX" -f >/dev/null 2>&1 || true
-      ok "removed the broker's GitHub token"
-    else
-      secret_revoke_file "$BROKER_SANDBOX" "$name" \
-        || die "could not remove '$name' from the broker sandbox; it may still be active"
-      secret_unmark_manual "$name"
-      ok "removed '$name' from the broker sandbox"
-    fi
-  fi
+  secret_forget_broker_copy "$name"
 }
 
 cmd_secret_rm() {
@@ -1332,6 +1431,49 @@ cmd_approvals() {
   "$python" "$SCRIPTS/approvals.py" --state "$FACTORY_BROKER_STATE" "$@"
 }
 
+# --- config ------------------------------------------------------------------------
+# cmd_config init [--force] -> copies config.example/ into FACTORY_CONFIG. Every
+# placeholder in the example is commented out, so the copy is inert. Writes
+# nothing at all if any target file exists, unless --force.
+cmd_config() {
+  local sub="${1:-}" force="" arg src rel dest
+  local -a files=() existing=()
+  [ $# -eq 0 ] || shift
+  [ "$sub" = init ] || die "usage: factory config init [--force]"
+  for arg in "$@"; do
+    case "$arg" in
+      --force) force=1 ;;
+      *) die "usage: factory config init [--force]" ;;
+    esac
+  done
+  [ -d "$ROOT/config.example" ] || die "no config.example/ in $ROOT"
+  while IFS= read -r src; do
+    files+=("${src#"$ROOT/config.example/"}")
+  done < <(find "$ROOT/config.example" -type f | LC_ALL=C sort)
+  [ "${#files[@]}" -gt 0 ] || die "config.example/ in $ROOT is empty"
+  # -L too: a dangling symlink is "absent" to -e, and cp would write through it.
+  for rel in "${files[@]}"; do
+    if [ -e "$FACTORY_CONFIG/$rel" ] || [ -L "$FACTORY_CONFIG/$rel" ]; then
+      existing+=("$FACTORY_CONFIG/$rel")
+    fi
+  done
+  if [ "${#existing[@]}" -gt 0 ] && [ -z "$force" ]; then
+    for dest in "${existing[@]}"; do bad "exists: $dest"; done
+    die "nothing written; re-run with --force to overwrite the files above"
+  fi
+  step "Config init ($FACTORY_CONFIG)"
+  for rel in "${files[@]}"; do
+    dest="$FACTORY_CONFIG/$rel"
+    mkdir -p "$(dirname "$dest")"
+    # --force replaces a symlink itself; cp would write through it to its target.
+    [ ! -L "$dest" ] || rm -f "$dest"
+    cp "$ROOT/config.example/$rel" "$dest"
+    ok "wrote $dest"
+  done
+  say "Every value in them is commented out: uncomment and fill in only what you need."
+  say "Next: factory doctor"
+}
+
 # --- main ----------------------------------------------------------------------------
 # Guarded so a test can source this file (to call e.g. pull_factory directly)
 # without running main: BASH_SOURCE[0] equals $0 only when run directly.
@@ -1354,6 +1496,7 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
     dashboard|gui) cmd_dashboard "$@" ;;
     roles) cmd_roles "$@" ;;
     role) cmd_role "$@" ;;
+    config) cmd_config "$@" ;;
     secret) cmd_secret "$@" ;;
     analytics) cmd_analytics "$@" ;;
     docs) cmd_docs "$@" ;;

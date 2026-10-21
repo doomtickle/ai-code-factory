@@ -89,7 +89,7 @@ time, after hanging up Terminal 0 and holding its POWER ON until the action ends
 
 DIAG (doomtickle/passdesk-ops#118) runs `factory doctor` through the same
 `prepare`/`run` token and the same runner (fixed argv `<factory> doctor`, logged the
-same way, one at a time with RESTART and UPDATE); doctor changes nothing, so its
+same way, one at a time with RESTART and UPDATE); doctor changes nothing (apart from fetching an empty broker/), so its
 `prepare` lists no jobs or held writes and it leaves Terminal 0 attached.
 
 INSPECT (doomtickle/passdesk-ops#113) shows a held push's patch, and acts on nothing:

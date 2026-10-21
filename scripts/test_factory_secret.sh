@@ -37,7 +37,9 @@ set -euo pipefail
 #    unavailable keychain (an error on stderr, a non-44 exit from security,
 #    or a locked item behind a silent secret-tool exit 1) leaves the file
 #    and the GitHub token alone and prints one warning naming the secret,
-#    never the value.
+#    never the value. "factory secret forget" with a locked keychain still
+#    removes the broker's copy, then exits non-zero telling the user to
+#    unlock and run it again.
 #
 # Drives the real bin/factory as a subprocess (not sourced, since the
 # command dispatch under test runs only in that mode - see the guard at the
@@ -606,14 +608,38 @@ for mode in search-error search-silent; do
 done
 assert_value_not_leaked "keychain sync: the value lands nowhere else under the temp dir" "kr-secret-9"
 
-# 'factory secret forget' with a locked keychain can't confirm the delete:
-# it says so and leaves the broker's copy alone.
+# 'factory secret forget' with a locked keychain can't delete the keychain
+# entry, but it still removes the broker's copy first (forget is how a leaked
+# token is killed), then exits non-zero and says what to do.
 reset_fakes
 FAKE_KEYRING=locked run_factory secret forget jira
 [ "$F_RC" -ne 0 ] && ok "forget, keychain locked: exits non-zero" || bad "forget, keychain locked: exits non-zero (got 0)"
-assert_contains "forget, keychain locked: says the delete couldn't be confirmed" "$F_OUT" "keychain locked; could not confirm the delete"
-assert_not_contains "forget, keychain locked: never claims it deleted" "$F_OUT" "deleted factory-jira"
-assert_empty "forget, keychain locked: the broker's file is left alone" "$(cat "$FAKE_SBX_ARGS")"
+assert_contains "forget, keychain locked: removes the broker's file anyway" \
+  "$(cat "$FAKE_SBX_ARGS")" "exec factory-broker rm -f /etc/factory-broker/secrets/jira"
+assert_contains "forget, keychain locked: says the broker copy is revoked" "$F_OUT" "the broker's copy of 'jira' is revoked"
+assert_contains "forget, keychain locked: says the keychain entry couldn't be deleted because it is locked" \
+  "$F_OUT" "factory-jira could not be deleted from the keychain because the keychain is locked"
+assert_contains "forget, keychain locked: says to unlock and run forget again" \
+  "$F_OUT" "Unlock it, then run 'factory secret forget jira' again"
+assert_not_contains "forget, keychain locked: never claims the keychain entry was deleted" "$F_OUT" "deleted factory-jira from"
+assert_not_contains "forget, keychain locked: never prints the value" "$F_OUT" "kr-secret-9"
+
+reset_fakes
+FAKE_KEYRING=locked run_factory secret forget github
+[ "$F_RC" -ne 0 ] && ok "forget github, keychain locked: exits non-zero" || bad "forget github, keychain locked: exits non-zero (got 0)"
+assert_contains "forget github, keychain locked: removes the broker-scoped sbx secret anyway" \
+  "$(cat "$FAKE_SBX_ARGS")" "secret rm github --sandbox factory-broker -f"
+assert_contains "forget github, keychain locked: says the broker copy is revoked" "$F_OUT" "the broker's copy of 'github' is revoked"
+assert_contains "forget github, keychain locked: says to unlock and run forget again" \
+  "$F_OUT" "Unlock it, then run 'factory secret forget github' again"
+assert_not_contains "forget github, keychain locked: never prints the value" "$F_OUT" "kr-secret-9"
+
+# Unlocked, with the entry deleted: both steps are reported, in order.
+reset_fakes
+FAKE_KEYRING=absent run_factory secret forget jira
+assert_eq "forget, entry already gone: exits 0" "$F_RC" "0"
+assert_contains "forget, entry already gone: removes the broker's file" \
+  "$(cat "$FAKE_SBX_ARGS")" "exec factory-broker rm -f /etc/factory-broker/secrets/jira"
 
 # doctor/status: a locked keychain is reported as locked, not as a missing token.
 run_warn_missing() { # run_warn_missing MODE -> output in $W_OUT
