@@ -91,23 +91,25 @@ The settings you're most likely to change:
 
 | Key | What it does | Developer default |
 |---|---|---|
-| `MODEL` | Default model: an alias (`sonnet`, `opus`, `haiku`) or a full model id | `sonnet` |
+| `MODEL` | Default model: an alias (`sonnet`, `opus`, `haiku`) or a full model id | `claude-sonnet-5-5` |
 | `MODELS` | Other models the Coordinator may pick for a single task | `claude-haiku-5-5 opus` |
 | `EFFORT` | Default reasoning effort: `low`, `medium`, `high` or `xhigh`; empty is the model's default | empty |
 | `LANES` | Tasks the role runs at once, 1 to 8 | `3` |
 | `MAX_SESSION_TOKENS` | A lane whose saved session is larger starts the next task fresh; empty is 100000, `0` is no cap | empty |
 | `MAX_TURNS` | Turns (tool calls and replies) one job may take before it stops as failed, keeping its session; a safety net against a lost job; empty or `0` is no cap | `200` |
 
-The developer's `MODELS` names haiku by the full id `claude-haiku-5-5`, not
-the alias `haiku`: the Claude Code CLI in the pinned role image resolves that
-alias to the older `claude-haiku-4-5-20251001`.
+The developer's `MODEL` and `MODELS` name sonnet and haiku by their full ids,
+`claude-sonnet-5-5` and `claude-haiku-5-5`, not the aliases `sonnet` and
+`haiku`: the Claude Code CLI in the pinned role image resolves those aliases
+to the older `claude-sonnet-5` and `claude-haiku-4-5-20251001`. Opus is left
+as the alias: it already resolves to `claude-opus-5-5`.
 
 For example, to make the reviewer cheaper on a low-risk project, run it on
 Sonnet by default and keep Opus available for hard reviews:
 
 ```conf
 # roles/reviewer/role.conf
-MODEL="sonnet"
+MODEL="claude-sonnet-5-5"
 MODELS="opus"
 ```
 
