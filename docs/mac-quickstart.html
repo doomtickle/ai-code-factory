@@ -196,25 +196,25 @@ source ~/.zshrc</pre><button class="copy" type="button">Copy</button></div>
       <li class="step">
         <h3>Start the factory on a project</h3>
         <div class="step-body">
-          <p>Run it from the project folder: a git repository, or a folder of them. It opens Herdr with one Coordinator tab.</p>
+          <p>Run it from the project folder: a git repository, or a folder of them. It starts the factory and opens the dashboard in your browser; it prints the link too, in case no window appears.</p>
           <div class="cmd"><pre>cd ~/code/my-project
 factory start</pre><button class="copy" type="button">Copy</button></div>
-          <div class="panes" aria-label="What Herdr shows">
-            <div class="pane"><b>Coordinator (VM)</b><span>Claude, talking to you</span></div>
-            <div class="pane"><b>Watch</b><span>Live, read-only view of every role's lanes: developer, reviewer, researcher</span></div>
-            <div class="pane"><b>Host shell</b><span>A normal terminal, in the project folder</span></div>
+          <div class="panes" aria-label="What the dashboard shows">
+            <div class="pane"><b>Coordinator</b><span>Claude, talking to you, in the terminal on the left</span></div>
+            <div class="pane"><b>Lanes</b><span>Live, read-only view of every role's lanes: developer, reviewer, researcher</span></div>
+            <div class="pane"><b>Control unit</b><span>Approve held writes, restart and update the factory, each after a confirm step</span></div>
           </div>
-          <p class="note"><strong>Per-role tabs instead?</strong> <code>factory start --layout tabs</code> swaps the Watch pane for one tab per role, each tailing that role's live transcript (remembered for next time).</p>
+          <p class="note"><strong>Prefer Herdr?</strong> It is the older, optional layout: <code>factory start --layout watch</code> opens it with a Watch pane beside the Coordinator, and <code>--layout tabs</code> gives one tab per role (remembered for next time).</p>
         </div>
       </li>
 
       <li class="step">
         <h3>Sign in to Claude, then start again</h3>
         <div class="step-body">
-          <p>The first time, type <code>/login</code> in the Coordinator pane and sign in with your Claude subscription. Then run <code>factory start</code> again from the host shell under it. sbx hands a sandbox the login only when it creates it, so the second start is what creates the role sandboxes.</p>
-          <div class="cmd"><pre><span class="c"># in the Coordinator pane</span>
+          <p>The first time, press POWER ON under the dashboard's Coordinator screen, type <code>/login</code> and sign in with your Claude subscription. Then press RESTART on the control unit (and CONFIRM), or run <code>factory start</code> again in another terminal. sbx hands a sandbox the login only when it creates it, so the second start is what creates the role sandboxes.</p>
+          <div class="cmd"><pre><span class="c"># on the dashboard's Coordinator screen</span>
 /login
-<span class="c"># then, in the host shell pane below it</span>
+<span class="c"># then, in a terminal (or press RESTART on the dashboard)</span>
 factory start</pre><button class="copy" type="button">Copy</button></div>
         </div>
       </li>
@@ -226,7 +226,7 @@ factory start</pre><button class="copy" type="button">Copy</button></div>
           <p>The developer works in its own clones of your project, from what is committed, so commit first. Its branches appear in your repository after each job; merge the one the Coordinator says is approved:</p>
           <div class="cmd"><pre>git merge factory-developer/factory/rate-limit</pre><button class="copy" type="button">Copy</button></div>
           <div class="cmd"><pre>Research how to add rate limiting to the API, implement it with tests, and get it reviewed.</pre><button class="copy" type="button">Copy</button></div>
-          <p>Press <strong>Ctrl+B</strong> then <strong>Q</strong> to leave it running in the background, and <code>factory start</code> to come back. When the Coordinator suggests <code>/compact</code> or <code>/clear</code> between pieces of work, take it: that keeps every later turn cheap.</p>
+          <p>Press <strong>Ctrl-C</strong> in the terminal that runs the dashboard to close it and leave the factory running; <code>factory dashboard</code> reopens it. When the Coordinator suggests <code>/compact</code> or <code>/clear</code> between pieces of work, take it: that keeps every later turn cheap.</p>
         </div>
       </li>
     </ol>
@@ -257,11 +257,11 @@ cat &gt; ~/.config/ai-code-factory/projects/my-project.md &lt;&lt;'EOF'
 - Tests: `factory-test -q -- npx vitest run` (`npm test` starts watch mode).
 - Type check: `factory-test -q -- npx tsc --noEmit`.
 EOF</pre><button class="copy" type="button">Copy</button></div>
-    <p><strong>Let agents push branches and open PRs.</strong> Add the repos to <code>[git].repos</code> in <code>~/.config/ai-code-factory/policy.toml</code> and run <code>factory setup</code>. Then store a fine-grained GitHub token for the broker sandbox only. Agents can push only <code>factory/*</code> branches.</p>
-    <div class="cmd"><pre>sbx secret set github --sandbox factory-broker</pre><button class="copy" type="button">Copy</button></div>
+    <p><strong>Let agents push branches and open PRs.</strong> Add the repos to <code>[git].repos</code> in <code>~/.config/ai-code-factory/policy.toml</code> and run <code>factory update</code>. Then save a fine-grained GitHub token once; it goes to the broker sandbox only. Agents can push only <code>factory/*</code> branches.</p>
+    <div class="cmd"><pre>factory secret save github</pre><button class="copy" type="button">Copy</button></div>
     <p><strong>Updating the factory later</strong> takes one command. It pulls the latest code and rebuilds the images. Then it recreates only the sandboxes the changes affect, after listing them and what each one loses, and restarts the factory. Your Claude login is always kept.</p>
     <div class="cmd"><pre>factory update</pre><button class="copy" type="button">Copy</button></div>
-    <p class="note"><strong>GitHub token:</strong> if the broker gets recreated, sbx deletes the token you stored for it. Re-add it with <code>sbx secret set github --sandbox factory-broker</code>. <code>factory update</code> warns you before this happens, and <code>factory start</code> reminds you afterwards.</p>
+    <p class="note"><strong>GitHub token:</strong> save it with <code>factory secret save github</code> and it survives a recreated broker: every broker start restores it from the Keychain. Only a token set by hand with <code>sbx secret set github --sandbox factory-broker</code> is deleted when the broker is recreated; <code>factory update</code> warns you before that happens, and <code>factory start</code> reminds you afterwards.</p>
   </section>
 
   <hr>

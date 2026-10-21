@@ -255,6 +255,17 @@ sandbox_running() {
   [ "$(sbx ls 2>/dev/null | awk -v s="$1" '$1 == s { print $3 }')" = running ]
 }
 
+# local_settings_present -> success if the config folder holds any local
+# settings: policy.toml, or a broker-kit/, roles/, projects/ or plugins/ folder.
+local_settings_present() {
+  local d
+  [ -f "$FACTORY_CONFIG/policy.toml" ] && return 0
+  for d in broker-kit roles projects plugins; do
+    [ -d "$FACTORY_CONFIG/$d" ] && return 0
+  done
+  return 1
+}
+
 # sbx_not_signed_in -> success only when sbx itself says it is not signed in
 # to Docker ("Not authenticated", the message the image load gives). Any other
 # answer, including an sbx that can't be asked, is "unknown" and fails, so the

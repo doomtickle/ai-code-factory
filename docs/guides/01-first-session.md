@@ -27,8 +27,11 @@ cd ~/code/ai-code-factory
 ```
 
 Each check prints a ✓, a `!` (a warning) or a ✗ (a problem) with the fix
-indented underneath. Before setup, it's normal to see warnings that `sbx` and
-`herdr` aren't installed yet:
+indented underneath, grouped under `==>` headings: Platform, Tools, Gateway
+source (broker/ submodule), Docker, Factory tools, and Passdesk (the gateway).
+If `broker/` is empty, the doctor tries once to initialize that submodule; if
+it can't, it prints the exact `git submodule update --init` fix. Before setup,
+it's normal to see warnings that `sbx` and `herdr` aren't installed yet:
 
 ```text
 ==> Factory tools
@@ -45,7 +48,7 @@ Fix every ✗ and run the doctor again until it ends with `No problems found.`
 ```
 
 Setup runs the doctor again, installs the pinned `sbx` and `herdr`, signs you in
-to Docker (a browser window opens), builds the sandbox images, applies the
+to Docker if `sbx` isn't signed in yet (a browser window opens), builds the sandbox images, applies the
 security baseline, and links `factory` into `~/.local/bin`. It is safe to run
 again. When it finishes you'll see:
 
@@ -60,7 +63,9 @@ Setup complete. Next: cd into a project and run factory start
 
 The project must be a git repository, or a folder whose immediate subfolders
 are git repositories. The developer works in git clones of it, so it only
-ever sees what you have committed.
+ever sees what you have committed. Every repository needs at least one commit:
+`factory start` refuses a repository with none and prints the
+`git commit --allow-empty` command to run first.
 
 ```bash
 cd ~/code/my-api
@@ -89,7 +94,7 @@ creates only the Coordinator and tells you so:
 
 ```text
 note: no Claude login is stored yet, so these role sandboxes were not created: developer researcher reviewer
-  Type /login in the Coordinator pane, then run 'factory start' again (e.g. in the Host shell pane).
+  Type /login in the Coordinator (POWER ON on the dashboard), then run 'factory start' again (or press RESTART on the dashboard).
 ```
 
 Do exactly that:
@@ -172,7 +177,7 @@ messages, each tool call and a one-line summary of its result (left out here):
 14:02:11  ▶ job 20261017-140211-a3f9c2 from the Coordinator
 14:02:11     > Add unit tests for slugify in src/utils/slug.ts on a new branch factory/slug-tests.
 14:02:11     preparing lane developer (git clone/fetch from the project)
-14:02:19     model: claude-sonnet-5
+14:02:19     model: claude-sonnet-5-5
 14:06:40  ⎇ branch factory-developer/factory/slug-tests at 3f9c2ab
 14:06:40  ■ job 20261017-140211-a3f9c2 done after 269s
 ```

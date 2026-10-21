@@ -1443,7 +1443,7 @@ def server_instructions() -> str:
         "roles and lanes, broker tools, settings, error messages from factory commands): call "
         "factory_docs and answer from it, not from memory, citing the section. You can't run "
         "factory commands; tell the user the exact command to run in a terminal on their "
-        "machine (the host), e.g. the Host shell pane.",
+        "machine (the host), not in the dashboard.",
         "Roles with several lanes run that many tasks at once. Split large work into "
         "independent chunks, each on its own factory/<topic> branch in its own lane "
         "(delegate with wait_seconds: 0, then wait_for_job each, with the default timeout: "

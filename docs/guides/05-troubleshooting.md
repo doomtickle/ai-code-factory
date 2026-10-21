@@ -34,7 +34,7 @@ tool or event, the decision or status, and the reason for a refusal:
 
 ```text
 14:20:03  developer  npm_fetch  allow
-14:21:47  developer  web_fetch  deny  the developer role may not use web_fetch (roles/developer/role.conf BROKER_TOOLS)
+14:21:47  developer  web_fetch  deny  principal 'developer' is not granted tool 'web_fetch' (see roles/developer/role.conf)
 ```
 
 The raw files are in the state folder, `~/.local/state/ai-code-factory/`
@@ -96,6 +96,17 @@ the repository itself rather than a folder above it:
 git init && git add -A && git commit -m "Initial commit"
 factory start
 ```
+
+### "is a git repository with no commits yet"
+
+```text
+error: /Users/you/code/my-api is a git repository with no commits yet, so the developer has nothing to branch from. Make the first commit there (git -C '/Users/you/code/my-api' commit --allow-empty -m 'Initial commit'), then run 'factory start' again.
+```
+
+**Cause:** the developer clones your project and branches from its `HEAD`; a
+repository with no commits has none. In a folder of repositories, the message
+names the one that is empty.
+**Fix:** make the first commit it names, then run `factory start` again.
 
 ### "created with an older layout"
 
@@ -200,11 +211,14 @@ Coordinator usually handles these itself:
 ### "DENIED by broker policy"
 
 Every broker refusal starts with `DENIED by broker policy:` and says which rule
-applied. Roles are told to report these, not work around them. Common ones:
+applied. Roles are told to report these, not work around them. README
+[Fixing DENIED](../../README.md#fixing-denied) has the fix for the most common
+causes: a tool not granted, a host not allowed, a missing secret, Jira not
+configured. Other ones:
 
 | Message (after `DENIED by broker policy:`) | Fix |
 |---|---|
-| `the developer role may not use web_fetch (roles/developer/role.conf BROKER_TOOLS)` | Working as designed: only the researcher reads the web. Grant a tool in `BROKER_TOOLS` only if you mean to. |
+| `principal 'developer' is not granted tool 'web_fetch' (see roles/developer/role.conf)` | Working as designed: only the researcher reads the web. Grant a tool in `BROKER_TOOLS` only if you mean to (README, [Fixing DENIED](../../README.md#fixing-denied)). |
 | `host fastify.dev is not in the web allowlist (policy.toml [web].allow_hosts)` | Add the host to `[web].allow_hosts` in your local `policy.toml` and to your local `broker-kit/spec.yaml`, then `factory update` ([Make it yours](04-customize.md)). |
 | `repo my-org/my-api is not in the broker allowlist (policy.toml [git].repos)` | Add it to `[git].repos` in your local `policy.toml`, then `factory update`. |
 | `agents may only push branches starting with 'factory/'` | Push a `factory/*` branch. Protected branches (`main`, `master`, `release/*`) are always refused. |

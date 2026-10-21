@@ -92,7 +92,7 @@ wrapped here; `report` is the role's own summary):
 {"job_id": "20261017-142530-9b1e44", "role": "developer", "lane": "developer",
  "status": "done", "elapsed_seconds": 412,
  "task": "Add per-client rate limiting to the public API in src/server/ on branch factory/rate-limit.",
- "model": "claude-sonnet-5", "cost_usd": 0.8312, "session_cost_usd": 0.8312,
+ "model": "claude-sonnet-5-5", "cost_usd": 0.8312, "session_cost_usd": 0.8312,
  "context_tokens": 48213,
  "branches": [{"repo": ".", "ref": "factory-developer/factory/rate-limit", "commit": "3f9c2ab"}],
  "import_errors": [],

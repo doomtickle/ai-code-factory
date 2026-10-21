@@ -141,7 +141,7 @@ It takes 5 to 15 minutes. It:
 
 - runs `factory doctor` again and stops if anything is wrong
 - installs the pinned `sbx` (Docker's `docker-sbx` package, checksum-verified;
-  apt asks for your password) and `herdr`
+  apt asks for your password) and `herdr` (only the optional Herdr layouts use it)
 - signs you in to Docker. A browser window opens. If none does, copy the URL
   it prints into a Windows browser.
 - builds the three sandbox images and loads them into sbx
@@ -161,15 +161,20 @@ cd ~/code/my-project
 factory start
 ```
 
-Herdr opens with a **coordinator** tab. **The first time:**
+`factory start` opens the dashboard in your Windows browser (if nothing opens,
+paste the link it prints into one). Its left-hand screen is the Coordinator's terminal.
+**The first time:**
 
-1. Type `/login` in the Coordinator pane and sign in with your Claude account.
-   Paste the URL into a Windows browser if nothing opens.
-2. Run `factory start` again, for example in the Host shell pane below the
-   Coordinator. This creates the role sandboxes, which pick up the login.
+1. Press POWER ON on the dashboard's Coordinator screen, type `/login` and
+   sign in with your Claude account. Paste the URL into a Windows browser if
+   nothing opens.
+2. Run `factory start` again in another Ubuntu terminal (or press RESTART on
+   the dashboard). This creates the role sandboxes, which pick up the login.
 
-Then tell the Coordinator what you want done. **Ctrl+B** then **Q** leaves the
-factory running in the background; `factory start` reopens it.
+Then tell the Coordinator what you want done. Ctrl-C in the terminal that runs
+the dashboard closes it and leaves the factory running; `factory dashboard`
+reopens it. Herdr is the older, optional layout: `factory start --layout
+watch` (or `tabs`) opens it instead (README, *Layouts*).
 
 ## Optional extras
 
@@ -179,8 +184,9 @@ factory running in the background; `factory start` reopens it.
   every time the broker is created, so `factory update` never asks for it again.
   GitLab instead (or too): README, *Enabling GitLab*, and
   `factory secret save gitlab`.
-- **Personal settings** (repos agents may push to, extra hosts): copy
-  `config.example/` to `~/.config/ai-code-factory/` and edit it. README,
+- **Personal settings** (repos agents may push to, extra hosts): run
+  `factory config init` (it writes commented examples to
+  `~/.config/ai-code-factory/`) and uncomment what you need. README,
   *Local settings*.
 - **GitLab, Gemini, Jira, private npm registry, approvals webhook:** WSL usually has no Linux
   keyring, so the factory uses the **Windows Credential Manager** instead

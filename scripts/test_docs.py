@@ -549,5 +549,78 @@ class DoctorMarkTests(unittest.TestCase):
         self.assertIn('class="mk mk-ok"', page)
 
 
+def _doc_sources():
+    files = [REPO / "README.md", REPO / "docs" / "mac-quickstart.html"]
+    files += sorted((REPO / "docs").glob("*.md")) + sorted((REPO / "docs" / "guides").glob("*.md"))
+    return [f for f in files if f.is_file()]
+
+
+def _doc_lines():
+    for src in _doc_sources():
+        for no, line in enumerate(src.read_text(encoding="utf-8").splitlines(), 1):
+            yield src, no, line
+
+
+class StalePhrasesTest(unittest.TestCase):
+    """Docs and user-facing messages must not drift back to wording the code outgrew."""
+
+    def test_herdr_is_not_called_the_default(self):
+        pat = re.compile(
+            r"herdr[^.\n]{0,40}\(default\)|herdr (is )?(now )?the default|herdr[^.\n]{0,40}\bby default"
+            r"|default (layout )?(is|opens|=)\s*herdr|\bit opens herdr\b|herdr opens with a", re.I)
+        bad = [f"{s.name}:{n}" for s, n, line in _doc_lines() if pat.search(line)
+               and not re.search(r"\b(no|not|without|isn't|optional)\b[^.\n]{0,40}herdr", line, re.I)]
+        self.assertEqual(bad, [])
+
+    def test_saved_token_is_not_lost_on_recreate(self):
+        pat = re.compile(
+            r"token[^.\n]{0,80}(is |are |gets )?(lost|wiped|deleted|erased)[^.\n]{0,40}(recreat|re-creat)"
+            r"|(recreat|re-creat)[^.\n]{0,60}(deletes|wipes|erases|loses)[^.\n]{0,30}token"
+            r"|(deletes|wipes|erases) (a |the )?(github )?token", re.I)
+        bad = []
+        for s, n, line in _doc_lines():
+            if pat.search(line) and not re.search(r"hand|sbx secret set|by hand|not saved|without saving", line, re.I):
+                bad.append(f"{s.name}:{n}")
+        self.assertEqual(bad, [])
+
+    def test_no_host_shell_pane(self):
+        files = _doc_sources() + [REPO / "bin" / "factory", REPO / "scripts" / "02-launch-factory.sh",
+                                  REPO / "dispatch" / "server.py"]
+        bad = [f.name for f in files if f.is_file() and re.search(r"host shell pane", f.read_text(encoding="utf-8"), re.I)]
+        self.assertEqual(bad, [])
+
+    def test_model_ids_are_ones_the_config_uses(self):
+        known = {"claude-opus-5-5", "claude-fable-5-1", "claude-code"}
+        older = {"claude-sonnet-5", "claude-haiku-4-5-20251001"}
+        for conf in sorted((REPO / "roles").glob("*/role.conf")):
+            for line in conf.read_text(encoding="utf-8").splitlines():
+                if line.lstrip().startswith("#"):
+                    continue
+                known.update(re.findall(r"claude-[a-z0-9]+(?:-[a-z0-9]+)*", line))
+        self.assertIn("claude-sonnet-5-5", known)
+        bad = []
+        prev = ""
+        for s, n, line in _doc_lines():
+            for tok in re.findall(r"claude-[a-z0-9]+(?:-[a-z0-9]+)*", line):
+                if tok in known:
+                    continue
+                if tok in older and re.search(r"\bolder\b", prev + " " + line, re.I):
+                    continue
+                bad.append(f"{s.name}:{n} {tok}")
+            prev = line
+        self.assertEqual(bad, [])
+
+
+class FixingDeniedTest(unittest.TestCase):
+    def test_readme_explains_each_common_denied(self):
+        text = (REPO / "README.md").read_text(encoding="utf-8")
+        m = re.search(r"^#+ Fixing DENIED\n(.*?)(?=^#{1,3} )", text, re.S | re.M)
+        self.assertIsNotNone(m, "README has no 'Fixing DENIED' section")
+        body = m.group(1)
+        for needle in ("BROKER_TOOLS", "allow_hosts", "factory secret save", "[jira]", "factory update"):
+            with self.subTest(needle=needle):
+                self.assertIn(needle, body)
+
+
 if __name__ == "__main__":
     unittest.main()
