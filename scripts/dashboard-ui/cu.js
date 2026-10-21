@@ -112,6 +112,26 @@
   const running = () => act().phase === "running";
   const secondsLeft = c => (c.seconds_left == null ? null : Math.max(0, Math.round(Number(c.seconds_left) - (Date.now() - polledAt) / 1000)));
   const expired = c => { const s = secondsLeft(c); return s != null && s <= 0; };
+  // A decided card stays held until the agent retries the call (the retry picks
+  // the decision up); one decision per card, so its keys stay dark meanwhile.
+  const VERDICTS = { approve: "approved", decline: "declined" };
+  const decidedOf = c => (c && VERDICTS[c.decided] ? c.decided : null);
+  const closed = c => !!c && (!!decidedOf(c) || expired(c));
+  const clock = ts => {
+    const n = Number(ts);
+    if (ts == null || !Number.isFinite(n)) return "?";
+    const d = new Date(n * 1000);
+    return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  };
+  // "Approved by sam at 14:02; waiting for the agent to retry" (d: the card, or a 409's body).
+  const decidedText = d => `${VERDICTS[d.decided] === "approved" ? "Approved" : "Declined"} by ${str(d.decided_by) || "?"} at ${clock(d.decided_at)}; waiting for the agent to retry`;
+  // What the keys' strip says when they are dark for a reason other than a new card.
+  function shutText(c) {
+    const v = decidedOf(c);
+    if (v === "approve") return "Approved · waiting for the agent's retry";
+    if (v === "decline") return "Declined";
+    return expired(c) ? "Expired" : "";
+  }
 
   async function poll() {
     if (polling || document.hidden) return;
@@ -164,8 +184,17 @@
   // Each line is one ellipsized row on the small glass; its full text is the tooltip.
   const line = (cls, text) => { const n = el("div", cls, text); n.title = n.textContent; return n; };
   function cardLines(c) {
-    // Most telling first: what and who, a PR's title, then where it comes from and goes.
-    const out = [line("ln big", `${str(c.tool) || "write"} · ${str(c.role) || "?"}`)];
+    // Most telling first: the card's state if it can't be decided any more, what
+    // and who, a PR's title, then where it comes from and goes.
+    const out = [];
+    const v = decidedOf(c);
+    if (v) {
+      out.push(line(`ln big ${v === "approve" ? "st-ok" : "st-no"}`, v === "approve" ? "APPROVED, waiting for the agent's retry" : "DECLINED"));
+      out.push(line("ln dim", `by ${str(c.decided_by) || "?"} at ${clock(c.decided_at)}`));
+    } else if (expired(c)) {
+      out.push(line("ln big st-no", "EXPIRED"), line("ln dim", "the agent's retry makes a fresh card"));
+    }
+    out.push(line("ln big", `${str(c.tool) || "write"} · ${str(c.role) || "?"}`));
     if (c.title) out.push(line("ln title", `“${str(c.title)}”${c.draft ? " (draft)" : ""}`));
     out.push(line("ln lane", lanesLine(c)));
     if (c.repo) out.push(line("ln", `→ ${str(c.repo)}`));
@@ -220,11 +249,12 @@
     selFp = c ? c.fp : null;
     if (asking("deck") && (!c || c.id !== ask.id || c.fp !== ask.fp)) cancelAsk();
 
-    setClass($("cu-led"), cs.length ? "led a blink" : "led g");
+    // Blinking while a held write waits for a person; steady while all of them wait for the agent.
+    setClass($("cu-led"), cs.some(x => !closed(x)) ? "led a blink" : cs.length ? "led a" : "led g");
     $("sel").hidden = cs.length < 2;
     if (cs.length > 1) setText($("sel-n"), `${cs.indexOf(c) + 1}/${cs.length}`);
 
-    const k = c ? JSON.stringify(Object.assign({}, c, { seconds_left: c.seconds_left == null })) : "empty";
+    const k = c ? JSON.stringify(Object.assign({}, c, { seconds_left: c.seconds_left == null, expired: expired(c) })) : "empty";
     if (k !== shownKey) {
       shownKey = k;
       body.replaceChildren(...(c ? cardLines(c) : [el("div", "ln idle", "No writes held")]));
@@ -242,25 +272,32 @@
     const c = fault ? null : current();
     const reason = $("reason");
     const held = !!c && holding();
-    const live = !!c && !busy && !held;
-    reason.disabled = !c;
-    $("keys-hold").hidden = !held;
+    const shut = closed(c);
+    const live = !!c && !busy && !held && !shut;
+    reason.disabled = !c || shut;
+    const strip = shut ? shutText(c) : held ? "Check the new card" : "";
+    $("keys-hold").hidden = !strip;
+    setText($("keys-hold"), strip);
     const deckAsk = asking("deck");
-    const canDecline = deckAsk ? !busy : live && reason.value.trim() !== "";
-    const canApprove = live && !expired(c) && (!deckAsk || armed());
+    // DECLINE takes a press without a reason too, to say that one is needed;
+    // its lamp lights only when the press would decline.
+    const canDecline = deckAsk ? !busy : live;
+    const declineLit = deckAsk ? !busy : live && reason.value.trim() !== "";
+    const canApprove = live && (!deckAsk || armed());
     setText($("lbl-decline"), deckAsk ? "Cancel" : "Decline");
     setText($("lbl-approve"), deckAsk ? "Confirm approve" : "Approve");
     $("btn-decline").disabled = !canDecline;
     $("btn-approve").disabled = !canApprove;
-    setClass($("led-decline"), `led${canDecline ? " r" : ""}`);
+    setClass($("led-decline"), `led${declineLit ? " r" : ""}`);
     setClass($("led-approve"), `led${canApprove ? " g" : ""}`);
-    if (canDecline) reason.classList.remove("need");
+    if (declineLit || !live) reason.classList.remove("need");
     const inspectable = !fault && !!c && c.patch === true;
     $("insp-row").hidden = !inspectable;
     $("btn-inspect").disabled = !inspectable;
     setClass($("led-inspect"), `led${inspectable ? " g" : ""}`);
-    $("btn-approve").title = c && expired(c) ? "This hold has expired" : "";
-    $("btn-decline").title = c && !canDecline && !busy && !held && !deckAsk ? "Type a reason to decline" : "";
+    const why = !c ? "" : decidedOf(c) ? decidedText(c) : expired(c) ? "This hold has expired" : "";
+    $("btn-approve").title = why;
+    $("btn-decline").title = why || (live && !declineLit && !deckAsk ? "Type a reason to decline" : "");
 
     const a = act(), run = !fault && running();
     const bound = !!(st && st.bound);
@@ -277,10 +314,17 @@
     updateInspKeys();
   }
 
-  // Once a second: the countdown, and APPROVE goes dark when the hold expires.
+  // Once a second: the countdown, and the keys go dark when the hold expires
+  // (the glass is redrawn once then, to say EXPIRED).
+  let shownExpired = null;
   function tick() {
     const c = fault ? null : current();
     const s = c ? secondsLeft(c) : null;
+    const exp = c ? `${c.id}\u0000${expired(c)}` : null;
+    if (exp !== shownExpired) {
+      shownExpired = exp;
+      if (c && expired(c) && screen === "deck") { renderDeckOnly(); return; }
+    }
     const box = $("cd-box");
     setText($("cd"), !c ? "--:--" : s == null ? "--:--" : s <= 0 ? "EXP" : mmss(s));
     setClass(box, `lcd cd-box${!c || s == null ? " off" : s < 60 ? " low" : ""}`);
@@ -304,7 +348,16 @@
     gone: "Gone: that write is no longer held (decided elsewhere, or the agent gave up).",
     changed: "Changed: a new write replaced that card. Check it, then decide again.",
     expired: "Expired: the hold ran out. The agent can push again.",
+    ambiguous: "Ambiguous: two held writes claim this id. Nothing was decided; use factory approvals in a terminal.",
+    reason: "DECLINE needs a reason for the agent: type one, then press DECLINE.",
   };
+  // Every refusal as text: the server's reasons by name, anything else as it says.
+  function refusalText(res) {
+    const e = errText(res);
+    if (res.status === 409 && e === "decided") return `Already decided: ${decidedText(res.data)}.`;
+    if (res.status === 409 && WHY[e]) return WHY[e];
+    return `Refused (${res.status}): ${e}`;
+  }
   // APPROVE on a push whose patch was truncated (the card says so, or the viewer
   // got a truncated patch) asks once more, on the deck or in the viewer:
   // "Approve without seeing N files?", with CANCEL and CONFIRM APPROVE, and
@@ -363,12 +416,14 @@
     const reasonEl = fromViewer ? $("pv-reason") : $("reason");
     const say = fromViewer ? inspSay : flash;
     const reason = reasonEl.value.trim();
+    if (decidedOf(c)) { say(`Already decided: ${decidedText(c)}.`, "err"); return; }
+    if (expired(c)) { say(WHY.expired, "err"); return; }
     if (verdict === "decline" && !reason) {
       reasonEl.classList.add("need");
       reasonEl.focus();
+      say(WHY.reason, "err");
       return;
     }
-    if (verdict === "approve" && expired(c)) return;
     busy = true;
     updateKeys();
     try {
@@ -377,12 +432,9 @@
         expectGone = c.id;
         reasonEl.value = "";
         if (fromViewer) closeInspect();
-        flash(`${verdict === "approve" ? "APPROVED" : "DECLINED"} · ${str(res.data.text)}`, "ok");
-      } else if (res.status === 409) {
-        const e = errText(res).toLowerCase();
-        say(e.includes("gone") ? WHY.gone : e.includes("changed") ? WHY.changed : e.includes("expired") ? WHY.expired : errText(res), "err");
+        flash(`${verdict === "approve" ? "APPROVED" : "DECLINED"} · ${str(res.data.text)} · waiting for the agent's retry`, "ok");
       } else {
-        say(errText(res), "err");
+        say(refusalText(res), "err");
       }
     } catch (e) {
       say("No link to the dashboard: nothing was decided.", "err");
@@ -717,7 +769,7 @@
   const inspHolding = () => !!insp && Date.now() < insp.holdUntil;
   function inspLive() {
     const c = inspCard();
-    return !!c && !fault && !busy && !!insp.data && insp.dataFp === c.fp && !inspHolding();
+    return !!c && !fault && !busy && !!insp.data && insp.dataFp === c.fp && !inspHolding() && !closed(c);
   }
   function inspSay(text, kind) {
     const n = $("pv-note");
@@ -737,18 +789,22 @@
     const c = inspCard();
     const live = inspLive();
     const held = !!c && inspHolding();
-    $("pv-hold").hidden = !held;
-    pvReason.disabled = !c;
+    const shut = closed(c);
+    const strip = shut ? shutText(c) : held ? "Check the new card" : "";
+    $("pv-hold").hidden = !strip;
+    setText($("pv-hold"), strip);
+    pvReason.disabled = !c || shut;
     const vAsk = asking("viewer");
-    const canDecline = vAsk ? !busy : live && pvReason.value.trim() !== "";
-    const canApprove = live && !expired(c) && (!vAsk || armed());
+    const canDecline = vAsk ? !busy : live;
+    const declineLit = vAsk ? !busy : live && pvReason.value.trim() !== "";
+    const canApprove = live && (!vAsk || armed());
     setText($("pv-lbl-decline"), vAsk ? "Cancel" : "Decline");
     setText($("pv-lbl-approve"), vAsk ? "Confirm approve" : "Approve");
     $("pv-decline").disabled = !canDecline;
     $("pv-approve").disabled = !canApprove;
-    setClass($("pv-led-decline"), `led${canDecline ? " r" : ""}`);
+    setClass($("pv-led-decline"), `led${declineLit ? " r" : ""}`);
     setClass($("pv-led-approve"), `led${canApprove ? " g" : ""}`);
-    if (canDecline) pvReason.classList.remove("need");
+    if (declineLit || !live) pvReason.classList.remove("need");
   }
 
   function openInspect() {
@@ -780,11 +836,11 @@
         insp.data = res.data;
         insp.dataFp = fp;
         renderPatch();
-      } else if (res.status === 409 && /gone/i.test(errText(res))) {
+      } else if (res.status === 409 && errText(res) === "gone") {
         closeInspect(WHY.gone);
       } else {
         inspHead("Error", "failed", "r");
-        pvMain.replaceChildren(el("p", "pv-msg k-err", `✕ ${errText(res)}`),
+        pvMain.replaceChildren(el("p", "pv-msg k-err", `✕ ${refusalText(res)}`),
           el("p", "pv-msg k-dim", "Nothing is shown, so nothing can be decided from here. Close, and decide from the deck if you must."));
       }
       updateInspKeys();

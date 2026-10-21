@@ -9,21 +9,29 @@ only, and touches nothing but those files. The dashboard's control unit
 (scripts/dashboard_controls.py) writes decisions through write_decision()
 here, so both write the same record.
 
-    factory approvals                      pending cards
+    factory approvals                      pending cards (decided ones marked)
     factory approvals show <id>
     factory approvals approve <id> [--as NAME] [--reason TEXT]
     factory approvals decline <id> [--as NAME] [--reason TEXT]
     factory approvals watch                print cards as they arrive
-    factory approvals summary              one line for scripts: "pending oldest_min expired_unhandled"
+    factory approvals summary              one line for scripts: "pending oldest_min expired_unhandled decided"
+
+A decision is final for its card: the gateway keeps the card in pending/
+until the agent retries the held call (the retry picks the decision up), and
+a second approve or decline of the same card is refused, here and in the
+dashboard, rather than overwriting the first.
 """
 
 import argparse
+import errno
+import fcntl
 import getpass
 import hashlib
 import json
 import os
 import re
 import sys
+import stat
 import tempfile
 import time
 from pathlib import Path
@@ -79,13 +87,24 @@ def one_line(card):
     return "{}  {:<10} {}  ({} min left)".format(card["id"], who, what, minutes_left(card))
 
 
+def status_note(state, card, now=None):
+    """What the card is waiting for, if not for a decision: "" while it is."""
+    info = decided(state, card)
+    if info["decided"]:
+        return info, decided_text(info)
+    if minutes_left(card, now) < 0:
+        return info, "expired; the agent's retry will make a fresh card"
+    return info, ""
+
+
 def cmd_list(state, _args):
     cards = read_cards(state)
     if not cards:
         print("No approvals pending.")
         return 0
     for card in cards:
-        print(one_line(card))
+        _, note = status_note(state, card)
+        print(one_line(card) + ("\n    [{}]".format(note) if note else ""))
     print("\nfactory approvals show <id> | approve <id> | decline <id> --reason ...")
     return 0
 
@@ -96,7 +115,14 @@ def cmd_show(state, args):
         print("no pending approval matches {}".format(args.id), file=sys.stderr)
         return 1
     skip = {"created", "expires", "nonce"}
+    info, note = status_note(state, card)
     print("approval {}  ({} min left)".format(card["id"], minutes_left(card)))
+    print("  {:<14} {}".format("decided", info["decided"] or "no"))
+    if info["decided"]:
+        print("  {:<14} {}".format("decided_by", info["decided_by"]))
+        print("  {:<14} {}".format("decided_at", when(info["decided_at"])))
+    if note:
+        print("  {:<14} {}".format("status", note))
     for key in sorted(card):
         if key in skip or key == "id":
             continue
@@ -110,6 +136,64 @@ def cmd_show(state, args):
     return 0
 
 
+class AlreadyDecided(Exception):
+    """write_decision() found a decision for this very card (same id and nonce)
+    already written: the first one stands. .decision is that decision."""
+
+    def __init__(self, decision):
+        super().__init__("already decided")
+        self.decision = decision
+
+
+def read_decision(state, card):
+    """The decision written for this card (same id and nonce), or None. A
+    decision file with another nonce belongs to an earlier card with the same
+    id and is not this card's."""
+    cid = card.get("id")
+    if not isinstance(cid, str) or not CARD_ID.fullmatch(cid):
+        return None
+    try:
+        decision = json.loads((state / "approvals" / "decisions" / "{}.json".format(cid)).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(decision, dict) or decision.get("nonce") != card.get("nonce"):
+        return None
+    if decision.get("decision") not in ("approve", "decline"):
+        return None
+    return decision
+
+
+def decision_info(decision):
+    """{"decided": "approve"|"decline"|None, "decided_by": str|None,
+    "decided_at": float|None}: a decision (or None) as lists show it."""
+    if decision is None:
+        return {"decided": None, "decided_by": None, "decided_at": None}
+    ts = decision.get("ts")
+    return {"decided": decision.get("decision"), "decided_by": str(decision.get("approver") or "unknown"),
+            "decided_at": float(ts) if isinstance(ts, (int, float)) and not isinstance(ts, bool) else None}
+
+
+def decided(state, card):
+    """decision_info() of this card's own decision."""
+    return decision_info(read_decision(state, card))
+
+
+def when(ts):
+    """A decision's time for people: local "YYYY-MM-DD HH:MM", or "?"."""
+    if ts is None:
+        return "?"
+    try:
+        return time.strftime("%Y-%m-%d %H:%M", time.localtime(float(ts)))
+    except (TypeError, ValueError, OverflowError, OSError):
+        return "?"
+
+
+def decided_text(info):
+    """ "approved by X at T; waiting for the agent to retry" (or declined)."""
+    return "{} by {} at {}; waiting for the agent to retry".format(
+        "approved" if info["decided"] == "approve" else "declined", info["decided_by"], when(info["decided_at"]))
+
+
 def card_fingerprint(card):
     """A short public stand-in for the card's nonce: the first 16 hex digits of
     sha256(id NUL nonce). The dashboard's control unit sends it back with a
@@ -119,11 +203,60 @@ def card_fingerprint(card):
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
 
 
+LOCK_WAIT = 5.0  # seconds write_decision waits for another writer's lock
+
+
+class _DecisionLock:
+    """An exclusive flock on approvals/decisions/.write.lock, so two writers
+    can't both set aside a stale decision and both write their own. The
+    broker can write in its state folder, so the lock file is opened without
+    following a symlink and without blocking on a FIFO, and must be a regular
+    file. Waits up to LOCK_WAIT seconds, then raises OSError(EAGAIN)."""
+
+    def __init__(self, folder):
+        self.folder = folder
+        self.fd = None
+
+    def __enter__(self):
+        flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0) \
+            | getattr(os, "O_CLOEXEC", 0)
+        fd = os.open(str(self.folder / ".write.lock"), flags, 0o600)
+        try:
+            if not stat.S_ISREG(os.fstat(fd).st_mode):
+                raise OSError(errno.EINVAL, "the decisions lock is not a regular file")
+            end = time.monotonic() + LOCK_WAIT
+            while True:
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except OSError as e:
+                    if e.errno not in (errno.EAGAIN, errno.EACCES) or time.monotonic() >= end:
+                        raise OSError(errno.EAGAIN, "another decision is being written; try again") from None
+                    time.sleep(0.05)
+        except BaseException:
+            os.close(fd)
+            raise
+        self.fd = fd
+        return self
+
+    def __exit__(self, *_exc):
+        os.close(self.fd)  # releases the flock
+        return False
+
+
 def write_decision(state, card, verdict, approver, reason=""):
-    """Write the decision file the gateway waits for (approvals/decisions/<id>.json),
-    atomically (a temporary file, then os.replace). Used by this console and
-    by the dashboard's control unit, so both write exactly the same record.
-    Returns the decision."""
+    """Write the decision file the gateway waits for (approvals/decisions/<id>.json).
+    Used by this console and by the dashboard's control unit, so both write
+    exactly the same record. Returns the decision.
+
+    One decision per card: if a decision for this card (same id and nonce)
+    is already there, nothing is written and AlreadyDecided is raised with
+    it. The file is written in full under a temporary name and then hard-
+    linked onto the final name, which fails if that name exists, so of two
+    people deciding at once exactly one wins. A decision file with another
+    nonce (an earlier card that had the same id) is removed first, under a
+    lock (_DecisionLock), so it never blocks the new card. Raises OSError
+    if the lock can't be had."""
     if verdict not in ("approve", "decline"):
         raise ValueError("verdict must be approve or decline")
     if not isinstance(card.get("id"), str) or not CARD_ID.fullmatch(card["id"]):
@@ -135,20 +268,35 @@ def write_decision(state, card, verdict, approver, reason=""):
     path = state / "approvals" / "decisions" / "{}.json".format(card["id"])
     path.parent.mkdir(parents=True, exist_ok=True)
     # A temporary file of its own (two people deciding at once must not share
-    # one), in the same folder so os.replace is atomic; removed on failure.
+    # one), in the same folder so it can be linked onto the final name; it is
+    # always removed, as the final name (if linked) keeps the data.
     fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".{}.".format(card["id"]), suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(json.dumps(decision, indent=2) + "\n")
         os.chmod(tmp, 0o644)
-        os.replace(tmp, path)
-    except BaseException:
+        with _DecisionLock(path.parent):
+            for _ in range(3):
+                try:
+                    os.link(tmp, str(path))  # never replaces: EEXIST if a decision is there
+                    return decision
+                except FileExistsError:
+                    pass
+                existing = read_decision(state, card)
+                if existing is not None:
+                    raise AlreadyDecided(existing)
+                # Another card's decision (another nonce), or unreadable: not
+                # this card's, so it must not block it.
+                try:
+                    os.unlink(str(path))
+                except FileNotFoundError:
+                    pass
+            raise OSError(errno.EAGAIN, "the decision file keeps reappearing; try again")
+    finally:
         try:
             os.unlink(tmp)
         except OSError:
             pass
-        raise
-    return decision
 
 
 def default_approver():
@@ -160,6 +308,10 @@ def decide(state, args, verdict):
     if not card:
         print("no pending approval matches {}".format(args.id), file=sys.stderr)
         return 1
+    info = decided(state, card)
+    if info["decided"]:
+        print("approval {} is already {}".format(card["id"], decided_text(info)), file=sys.stderr)
+        return 1
     if minutes_left(card) < 0:
         print("approval {} has expired; the agent's retry will make a fresh one".format(card["id"]), file=sys.stderr)
         return 1
@@ -169,7 +321,11 @@ def decide(state, args, verdict):
     approver = args.as_name or default_approver()
     try:
         write_decision(state, card, verdict, approver, args.reason)
-    except ValueError as e:
+    except AlreadyDecided as e:  # someone else decided it a moment ago
+        info = decision_info(e.decision)
+        print("approval {} is already {}".format(card["id"], decided_text(info)), file=sys.stderr)
+        return 1
+    except (ValueError, OSError) as e:
         print("cannot decide {}: {}".format(card["id"], e), file=sys.stderr)
         return 1
     print("{} {} as {}: {}".format("approved" if verdict == "approve" else "declined", card["id"], approver,
@@ -191,32 +347,33 @@ def is_expired_unhandled(state, card, now=None):
     """
     if minutes_left(card, now) >= 0:
         return False
-    path = state / "approvals" / "decisions" / "{}.json".format(card["id"])
-    try:
-        decision = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return True
-    return decision.get("nonce") != card.get("nonce")
+    return read_decision(state, card) is None
 
 
 def summarize(state, now=None):
-    """pending count, the oldest card's age in minutes (None if none), expired-unhandled count."""
+    """pending: cards still waiting for a person (no decision of their own);
+    oldest_minutes: the oldest of those, in minutes (None if none);
+    expired_unhandled: expired cards with no decision; decided: cards decided
+    and waiting for the agent's retry (they need no one)."""
     cards = read_cards(state)
+    undecided = [c for c in cards if read_decision(state, c) is None]
     oldest_minutes = None
-    if cards:
+    if undecided:
         now_ts = time.time() if now is None else now
-        oldest_minutes = int((now_ts - min(float(c.get("created", 0)) for c in cards)) // 60)
-    expired_unhandled = sum(1 for c in cards if is_expired_unhandled(state, c, now))
-    return {"pending": len(cards), "oldest_minutes": oldest_minutes, "expired_unhandled": expired_unhandled}
+        oldest_minutes = int((now_ts - min(float(c.get("created", 0)) for c in undecided)) // 60)
+    expired_unhandled = sum(1 for c in undecided if minutes_left(c, now) < 0)
+    return {"pending": len(undecided), "oldest_minutes": oldest_minutes, "expired_unhandled": expired_unhandled,
+            "decided": len(cards) - len(undecided)}
 
 
 def cmd_summary(state, _args):
-    # One line, three whitespace-separated fields, for a caller (bin/factory)
-    # to read with `set --` rather than parsing JSON: pending count, the
-    # oldest card's age in minutes (-1 if none pending), expired-unhandled count.
+    # One line, four whitespace-separated fields, for a caller (bin/factory)
+    # to read with `set --` rather than parsing JSON: undecided pending count,
+    # the oldest undecided card's age in minutes (-1 if none), expired-unhandled
+    # count, and decided cards waiting for the agent's retry.
     s = summarize(state)
     oldest = -1 if s["oldest_minutes"] is None else s["oldest_minutes"]
-    print("{} {} {}".format(s["pending"], oldest, s["expired_unhandled"]))
+    print("{} {} {} {}".format(s["pending"], oldest, s["expired_unhandled"], s["decided"]))
     return 0
 
 

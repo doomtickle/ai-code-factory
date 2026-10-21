@@ -284,7 +284,10 @@ class Dashboard:
         name, which is the role (developer), never the lane (developer-lane2),
         so "lanes" lists every running lane of that role: any of them may be
         the one waiting. With fp (the control unit only, never the main
-        page's /api/state), each card also carries approvals.card_fingerprint."""
+        page's /api/state), each card also carries approvals.card_fingerprint.
+        A card someone has decided stays pending until the agent retries the
+        call: "decided" is then "approve" or "decline", with "decided_by"
+        and "decided_at" (else all three are None)."""
         running = self.running()
         out = []
         for card in approvals.read_cards(self.state / "broker"):
@@ -304,6 +307,7 @@ class Dashboard:
                 "file_count": None if file_count is None else int(file_count),
                 "files": [str(f) for f in files[:12]],
                 "seconds_left": None if expires is None else int(expires - now),
+                **approvals.decided(self.state / "broker", card),
             })
             if fp:
                 out[-1]["fp"] = approvals.card_fingerprint(card)
@@ -313,9 +317,13 @@ class Dashboard:
     def held(cards: list) -> dict:
         """Lane name -> note for each running lane whose role has a write held.
         With one running lane the hold is surely its own (note ""); with several
-        the card can't say which, so each is marked held and the note says so."""
+        the card can't say which, so each is marked held and the note says so.
+        A decided or expired card holds nothing: the broker's hook waits only
+        hold_seconds, so by then the agent's call has returned."""
         out: dict = {}
         for card in cards:
+            if card["decided"] or (card["seconds_left"] is not None and card["seconds_left"] < 0):
+                continue
             lanes = card["lanes"]
             note = "" if len(lanes) == 1 else (
                 f"one of {len(lanes)} running {card['role']} lanes is held; the broker names the role, not the lane")

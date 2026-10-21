@@ -260,7 +260,8 @@
     $("project").textContent = state.project;
     $("lamp-link").className = "led g";
     $("lamp-bridge").className = `led ${state.bridge ? "g" : "r"}`;
-    $("lamp-gate").className = `led ${state.gate.length ? "a blink" : ""}`;
+    const undecided = state.gate.filter(x => x.decided !== "approve" && x.decided !== "decline").length;
+    $("lamp-gate").className = `led ${undecided ? "a blink" : state.gate.length ? "a" : ""}`;
     setSeg($("ro-spend"), Number(state.totals.cost).toFixed(2));
     setSeg($("ro-jobs"), String(state.totals.jobs));
     setSeg($("ro-run"), String(state.totals.running));
@@ -275,8 +276,10 @@
     if (key === gateKey) { tickGate(); return; }
     gateKey = key;
     const lcd = $("gate-lcd");
-    $("gate-led").className = `led ${cards.length ? "a blink" : ""}`;
-    $("gate-state").textContent = cards.length ? `Held · ${cards.length}` : "Clear";
+    // A decided card stays held until the agent retries; it waits for no one here.
+    const decided = cards.filter(x => x.decided === "approve" || x.decided === "decline").length;
+    $("gate-led").className = `led ${cards.length > decided ? "a blink" : cards.length ? "a" : ""}`;
+    $("gate-state").textContent = cards.length ? `Held · ${cards.length}${decided ? ` · ${decided} decided` : ""}` : "Clear";
     gateCd = null;
     if (!cards.length) {
       lcd.replaceChildren(el("div", cuFrame ? "one" : "big", "No writes held"));

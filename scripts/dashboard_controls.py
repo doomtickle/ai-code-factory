@@ -14,6 +14,9 @@ those requests reach:
   decide   approve or decline one held write: one press, a file write through
            approvals.write_decision(), the same record `factory approvals`
            writes. Exact id, and the card's fingerprint must still match.
+           One decision per card: a card already decided (it stays pending
+           until the agent retries) is a 409 "decided" with the verdict that
+           stands.
   prepare  the confirm step for RESTART, UPDATE or DIAG: what the action would
            do (jobs it cancels, held writes it drops; for UPDATE, the output
            of the read-only `factory update --plan`; DIAG stops nothing) and a
@@ -75,17 +78,20 @@ LOG_CHUNK = 64 * 1024  # most bytes /cu/api/log returns at once
 MAX_REASON = 500       # characters in a decision's reason
 MAX_OFFSET = 2 ** 53   # largest log offset accepted (a page's JSON number stays exact)
 CARD_KEYS = ("id", "tool", "role", "lanes", "repo", "branch", "base", "title", "draft", "commits",
-             "file_count", "files", "seconds_left", "fp", "patch", "patch_truncated")
+             "file_count", "files", "seconds_left", "fp", "patch", "patch_truncated", "decided", "decided_by",
+             "decided_at")
 PATCH_SHA = re.compile(r"[0-9a-f]{64}")  # a card's patch_sha256 (fullmatch), before it names a file
 PATCH_MAX = 2 * 1024 * 1024              # largest patch file read (the broker caps them at 256 KiB by default)
 
 
 class Refused(Exception):
-    """A request the API answers with an error: (status, plain-text reason)."""
+    """A request the API answers with an error: (status, plain-text reason),
+    and any extra fields for the page (fixed keys, set here, never a card's)."""
 
-    def __init__(self, status: int, text: str):
+    def __init__(self, status: int, text: str, extra: dict | None = None):
         super().__init__(text)
         self.status = status
+        self.extra = extra or {}
 
 
 def files_digest(paths) -> str:
@@ -186,7 +192,7 @@ class Controls:
         try:
             return handler(body)
         except Refused as e:
-            return e.status, {"error": str(e)}
+            return e.status, dict(e.extra, error=str(e))
         except Exception as e:  # never the message: it could quote a card or a patch
             print(f"control unit: /cu/api/{name} failed: {type(e).__name__}", file=sys.stderr)
             return 500, {"error": "the control unit failed; see the dashboard's log"}
@@ -252,6 +258,9 @@ class Controls:
         if verdict == "decline" and not reason:
             raise Refused(400, "give the agent a reason for declining")
         card = self.held_card(cid, fp)
+        # One decision per card: the first stands until the agent's retry
+        # picks it up (checked again, race-free, by write_decision).
+        self.refuse_if_decided(approvals.read_decision(self.state / "broker", card))
         try:
             expired = float(card.get("expires", 0)) < self.clock()
         except (TypeError, ValueError):
@@ -260,13 +269,24 @@ class Controls:
             raise Refused(409, "expired")
         try:
             approvals.write_decision(self.state / "broker", card, verdict, self.approver, reason)
+        except approvals.AlreadyDecided as e:
+            self.refuse_if_decided(e.decision)
+            raise
         except ValueError:
             raise Refused(400, "this card's id can't be decided: use 'factory approvals'") from None
+        except OSError:
+            raise Refused(503, "the decision could not be written; try again") from None
         try:
             text = approvals.one_line(card)
         except (TypeError, ValueError):
             text = cid
         return 200, {"ok": True, "id": cid, "verdict": verdict, "text": text}
+
+    @staticmethod
+    def refuse_if_decided(decision) -> None:
+        """409 "decided", with the verdict that stands, if there is one."""
+        if decision is not None:
+            raise Refused(409, "decided", approvals.decision_info(decision))
 
     def api_patch(self, body: dict) -> tuple:
         cid, fp = body.get("id"), body.get("fp")

@@ -2,7 +2,9 @@
 // with a small fake DOM, a fake server and fake timers: APPROVE on a truncated
 // push asks a second question, CONFIRM stays dark for a second, CANCEL, a new
 // fingerprint or the card going cancels it, and the viewer counts the files
-// it doesn't show. Run by test_dashboard_controls.py (CuScriptTests):
+// it doesn't show. A decided or expired card shows its state with both keys
+// dark, and every refusal (each 409 reason, a 400) reaches the user as text.
+// Run by test_dashboard_controls.py (CuScriptTests):
 //   node scripts/test_cu_page.js scripts/dashboard-ui/cu.js
 "use strict";
 const fs = require("fs"), vm = require("vm"), assert = require("assert");
@@ -74,7 +76,7 @@ const flush = async () => { for (let i = 0; i < 20; i++) await new Promise(r => 
 
 // The server.
 const calls = [];
-let cards = [], patch = null;
+let cards = [], patch = null, refuse = null;  // refuse: [status, body] for the next decide
 function reply(name, body) {
   if (name === "state") return { cards, action: { name: null, phase: "idle" }, bound: true, project: "p", now: 0 };
   if (name === "decide") return { ok: true, id: body.id, verdict: body.verdict, text: "done" };
@@ -84,6 +86,11 @@ function reply(name, body) {
 const fetchFake = async (url, opts) => {
   const name = url.replace("/cu/api/", ""), body = JSON.parse(opts.body);
   calls.push([name, body]);
+  if (name === "decide" && refuse) {
+    const [status, out] = refuse;
+    refuse = null;
+    return { status, ok: false, json: async () => out };
+  }
   return { status: 200, ok: true, json: async () => reply(name, body) };
 };
 const decisions = () => calls.filter(c => c[0] === "decide").map(c => c[1]);
@@ -193,6 +200,96 @@ const card = (over) => Object.assign({ id: "c1", tool: "git_push", role: "develo
   assert.strictEqual($("pv-ask").hidden, true);
   assert.strictEqual(decisions().length, 0);
   results.push("viewer: fp change cancels");
+
+  // 6. A decided card: its state on the glass, both keys dark, the reason shut.
+  calls.length = 0;
+  const at = new Date(2026, 9, 21, 14, 2).getTime() / 1000;
+  cards = [card({ id: "c6", fp: "fp6", decided: "approve", decided_by: "sam", decided_at: at })];
+  await advance(2000); await advance(3000);
+  assert.match($("deck-body").textContent, /^APPROVED, waiting for the agent's retryby sam at 14:02/);
+  assert.strictEqual($("btn-approve").disabled, true, "approve dark on a decided card");
+  assert.strictEqual($("btn-decline").disabled, true, "decline dark on a decided card");
+  assert.strictEqual($("reason").disabled, true);
+  assert.strictEqual($("keys-hold").hidden, false);
+  assert.strictEqual($("keys-hold").textContent, "Approved · waiting for the agent's retry");
+  assert.match($("btn-approve").title, /^Approved by sam at 14:02; waiting for the agent to retry$/);
+  $("btn-approve").fire("click"); await flush();          // even past the disabled key
+  $("reason").value = "no"; $("reason").fire("keydown", { key: "Enter" }); await flush();
+  assert.strictEqual(decisions().length, 0, "nothing is sent for a decided card");
+  assert.match($("flash").textContent, /^Already decided: Approved by sam/);
+  cards = [card({ id: "c6", fp: "fp6", decided: "decline", decided_by: "sam", decided_at: at })];
+  await advance(2000);
+  assert.match($("deck-body").textContent, /^DECLINEDby sam at 14:02/);
+  assert.strictEqual($("keys-hold").textContent, "Declined");
+  assert.strictEqual($("btn-decline").disabled, true);
+  results.push("decided card shows its state, keys dark");
+
+  // 7. An expired card, and one that expires on the glass.
+  calls.length = 0;
+  cards = [card({ id: "c7", fp: "fp7", seconds_left: 0 })];
+  await advance(2000); await advance(3000);
+  assert.match($("deck-body").textContent, /^EXPIRED/);
+  assert.strictEqual($("btn-approve").disabled, true);
+  assert.strictEqual($("btn-decline").disabled, true);
+  assert.strictEqual($("keys-hold").textContent, "Expired");
+  cards = [card({ id: "c8", fp: "fp8", seconds_left: 9 })];
+  await advance(2000); await advance(3000);
+  assert.doesNotMatch($("deck-body").textContent, /EXPIRED/);
+  assert.strictEqual($("btn-approve").disabled, false);
+  doc.hidden = true;     // no polls (they would bring the same 9 s back): the clock runs out
+  await advance(10000);
+  doc.hidden = false;
+  assert.match($("deck-body").textContent, /^EXPIRED/);
+  assert.strictEqual($("btn-approve").disabled, true);
+  assert.strictEqual($("btn-decline").disabled, true);
+  assert.strictEqual(decisions().length, 0);
+  results.push("expired card shows EXPIRED, keys dark");
+
+  // 8. Every refusal is shown as text.
+  const live = async (id) => { cards = [card({ id, fp: id })]; await advance(2000); await advance(3000); };
+  const cases = [
+    [409, { error: "decided", decided: "decline", decided_by: "kim", decided_at: at }, /^Already decided: Declined by kim at 14:02; waiting for the agent to retry\.$/],
+    [409, { error: "gone" }, /^Gone: /],
+    [409, { error: "changed" }, /^Changed: /],
+    [409, { error: "expired" }, /^Expired: /],
+    [409, { error: "ambiguous" }, /^Ambiguous: /],
+    [400, { error: "give the agent a reason for declining" }, /^Refused \(400\): give the agent a reason for declining$/],
+    [500, {}, /^Refused \(500\): refused \(HTTP 500\)$/],
+  ];
+  for (const [i, [status, body, want]] of cases.entries()) {
+    await live(`r${i}`);
+    refuse = [status, body];
+    $("btn-approve").click(); await flush();
+    assert.strictEqual(decisions().length, i + 1, `sent ${i}`);
+    assert.strictEqual($("flash").hidden, false);
+    assert.match($("flash").textContent, want);
+    assert.strictEqual($("flash").className, "flash err");
+  }
+  results.push("refusals shown as text");
+
+  // 9. DECLINE without a reason says so, and sends nothing.
+  calls.length = 0;
+  await live("d1");
+  assert.strictEqual($("btn-decline").disabled, false, "decline takes the press");
+  assert.strictEqual($("led-decline").className, "led", "but its lamp is dark");
+  $("btn-decline").click(); await flush();
+  assert.strictEqual(decisions().length, 0);
+  assert.match($("flash").textContent, /^DECLINE needs a reason/);
+  assert.ok($("reason").classList.contains("need"));
+  $("reason").value = "too big"; $("reason").fire("input");
+  assert.strictEqual($("led-decline").className, "led r");
+  $("btn-decline").click(); await flush();
+  assert.deepStrictEqual(decisions().map(d => [d.id, d.verdict, d.reason]), [["d1", "decline", "too big"]]);
+  results.push("decline without a reason says so");
+
+  // 10. Agent-written strings are text: markup stays literal.
+  await live("x1");
+  cards = [card({ id: "x1", fp: "x1", title: "<img src=x onerror=alert(1)>", decided: "approve",
+    decided_by: "<b>evil</b>", decided_at: "soon" })];
+  await advance(2000);
+  assert.match($("deck-body").textContent, /“<img src=x onerror=alert\(1\)>”/);
+  assert.match($("deck-body").textContent, /by <b>evil<\/b> at \?/);
+  results.push("agent strings stay text");
 
   Date.now = realNow;
   console.log(JSON.stringify(results));
