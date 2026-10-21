@@ -626,9 +626,9 @@ model of that tier):
 | Agent | Model | Why |
 |---|---|---|
 | Coordinator | `opus` | Few calls, but its task specs and batching set the cost and quality of all the work below it |
-| developer | `sonnet` | Most of the tokens; Sonnet is built for everyday agentic coding |
+| developer | `claude-sonnet-5-5` | Most of the tokens; Sonnet is built for everyday agentic coding |
 | reviewer | `opus` | Independent judgment and security review, and a different model from the one that wrote the code |
-| researcher | `sonnet` | Judges sources and resists text planted in web pages; low volume |
+| researcher | `claude-sonnet-5-5` | Judges sources and resists text planted in web pages; low volume |
 
 If you hit your subscription's usage limits, move the Coordinator to `sonnet`
 first.
@@ -645,9 +645,17 @@ the model and effort it ran with:
 
 | Role | Default | Coordinator may also pick |
 |---|---|---|
-| developer | `sonnet` | `haiku` (prose and push chores only, never code), `opus` |
-| reviewer | `opus` | `sonnet` (small, low-risk diffs) |
-| researcher | `sonnet` | `opus` (no `haiku`: this role reads untrusted web pages) |
+| developer | `claude-sonnet-5-5` | `claude-haiku-5-5` (prose and push chores only, never code), `opus` |
+| reviewer | `opus` | `claude-sonnet-5-5` (small, low-risk diffs) |
+| researcher | `claude-sonnet-5-5` | `opus` (no `haiku`: this role reads untrusted web pages) |
+
+The developer's and reviewer's/researcher's sonnet entries are pinned to the
+full model id `claude-sonnet-5-5` rather than the alias `sonnet`, and the
+developer's haiku entry to the full id `claude-haiku-5-5` rather than the
+alias `haiku`: the Claude Code CLI in the pinned role image resolves `sonnet`
+to the older `claude-sonnet-5` and `haiku` to the older
+`claude-haiku-4-5-20251001`. Opus is left as the alias: it already resolves
+to `claude-opus-5-5`.
 
 A resumed session keeps the model it was saved with, and each model has its own
 prompt cache, so a task on a different model from the role's saved session

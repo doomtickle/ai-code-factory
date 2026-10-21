@@ -192,7 +192,7 @@ Coordinator usually handles these itself:
 
 - `all 3 lanes of developer are busy (jobs ...); wait for one or cancel it`:
   every lane has a job. It waits, or asks you whether to cancel one.
-- `developer can't run on model 'opus-4'; allowed: sonnet, haiku, opus`: the
+- `developer can't run on model 'opus-4'; allowed: claude-sonnet-5-5, claude-haiku-5-5, opus`: the
   model isn't in the role's `MODEL` or `MODELS`.
 - `instructions for developer exceed 20000 characters`: the role's
   instructions plus your per-project notes are too long. Shorten the notes.
