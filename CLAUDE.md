@@ -25,8 +25,9 @@ boundary.
     (scoped to `https://github.com/`, never argv or disk), never follows a
     redirect with it, and redacts it from everything it returns or records.
   - Credentials nothing can proxy-inject (currently Jira, Gemini, a
-    read-only token for a private npm registry, and a GitLab project access
-    token, owner decision 2026-10-20 in `docs/decisions.md`) are read from files inside
+    read-only token for a private npm registry, a GitLab project access
+    token, owner decision 2026-10-20 in `docs/decisions.md`, and the
+    approvals webhook URL) are read from files inside
     Passdesk's own sandbox (`/etc/factory-broker/secrets/`, a Docker secret
     under `/run/secrets/`, or a file whose path is in
     `PASSDESK_SECRET_<NAME>_FILE`), delivered there by the deployment (never

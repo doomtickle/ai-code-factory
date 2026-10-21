@@ -33,6 +33,7 @@ import re
 import ssl
 import stat
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -40,7 +41,7 @@ from pathlib import Path
 
 from . import egress_guard
 from . import tools  # noqa: F401 - registers every tool
-from .core import approvals, auth, config, credentials, plugins, registry
+from .core import approvals, auth, config, credentials, holds, notify, plugins, registry
 from .core import policy as policy_mod
 from .core.errors import Denied
 from .core.net import NO_REDIRECT_OPENER, RefuseRedirects
@@ -183,8 +184,7 @@ def _check_policy_shape(report: Report, pol: dict) -> None:
         "gemini": {"model", "max_prompt_chars"},
         "jira": {"site", "cloud_id", "projects", "max_results", "max_comments"},
         "egress_guard": {"allow_hosts"},  # read by `passdesk egress-guard`, not a tool
-        # patch_max_bytes is core's (git_push's inspectable patch); the rest
-        # are read by an approval plugin (Passdesk Pro).
+        # The hold (core/holds.py) and git_push's inspectable patch.
         "approvals": {"patch_max_bytes", "tools", "hold_seconds", "expire_seconds"},
     }
     for table, val in pol.items():
@@ -200,6 +200,22 @@ def _check_policy_shape(report: Report, pol: dict) -> None:
                 report.warn(f"[{table}].{key} is not a setting any tool reads; a typo?",
                             f"known keys: {', '.join(sorted(known[table]))}")
     appr = pol.get("approvals")
+    if isinstance(appr, dict) and "tools" in appr:
+        tools = appr["tools"]
+        if not isinstance(tools, list) or not all(isinstance(t, str) and t for t in tools):
+            report.fail("[approvals].tools must be a list of tool names",
+                        f'e.g. tools = {json.dumps(holds.SUGGESTED_TOOLS)}; holds are off until it is')
+        else:
+            known_tools = [*TOOLS, *(t for t in plugins.declared_tools()[0] if t not in TOOLS)]
+            for t in tools:
+                if t not in known_tools:
+                    report.warn(f"[approvals].tools names {t}, which is not a tool; a typo?",
+                                f"tools that can be held: {', '.join(holds.SUGGESTED_TOOLS)}, github_create_issue, "
+                                "and a plugin tool declared writes_externally")
+        for key in ("hold_seconds", "expire_seconds"):
+            value = appr.get(key)
+            if value is not None and (isinstance(value, bool) or not isinstance(value, int) or value < 0):
+                report.fail(f"[approvals].{key} = {value!r} is not a whole number of seconds")
     if isinstance(appr, dict) and "patch_max_bytes" in appr:
         value = appr["patch_max_bytes"]
         lo, hi = approvals.PATCH_MAX_BYTES_MIN, approvals.PATCH_MAX_BYTES_MAX
@@ -873,16 +889,19 @@ def check_secrets(report: Report, pol: dict | None, granted: set[str],
 # --- plugins ------------------------------------------------------------------------
 
 def check_plugins(report: Report) -> None:
-    """What PASSDESK_PLUGINS names, whether it imports, and (for Passdesk
-    Pro) whether its license is usable. Importing a plugin here has no side
-    effects: plugins register only through activate(), which the server
-    calls and the doctor does not."""
+    """What PASSDESK_PLUGINS names and whether it imports. Importing a
+    plugin here has no side effects: plugins register only through
+    activate(), which the server calls and the doctor does not."""
     report.section("Plugins")
     names = [n.strip() for n in config.PLUGINS.split(",") if n.strip()]
     if not names:
-        report.info("no plugins named in PASSDESK_PLUGINS (approvals are off; the free core is running)")
+        report.info("no plugins named in PASSDESK_PLUGINS")
         return
     for name in names:
+        if name == plugins.RETIRED_PRO:
+            report.fail(f"PASSDESK_PLUGINS names {name}, which the gateway refuses to start with",
+                        plugins.RETIRED_PRO_HINT)
+            continue
         try:
             module = importlib.import_module(name)
         except ImportError as e:
@@ -898,24 +917,86 @@ def check_plugins(report: Report) -> None:
             continue
         if declared is not None:
             report.ok(f"plugin {name} {version} declares tool(s): {', '.join(declared[1])}")
-        lic = getattr(module, "license", None)
-        if lic is None or not hasattr(lic, "load"):
-            if declared is None:
-                report.ok(f"plugin {name} {version} imports")
-            continue
-        try:
-            claims = lic.load()
-        except Exception as e:  # noqa: BLE001 - the plugin's own error type; its message is the finding
-            report.fail(f"plugin {name} {version} is installed but inactive: {e}",
-                        "deliver a valid license key (README of the plugin); the gateway runs as the free core until then")
-            continue
-        left = claims.days_left()
-        text = (f"plugin {name} {version}: licensed to {claims.sub}, {claims.tier}, "
-                f"{claims.approvers} approver(s), {left} day(s) left")
-        if left <= 14:
-            report.warn(text + "; renew soon: when it expires, held writes are refused, not released")
         else:
-            report.ok(text)
+            report.ok(f"plugin {name} {version} imports")
+
+
+# --- approvals --------------------------------------------------------------------
+
+def _card_files(kind: str) -> list[tuple[str, dict]]:
+    """(id, card) for each readable JSON card under STATE/approvals/<kind>/."""
+    out: list[tuple[str, dict]] = []
+    try:
+        paths = sorted((holds.base_dir() / kind).glob("*.json"))
+    except OSError:
+        return out
+    for path in paths:
+        try:
+            card = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if isinstance(card, dict):
+            out.append((path.stem, card))
+    return out
+
+
+def check_approvals(report: Report, pol: dict | None, granted: set[str]) -> None:
+    """Whether writes are held, for which tools, what is waiting, and whether
+    a person will hear about it. Reads the state directory and the webhook
+    credential; changes nothing."""
+    report.section("Approvals")
+    hold, expire, tools = holds.settings(pol or {})
+    if not tools:
+        report.info("holds are off: [approvals].tools is empty or absent, so every granted write goes straight out",
+                    f"to hold writes for a person, set [approvals] tools = {json.dumps(holds.SUGGESTED_TOOLS)} "
+                    "and rebuild the image")
+    else:
+        report.ok(f"holds on for {', '.join(tools)}: a call waits {hold} s, a card can be decided for {expire} s")
+        unused = sorted(t for t in tools if t not in granted)
+        if unused and granted:
+            report.info(f"{', '.join(unused)} held but granted to no principal")
+    pending = _card_files("pending")
+    now = time.time()
+    if pending:
+        ages = []
+        stale = 0
+        for _, card in pending:
+            try:
+                ages.append(max(0, now - float(card.get("created", now))))
+                stale += float(card.get("expires", 0)) <= now
+            except (TypeError, ValueError):
+                continue
+        oldest = f", the oldest {int(max(ages) // 60)} min old" if ages else ""
+        text = f"{len(pending)} pending approval(s){oldest}"
+        if stale:
+            report.warn(text + f"; {stale} already expired and will be refused on retry",
+                        "the agent must retry the call to make a fresh card; an un-retried card is "
+                        "filed as expired by the next held call")
+        else:
+            report.ok(text) if tools else report.warn(text + " although holds are off",
+                                                       "left from an earlier policy; harmless, decide or delete them")
+    elif tools:
+        report.ok("no pending approvals")
+    if tools and not credentials.secrets_dir().is_dir():
+        report.info("the approvals-webhook credential lives alongside the running broker; not visible from here",
+                    "run the doctor from where the broker runs to check it")
+    elif tools:
+        reasons: list[str] = []
+        try:
+            url = credentials.get(notify.CREDENTIAL, on_unusable=lambda n, p, reason, r=reasons: r.append(reason))
+        except credentials.CredentialError as e:
+            report.fail(str(e))
+            return
+        for reason in reasons:
+            report.warn(reason)
+        if url and url.startswith("https://"):
+            report.ok("approvals-webhook credential present: each new card is posted to it")
+        elif url:
+            report.warn("the approvals-webhook credential is not an https:// URL; no notification is sent",
+                        "have the deployment deliver the webhook URL again")
+        else:
+            report.info("no approvals-webhook credential: nobody is told about a held write until they look",
+                        "deliver a Slack, Discord or ntfy webhook URL as the approvals-webhook credential")
 
 
 # --- live ---------------------------------------------------------------------------
@@ -1093,6 +1174,7 @@ def run(policy_path: Path | None = None, kits: list[Path] | None = None, live: b
         report.section("TLS")  # sbx mode: only when a deployment turned it on, so the usual report is unchanged
         check_tls(report)
     check_secrets(report, pol, granted, order_error)
+    check_approvals(report, pol, granted)
     check_plugins(report)
     if live:
         scheme = "https" if config.TLS_CERT else "http"

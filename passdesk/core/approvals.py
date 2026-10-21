@@ -1,5 +1,5 @@
 """The approval point: where a deployment can hold an external write for a
-person (docs/pro-approvals.md).
+person (docs/approvals.md; the hold itself is core/holds.py).
 
 A tool that is about to write outside the broker (push, open a pull request)
 calls `require(card)` after every check of its own has passed, with a card

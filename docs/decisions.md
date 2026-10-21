@@ -2,6 +2,56 @@
 
 Dated entries, for the user to review. Newest first.
 
+## 2026-10-21
+
+- **The hold moves from Passdesk Pro into core; the licence is gone
+  (doomtickle/passdesk-ops#89, owner decision in passdesk-ops
+  `decisions.md` and `docs/strategy/2026-10-lois-merge-plan.md`).** The
+  factory is the one product and held writes are part of it; nothing is for
+  sale, so there is nothing to license. Choices:
+  - **`core/holds.py` and `core/notify.py` are Pro's `approvals.py` and
+    `notify.py`** with every licence call removed and nothing else changed:
+    same card ids, same `pending/`, `decisions/` and `done/` files, same
+    nonce contract, same audit events. A console written against Pro
+    (`factory approvals`, the factory dashboard) keeps working, and cards
+    pending at upgrade time are still decidable.
+  - **Off unless the policy says otherwise.** `holds.install` puts the hook
+    on the approval point only when `[approvals].tools` is a non-empty
+    list. Pro's default held three tools once licensed; without a licence
+    that default would mean every upgrading deployment starts holding
+    pushes by surprise, so the list is the switch. The doctor's Approvals
+    section says which it is and prints the usual list as the fix.
+  - **The old plugin is refused by name.** An old `passdesk_pro` copy would
+    still import and put its licence-checking hook over core's, so
+    `plugins.load` raises on that name and the doctor fails with the fix.
+    The general plugin mechanism (tools, hooks, providers) is unchanged.
+  - **The webhook URL is the `approvals-webhook` credential**, read through
+    `core/credentials.py` like Jira or GitLab (the file in the secrets
+    directory, a Docker secret, or `PASSDESK_SECRET_APPROVALS_WEBHOOK_FILE`;
+    Pro's `PASSDESK_APPROVALS_WEBHOOK_FILE` is gone). CLAUDE.md's
+    file-credential rule now lists it.
+  - **Notification is off the hold path** (doomtickle/passdesk-ops#14): the
+    POST runs on a daemon thread, so a webhook that takes ten seconds no
+    longer costs ten of the forty-five held seconds.
+  - **Policy checks.** The doctor fails a `tools` that isn't a list of
+    names or a negative `hold_seconds`/`expire_seconds`, and warns about a
+    tool name it doesn't know.
+  - **Security review findings fixed before merge:** a webhook URL with
+    userinfo is refused (urllib would echo the password in an
+    `InvalidURL`), `send` catches `http.client.HTTPException` too and
+    records only the exception type for anything but a `URLError`, so the
+    thread never raises; `settings` falls back to the defaults for a
+    `hold_seconds`/`expire_seconds` that isn't a number (the doctor
+    reports it; the server and the doctor no longer crash on it); a
+    pending card whose `expires` is unreadable is discarded
+    (`approval-discarded`) and replaced instead of wedging every retry.
+    Noted, not changed: `holds._read` and the doctor's card reads follow
+    symlinks and would block on a FIFO; both need write access to the
+    state directory, which the threat model excludes.
+  - **Not here:** the in-gateway approver CLI (doomtickle/passdesk-ops#60)
+    is a follow-up; the denial message still names `factory approvals` as
+    the example console.
+
 ## 2026-10-20
 
 - **GitLab, self-hosted or gitlab.com (doomtickle/passdesk-ops#120).** The

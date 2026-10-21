@@ -21,8 +21,8 @@ any of it off:
   handler runs. A match refuses the call.
 - **Approvals.** A tool declared `writes_externally=True` gets an `intent`
   audit record before it runs, then goes through the approval point with
-  the card `{"tool": <name>, <its arguments>, "principal": <caller>}`. With
-  Passdesk Pro, list the tool in `[approvals] tools` to hold it for a person.
+  the card `{"tool": <name>, <its arguments>, "principal": <caller>}`. List
+  the tool in `[approvals] tools` to hold it for a person (`docs/approvals.md`).
 - **Inbound cleaning.** Whatever your handler returns has terminal escapes
   and control characters stripped, known secret formats redacted and its
   size capped. It's then wrapped as untrusted content, so the agent treats

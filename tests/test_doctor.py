@@ -3,6 +3,7 @@
 import json
 import os
 import threading
+import time
 import unittest
 import urllib.error
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -151,6 +152,17 @@ class PolicyChecks(DoctorBase):
             report = doctor.Report()
             doctor.check_policy(report, self.policy_path)
             self.assertWarns(report, "[approvals].patch_max_bytes")
+
+    def test_approvals_tools_are_checked(self):
+        self.policy(GOOD_POLICY + '\n[approvals]\ntools = "git_push"\n')
+        report = doctor.Report()
+        doctor.check_policy(report, self.policy_path)
+        self.assertFails(report, "[approvals].tools must be a list")
+        self.policy(GOOD_POLICY + '\n[approvals]\ntools = ["git_push", "git_psuh"]\nhold_seconds = -1\n')
+        report = doctor.Report()
+        doctor.check_policy(report, self.policy_path)
+        self.assertWarns(report, "names git_psuh, which is not a tool")
+        self.assertFails(report, "[approvals].hold_seconds = -1")
 
     def test_shape_errors(self):
         bad = GOOD_POLICY.replace('repos = ["acme/widgets"]', 'repos = ["https://github.com/acme/widgets"]') \
@@ -677,10 +689,65 @@ class SbxModeUnaffected(DoctorBase):
         self.assertEqual(report.messages(doctor.WARN), [])
         self.assertEqual(
             self.ordered_sections(report),
-            ["Policy", "Egress", "State", "Workspace", "Credentials", "Plugins"])
+            ["Policy", "Egress", "State", "Workspace", "Credentials", "Approvals", "Plugins"])
         self.assertIn("jira credential present", report.messages(doctor.OK))
         self.assertIn("gemini credential present", report.messages(doctor.OK))
         self.assertIn("npm-registry credential present", report.messages(doctor.OK))
+
+
+class ApprovalChecks(DoctorBase):
+    def pending(self, cid, created, expires):
+        d = config.STATE / "approvals" / "pending"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / f"{cid}.json").write_text(json.dumps({"tool": "git_push", "id": cid, "nonce": "n",
+                                                   "created": created, "expires": expires}))
+
+    def test_off_by_default_is_an_info_with_the_fix(self):
+        self.policy()
+        self.state()
+        report = self.run_doctor()
+        self.assertNoFailures(report)
+        texts = [t for sec, _, t, _ in report.items if sec == "Approvals"]
+        self.assertEqual(len(texts), 1)
+        self.assertIn("holds are off", texts[0])
+        self.assertTrue(any('tools = ["git_push"' in line for line in self.all_text(report)))
+
+    def test_on_lists_the_tools_the_cards_and_the_webhook(self):
+        self.policy(GOOD_POLICY + '\n[approvals]\ntools = ["git_push", "github_create_pr"]\nhold_seconds = 30\n')
+        self.state(grants={"developer": ["git_fetch", "git_push", "github_create_pr"]})  # no npm_fetch: no registry warning
+        config.SECRETS_DIR.mkdir()
+        hook = config.SECRETS_DIR / "approvals-webhook"
+        hook.write_text("https://hooks.example.invalid/x\n")
+        os.chmod(hook, 0o600)
+        now = time.time()
+        self.pending("a" * 16, now - 120, now + 600)
+        report = self.run_doctor()
+        self.assertNoFailures(report)
+        self.assertEqual(report.messages(doctor.WARN), [])
+        oks = report.messages(doctor.OK)
+        self.assertTrue(any(m.startswith("holds on for git_push, github_create_pr: a call waits 30 s") for m in oks))
+        self.assertIn("1 pending approval(s), the oldest 2 min old", oks)
+        self.assertIn("approvals-webhook credential present: each new card is posted to it", oks)
+
+    def test_expired_pending_and_a_missing_webhook_are_flagged(self):
+        self.policy(GOOD_POLICY + '\n[approvals]\ntools = ["git_push"]\n')
+        self.state()
+        config.SECRETS_DIR.mkdir()
+        now = time.time()
+        self.pending("b" * 16, now - 4000, now - 100)
+        report = self.run_doctor()
+        self.assertNoFailures(report)
+        self.assertWarns(report, "1 already expired")
+        self.assertTrue(any("no approvals-webhook credential" in t for _, _, t, _ in report.items))
+
+    def test_the_retired_pro_plugin_is_a_failure_with_the_fix(self):
+        self.policy()
+        self.state()
+        config.PLUGINS = "passdesk_pro"
+        self.addCleanup(setattr, config, "PLUGINS", "")
+        report = self.run_doctor()
+        self.assertFails(report, "names passdesk_pro")
+        self.assertTrue(any("[approvals].tools" in line for line in self.all_text(report)))
 
 
 class _Unauthorized(BaseHTTPRequestHandler):
