@@ -645,9 +645,13 @@ the model and effort it ran with:
 
 | Role | Default | Coordinator may also pick |
 |---|---|---|
-| developer | `sonnet` | `haiku` (prose and push chores only, never code), `opus` |
+| developer | `sonnet` | `claude-haiku-5-5` (prose and push chores only, never code), `opus` |
 | reviewer | `opus` | `sonnet` (small, low-risk diffs) |
 | researcher | `sonnet` | `opus` (no `haiku`: this role reads untrusted web pages) |
+
+The developer's haiku entry is pinned to the full model id `claude-haiku-5-5`
+rather than the alias `haiku`: the Claude Code CLI in the pinned role image
+resolves that alias to the older `claude-haiku-4-5-20251001`.
 
 A resumed session keeps the model it was saved with, and each model has its own
 prompt cache, so a task on a different model from the role's saved session

@@ -92,11 +92,15 @@ The settings you're most likely to change:
 | Key | What it does | Developer default |
 |---|---|---|
 | `MODEL` | Default model: an alias (`sonnet`, `opus`, `haiku`) or a full model id | `sonnet` |
-| `MODELS` | Other models the Coordinator may pick for a single task | `haiku opus` |
+| `MODELS` | Other models the Coordinator may pick for a single task | `claude-haiku-5-5 opus` |
 | `EFFORT` | Default reasoning effort: `low`, `medium`, `high` or `xhigh`; empty is the model's default | empty |
 | `LANES` | Tasks the role runs at once, 1 to 8 | `3` |
 | `MAX_SESSION_TOKENS` | A lane whose saved session is larger starts the next task fresh; empty is 100000, `0` is no cap | empty |
 | `MAX_TURNS` | Turns (tool calls and replies) one job may take before it stops as failed, keeping its session; a safety net against a lost job; empty or `0` is no cap | `200` |
+
+The developer's `MODELS` names haiku by the full id `claude-haiku-5-5`, not
+the alias `haiku`: the Claude Code CLI in the pinned role image resolves that
+alias to the older `claude-haiku-4-5-20251001`.
 
 For example, to make the reviewer cheaper on a low-risk project, run it on
 Sonnet by default and keep Opus available for hard reviews:
