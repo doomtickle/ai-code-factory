@@ -1242,7 +1242,7 @@ JS = r"""
       var li = a.parentNode;
       if (li.classList.contains('has-sub')) li.classList.toggle('open', on);
     });
-    d.title = page.getAttribute('data-title') + ' · AI Code Factory docs';
+    d.title = page.getAttribute('data-title') + ' · LOIS docs';
     watchToc(page);
     return true;
   }
@@ -1504,7 +1504,7 @@ def render_hero(site: Site) -> str:
         f'<a class="card" href="#{esc(r)}"><strong>{esc(t)}</strong><span>{esc(s)}</span></a>' for r, t, s in cards)
     return f"""<header class="hero">
 <p class="eyebrow">Documentation</p>
-<p class="hero-title">AI Code Factory</p>
+<p class="hero-title">LOIS</p>
 <p class="pitch">Tell a Coordinator agent what you want built. It plans the work and hands it to sandboxed
 role agents that research, implement and review it, then gives you a branch to merge.</p>
 <ul class="flow" aria-label="How a task flows">
@@ -1622,14 +1622,14 @@ def render_site(site: Site, now: datetime | None = None) -> str:
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
-<title>{esc(first_title)} · AI Code Factory docs</title>
+<title>{esc(first_title)} · LOIS docs</title>
 {head}
 </head>
 <body data-docs="{esc(docs_attr)}">
 <a class="skip" href="#main">Skip to content</a>
 <header class="topbar">
 <button type="button" class="icon-btn menu-btn" id="menu-btn" aria-label="Menu" aria-controls="sidebar" aria-expanded="false">{ICON_MENU}</button>
-<a class="brand" href="#{esc(site.pages[0].route) if site.pages else '/'}"><span class="brand-mark" aria-hidden="true"></span><span class="brand-text">AI Code Factory <small>docs</small></span></a>
+<a class="brand" href="#{esc(site.pages[0].route) if site.pages else '/'}"><span class="brand-mark" aria-hidden="true"></span><span class="brand-text">LOIS <small>docs</small></span></a>
 <div class="search" role="search">
 <label class="sr-only" for="search">Search the docs</label>
 {ICON_SEARCH}<input id="search" type="search" placeholder="Search" autocomplete="off" spellcheck="false" role="combobox" aria-autocomplete="list" aria-controls="results" aria-expanded="false">
