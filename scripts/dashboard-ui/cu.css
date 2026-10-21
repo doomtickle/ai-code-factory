@@ -310,7 +310,7 @@ button, input { font: inherit; color: inherit; }
    Left: the header row over the card LCD, which takes the full height and scrolls.
    Right: the reason tape, DECLINE / APPROVE, INSPECT (pushes only), the service row
    (DIAG, RESTART, UPDATE, LOG) and a thin SETUP plate. The right column is 203px at a
-   frame of 390px and grows with the frame (52vw) up to 244px (264px from a 600px frame), so the four service keys
+   frame of 390px and grows with the frame (52vw) up to 244px (the min-width: 600px rule below sets 264px), so the four service keys
    share one row at every width: their natural widths come to about 195px (LED, label,
    padding, gaps), and the row wraps rather than clip if a font ever runs wider.
    Height budget at 192px (worst case: a push held and a log to open): 6 + 6 padding,
@@ -371,10 +371,13 @@ button, input { font: inherit; color: inherit; }
   .deck-title { display: none; }
   .bigkey { letter-spacing: .08em; }
 }
+/* Four service keys (DIAG, RESTART, UPDATE, LOG) need the tight cut to stay on one row up to here */
+@media (max-width: 330px) {
+  .svckey { letter-spacing: .05em; gap: 4px; padding-left: 5px; padding-right: 5px; }
+}
 @media (max-width: 270px) {
   .unit { padding-left: 8px; padding-right: 8px; }
   .service { padding: 4px 6px 5px; gap: 4px; }
-  .svckey { letter-spacing: .05em; gap: 4px; padding-left: 5px; padding-right: 5px; }
 }
 @media (max-width: 900px) {
   .pv-help { display: none; }
