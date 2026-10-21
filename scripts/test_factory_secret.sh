@@ -31,14 +31,23 @@ set -euo pipefail
 #    running broker and not marked manual, "github" becomes the
 #    broker-scoped sbx secret (on stdin, never global), and a service name
 #    that isn't ours never reaches PowerShell.
+# 9. secret_sync_from_keychain and github_sync_from_keychain against stubbed
+#    secret-tool (Linux) and security (macOS) commands: a found entry is
+#    delivered; a definite "not found" revokes the broker's file; a locked or
+#    unavailable keychain (an error on stderr, a non-44 exit from security,
+#    or a locked item behind a silent secret-tool exit 1) leaves the file
+#    and the GitHub token alone and prints one warning naming the secret,
+#    never the value. "factory secret forget" with a locked keychain still
+#    removes the broker's copy, then exits non-zero telling the user to
+#    unlock and run it again; so does a failed delete from a readable one.
 #
 # Drives the real bin/factory as a subprocess (not sourced, since the
 # command dispatch under test runs only in that mode - see the guard at the
 # bottom of bin/factory), against a disposable FACTORY_STATE and a fake sbx
 # on PATH that records every invocation's argv and the last call's stdin.
-# No sbx, docker, or network access needed. There is no secret-tool/security
-# binary on PATH either, so keychain_lookup (scripts/lib/secrets.sh) always
-# reports "no value" here - exactly the state this test needs for part 5.
+# No sbx, docker, or network access needed. Until part 9 installs stubs,
+# FACTORY_KEYCHAIN=none, so keychain_lookup (scripts/lib/secrets.sh) always
+# reports "not stored" - exactly the state this test needs for part 5.
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
@@ -381,6 +390,7 @@ cat > "$tmp/bin/powershell.exe" <<'FAKE_PS'
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >> "$FAKE_PS_ARGS"
+if [ -n "${FAKE_PS_FAIL:-}" ]; then echo "powershell.exe: cannot start" >&2; exit 1; fi
 script="${*: -1}"
 op="$(printf '%s' "$script" | sed -n 's/.*op=\([a-z]*\).*/\1/p' | head -n1)"
 svc="$(printf '%s' "$script" | grep -o "Retrieve('factory-[a-z-]*'" | head -n1 | sed "s/Retrieve('//; s/'//")"
@@ -469,6 +479,299 @@ reset_fakes; reset_ps
 run_factory_with_stdin 'x' secret save jira
 assert_contains "save with no keychain: says what to do instead" "$F_OUT" "no keychain"
 assert_empty "save with no keychain: PowerShell is never called" "$(cat "$FAKE_PS_ARGS")"
+
+# ===========================================================================
+# Part 9: found / not found / locked through stubbed secret-tool and
+# security. FAKE_KEYRING picks what the stubs report:
+#   found          the entry exists and is readable;
+#   absent         no such entry (secret-tool: silent exit 1, empty search;
+#                  security: exit 44 "could not be found");
+#   locked         an error (secret-tool: D-Bus message on stderr, exit 1;
+#                  security: exit 36, "User interaction is not allowed");
+#   locked-silent  secret-tool only: the unlock prompt was dismissed, so
+#                  lookup exits 1 silently but search lists the locked item.
+#   search-error   secret-tool only: lookup exits 1 silently, then search
+#                  fails with a D-Bus error on stderr (after printing a
+#                  "secret = <value>" line, to check it goes nowhere);
+#   search-silent  secret-tool only: lookup and search both exit 1 silently.
+# Each stub logs its argv to $FAKE_KEYRING_ARGS.
+# ===========================================================================
+install_good_fake_sbx
+cat > "$tmp/bin/secret-tool" <<'FAKE_ST'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >> "$FAKE_KEYRING_ARGS"
+case "$1:$FAKE_KEYRING" in
+  lookup:found) printf '%s' "$FAKE_KEYRING_VALUE" ;;
+  lookup:absent|lookup:locked-silent|lookup:search-error|lookup:search-silent) exit 1 ;;
+  lookup:locked|search:locked)
+    echo "secret-tool: Cannot autolaunch D-Bus without X11 \$DISPLAY" >&2; exit 1 ;;
+  search:found) printf '[/org/freedesktop/secrets/collection/login/7]\nsecret = %s\n' "$FAKE_KEYRING_VALUE" ;;
+  search:absent) ;;
+  search:locked-silent) printf '[/org/freedesktop/secrets/collection/login/7]\nlabel = x\n' ;;
+  search:search-error)
+    printf 'secret = %s\n' "$FAKE_KEYRING_VALUE"
+    echo "secret-tool: org.freedesktop.DBus.Error.NoReply: Did not receive a reply" >&2; exit 1 ;;
+  search:search-silent) exit 1 ;;
+  *) exit 1 ;;
+esac
+FAKE_ST
+cat > "$tmp/bin/security" <<'FAKE_SEC'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >> "$FAKE_KEYRING_ARGS"
+case "$FAKE_KEYRING" in
+  found) case " $* " in *" -w "*) printf '%s\n' "$FAKE_KEYRING_VALUE" ;; esac ;;
+  absent)
+    echo "security: SecKeychainSearchCopyNext: The specified item could not be found in the keychain." >&2
+    exit 44 ;;
+  *) echo "security: SecKeychainItemCopyContent: User interaction is not allowed." >&2; exit 36 ;;
+esac
+FAKE_SEC
+chmod +x "$tmp/bin/secret-tool" "$tmp/bin/security"
+export FAKE_KEYRING_ARGS="$tmp/keyring-args.log" FAKE_KEYRING_VALUE="kr-secret-9"
+rm -rf "$MARKER_DIR"
+
+for backend in secret-tool macos; do
+  export FACTORY_KEYCHAIN="$backend"
+
+  reset_fakes; : > "$FAKE_KEYRING_ARGS"
+  FAKE_KEYRING=found run_sync jira
+  assert_eq "$backend found: exits 0" "$S_RC" "0"
+  assert_eq "$backend found: the value is delivered on stdin" "$(cat "$FAKE_SBX_STDIN" 2>/dev/null)" "kr-secret-9"
+  assert_contains "$backend found: delivered as jira" "$(cat "$FAKE_SBX_ARGS")" "exec -i factory-broker"
+  assert_not_contains "$backend found: never revokes" "$(cat "$FAKE_SBX_ARGS")" "rm -f"
+  assert_not_contains "$backend found: the value never appears in sbx's argv" "$(cat "$FAKE_SBX_ARGS")" "kr-secret-9"
+  assert_not_contains "$backend found: the value is never printed" "$S_OUT" "kr-secret-9"
+
+  reset_fakes; : > "$FAKE_KEYRING_ARGS"
+  FAKE_KEYRING=absent run_sync jira
+  assert_eq "$backend not found: exits 0" "$S_RC" "0"
+  assert_contains "$backend not found: the stale file is revoked" \
+    "$(cat "$FAKE_SBX_ARGS")" "exec factory-broker rm -f /etc/factory-broker/secrets/jira"
+  assert_not_contains "$backend not found: no warning" "$S_OUT" "warning"
+
+  reset_fakes; : > "$FAKE_KEYRING_ARGS"
+  FAKE_KEYRING=locked run_sync gitlab
+  assert_eq "$backend locked: exits 0 (start-up goes on)" "$S_RC" "0"
+  assert_empty "$backend locked: the credential is kept (sbx never called)" "$(cat "$FAKE_SBX_ARGS")"
+  assert_contains "$backend locked: warns, naming the secret" "$S_OUT" "could not read factory-gitlab from the keychain"
+  assert_contains "$backend locked: says how to fix it" "$S_OUT" "To fix: unlock"
+  assert_eq "$backend locked: exactly one line of output" "$(printf '%s\n' "$S_OUT" | wc -l | tr -d ' ')" "1"
+  assert_not_contains "$backend locked: the backend's own error is not passed on" "$S_OUT" "interaction is not allowed"
+  assert_not_contains "$backend locked: no D-Bus noise either" "$S_OUT" "D-Bus"
+
+  # github: found re-registers; locked leaves sbx alone and warns, and does
+  # not abort under set -e (start-broker.sh and bin/factory run with it).
+  reset_fakes
+  FAKE_KEYRING=found run_github_sync
+  assert_eq "$backend github found: the token reaches sbx on stdin" "$(cat "$FAKE_SBX_SECRET_STDIN" 2>/dev/null)" "kr-secret-9"
+  reset_fakes
+  set +e
+  G_OUT="$( ( set -e
+    . "$REPO_ROOT/scripts/lib/common.sh"; . "$REPO_ROOT/scripts/lib/secrets.sh"
+    FAKE_KEYRING=locked github_sync_from_keychain; echo "still running" ) 2>&1 )"
+  set -e
+  assert_empty "$backend github locked: the existing token is left alone" "$(cat "$FAKE_SBX_ARGS")"
+  assert_contains "$backend github locked: warns, naming factory-github" "$G_OUT" "could not read factory-github"
+  assert_contains "$backend github locked: not fatal under set -e" "$G_OUT" "still running"
+  reset_fakes
+  FAKE_KEYRING=absent run_github_sync
+  assert_empty "$backend github not found: leaves sbx alone" "$(cat "$FAKE_SBX_ARGS")"
+  assert_empty "$backend github not found: no warning" "$G_OUT"
+done
+
+export FACTORY_KEYCHAIN=secret-tool
+reset_fakes; : > "$FAKE_KEYRING_ARGS"
+FAKE_KEYRING=locked-silent run_sync npm-registry
+assert_eq "secret-tool locked item, prompt dismissed: exits 0" "$S_RC" "0"
+assert_empty "secret-tool locked item, prompt dismissed: the credential is kept" "$(cat "$FAKE_SBX_ARGS")"
+assert_contains "secret-tool locked item, prompt dismissed: warns" "$S_OUT" "could not read factory-npm-registry"
+assert_not_contains "secret-tool: search is never asked to unlock (no second prompt)" "$(cat "$FAKE_KEYRING_ARGS")" "--unlock"
+
+# A failed 'secret-tool search' after a silent lookup miss is not "empty":
+# whether it errors loudly or silently, the file is kept.
+for mode in search-error search-silent; do
+  reset_fakes; : > "$FAKE_KEYRING_ARGS"
+  FAKE_KEYRING=$mode run_sync jira
+  assert_eq "secret-tool $mode: exits 0" "$S_RC" "0"
+  assert_empty "secret-tool $mode: the credential is kept (sbx never called)" "$(cat "$FAKE_SBX_ARGS")"
+  assert_contains "secret-tool $mode: warns" "$S_OUT" "could not read factory-jira"
+  assert_not_contains "secret-tool $mode: the search's error is not passed on" "$S_OUT" "NoReply"
+  assert_not_contains "secret-tool $mode: the search's listing is not passed on" "$S_OUT" "kr-secret-9"
+  set +e
+  ( . "$REPO_ROOT/scripts/lib/common.sh"; . "$REPO_ROOT/scripts/lib/secrets.sh"
+    FAKE_KEYRING=$mode keychain_lookup factory-jira ) >/dev/null 2>&1
+  L_RC=$?
+  set -e
+  assert_eq "secret-tool $mode: keychain_lookup returns 2 (undetermined)" "$L_RC" "2"
+done
+assert_value_not_leaked "keychain sync: the value lands nowhere else under the temp dir" "kr-secret-9"
+
+# 'factory secret forget' with a locked keychain can't delete the keychain
+# entry, but it still removes the broker's copy first (forget is how a leaked
+# token is killed), then exits non-zero and says what to do.
+reset_fakes
+FAKE_KEYRING=locked run_factory secret forget jira
+[ "$F_RC" -ne 0 ] && ok "forget, keychain locked: exits non-zero" || bad "forget, keychain locked: exits non-zero (got 0)"
+assert_contains "forget, keychain locked: removes the broker's file anyway" \
+  "$(cat "$FAKE_SBX_ARGS")" "exec factory-broker rm -f /etc/factory-broker/secrets/jira"
+assert_contains "forget, keychain locked: says the broker copy is revoked" "$F_OUT" "the broker's copy of 'jira' is revoked"
+assert_contains "forget, keychain locked: says the keychain entry couldn't be deleted because it is locked" \
+  "$F_OUT" "factory-jira could not be deleted from the keychain (the keychain is locked or unavailable)"
+assert_contains "forget, keychain locked: says to unlock and run forget again" \
+  "$F_OUT" "Unlock it, then run 'factory secret forget jira' again"
+assert_not_contains "forget, keychain locked: never claims the keychain entry was deleted" "$F_OUT" "deleted factory-jira from"
+assert_not_contains "forget, keychain locked: never prints the value" "$F_OUT" "kr-secret-9"
+
+reset_fakes
+FAKE_KEYRING=locked run_factory secret forget github
+[ "$F_RC" -ne 0 ] && ok "forget github, keychain locked: exits non-zero" || bad "forget github, keychain locked: exits non-zero (got 0)"
+assert_contains "forget github, keychain locked: removes the broker-scoped sbx secret anyway" \
+  "$(cat "$FAKE_SBX_ARGS")" "secret rm github --sandbox factory-broker -f"
+assert_contains "forget github, keychain locked: says the broker copy is revoked" "$F_OUT" "the broker's copy of 'github' is revoked"
+assert_contains "forget github, keychain locked: says to unlock and run forget again" \
+  "$F_OUT" "Unlock it, then run 'factory secret forget github' again"
+assert_not_contains "forget github, keychain locked: never prints the value" "$F_OUT" "kr-secret-9"
+
+# A failed delete with a readable keychain (the stub's 'clear' does nothing, so
+# the entry is still found afterwards): the broker copy is still removed first.
+for name in jira github; do
+  reset_fakes
+  FAKE_KEYRING=found run_factory secret forget "$name"
+  [ "$F_RC" -ne 0 ] && ok "forget $name, delete fails: exits non-zero" || bad "forget $name, delete fails: exits non-zero (got 0)"
+  if [ "$name" = github ]; then
+    assert_contains "forget $name, delete fails: removes the broker-scoped sbx secret anyway" \
+      "$(cat "$FAKE_SBX_ARGS")" "secret rm github --sandbox factory-broker -f"
+  else
+    assert_contains "forget $name, delete fails: removes the broker's file anyway" \
+      "$(cat "$FAKE_SBX_ARGS")" "exec factory-broker rm -f /etc/factory-broker/secrets/$name"
+  fi
+  assert_contains "forget $name, delete fails: says the broker copy is revoked" "$F_OUT" "the broker's copy of '$name' is revoked"
+  assert_contains "forget $name, delete fails: says the keychain entry could not be deleted" "$F_OUT" "factory-$name could not be deleted from the keychain"
+  assert_contains "forget $name, delete fails: says what to do" "$F_OUT" "Delete it by hand"
+  assert_not_contains "forget $name, delete fails: not mistaken for a locked keychain" "$F_OUT" "is locked"
+  assert_not_contains "forget $name, delete fails: never claims the keychain entry was deleted" "$F_OUT" "deleted factory-$name from"
+  assert_not_contains "forget $name, delete fails: never prints the value" "$F_OUT" "kr-secret-9"
+done
+
+# The message must match what really happened to the broker's copy. A fake sbx
+# whose broker is stopped (FAKE_SBX_STATE), whose removals fail (FAKE_SBX_RM_FAIL)
+# and whose 'secret ls' lists what FAKE_SBX_SECRETS holds.
+cat > "$tmp/bin/sbx" <<'FAKE_SBX_VARIANT'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >> "$FAKE_SBX_ARGS"
+case "$1" in
+  version) echo "sbx version: v0.45.1 testcommit" ;;
+  ls) echo "factory-broker   template   ${FAKE_SBX_STATE:-running}" ;;
+  exec) [ -z "${FAKE_SBX_RM_FAIL:-}" ] || exit 1 ;;
+  secret)
+    case "${2:-}" in
+      rm) [ -z "${FAKE_SBX_RM_FAIL:-}" ] || exit 1 ;;
+      ls) printf '%s\n' "${FAKE_SBX_SECRETS:-}" ;;
+    esac ;;
+esac
+FAKE_SBX_VARIANT
+chmod +x "$tmp/bin/sbx"
+GITHUB_LISTED='SCOPE  SECRET  SERVICE
+factory-broker   -   github'
+
+for mode in locked found; do
+  # Broker stopped: nothing was revoked, and the message must not claim it was.
+  reset_fakes
+  FAKE_SBX_STATE=stopped FAKE_KEYRING=$mode run_factory secret forget jira
+  [ "$F_RC" -ne 0 ] && ok "forget jira, keychain $mode, broker stopped: exits non-zero" || bad "forget jira, keychain $mode, broker stopped: exits non-zero (got 0)"
+  assert_not_contains "forget jira, keychain $mode, broker stopped: sbx is never asked to remove anything" \
+    "$(cat "$FAKE_SBX_ARGS")" "rm -f"
+  assert_contains "forget jira, keychain $mode, broker stopped: says the broker's copy was NOT touched" "$F_OUT" "its copy of 'jira' was NOT touched"
+  assert_not_contains "forget jira, keychain $mode, broker stopped: does not claim revocation" "$F_OUT" "is revoked"
+  assert_contains "forget jira, keychain $mode, broker stopped: says to re-run forget before the next start" \
+    "$F_OUT" "run 'factory secret forget jira' again before the next 'factory start'"
+  assert_not_contains "forget jira, keychain $mode, broker stopped: never prints the value" "$F_OUT" "kr-secret-9"
+
+  # Broker running but the removal fails: not "revoked" either.
+  reset_fakes
+  FAKE_SBX_RM_FAIL=1 FAKE_KEYRING=$mode run_factory secret forget jira
+  [ "$F_RC" -ne 0 ] && ok "forget jira, keychain $mode, removal fails: exits non-zero" || bad "forget jira, keychain $mode, removal fails: exits non-zero (got 0)"
+  assert_contains "forget jira, keychain $mode, removal fails: says it may still be active" "$F_OUT" "could not remove 'jira' from the broker sandbox, so it may still be active"
+  assert_not_contains "forget jira, keychain $mode, removal fails: does not claim revocation" "$F_OUT" "is revoked"
+  assert_not_contains "forget jira, keychain $mode, removal fails: never prints the value" "$F_OUT" "kr-secret-9"
+
+  # github: a failing 'sbx secret rm' that leaves the token listed is a failure.
+  reset_fakes
+  FAKE_SBX_RM_FAIL=1 FAKE_SBX_SECRETS="$GITHUB_LISTED" FAKE_KEYRING=$mode run_factory secret forget github
+  [ "$F_RC" -ne 0 ] && ok "forget github, keychain $mode, rm fails and token stays: exits non-zero" || bad "forget github, keychain $mode, rm fails and token stays: exits non-zero (got 0)"
+  assert_contains "forget github, keychain $mode, rm fails and token stays: says it may still be active" "$F_OUT" "may still be active"
+  assert_not_contains "forget github, keychain $mode, rm fails and token stays: does not claim revocation" "$F_OUT" "is revoked"
+  assert_not_contains "forget github, keychain $mode, rm fails and token stays: does not claim removal" "$F_OUT" "removed the broker's GitHub token"
+done
+
+# github, unlocked and deleted, but 'sbx secret rm' fails and the token is still listed.
+reset_fakes
+FAKE_SBX_RM_FAIL=1 FAKE_SBX_SECRETS="$GITHUB_LISTED" FAKE_KEYRING=absent run_factory secret forget github
+[ "$F_RC" -ne 0 ] && ok "forget github, deleted, rm fails and token stays: exits non-zero" || bad "forget github, deleted, rm fails and token stays: exits non-zero (got 0)"
+assert_not_contains "forget github, deleted, rm fails and token stays: does not claim removal" "$F_OUT" "removed the broker's GitHub token"
+# ...but a refusal because nothing is stored is not a failure.
+reset_fakes
+FAKE_SBX_RM_FAIL=1 FAKE_SBX_SECRETS="SCOPE  SECRET  SERVICE" FAKE_KEYRING=absent run_factory secret forget github
+assert_eq "forget github, deleted, rm refuses and nothing is listed: exits 0" "$F_RC" "0"
+# Entry deleted, broker stopped: succeeds but warns the broker copy was not touched.
+reset_fakes
+FAKE_SBX_STATE=stopped FAKE_KEYRING=absent run_factory secret forget jira
+assert_eq "forget jira, deleted, broker stopped: exits 0" "$F_RC" "0"
+assert_contains "forget jira, deleted, broker stopped: warns its copy was not touched" "$F_OUT" "its copy of 'jira' was not touched"
+install_good_fake_sbx
+
+# Unlocked, with the entry deleted: both steps are reported, in order.
+reset_fakes
+FAKE_KEYRING=absent run_factory secret forget jira
+assert_eq "forget, entry already gone: exits 0" "$F_RC" "0"
+assert_contains "forget, entry already gone: removes the broker's file" \
+  "$(cat "$FAKE_SBX_ARGS")" "exec factory-broker rm -f /etc/factory-broker/secrets/jira"
+
+# doctor/status: a locked keychain is reported as locked, not as a missing token.
+run_warn_missing() { # run_warn_missing MODE -> output in $W_OUT
+  W_OUT="$( ( . "$REPO_ROOT/bin/factory"
+    FAKE_KEYRING=$1 keychain_warn_missing factory-jira "no token is stored" ) 2>&1 )"
+}
+run_warn_missing absent
+assert_contains "doctor, no entry: says no token is stored" "$W_OUT" "no token is stored"
+run_warn_missing locked
+assert_contains "doctor, keychain locked: says it is locked" "$W_OUT" "keychain is locked or unavailable, so factory-jira couldn't be checked"
+assert_not_contains "doctor, keychain locked: doesn't claim no token is stored" "$W_OUT" "no token is stored"
+run_warn_missing found
+assert_empty "doctor, entry found: no warning" "$W_OUT"
+
+# The WSL2 Credential Manager (the Part 8 fake PowerShell): no entry is
+# "not stored" (1) and revokes; a failing PowerShell is "undetermined" (2)
+# and keeps the file.
+export FACTORY_KEYCHAIN=wincred
+rm -f "$tmp/wincred/factory-gemini"
+set +e
+( . "$REPO_ROOT/scripts/lib/common.sh"; . "$REPO_ROOT/scripts/lib/secrets.sh"
+  keychain_lookup factory-gemini ) >/dev/null 2>&1
+L_RC=$?
+set -e
+assert_eq "wincred, no entry: keychain_lookup returns 1" "$L_RC" "1"
+reset_fakes
+run_sync gemini
+assert_contains "wincred, no entry: the stale file is revoked" \
+  "$(cat "$FAKE_SBX_ARGS")" "exec factory-broker rm -f /etc/factory-broker/secrets/gemini"
+printf 'wc-secret-2' > "$tmp/wincred/factory-gemini"
+set +e
+( . "$REPO_ROOT/scripts/lib/common.sh"; . "$REPO_ROOT/scripts/lib/secrets.sh"
+  FAKE_PS_FAIL=1 keychain_lookup factory-gemini ) >/dev/null 2>&1
+L_RC=$?
+set -e
+assert_eq "wincred, PowerShell fails: keychain_lookup returns 2" "$L_RC" "2"
+reset_fakes
+FAKE_PS_FAIL=1 run_sync gemini
+assert_empty "wincred, PowerShell fails: the credential is kept (sbx never called)" "$(cat "$FAKE_SBX_ARGS")"
+assert_contains "wincred, PowerShell fails: warns" "$S_OUT" "could not read factory-gemini"
+assert_contains "wincred, PowerShell fails: the hint is about PowerShell" "$S_OUT" "powershell.exe"
+rm -f "$tmp/wincred/factory-gemini"
+export FACTORY_KEYCHAIN=none
 
 echo "---"
 echo "$pass passed, $fail failed"
