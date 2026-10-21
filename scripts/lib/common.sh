@@ -49,6 +49,26 @@ die() {
   exit 1
 }
 
+# run_or_die MESSAGE COMMAND... -> run COMMAND with its output held back. If it
+# fails, die with MESSAGE and the last 20 lines of what it printed (stdout and
+# stderr), so the reason isn't lost; if it succeeds, print nothing.
+run_or_die() {
+  local msg="$1" log status=0
+  shift
+  log="$(mktemp)"
+  "$@" >"$log" 2>&1 || status=$?
+  if [ "$status" -ne 0 ]; then
+    echo "error: $msg (exit status $status)" >&2
+    if [ -s "$log" ]; then
+      echo "last output of '$*' (up to 20 lines):" >&2
+      tail -n 20 "$log" | sed 's/^/  /' >&2
+    fi
+    rm -f "$log"
+    exit 1
+  fi
+  rm -f "$log"
+}
+
 # Runtime state: audit logs, transcripts, sessions, token hashes, per-role tool
 # grants, and roles' scratch dirs. It lives outside the repo so no
 # agent workspace can reach it, even when the factory works on its own repo
@@ -235,6 +255,16 @@ sandbox_running() {
   [ "$(sbx ls 2>/dev/null | awk -v s="$1" '$1 == s { print $3 }')" = running ]
 }
 
+# sbx_not_signed_in -> success only when sbx itself says it is not signed in
+# to Docker ("Not authenticated", the message the image load gives). Any other
+# answer, including an sbx that can't be asked, is "unknown" and fails, so the
+# caller carries on and the later failure still gets handled.
+sbx_not_signed_in() {
+  local out
+  out="$(sbx template ls 2>&1 </dev/null || true)"
+  printf '%s\n' "$out" | grep -qi "not authenticated"
+}
+
 # claude_login_stored -> success if sbx holds the global Claude login (the first
 # /login in a factory sandbox, or an API key from `sbx secret set anthropic`).
 claude_login_stored() {
@@ -321,6 +351,39 @@ broker_initialized() {
   rel="$(broker_gitdir_rel "$1")" || return 1
   case "$rel" in /*) ;; *) rel="$1/$rel" ;; esac
   [ -e "$rel" ]
+}
+
+# .gitmodules names the broker submodule relative to this repo's own origin
+# (../passdesk-broker.git), so a clone from a fork or mirror looks for a
+# repository that doesn't exist. This is the absolute URL to fall back on.
+readonly BROKER_CANONICAL_URL="https://github.com/doomtickle/passdesk-broker.git"
+
+# broker_init_command ROOT -> the command that fetches broker/ at its pin from
+# the canonical URL, whatever .gitmodules says (the -c is for this one run;
+# no config is written).
+broker_init_command() {
+  printf "git -C %q -c submodule.broker.url=%s submodule update --init broker" "$1" "$BROKER_CANONICAL_URL"
+}
+
+# broker_submodule_init ROOT -> try to initialize the broker/ submodule. On
+# failure, print git's own error (all of it) on stdout and fail.
+broker_submodule_init() {
+  local err
+  err="$(git "${BROKER_GIT_SAFE[@]}" -C "$1" submodule update --init --quiet -- broker 2>&1 >/dev/null)" && return 0
+  printf '%s' "$err"
+  return 1
+}
+
+# broker_missing_message ROOT [GIT-ERROR] -> why broker/ is unusable and what
+# to run, as plain lines (no "error:" prefix).
+broker_missing_message() {
+  printf '%s/broker/tools.txt is missing: the broker/ submodule (passdesk-broker) is not checked out.\n' "$1"
+  if [ -n "${2:-}" ]; then
+    printf 'git said:\n%s\n' "$(printf '%s\n' "$2" | sed 's/^/  /')"
+  fi
+  printf '.gitmodules gives its URL relative to this repo'"'"'s origin, so a clone from a fork or mirror looks\n'
+  printf 'for a passdesk-broker that does not exist there. Fetch it from %s instead:\n' "$BROKER_CANONICAL_URL"
+  printf '  %s\n' "$(broker_init_command "$1")"
 }
 
 # broker_gitdir ROOT -> absolute path of broker/'s git directory, resolved

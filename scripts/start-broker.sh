@@ -103,7 +103,7 @@ done
 
 if sandbox_exists "$BROKER_SANDBOX"; then
   echo "Starting existing broker sandbox..."
-  sbx run -d --name "$BROKER_SANDBOX" >/dev/null 2>&1 || die "could not start the broker sandbox"
+  run_or_die "could not start the broker sandbox" sbx run -d --name "$BROKER_SANDBOX"
 else
   echo "Creating broker sandbox for $PROJECT..."
   # This machine's extra broker egress hosts (e.g. a private npm registry), if any.
@@ -118,10 +118,11 @@ else
     echo "Enabling broker plugins: $(broker_plugins)"
     set -- "$@" -e "PASSDESK_PLUGINS=$(broker_plugins)"
   fi
-  sbx run -d --name "$BROKER_SANDBOX" --pull never -t "factory-broker:$TEMPLATE_TAG" \
+  run_or_die "could not create the broker sandbox" \
+    sbx run -d --name "$BROKER_SANDBOX" --pull never -t "factory-broker:$TEMPLATE_TAG" \
     -p "127.0.0.1:$BROKER_PORT:8765" \
     -e "BROKER_WORKSPACE=$PROJECT" -e "BROKER_STATE=$STATE" \
-    shell "$@" "$PROJECT" "$STATE" >/dev/null 2>&1 || die "could not create the broker sandbox"
+    shell "$@" "$PROJECT" "$STATE"
   record_sandbox_fingerprint "$BROKER_SANDBOX"
   # A brand new sandbox has none of the credentials delivered, so any marker
   # left over from a previous one (e.g. after 'factory reset' or 'factory

@@ -78,6 +78,8 @@ jobs:
         run: bash scripts/test_factory_gitlab.sh
       - name: local role overrides
         run: bash scripts/test_factory_role_overrides.sh
+      - name: fresh-clone doctor and start checks
+        run: bash scripts/test_factory_doctor.sh
 
   macos:
     # What a Mac user runs: the system bash (3.2) and the system Python
@@ -122,6 +124,8 @@ jobs:
         run: bash scripts/test_factory_restart.sh
       - name: factory GitLab checks
         run: bash scripts/test_factory_gitlab.sh
+      - name: fresh-clone doctor and start checks
+        run: bash scripts/test_factory_doctor.sh
       # factory-lane runs only inside the Linux sandboxes, so it's tested on Linux.
 
   images:
