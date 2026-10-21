@@ -95,7 +95,11 @@ socket, or host credentials. Full picture: README.md.
   (`scripts/lib/common.sh`, `~/.config/ai-code-factory/`, outside repo/workspace):
   `policy.toml` overlays `broker/policy.toml` (baked into the broker image),
   `broker-kit/` mixes in broker egress hosts, `projects/<name>.md` holds per-project
-  notes `start-dispatch.sh` appends to role instructions. `config.example/` holds
+  notes `start-dispatch.sh` appends to role instructions, and `roles/<role>.conf`
+  overrides a role's tuning keys only (`ROLE_OVERRIDE_KEYS` in `scripts/lib/roles.sh`
+  and `dispatch/server.py`; never `BROKER_TOOLS`, `WORKSPACE`, `TEMPLATE` or anything
+  else that moves the security boundary), parsed as data and snapshotted by
+  `start-dispatch.sh` into `FACTORY_STATE` for the bridge. `config.example/` holds
   placeholders only; features needing these settings must be inert when absent.
 
 ### Credentials

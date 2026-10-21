@@ -282,13 +282,20 @@ class Audit(Tail):
         return jobs, cost
 
 
-def discover_lanes(roles_dir: Path, logs_dir: Path) -> list:
+def discover_lanes(roles_dir: Path, logs_dir: Path, overrides_dir: Path | None = None) -> list:
     """Every lane of every role in roles/ (in LANES order), then any other
-    transcript in the logs folder (a removed role's, say)."""
+    transcript in the logs folder (a removed role's, say). A role's LANES comes
+    from its local override as the bridge sees it (overrides_dir: the dispatch
+    state's role-overrides snapshot, validated by start-dispatch.sh) if that
+    sets it, else from role.conf."""
     lanes = []
     for conf in sorted(roles_dir.glob("*/role.conf")):
         role = conf.parent.name
-        m = CONF_LANES.search(conf.read_text(errors="replace"))
+        m = None
+        override = overrides_dir / f"{role}.conf" if overrides_dir else None
+        if override and override.is_file():
+            m = CONF_LANES.search(override.read_text(errors="replace"))
+        m = m or CONF_LANES.search(conf.read_text(errors="replace"))
         n = int(m.group(1)) if m and m.group(1) else 1
         for k in range(1, max(1, min(n, 8)) + 1):
             name = role if k == 1 else f"{role}-lane{k}"
@@ -303,7 +310,7 @@ def discover_lanes(roles_dir: Path, logs_dir: Path) -> list:
 class Watch:
     def __init__(self, state: Path, roles: Path, project: str):
         self.state, self.project = state, project
-        self.lanes = discover_lanes(roles, state / "logs")
+        self.lanes = discover_lanes(roles, state / "logs", state / "role-overrides")
         self.audit = Audit(state / "audit.jsonl")
         self.focus: int | None = None  # index into lanes
         self.all = False  # grid of every lane, not only the active ones

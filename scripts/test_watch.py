@@ -99,6 +99,35 @@ class LaneTests(unittest.TestCase):
         self.assertEqual(len(self.lane.entries), 1)
 
 
+class DiscoverLanesTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        root = Path(self.tmp.name)
+        self.roles, self.logs, self.overrides = root / "roles", root / "logs", root / "role-overrides"
+        for role, lanes in (("developer", "2"), ("reviewer", "")):
+            (self.roles / role).mkdir(parents=True)
+            (self.roles / role / "role.conf").write_text(f'DESCRIPTION="x"\nLANES="{lanes}"\n')
+        self.logs.mkdir()
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def names(self, *args):
+        return [lane.name for lane in w.discover_lanes(self.roles, self.logs, *args)]
+
+    def test_lanes_from_role_conf(self):
+        expected = ["developer", "developer-lane2", "reviewer"]
+        self.assertEqual(self.names(), expected)
+        self.assertEqual(self.names(self.overrides), expected)  # no snapshot folder
+
+    def test_local_override_sets_lanes(self):
+        self.overrides.mkdir()
+        (self.overrides / "developer.conf").write_text('# more lanes\nLANES="3"\n')
+        (self.overrides / "reviewer.conf").write_text('MODEL="opus"\n')  # LANES unset: role.conf's
+        self.assertEqual(self.names(self.overrides),
+                         ["developer", "developer-lane2", "developer-lane3", "reviewer"])
+
+
 class AuditTests(unittest.TestCase):
     def test_skips_malformed_job_ids(self):
         # A job_id that isn't a string (a list, say) can't be a dict key; one such

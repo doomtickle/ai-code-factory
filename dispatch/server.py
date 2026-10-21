@@ -153,10 +153,48 @@ _RESERVED_ROLE_NAMES = {"broker", "coordinator", "dispatch"}
 _LANE_SUFFIX = re.compile(r"-lane[0-9]+$")
 
 
+# Keys this machine's local override of a role may set (FACTORY_CONFIG/roles/
+# <role>.conf, snapshotted by start-dispatch.sh into STATE/role-overrides): tuning
+# only, nothing that moves the security boundary. Keep in sync with
+# ROLE_OVERRIDE_KEYS in scripts/lib/roles.sh.
+ROLE_OVERRIDE_KEYS = ("MODEL", "MODELS", "EFFORT", "LANES", "MAX_SESSION_TOKENS", "MAX_TURNS")
+
+
+def role_overrides_dir() -> Path:
+    return STATE / "role-overrides"
+
+
+def read_role_override(path: Path) -> dict:
+    """A role's local override, as start-dispatch.sh snapshotted it: only blank
+    lines, comments and KEY="value" lines for ROLE_OVERRIDE_KEYS (parsed, never
+    executed). Anything else is refused, naming the file and line."""
+    values = {}
+    for line in path.read_text().splitlines():
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        m = _CONF_LINE.match(line)
+        if not m:
+            raise Denied(f'{path}: not a KEY="value" line: {line[:80]}')
+        if m.group(1) not in ROLE_OVERRIDE_KEYS:
+            raise Denied(f"{path}: {m.group(1)} can't be set in a local override "
+                         f"(allowed: {' '.join(ROLE_OVERRIDE_KEYS)})")
+        values[m.group(1)] = m.group(2)
+    return values
+
+
 def load_roles() -> dict:
-    """Roles from ROOT/roles/*/role.conf (parsed, never executed)."""
+    """Roles from ROOT/roles/*/role.conf (parsed, never executed), each with this
+    machine's local override (if any) layered on top. Override values go through
+    the same parsing as role.conf's."""
     roles = {}
-    for conf in sorted((ROOT / "roles").glob("*/role.conf")):
+    confs = sorted((ROOT / "roles").glob("*/role.conf"))
+    overrides = role_overrides_dir()
+    if overrides.is_dir():
+        known = {conf.parent.name for conf in confs}
+        for path in sorted(overrides.glob("*.conf")):
+            if path.stem not in known:
+                raise Denied(f"{path}: no role named {path.stem!r} in roles/")
+    for conf in confs:
         name = conf.parent.name
         if not _ROLE_NAME.match(name) or name in _RESERVED_ROLE_NAMES or _LANE_SUFFIX.search(name):
             continue
@@ -165,6 +203,9 @@ def load_roles() -> dict:
             m = _CONF_LINE.match(line)
             if m:
                 values[m.group(1)] = m.group(2)
+        override = overrides / f"{name}.conf"
+        if override.is_file():
+            values.update(read_role_override(override))
         roles[name] = {
             "description": values.get("DESCRIPTION", ""),
             "workspace": values.get("WORKSPACE", "rw"),

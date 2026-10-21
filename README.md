@@ -317,6 +317,10 @@ factory update
 - `projects/<project-folder-name>.md` holds optional notes for one project,
   such as its test command, added to every role's instructions on `factory start`
   (Roles, "Per-project notes"). These need no rebuild.
+- `roles/<role>.conf` tunes one role on this machine, layered over
+  `roles/<role>/role.conf`: only `MODEL`, `MODELS`, `EFFORT`, `LANES`,
+  `MAX_SESSION_TOKENS` and `MAX_TURNS`, applied on `factory start` (Roles,
+  "Tuning a role locally"). No rebuild.
 
 The folder sits outside the repo on purpose. When the factory works on its own
 repo, the developer's branches can change anything in it once you merge them,
@@ -662,6 +666,16 @@ to `claude-opus-5-5`.
 A resumed session keeps the model it was saved with, and each model has its own
 prompt cache, so a task on a different model from the role's saved session
 starts a fresh session.
+
+**Tuning a role locally.** To change these settings on your machine without
+editing your clone, put them in `~/.config/ai-code-factory/roles/<role>.conf`,
+the same `KEY="value"` lines layered over the role's `role.conf` (e.g.
+`MODELS="claude-haiku-5-5 opus claude-fable-5-1"` for the developer). Only the
+tuning keys `MODEL`, `MODELS`, `EFFORT`, `LANES`, `MAX_SESSION_TOKENS` and
+`MAX_TURNS` are allowed; `factory start` refuses any other key (`BROKER_TOOLS`,
+`WORKSPACE`, ...), a bad value or an unknown role, naming the file. Overrides
+apply on `factory start`, and the Coordinator's `list_roles` shows the merged
+result. See [Customize](docs/guides/04-customize.md#tune-a-role).
 
 The split follows the capabilities that matter:
 

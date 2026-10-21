@@ -87,7 +87,12 @@ carry it in every prompt.
 ## Tune a role
 
 Each role is `roles/<name>/role.conf`, a file of plain `KEY="value"` lines.
-The settings you're most likely to change:
+To tune a role on your machine, don't edit that file: put the keys you want
+to change in `~/.config/ai-code-factory/roles/<name>.conf`, a local override
+layered over it, outside the repo (see [Local
+settings](../../README.md#local-settings)). It survives `git pull`, and keys it
+leaves out keep the repo's values. The settings you're most likely to change,
+and the only ones an override may set:
 
 | Key | What it does | Developer default |
 |---|---|---|
@@ -108,19 +113,35 @@ For example, to make the reviewer cheaper on a low-risk project, run it on
 Sonnet by default and keep Opus available for hard reviews:
 
 ```conf
-# roles/reviewer/role.conf
+# ~/.config/ai-code-factory/roles/reviewer.conf
 MODEL="claude-sonnet-5-5"
 MODELS="opus"
 ```
 
-Or, to keep developer sessions small on a project with long, unrelated tasks:
+Or, to give the developer a different set of models to pick from per task
+(`config.example/roles/developer.conf` has this as a placeholder):
 
 ```conf
-# roles/developer/role.conf
-MAX_SESSION_TOKENS="60000"
+# ~/.config/ai-code-factory/roles/developer.conf
+MODELS="claude-haiku-5-5 opus claude-fable-5-1"
 ```
 
-Then run `factory start`. Every change above applies from the next task.
+Then run `factory start`, which applies overrides: the bridge reads a copy it
+takes then, so editing the file mid-session changes nothing until the next
+start. The Coordinator's `list_roles` shows the merged result, and `factory
+roles` names each role's override file.
+
+An override is checked the same way as `role.conf`, and `factory start` stops
+with an error naming the file and key if it sets anything else
+(`BROKER_TOOLS`, `WORKSPACE`, `TEMPLATE`, `DESCRIPTION`, ...): what a role may
+reach or write changes only in the repo, where it shows in review. A bad
+value (a model name with a space, `LANES="9"`) or an override for a role that
+isn't in `roles/` stops it too. The file is read as data, never run as a
+shell script. `factory doctor` checks overrides as well.
+
+If you're changing a role's defaults for everyone (a contributor's change to
+the repo), edit `roles/<name>/role.conf` instead; a change there to `LANES`,
+`MODEL` or the other keys above applies from the next task.
 
 The Coordinator's own model is set differently: it defaults to `opus` in
 `kits/coordinator/spec.yaml`, and changing that default needs `factory update`,
@@ -232,6 +253,10 @@ cp -R config.example/. ~/.config/ai-code-factory/
 The copied files hold placeholder values (an `example.jfrog.io` registry, an
 `example.atlassian.net` Jira site). Delete the tables and hosts you don't use
 before you run `factory update`.
+
+`roles/<role>.conf` there tunes a role (see [Tune a role](#tune-a-role)); the
+example `roles/developer.conf` is all comments, so it changes nothing until you
+uncomment a line.
 
 `policy.toml` there overlays the repo's `broker/policy.toml` table by table: a
 key you set replaces the repo's value, and keys you leave out keep it. A list

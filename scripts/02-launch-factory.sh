@@ -70,6 +70,7 @@ readonly COORDINATOR_TAB="coordinator"
 
 roles="$(list_roles)"
 [ -n "$roles" ] || die "no roles defined in roles/"
+validate_role_overrides
 for role in $roles; do validate_role "$role"; done
 rw_roles=""
 for role in $roles; do
