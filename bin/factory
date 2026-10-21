@@ -314,6 +314,12 @@ $(sed -n 's/^[[:space:]]*-[[:space:]]*"\{0,1\}\([^"[:space:]#]*\).*/\1/p' "$kit"
     esac
   fi
   approvals_doctor_check
+  # A warning, not a problem (owner decision): the fix is a Pro re-copy or a
+  # policy edit, and `factory update` must stay usable meanwhile.
+  local why
+  if why="$(gitlab_mr_unheld)"; then
+    warn "GitLab merge requests open without approval: $why (see README: Enabling approvals)"
+  fi
 
   say ""
   if [ "$problems" -eq 0 ]; then

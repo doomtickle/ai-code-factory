@@ -594,8 +594,9 @@ call later; the decision is picked up by the retry.
    If you set `[approvals].tools` yourself, it replaces the default: list
    `gitlab_create_mr` there for GitLab merge requests to wait for you. Holding
    them also needs a Passdesk Pro copy from after GitLab support (re-copy it
-   into `plugins/` and run `factory update`); `factory status` warns if
-   merge requests would open unheld.
+   into `plugins/` and run `factory update`); `factory status` and
+   `factory doctor` warn (without failing) if merge requests would open
+   unheld.
 5. `factory status` shows a line with the pending count and the oldest
    card's age once there is at least one; `factory doctor` warns (without
    failing) about any card that expired with no decision, pointing back at
