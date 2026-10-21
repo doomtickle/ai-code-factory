@@ -39,7 +39,7 @@ set -euo pipefail
 #    and the GitHub token alone and prints one warning naming the secret,
 #    never the value. "factory secret forget" with a locked keychain still
 #    removes the broker's copy, then exits non-zero telling the user to
-#    unlock and run it again.
+#    unlock and run it again; so does a failed delete from a readable one.
 #
 # Drives the real bin/factory as a subprocess (not sourced, since the
 # command dispatch under test runs only in that mode - see the guard at the
@@ -633,6 +633,27 @@ assert_contains "forget github, keychain locked: says the broker copy is revoked
 assert_contains "forget github, keychain locked: says to unlock and run forget again" \
   "$F_OUT" "Unlock it, then run 'factory secret forget github' again"
 assert_not_contains "forget github, keychain locked: never prints the value" "$F_OUT" "kr-secret-9"
+
+# A failed delete with a readable keychain (the stub's 'clear' does nothing, so
+# the entry is still found afterwards): the broker copy is still removed first.
+for name in jira github; do
+  reset_fakes
+  FAKE_KEYRING=found run_factory secret forget "$name"
+  [ "$F_RC" -ne 0 ] && ok "forget $name, delete fails: exits non-zero" || bad "forget $name, delete fails: exits non-zero (got 0)"
+  if [ "$name" = github ]; then
+    assert_contains "forget $name, delete fails: removes the broker-scoped sbx secret anyway" \
+      "$(cat "$FAKE_SBX_ARGS")" "secret rm github --sandbox factory-broker -f"
+  else
+    assert_contains "forget $name, delete fails: removes the broker's file anyway" \
+      "$(cat "$FAKE_SBX_ARGS")" "exec factory-broker rm -f /etc/factory-broker/secrets/$name"
+  fi
+  assert_contains "forget $name, delete fails: says the broker copy is revoked" "$F_OUT" "the broker's copy of '$name' is revoked"
+  assert_contains "forget $name, delete fails: says the keychain entry could not be deleted" "$F_OUT" "factory-$name could not be deleted from the keychain"
+  assert_contains "forget $name, delete fails: says what to do" "$F_OUT" "Delete it by hand"
+  assert_not_contains "forget $name, delete fails: not mistaken for a locked keychain" "$F_OUT" "is locked"
+  assert_not_contains "forget $name, delete fails: never claims the keychain entry was deleted" "$F_OUT" "deleted factory-$name from"
+  assert_not_contains "forget $name, delete fails: never prints the value" "$F_OUT" "kr-secret-9"
+done
 
 # Unlocked, with the entry deleted: both steps are reported, in order.
 reset_fakes

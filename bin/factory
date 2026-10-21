@@ -1008,8 +1008,9 @@ secret_forget_broker_copy() {
 }
 
 # cmd_secret_forget NAME -> delete factory-<NAME> from the keychain, and its
-# copy in the running broker. A locked keychain can't confirm the delete, but
-# the broker copy is still removed first: forget is how a leaked token is killed.
+# copy in the running broker. If the keychain entry can't be deleted (locked, or
+# the delete failed), the broker copy is still removed first: forget is how a
+# leaked token is killed.
 cmd_secret_forget() {
   [ $# -eq 1 ] || die "usage: factory secret forget <name>"
   local name="$1"
@@ -1020,7 +1021,9 @@ cmd_secret_forget() {
   keychain_has "factory-$name" || rc=$?
   case "$rc" in
     1) ;;
-    0) die "could not delete factory-$name from the keychain" ;;
+    0)
+      secret_forget_broker_copy "$name"
+      die "the broker's copy of '$name' is revoked, but factory-$name could not be deleted from the keychain, so the next 'factory start' would deliver it again. Delete it by hand (e.g. in your keychain app), then run 'factory secret forget $name' again" ;;
     *)
       secret_forget_broker_copy "$name"
       die "the broker's copy of '$name' is revoked, but factory-$name could not be deleted from the keychain because the keychain is locked or unavailable. Unlock it, then run 'factory secret forget $name' again" ;;
