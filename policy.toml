@@ -101,8 +101,14 @@ max_diff_bytes = 2_000_000
 max_bundle_bytes = 100_000_000
 
 # [approvals]
-# Read only when an approval hook is installed (e.g. Passdesk Pro, which also
-# reads tools, hold_seconds and expire_seconds here). git_push then stores the
+# The hold (docs/approvals.md): each tool named in `tools` waits for a
+# person's decision before its write leaves the machine. Off until `tools`
+# names something. A call waits hold_seconds for the decision, then asks the
+# agent to retry; a pending card can be decided for expire_seconds.
+# tools = ["git_push", "github_create_pr", "gitlab_create_mr"]
+# hold_seconds = 45
+# expire_seconds = 1800
+# With holds on, git_push also stores the
 # pushed commits' patch (oldest first, with --stat, binary files as one line)
 # in the gateway's state directory, approvals/patches/<sha256>.patch, for the
 # person approving to inspect; the card carries only its digest and size,

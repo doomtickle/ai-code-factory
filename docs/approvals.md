@@ -1,10 +1,12 @@
-# Design note: approvals (Passdesk Pro)
+# Design note: approvals
 
-The paid feature: nothing an agent pushes or opens as a pull request leaves
-the machine until a person has approved it. This note fixes the shape before
-the code; the decision log records what changed on the way.
+Nothing an agent pushes or opens as a pull request leaves the machine until
+a person has approved it. This note fixes the shape; the decision log
+records what changed on the way. The hold started life as the commercial
+Passdesk Pro plugin and moved into core, licence removed, on 2026-10-21
+(`decisions.md`); the file layout and the decision contract did not change.
 
-## What core ships (Apache-2.0, this repo)
+## The approval point and the plugin seam
 
 - **An approval point**, `core/approvals.py`: `require(card)` is called by a
   tool right before its external write, with a card describing what is about
@@ -26,10 +28,11 @@ the code; the decision log records what changed on the way.
   secret scan (`gitlab_create_mr` also after confirming the gateway holds a
   `gitlab` token), and
   `github_create_issue` after its title, body and labels pass it and the
-  labels are confirmed to exist (its card carries a `body_sha256`). Pro
-  holds only the tools `[approvals] tools` lists (its default holds
-  `git_push`, `github_create_pr` and `gitlab_create_mr`); add
-  `github_create_issue` there to hold issues too.
+  labels are confirmed to exist (its card carries a `body_sha256`). The
+  hold covers only the tools `[approvals] tools` lists; nothing is held
+  until that list names something (the usual list is `git_push`,
+  `github_create_pr` and `gitlab_create_mr`; add `github_create_issue` to
+  hold issues too).
 
 - **The patch to inspect** (doomtickle/passdesk-ops#113). Only when a hook
   is installed, `git_push` writes the pushed commits' patch to
@@ -78,14 +81,20 @@ per-commit patch scan. The redaction in `require` is defense in depth for a
 pattern that slipped past those checks, not the first line.
 
 The same holds for the card id: two pushes whose cards differ only in a
-redacted substring would get the same id (`passdesk_pro/approvals.py`'s
-`card_id` hashes the card it is given - the redacted one), but a card that
+redacted substring would get the same id (`core/holds.py`'s `card_id`
+hashes the card it is given - the redacted one), but a card that
 needed redacting is one the refusals above should have stopped, and the
 content that actually gets pushed is still pinned by `head` and
 `bundle_sha256`, which redaction never touches.
 
-## What Pro ships (commercial, `passdesk-pro`)
+## The hold (`core/holds.py`, `core/notify.py`)
 
+- **Switched on by policy.** At start-up, after the policy loads and before
+  plugins, `holds.install` puts the hook on the approval point if
+  `[approvals].tools` is a non-empty list, and records `approvals-enabled`
+  with the settings. Absent or empty, nothing is installed: no hook, no
+  patch files, no holds, exactly the gateway as it was without the plugin.
+  A plugin that installs its own hook replaces this one.
 - **The hold.** The hook computes a card id (a hash of the card's stable
   fields, including the bundle's digest), looks for a decision with that id,
   and otherwise records the card as pending, notifies, and waits.
@@ -102,43 +111,35 @@ content that actually gets pushed is still pinned by `head` and
 - **Decisions are files.** The state directory is shared between the gateway
   and its deployment and with nothing else, so it is the channel:
   `approvals/pending/<id>.json` is the card, `approvals/decisions/<id>.json`
-  is the decision (`approve` or `decline`, approver name, reason, time),
-  written atomically by the deployment's console. No new listener, no new
-  port, no new token: whoever can write to the state directory is the
-  approver, which is the person running the machine. A networked approver
-  API is the standalone deployment's job, later.
+  is the decision (`approve` or `decline`, approver name, reason, time,
+  and the card's `nonce`, so a decision never applies to a later card with
+  the same id), written atomically by the deployment's console. No new
+  listener, no new port, no new token: whoever can write to the state
+  directory is the approver, which is the person running the machine. A
+  networked approver API is the standalone deployment's job, later.
 - **Notification.** One outbound POST per card to a webhook URL, with a
-  plain-text summary under the keys Slack, Discord and ntfy each read. The
-  URL is a credential (a Slack webhook URL grants posting), so it is
-  delivered like the other credentials nothing can proxy-inject: a file in
-  the gateway's own sandbox, read fresh on every use. A failed notification
-  is logged and never blocks or leaks the card.
+  plain-text summary under the keys Slack, Discord and ntfy each read, sent
+  on its own thread so a slow webhook never shortens the hold. The URL is
+  a credential (a Slack webhook URL grants posting), so it is the
+  `approvals-webhook` credential, delivered like the others nothing can
+  proxy-inject (`core/credentials.py`: a file in the gateway's own sandbox,
+  a Docker secret, or `PASSDESK_SECRET_APPROVALS_WEBHOOK_FILE`), read fresh
+  on every use. A failed notification is logged and never blocks or leaks
+  the card.
 - **The record.** Every step is an audit event: `approval-requested`,
   `approval-granted` (with the approver), `approval-declined`,
-  `approval-expired`. The tool call's own record follows as today.
-- **The license.** A signed token: base64url(JSON claims) `.`
-  base64url(RSA-2048 PKCS#1 v1.5 SHA-256 signature). Claims: `sub` (the
-  customer), `tier` (`solo` or `team`), `approvers`, `iat`, `exp`, `v`.
-  The public key is baked into the Pro package; verification is offline and
-  pure standard library. The token is delivered as a credential file like
-  the webhook URL and read fresh at every held call, so a key delivered
-  after start-up takes effect at the next push without a restart. While no
-  valid key has ever been seen, the gateway behaves as the free core and
-  logs why once; once a key has been valid and then lapses (expired,
-  removed), held writes are refused rather than silently released. Keys
-  are minted by the seller with `openssl` from a private key that never
-  enters any repository.
+  `approval-expired` (with any decision that came too late). The tool
+  call's own record follows as today.
+- **No licence.** There is nothing to deliver, verify or renew.
 
 ## What the deployment ships (`ai-code-factory`)
 
 - `factory approvals`: list pending cards, show one, approve or decline it
   (with a name and a reason), and a watch mode. Plain files in the state
   directory; standard-library Python 3.9 for the macOS host.
-- Credential delivery for the webhook URL and the license, from the host
-  keychain into the gateway sandbox, the same way as Jira and Gemini.
-- The `plugins` build context from the local config folder, and
-  `PASSDESK_PLUGINS` set on the gateway sandbox when a plugin is present.
-  Both inert when absent.
+- Credential delivery for the webhook URL, from the host keychain into the
+  gateway sandbox, the same way as Jira and Gemini. Inert when absent.
+- `[approvals].tools` in its local policy overlay, baked into the image.
 
 ## Not in this slice
 

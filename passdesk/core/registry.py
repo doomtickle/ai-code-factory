@@ -54,7 +54,7 @@ class PluginTool:
     an optional "description"; the protocol layer enforces exactly these
     types, so nothing else is accepted. writes_externally marks a tool whose
     effect lands outside the gateway: it gets an "intent" audit record before
-    it runs and goes through the approval point (Passdesk Pro can hold it).
+    it runs and goes through the approval point (`[approvals].tools` can hold it).
     hosts lists the hosts the handler contacts, for the doctor's egress
     check; declaring them doesn't open the network.
     """

@@ -159,7 +159,7 @@ docker compose exec passdesk python3 -m passdesk.doctor --live
 - **Protected:** the agent has no GitHub token and no route to GitHub,
   PyPI, npm, the web, your machine's services, or the Docker socket. Its
   only ways out are Passdesk's tools (policy, secret scan, audit, and the
-  Pro approval gate if you run it) and a CONNECT to the model API hosts in
+  approval hold if you switch it on) and a CONNECT to the model API hosts in
   `[egress_guard].allow_hosts`. The isolation check is the evidence.
 - **Not protected:** what the agent sends to the model API itself (that
   tunnel is opaque by design: no TLS interception), and anything you mount

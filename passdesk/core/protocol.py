@@ -9,7 +9,7 @@ import sys
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import approvals, auth, config, credentials, plugins, policy
+from . import approvals, auth, config, credentials, holds, plugins, policy
 from .audit import audit, summarize_args
 from .auth import authenticate, principal_tools
 from .errors import Denied
@@ -222,8 +222,9 @@ def main() -> None:
     for p, what in ((config.WORKSPACE, "BROKER_WORKSPACE"), (config.STATE, "BROKER_STATE")):
         if not p.is_dir():
             sys.exit(f"{what} must be an existing directory (got {p})")
-    policy.load_policy()  # fail fast on a broken policy file
+    pol = policy.load_policy()  # fail fast on a broken policy file
     config.MIRRORS.mkdir(parents=True, exist_ok=True)
+    holds.install(pol)  # the hold, if [approvals].tools names anything
     plugins.load()  # a named plugin that fails to import stops the server
     try:
         credentials.provider_order()  # fail fast on a provider list naming an unknown provider

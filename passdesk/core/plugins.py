@@ -4,7 +4,8 @@ A plugin module may declare tools (PASSDESK_TOOL_NAMESPACE and
 PASSDESK_TOOLS; see core/registry.py and docs/plugin-tools.md), which load()
 validates and registers before anything else, and may define `activate() ->
 bool`, called once after that to register what else it provides (an
-approval hook via core.approvals.set_hook, credential providers via
+approval hook via core.approvals.set_hook, which replaces the core hold's
+own hook if the policy enabled it, credential providers via
 core.credentials.register_provider); importing alone has no side effects.
 Nothing is loaded unless named, so a gateway without the variable behaves
 exactly as the core alone. Modules are found on PYTHONPATH; the image puts its optional
@@ -17,6 +18,16 @@ import importlib
 
 from . import config, registry
 from .audit import audit
+
+
+# The commercial add-on whose hold moved into core (core/holds.py,
+# docs/decisions.md 2026-10-21). An old copy still named here would import
+# fine and put its own, licence-checking hook over core's, so it is refused
+# by name rather than loaded.
+RETIRED_PRO = "passdesk_pro"
+RETIRED_PRO_HINT = ("passdesk_pro is no longer a plugin: its hold is part of the gateway. Remove it from "
+                    "PASSDESK_PLUGINS (and the image's plugins directory) and list the tools to hold in "
+                    "[approvals].tools instead")
 
 
 def names() -> list[str]:
@@ -34,6 +45,8 @@ def load() -> list[str]:
     active: list[str] = []
     tools: list[str] = []
     for name in names():
+        if name == RETIRED_PRO:
+            raise ImportError(RETIRED_PRO_HINT)
         module = importlib.import_module(name)
         loaded.append(name)
         declared = registry.plugin_tools(name, module)
@@ -56,6 +69,9 @@ def declared_tools() -> tuple[dict[str, registry.PluginTool], list[tuple[str, st
     tools: dict[str, registry.PluginTool] = {}
     problems: list[tuple[str, str]] = []
     for name in names():
+        if name == RETIRED_PRO:
+            problems.append((name, RETIRED_PRO_HINT))
+            continue
         try:
             module = importlib.import_module(name)
             declared = registry.plugin_tools(name, module)

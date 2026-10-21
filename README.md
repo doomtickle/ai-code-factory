@@ -64,10 +64,10 @@ The package is `passdesk/`:
   holds them). Knows no tool. A plugin may declare tools of its own, which
   run behind the same grants, argument checks, secret scanning, approvals,
   cleaning and audit as core tools (`docs/plugin-tools.md`, with an example
-  in `examples/plugins/`). A deployment may install an approval hook
-  that holds pushes and pull requests for a person; the design is in
-  `docs/pro-approvals.md` and the hook ships in the commercial
-  `passdesk-pro` package. With a hook installed, `git_push` also stores
+  in `examples/plugins/`). The hold (`holds.py`, `notify.py`): with
+  `[approvals].tools` set, each listed write waits for a person's decision,
+  recorded as files in the state directory, and a webhook is told; the
+  design is in `docs/approvals.md`. With a hook installed, `git_push` also stores
   the pushed commits' patch in the state directory
   (`approvals/patches/<sha256>.patch`, capped by `[approvals]
   patch_max_bytes`) for the person approving to read; the card carries only
@@ -116,7 +116,7 @@ one this repo's own CI and test fixtures exercise.
 | `BROKER_REF_NAMESPACE` | `refs/factory` | Ref namespace `git_push` stages an incoming branch under in its own bare mirror while it verifies the push and awaits approval (never pushed itself; see `tools/git.py`). Must be a ref path under `refs/` (no `..`, no trailing slash, no empty component), must not be, or sit under, a namespace git/GitHub already use (`refs/heads`, `refs/tags`, `refs/remotes`, `refs/notes`, `refs/stash`), and no component may start with `.` or end in `.lock` (`git check-ref-format`); the broker refuses to start otherwise. |
 | `BROKER_PUSH_PREFIX` | `factory/` | Fallback for policy's `[git].push_branch_prefix` when a deployment's own `policy.toml` doesn't set it at all (every `policy.toml` this repo ships does, so this only matters for a deployment's own from-scratch policy). Deliberately fails closed here (unlike upstream, which falls back to `""` — any unprotected branch — when the key is absent); the doctor warns when `[git].push_branch_prefix` is missing from policy as well as when it's set to `""`. Must contain only ref-safe characters, no whitespace or control characters. |
 | `BROKER_DEPLOYMENT` | `sbx` | `sbx` (default) or `standalone`. Selects whether `git_push`/`github_create_pr` error hints and the doctor's live GitHub checks name the sbx CLI (`sbx secret set ...`) or stay generic, and the default of `PASSDESK_CREDENTIAL_PROVIDERS` (`standalone` leaves out `proxy`, so the gateway reads its own GitHub token); any other value refuses to start. Also selects which checks `python3 -m passdesk.doctor` runs: see "Checking a deployment". |
-| `PASSDESK_PLUGINS` | `` (empty) | Comma-separated plugin modules to import at start-up: integrations that add tools (`docs/plugin-tools.md`), or the commercial `passdesk-pro` approval hook. |
+| `PASSDESK_PLUGINS` | `` (empty) | Comma-separated plugin modules to import at start-up: integrations that add tools (`docs/plugin-tools.md`) or install their own approval hook. `passdesk_pro`, the retired add-on whose hold is now core's, is refused by name. |
 | `PASSDESK_CREDENTIAL_PROVIDERS` | `proxy,file,env-file` (`file,env-file` when `BROKER_DEPLOYMENT=standalone`) | Credential providers in lookup order; see "Configuring credentials". A name that isn't a provider stops the server at start-up. |
 | `PASSDESK_SECRET_<NAME>_FILE` | unset | Path of a file holding credential `<NAME>` (upper-cased, `-` as `_`: `PASSDESK_SECRET_NPM_REGISTRY_FILE`). Holds a path, never the secret. |
 
@@ -136,7 +136,7 @@ takes a bad value.
 Callers authenticate with a bearer token checked against a SHA-256 hash in
 `BROKER_STATE/tokens/<principal>.sha256`, and are granted only the tools
 listed for them in `BROKER_STATE/roles.json` — minting both is the
-deployment's job, not Passdesk's (see `docs/pro-approvals.md` for one
+deployment's job, not Passdesk's (see `docs/approvals.md` for one
 example, or ai-code-factory's start script for another). `python3 -m
 passdesk.doctor` (below) checks all of this and prints a fix for whatever is
 missing.
@@ -256,9 +256,8 @@ base64("oauth2:<token>")` in its environment only, with redirects refused;
 `<gitlab url>api/v4/` and refuses redirects; it is redacted everywhere once
 read. GitHub's token is never sent to GitLab, nor GitLab's to GitHub.
 `gitlab_create_mr` opens a draft by default (the title gets GitLab's
-`Draft: ` prefix), is held for approval like `github_create_pr` when an
-approval hook is installed (with Passdesk Pro, `[approvals].tools` must list
-it if you set that list yourself), and refuses a GitHub repo, as
+`Draft: ` prefix), is held for approval like `github_create_pr` when
+`[approvals].tools` lists it, and refuses a GitHub repo, as
 `github_create_pr` refuses a GitLab project. `web_fetch` refuses the
 `[gitlab].url` host. The doctor checks the policy, the credential and, with
 `--live`, that the token can read and push each project (Developer or
