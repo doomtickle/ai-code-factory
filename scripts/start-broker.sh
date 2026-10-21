@@ -179,8 +179,8 @@ for name in $(printf '%s\n' "$registered" | grep '^factory-broker-' || true); do
 done
 
 # Credentials the sbx egress proxy cannot inject (Jira, Gemini, the private
-# npm registry, GitLab, and, with the Passdesk Pro plugin, its license key and the
-# approvals webhook URL): the narrowly scoped exception in CLAUDE.md
+# npm registry, GitLab, and the approvals webhook URL): the narrowly scoped
+# exception in CLAUDE.md
 # ("Credentials"). Looked up in the host OS keychain and piped over stdin
 # into the running broker sandbox (secret_sync_from_keychain, scripts/lib/secrets.sh),
 # so the value never appears in argv, an env flag, a log, git, or on host
@@ -203,9 +203,8 @@ secret_sync_from_keychain gemini || revocation_failed=1
 secret_sync_from_keychain npm-registry || revocation_failed=1
 # GitLab's token is a file too: sbx has no gitlab service to proxy-inject it.
 secret_sync_from_keychain gitlab || revocation_failed=1
-# Passdesk Pro (if its plugin is installed): the license key, and the
-# approvals webhook URL, which is a credential too (it grants posting).
-secret_sync_from_keychain passdesk-license || revocation_failed=1
+# The approvals webhook URL is a credential too (it grants posting); the
+# gateway reads it as its approvals-webhook credential when holds are on.
 secret_sync_from_keychain approvals-webhook || revocation_failed=1
 # The GitHub token is not a file: it is the broker-scoped sbx secret the
 # egress proxy injects. 'sbx rm' deletes it with the sandbox, so restore it

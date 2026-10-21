@@ -1,6 +1,6 @@
 # Shared helpers for the credentials sbx cannot proxy-inject (Jira, Gemini,
-# the private npm registry token, the GitLab token, and, when the Passdesk Pro plugin is
-# installed, its license key and the approvals webhook URL) - the named
+# the private npm registry token, the GitLab token and the approvals webhook
+# URL) - the named
 # exception in CLAUDE.md ("Credentials"). Delivered into
 # /etc/factory-broker/secrets/<name> inside the broker sandbox over sbx exec
 # stdin, never through argv, an env flag, a log, or git. Source after
@@ -28,7 +28,7 @@
 # scripts/02-launch-factory.sh).
 # shellcheck shell=bash
 
-readonly FACTORY_SECRET_NAMES="jira gemini npm-registry gitlab passdesk-license approvals-webhook"
+readonly FACTORY_SECRET_NAMES="jira gemini npm-registry gitlab approvals-webhook"
 
 # secret_name_valid NAME -> success if NAME is exactly one of
 # FACTORY_SECRET_NAMES (not a substring match: "jira gemini" or "x jira y"

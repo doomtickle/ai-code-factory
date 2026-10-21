@@ -131,7 +131,7 @@ The dashboard is one screen, styled as a 1984 control unit:
   transcript; idle lanes wait as chips in a strip under them. Press a lane's
   number (or click it) for the full transcript and its latest review packet.
 - **Write gate** (bottom right): the pushes and pull requests waiting for you (with
-  Passdesk Pro), and under it the **control unit**: APPROVE and DECLINE for
+  approvals on), and under it the **control unit**: APPROVE and DECLINE for
   the selected one, and RESTART and UPDATE for the factory, which show what
   they'd do and wait for CONFIRM before running anything.
 - **Spend** and the **event printer** (under the lanes): today's cost, and

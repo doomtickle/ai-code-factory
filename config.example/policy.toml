@@ -44,3 +44,16 @@ repos = []
 # The GitHub token needs Issues read/write on them. Empty = no issues.
 # [github]
 # issue_repos = ["my-org/tracker"]
+
+# Hold writes for a person. Each tool named here waits for your decision
+# (the dashboard's control unit, or `factory approvals`) before it leaves the
+# machine; a call waits hold_seconds, then asks the agent to retry, and a
+# pending card can be decided for expire_seconds. Leave the table out (or
+# tools = []) and nothing is held. Name every tool you want held: leaving
+# gitlab_create_mr out lets merge requests open unheld (factory status warns).
+# To be told when something is waiting, save a Slack, Discord or ntfy webhook
+# URL with `factory secret save approvals-webhook`.
+# [approvals]
+# tools = ["git_push", "github_create_pr", "gitlab_create_mr"]
+# hold_seconds = 45
+# expire_seconds = 1800

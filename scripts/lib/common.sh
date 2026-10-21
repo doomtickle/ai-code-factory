@@ -242,8 +242,8 @@ claude_login_stored() {
 }
 
 # broker_plugins -> comma-separated module names of the broker plugins in
-# the local config folder (FACTORY_CONFIG/plugins/<module>/), e.g.
-# "passdesk_pro"; empty when there are none. 00-build-templates.sh bakes the
+# the local config folder (FACTORY_CONFIG/plugins/<module>/); empty when
+# there are none. 00-build-templates.sh bakes the
 # directory into the broker image and start-broker.sh passes this list as
 # PASSDESK_PLUGINS when it creates the broker sandbox.
 broker_plugins() {

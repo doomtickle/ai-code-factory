@@ -230,14 +230,14 @@ place to open it in another.
 
 | Command | What it does |
 |---|---|
-| `factory doctor` | Check the machine is ready; prints the fix for each problem (setup runs it first; the dashboard's DIAG key runs it too). Once the broker exists, it also runs the gateway's own doctor inside it: policy, tokens and grants, audit log, credentials, a live probe, GitHub or GitLab access per repo, the policy's hosts against the broker kit, and (Passdesk Pro) a warning for any approval that expired with no decision |
+| `factory doctor` | Check the machine is ready; prints the fix for each problem (setup runs it first; the dashboard's DIAG key runs it too). Once the broker exists, it also runs the gateway's own doctor inside it: policy, tokens and grants, audit log, credentials, a live probe, GitHub or GitLab access per repo, the policy's hosts against the broker kit, whether holds are on, and a warning for any approval that expired with no decision |
 | `factory setup` | One-time setup (safe to re-run) |
 | `factory update [--yes]` | After pulling changes or editing kits, images or policy: pulls the latest factory, rebuilds, recreates only the sandboxes the changes affect (it lists them and what each loses, then asks), and restarts. With the `web` layout it doesn't open the dashboard (so `factory update --yes` returns): run `factory dashboard` afterwards. The dashboard's UPDATE key runs `factory update --yes` after showing the plan |
 | `factory update --plan` | What `factory update` would do, changing nothing but a (hook-free) `git fetch`: the incoming commits, the sandboxes it would recreate and what each loses, the ones the incoming changes may make out of date (a guess from the changed files), and notes such as uncommitted changes that would skip the pull. Tab-separated lines (`commit`, `recreate`, `maybe`, `note`), for the dashboard |
 | `factory start [dir] [--no-ui] [--layout watch\|tabs\|web]` | Start the factory for a project (default: current folder) and open the dashboard (`web`, the default) or Herdr (`watch`, `tabs`). `--no-ui` (or `FACTORY_NO_UI=1`) opens neither: talk to the Coordinator with `factory chat` in any terminal and follow roles with `factory logs <role>`. `--layout` (or `FACTORY_LAYOUT`) picks the layout and is remembered for next time (see "Layouts") |
 | `factory restart` | Stop the factory and start it again for the project it is bound to, with the saved layout (the `web` layout doesn't open a second dashboard; one already open keeps running). The dashboard's RESTART key runs it |
 | `factory chat` | Talk to the Coordinator in this terminal (wraps `sbx run --name factory-coordinator`); `factory start` creates the sandbox first. Refuses while the Coordinator is open elsewhere (Herdr, the dashboard) |
-| `factory status` | Project, broker, dispatch bridge, login, roles (with their lanes), sandbox status, and (Passdesk Pro) pending approvals and the oldest one's age |
+| `factory status` | Project, broker, dispatch bridge, login, roles (with their lanes), sandbox status, and pending approvals and the oldest one's age |
 | `factory logs <role>` | Follow a role's transcripts, all its lanes (`factory logs developer-lane2` for one lane); `factory logs broker` / `dispatch` for audit logs |
 | `factory watch` | Live terminal view of the lanes: one pane per active lane (a job running, or finished in the last ten minutes) with the job's status, elapsed time, model and cost in its title and the transcript rendered for reading (tool calls condensed, results dimmed, text wrapped); idle lanes take one status line each. A digit focuses one lane, `a` shows every lane, `p` shows a lane's latest review packet, `q` quits. `--once` prints one plain-text frame |
 | `factory dashboard [--no-open] [--port N]` | The whole factory on one screen in your browser (see "Dashboard"): the Coordinator's live terminal; every lane's live transcript, status, model, cost and timer; today's spend by hour and role; an event printer of broker calls and finished jobs; the writes held for approval; and the control unit, which approves and declines them and diagnoses, restarts or updates the factory (each after a confirm screen). Local. `factory gui` is the same command |
@@ -245,9 +245,9 @@ place to open it in another.
 | `factory roles` | List roles, their project access, lanes and network tools |
 | `factory role new <name> [like]` | Add a role (copied from `reviewer`, or the role you name) |
 | `factory docs [--print]` | Open these docs, with guides, as a web page in your browser (offline, works before setup); `--print` writes the HTML to stdout instead |
-| `factory approvals [approve <id> \| decline <id> --reason "..." \| watch]` | List, decide and watch Passdesk Pro approval cards (see "Enabling approvals") |
+| `factory approvals [approve <id> \| decline <id> --reason "..." \| watch]` | List, decide and watch the gateway's approval cards (see "Enabling approvals") |
 | `factory analytics` | Cost, token and performance report from the audit logs (`--json`, `--html`) |
-| `factory secret save <name>` | Store a credential **once** in this machine's keychain (`github`, `gitlab`, `jira`, `gemini`, `npm-registry`, `passdesk-license`, `approvals-webhook`); every broker start delivers it, including after `factory update` or `factory reset` |
+| `factory secret save <name>` | Store a credential **once** in this machine's keychain (`github`, `gitlab`, `jira`, `gemini`, `npm-registry`, `approvals-webhook`); every broker start delivers it, including after `factory update` or `factory reset` |
 | `factory secret forget <name>` | Delete a saved credential from the keychain and from the running broker |
 | `factory secret set <name>` | Deliver a credential to the running broker only, without saving it (lost when the broker is recreated); reads from stdin |
 | `factory secret rm <name>` | Remove a credential delivered with `set` |
@@ -387,7 +387,7 @@ GitHub and opens merge requests with `gitlab_create_mr`.
 
 The same rules hold as on GitHub: only `factory/*` branches, never a
 protected one, no force-push, every commit secret-scanned, and with
-approvals on (Passdesk Pro) every push and merge request waits for you.
+approvals on every push and merge request waits for you.
 `web_fetch` never reaches the GitLab host. The instance's TLS certificate
 must be one the system trust store accepts; a private CA isn't supported
 yet.
@@ -406,9 +406,8 @@ repos it may file in:
 
 It only files issues (existing labels, no assignees, no edits or closing),
 and every issue is secret-scanned and audited. To see each one before it is
-filed, set `[approvals] tools = ["git_push", "github_create_pr",
-"gitlab_create_mr", "github_create_issue"]` (Passdesk Pro): the list replaces
-the default, so name every tool you want held.
+filed, add `"github_create_issue"` to `[approvals].tools` (*Enabling
+approvals* below): name every tool you want held.
 
 ### Enabling a private npm registry
 
@@ -560,29 +559,29 @@ Like every broker credential, the token is never visible to the Coordinator or a
 role: the broker reads it from a file inside its own sandbox and returns only the
 issue data the tools ask for.
 
-### Enabling approvals (Passdesk Pro)
+### Enabling approvals
 
-With the Passdesk Pro plugin installed, every `git_push`,
-`github_create_pr` and `gitlab_create_mr` waits for a person: the broker records a card (what,
-who, how many commits and files, the secret-scan result) and the agent's
-call proceeds once you approve it, or hears your reason if you decline. A
-call that waits longer than `[approvals].hold_seconds` (45 by default)
-returns to the agent with the approval id and asks it to retry the same
-call later; the decision is picked up by the retry.
+With holds on, every `git_push`, `github_create_pr` and `gitlab_create_mr`
+waits for a person: the broker records a card (what, who, how many commits
+and files, the secret-scan result) and the agent's call proceeds once you
+approve it, or hears your reason if you decline. A call that waits longer
+than `[approvals].hold_seconds` (45 by default) returns to the agent with
+the approval id and asks it to retry the same call later; the decision is
+picked up by the retry. Holds are part of the gateway; nothing is installed
+and there is no licence. They are off until you list the tools to hold.
 
-1. Put the `passdesk_pro` package in `~/.config/ai-code-factory/plugins/`
-   (Local settings) and store the license key in the host keychain under
-   service `factory-passdesk-license`, as for Gemini above. Optionally store
-   a Slack, Discord or ntfy webhook URL under `factory-approvals-webhook` to
-   be told when something is waiting.
-2. Run `factory update`: it bakes the plugin into the broker image and names it
-   in `PASSDESK_PLUGINS` when it creates the broker sandbox. `factory doctor`
-   then reports the license.
-3. From the keychain, the credentials are delivered automatically when the broker
-   starts. On any machine, including WSL2: `factory secret save passdesk-license`
-   and paste the license key, then `factory secret save approvals-webhook` and paste the webhook URL
-   (see *Storing credentials once* above). Revoke with `factory secret forget passdesk-license`
-   or `factory secret forget approvals-webhook`.
+1. In your local `policy.toml` (Local settings), set
+   `[approvals] tools = ["git_push", "github_create_pr", "gitlab_create_mr"]`
+   (`config.example/policy.toml` has the commented table). Add
+   `"github_create_issue"` to hold the reviewer's issues too.
+2. Run `factory update`: it bakes the policy into the broker image and
+   recreates the broker. `factory doctor` then reports holds on, the tools,
+   pending cards and whether a webhook is set.
+3. Optionally, to be told when something is waiting, store a Slack, Discord
+   or ntfy webhook URL in the host keychain: `factory secret save
+   approvals-webhook` and paste the URL (see *Storing credentials once*
+   above; it works on WSL2 too). Every broker start delivers it. Revoke with
+   `factory secret forget approvals-webhook`.
 4. Decide on the dashboard's control unit (APPROVE, or DECLINE with a
    reason), or with `factory approvals` (list), `factory approvals show <id>`
    (one card in full; an id prefix works), `factory approvals approve <id>`
@@ -591,12 +590,10 @@ call later; the decision is picked up by the retry.
    one line for scripts (pending count and the oldest card's age). Decisions
    are plain files in the broker state folder, so nothing new listens on the
    network.
-   If you set `[approvals].tools` yourself, it replaces the default: list
-   `gitlab_create_mr` there for GitLab merge requests to wait for you. Holding
-   them also needs a Passdesk Pro copy from after GitLab support (re-copy it
-   into `plugins/` and run `factory update`); `factory status` and
-   `factory doctor` warn (without failing) if merge requests would open
-   unheld.
+   The list is the whole switch: a tool left out is not held, so list
+   `gitlab_create_mr` for GitLab merge requests to wait for you.
+   `factory status` and `factory doctor` warn (without failing) if merge
+   requests would open unheld while other writes are held.
 5. `factory status` shows a line with the pending count and the oldest
    card's age once there is at least one; `factory doctor` warns (without
    failing) about any card that expired with no decision, pointing back at
@@ -865,7 +862,7 @@ your browser. It shows:
   bay and down into the strip (no motion with the system's reduced-motion
   setting), and keeps its number in both forms: a digit key (or a click)
   opens the lane's full transcript and its latest review packet.
-- **Write gate:** the pushes and pull requests Passdesk Pro is holding for you.
+- **Write gate:** the pushes and pull requests the gateway is holding for you.
   A held write names the role, not the lane, so when two lanes of one role
   are running both show as held. Under its display is the **control unit**:
   - the selected card in full (tool, role and lanes, repo, branch or head to
@@ -1160,7 +1157,7 @@ scripts/03-stop-factory.sh
 scripts/new-role.sh <name> [<role-to-copy>]
 scripts/start-broker.sh, scripts/start-dispatch.sh   (called by the launch script)
 scripts/analytics.py, scripts/test_analytics.py      Cost/performance report (factory analytics)
-scripts/approvals.py         Passdesk Pro approval cards (factory approvals)
+scripts/approvals.py         Approval cards (factory approvals)
 scripts/docs.py              Builds the docs site (factory docs)
 scripts/lint.sh              Pinned shellcheck over every shell script (CI)
 .github/workflows/            CI (ci.yml) and the docs site on GitHub Pages (docs.yml)

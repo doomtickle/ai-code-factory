@@ -182,7 +182,7 @@ factory running in the background; `factory start` reopens it.
 - **Personal settings** (repos agents may push to, extra hosts): copy
   `config.example/` to `~/.config/ai-code-factory/` and edit it. README,
   *Local settings*.
-- **GitLab, Gemini, Jira, private npm registry, Passdesk Pro:** WSL usually has no Linux
+- **GitLab, Gemini, Jira, private npm registry, approvals webhook:** WSL usually has no Linux
   keyring, so the factory uses the **Windows Credential Manager** instead
   (through `powershell.exe`; the value never appears on a command line). Save
   each credential once with `factory secret save <name>`; every broker start

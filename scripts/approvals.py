@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """factory approvals: decide what the gateway is holding for a person.
 
-Passdesk Pro records each held push or pull request as a card under the
+The gateway records each held push or pull request as a card under the
 broker state directory (approvals/pending/<id>.json) and waits for a
 decision file (approvals/decisions/<id>.json) that this console writes. It
 runs on the host with the system Python (3.9 on macOS), standard library
@@ -120,7 +120,7 @@ def card_fingerprint(card):
 
 
 def write_decision(state, card, verdict, approver, reason=""):
-    """Write the decision file Passdesk Pro waits for (approvals/decisions/<id>.json),
+    """Write the decision file the gateway waits for (approvals/decisions/<id>.json),
     atomically (a temporary file, then os.replace). Used by this console and
     by the dashboard's control unit, so both write exactly the same record.
     Returns the decision."""
@@ -182,7 +182,7 @@ def decide(state, args, verdict):
 def is_expired_unhandled(state, card, now=None):
     """A card past its expiry with no decision that still matches it.
 
-    passdesk-pro sweeps expired cards out of pending/ on its own, but only
+    The gateway sweeps expired cards out of pending/ on its own, but only
     while the broker is actively handling hook() calls; one left behind
     (broker idle, agent gone) is still expired and still unhandled. A
     decision file whose nonce doesn't match the card's nonce belongs to an
