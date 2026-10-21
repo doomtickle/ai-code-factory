@@ -72,7 +72,7 @@ if [ -f "$FACTORY_CONFIG/policy.toml" ]; then
 else
   : > "$tmp/config/policy.toml"
 fi
-# Optional plugin packages (e.g. Passdesk Pro) from the local config folder,
+# Optional plugin packages (docs/plugin-tools.md in broker/) from the local config folder,
 # as their own build context too: an empty directory when there are none.
 # A plugin loads only when start-broker.sh names it in PASSDESK_PLUGINS.
 mkdir "$tmp/plugins"

@@ -9,11 +9,11 @@ set -euo pipefail
 #    the commented-out example are unset.
 # 3. github_repos_listed: an owner/name entry is GitHub; host-qualified
 #    entries (a dot or a port in the first segment) are GitLab.
-# 4. gitlab_mr_unheld: warns when Passdesk Pro is installed and GitLab is
-#    configured, but [approvals].tools (one line or several) leaves
-#    gitlab_create_mr out, or (no list) the Pro copy predates it; silent for
-#    tools = [] (holds off on purpose), a list that names it, no Pro, no
-#    GitLab, or no role granted the tool.
+# 4. gitlab_mr_unheld: warns when GitLab is configured but [approvals].tools
+#    (one line or several) leaves gitlab_create_mr out; silent for no list
+#    or tools = [] (holds off: the gateway holds nothing until the list
+#    names a tool), a list that names it, no GitLab, or no role granted
+#    the tool.
 #
 # Sources only those functions from bin/factory, against a fixture config
 # folder and broker policy. No sbx, keychain or network.
@@ -51,13 +51,10 @@ repos = []
 url = ""
 EOF
 FACTORY_CONFIG="$tmp/config"
-mkdir -p "$FACTORY_CONFIG/plugins/passdesk_pro"
-NEW_PRO='DEFAULT_TOOLS = ["git_push", "github_create_pr", "gitlab_create_mr"]'
-OLD_PRO='DEFAULT_TOOLS = ["git_push", "github_create_pr"]'
+mkdir -p "$FACTORY_CONFIG"
 GITLAB=$'[gitlab]\nurl = "https://gitlab.acme.net/"\n'
 
 policy() { printf '%s\n' "$1" > "$FACTORY_CONFIG/policy.toml"; }
-pro() { printf '%s\n' "$1" > "$FACTORY_CONFIG/plugins/passdesk_pro/approvals.py"; }
 unheld() { if why="$(gitlab_mr_unheld)"; then printf 'warn: %s' "$why"; else printf 'silent'; fi; }
 yesno() { if "$@"; then printf yes; else printf no; fi; }
 
@@ -89,12 +86,8 @@ policy $'[git]\nrepos = []'
 assert_eq "github_repos_listed: none" "$(yesno github_repos_listed)" no
 
 # --- 4. gitlab_mr_unheld --------------------------------------------------------
-pro "$NEW_PRO"
 policy "$GITLAB"
-assert_eq "unheld: current Pro, default tools" "$(unheld)" silent
-pro "$OLD_PRO"
-assert_eq "unheld: Pro that predates gitlab_create_mr" "$(unheld | cut -c1-49)" "warn: the installed Passdesk Pro predates gitlab_"
-pro "$NEW_PRO"
+assert_eq "unheld: no [approvals].tools (holds off)" "$(unheld)" silent
 policy "$GITLAB"$'[approvals]\ntools = ["git_push", "github_create_pr"]'
 assert_eq "unheld: one-line list without it" "$(unheld)" 'warn: [approvals].tools is set without "gitlab_create_mr"'
 policy "$GITLAB"$'[approvals]\ntools = [\n  "git_push",\n  "github_create_pr",\n]'
@@ -113,8 +106,6 @@ policy "$GITLAB"$'[approvals]\ntools = ["git_push"]'
 GRANTED="npm_fetch git_push"
 assert_eq "unheld: no role granted gitlab_create_mr" "$(unheld)" silent
 GRANTED="npm_fetch git_push gitlab_create_mr"
-rm -rf "$FACTORY_CONFIG/plugins/passdesk_pro"
-assert_eq "unheld: no Pro installed" "$(unheld)" silent
 
 echo "---"
 echo "$pass passed, $fail failed"

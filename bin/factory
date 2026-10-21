@@ -105,7 +105,7 @@ ${B}Usage${N}
                              Add a role, copied from an existing one (default: reviewer)
   factory secret save <name> Store a credential once in this machine's keychain
                              (github, gitlab, jira, gemini, npm-registry,
-                             passdesk-license, approvals-webhook); every broker start
+                             approvals-webhook); every broker start
                              then delivers it
   factory secret forget <name>
                              Delete it from the keychain and from the running broker
@@ -116,7 +116,7 @@ ${B}Usage${N}
   factory docs [--print]     Open these docs, with guides, in your browser (offline);
                              --print writes the HTML to stdout instead
   factory analytics          Cost, token and performance report from the audit logs
-  factory approvals          Pushes and PRs the gateway is holding for you (Passdesk Pro):
+  factory approvals          Pushes and PRs the gateway is holding for you:
                              list, show <id>, approve <id>, decline <id> --reason ..., watch
   factory reset              Remove the agent sandboxes to switch projects
                              (your Claude login is kept)
@@ -485,25 +485,21 @@ gitlab_needs_token() {
 }
 
 # gitlab_mr_unheld -> prints why, and succeeds, when GitLab merge requests would
-# open without approval although Passdesk Pro is installed: gitlab_create_mr is
+# open without approval although other writes are held: gitlab_create_mr is
 # granted and [gitlab].url set, but the local [approvals].tools list leaves it
-# out, or (no list) the installed Pro copy predates it. Silent otherwise, and
-# for tools = [] (holds switched off on purpose).
+# out. Silent otherwise: no list or tools = [] means holds are off altogether
+# (the gateway holds nothing until the list names a tool).
 gitlab_mr_unheld() {
   local r granted="" tools
   for r in $(list_roles); do
     case " $(role_get "$r" BROKER_TOOLS) " in *" gitlab_create_mr "*) granted=1 ;; esac
   done
-  [ -n "$granted" ] && [ -d "$FACTORY_CONFIG/plugins/passdesk_pro" ] && gitlab_needs_token || return 1
+  [ -n "$granted" ] && gitlab_needs_token || return 1
   tools="$(policy_value approvals tools || true)"
-  if [ -n "$tools" ]; then
-    case "$tools" in *'"gitlab_create_mr"'*) return 1 ;; esac
-    [ -n "$(printf '%s' "$tools" | tr -d '[] \t')" ] || return 1  # tools = []: nothing is held at all
-    printf '%s\n' "[approvals].tools is set without \"gitlab_create_mr\""
-    return 0
-  fi
-  grep -q gitlab_create_mr "$FACTORY_CONFIG/plugins/passdesk_pro/approvals.py" 2>/dev/null && return 1
-  printf '%s\n' "the installed Passdesk Pro predates gitlab_create_mr (copy the current one into $FACTORY_CONFIG/plugins/, then factory update)"
+  [ -n "$tools" ] || return 1  # no list: holds are off
+  case "$tools" in *'"gitlab_create_mr"'*) return 1 ;; esac
+  [ -n "$(printf '%s' "$tools" | tr -d '[] \t')" ] || return 1  # tools = []: nothing is held at all
+  printf '%s\n' "[approvals].tools is set without \"gitlab_create_mr\""
 }
 
 # npm_private_registry_needs_token -> success if a role is granted npm_fetch and
@@ -519,7 +515,7 @@ npm_private_registry_needs_token() {
 
 # approvals_summary -> prints "pending oldest_min expired_unhandled" from
 # scripts/approvals.py summary (see its --help). Fails with nothing printed
-# when Passdesk Pro isn't in use (no approvals dir yet, or ever) or python3
+# when holds aren't in use (no approvals dir yet, or ever) or python3
 # isn't available; never dies, so callers stay inert rather than erroring.
 approvals_summary() {
   local python
@@ -529,7 +525,7 @@ approvals_summary() {
 }
 
 # approvals_status_line -> for `factory status`: one line when there is at
-# least one pending approval, nothing otherwise (Pro unused, or no pending cards).
+# least one pending approval, nothing otherwise (holds off, or no pending cards).
 approvals_status_line() {
   local out pending oldest
   out="$(approvals_summary)" || return 0
@@ -542,7 +538,7 @@ approvals_status_line() {
 
 # approvals_doctor_check -> for `factory doctor`: warn (not fail) about any
 # expired card with no decision that still matches it; nothing printed when
-# there are none, or when Passdesk Pro isn't in use.
+# there are none, or when holds aren't in use.
 approvals_doctor_check() {
   local out expired
   out="$(approvals_summary)" || return 0
@@ -793,9 +789,8 @@ cmd_role() {
 
 # --- secret --------------------------------------------------------------------------
 # For machines with no OS keychain (e.g. WSL2, which has neither macOS
-# Keychain nor secret-tool), so Jira, Gemini, the private npm registry token, the GitLab token,
-# and the Passdesk Pro plugin's license key and approvals webhook URL can
-# still be delivered. Shares its remote delivery/revocation code with
+# Keychain nor secret-tool), so Jira, Gemini, the private npm registry token, the GitLab token
+# and the approvals webhook URL can still be delivered. Shares its remote delivery/revocation code with
 # scripts/start-broker.sh's keychain-based path (scripts/lib/secrets.sh) and
 # marks the name as manually managed, so the next 'factory start' does not
 # try to revoke it for having no (or an empty) keychain entry.
@@ -1298,7 +1293,7 @@ cmd_dashboard() {
 }
 
 # --- approvals ---------------------------------------------------------------------
-# cmd_approvals -> the Passdesk Pro approval console (scripts/approvals.py):
+# cmd_approvals -> the approval console (scripts/approvals.py):
 # plain files under the broker state dir, host Python, nothing else.
 cmd_approvals() {
   local python

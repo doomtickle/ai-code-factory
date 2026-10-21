@@ -203,24 +203,32 @@ assert_value_not_leaked "secret set npm-registry: value lands nowhere under the 
 # "secret rm" removes the remote file and the marker.
 # ===========================================================================
 reset_fakes
-run_factory_with_stdin $'lic-key-xyz\n' secret set passdesk-license
-assert_eq "secret set passdesk-license: exits 0" "$F_RC" "0"
-[ -e "$MARKER_DIR/passdesk-license" ] \
-  && ok "secret set passdesk-license: marker file created" \
-  || bad "secret set passdesk-license: marker file created"
-assert_not_contains "secret set passdesk-license: marker never contains the value" \
-  "$(cat "$MARKER_DIR/passdesk-license" 2>/dev/null || true)" "lic-key-xyz"
-assert_value_not_leaked "secret set passdesk-license: value lands nowhere under the temp dir but the fake sbx's stdin" \
-  "lic-key-xyz"
+run_factory_with_stdin $'gl-tok-xyz\n' secret set gitlab
+assert_eq "secret set gitlab: exits 0" "$F_RC" "0"
+[ -e "$MARKER_DIR/gitlab" ] \
+  && ok "secret set gitlab: marker file created" \
+  || bad "secret set gitlab: marker file created"
+assert_not_contains "secret set gitlab: marker never contains the value" \
+  "$(cat "$MARKER_DIR/gitlab" 2>/dev/null || true)" "gl-tok-xyz"
+assert_value_not_leaked "secret set gitlab: value lands nowhere under the temp dir but the fake sbx's stdin" \
+  "gl-tok-xyz"
 
 reset_fakes
-run_factory secret rm passdesk-license
-assert_eq "secret rm passdesk-license: exits 0" "$F_RC" "0"
-assert_contains "secret rm passdesk-license: removes the right remote path" \
-  "$(cat "$FAKE_SBX_ARGS")" "exec factory-broker rm -f /etc/factory-broker/secrets/passdesk-license"
-[ ! -e "$MARKER_DIR/passdesk-license" ] \
-  && ok "secret rm passdesk-license: marker removed" \
-  || bad "secret rm passdesk-license: marker removed"
+run_factory secret rm gitlab
+assert_eq "secret rm gitlab: exits 0" "$F_RC" "0"
+assert_contains "secret rm gitlab: removes the right remote path" \
+  "$(cat "$FAKE_SBX_ARGS")" "exec factory-broker rm -f /etc/factory-broker/secrets/gitlab"
+[ ! -e "$MARKER_DIR/gitlab" ] \
+  && ok "secret rm gitlab: marker removed" \
+  || bad "secret rm gitlab: marker removed"
+
+# The retired licence name is refused: the gateway no longer has one.
+reset_fakes
+run_factory_with_stdin $'lic-key-xyz\n' secret set passdesk-license
+[ "$F_RC" -ne 0 ] \
+  && ok "secret set passdesk-license: refused (no such credential any more)" \
+  || bad "secret set passdesk-license: refused (no such credential any more)"
+assert_value_not_leaked "secret set passdesk-license: the refused value lands nowhere" "lic-key-xyz"
 
 # rm without a prior "set" (no marker) still removes the remote file cleanly.
 reset_fakes

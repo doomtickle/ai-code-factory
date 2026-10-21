@@ -121,15 +121,16 @@ All changes stay in this repo, and the factory keeps working throughout.
    until an external approver answers or a timeout denies it. The core ships
    the hook and a deny-all default; approvers (chat, web) plug in.
 
-   **Done:** the Passdesk Pro plugin hooks `git_push` and
-   `github_create_pr`, writing a pending card to the broker state directory
+   **Done:** the gateway's hold (`passdesk/core/holds.py`, moved into
+   core from the former Pro plugin on 2026-10-21) hooks `git_push`,
+   `github_create_pr` and `gitlab_create_mr` when `[approvals].tools`
+   lists them, writing a pending card to the broker state directory
    and holding the call for `[approvals].hold_seconds` before returning it
    to the agent to retry. People decide from the dashboard's control unit
    (APPROVE/DECLINE, including the patch INSPECT view) or from
    `scripts/approvals.py` (`factory approvals`), both writing the same
-   decision file. Still outstanding: this lives in the plugin, not the
-   broker core, so a deployment without Passdesk Pro has no hook at all
-   (not even a deny-all default) and chat-based approvers aren't wired up.
+   decision file. Still outstanding: holds are off by default (no deny-all
+   default) and chat-based approvers aren't wired up.
 2. **Admin API.** Read-only endpoints for audit queries, current grants and policy version, on a separate listener from the agent-facing MCP endpoint. A fleet view can build on it.
 3. **Managed policy.** Policy and grants loaded from a signed bundle, so a central team can roll out changes without rebuilding images. Agents still can't influence the policy source.
 

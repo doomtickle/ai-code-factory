@@ -118,10 +118,9 @@ Stands in for: `factory watch`, `factory logs <role>` and `factory packet
 
 ## Write gate and the control unit
 
-Bottom right. With the Passdesk Pro plugin installed, every push and pull
-request a role makes waits here for you
-([Enabling approvals](../../README.md#enabling-approvals-passdesk-pro)).
-Without it, the gate always reads NO WRITES HELD and the agents' writes go
+Bottom right. With approvals on, every push and pull request a role makes
+waits here for you ([Enabling approvals](../../README.md#enabling-approvals)).
+With holds off, the gate always reads NO WRITES HELD and the agents' writes go
 through under the broker's policy alone.
 
 The gate's display gives one line: how many writes are held, the first

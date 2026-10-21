@@ -4,7 +4,7 @@
 Serves one page (scripts/dashboard-ui/, the "FC-1984" design) and a JSON
 state endpoint the page polls every two seconds: every lane's live transcript
 tail, job status, model and cost; today's spend by hour and by role; an event
-printer of broker calls and finished jobs; and the writes Passdesk Pro is
+printer of broker calls and finished jobs; and the writes the gateway is
 holding for approval.
 
 The state view is read-only. To build it, it reads files under the

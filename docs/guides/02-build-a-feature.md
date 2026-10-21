@@ -230,10 +230,10 @@ how it was tested.
 The Coordinator asks you before anything irreversible like a push or a PR. The
 developer bundles the branch, and the broker checks the branch name, refuses
 protected branches and force-pushes, secret-scans every commit, then pushes.
-With the Passdesk Pro plugin, each push and PR also waits for your approval:
+With approvals on, each push and PR also waits for your approval:
 press APPROVE (or DECLINE, with a reason) on the dashboard's control unit, or
 use `factory approvals`
-([Enabling approvals](../../README.md#enabling-approvals-passdesk-pro)).
+([Enabling approvals](../../README.md#enabling-approvals)).
 
 ## Keep the Coordinator's context small
 

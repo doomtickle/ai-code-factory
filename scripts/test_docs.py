@@ -368,7 +368,7 @@ class SlugTests(unittest.TestCase):
 
     def test_real_readme_ids(self):
         page, _ = docs.build_html(REPO)
-        for slug in ("getting-the-developers-work", "enabling-approvals-passdesk-pro", "local-settings",
+        for slug in ("getting-the-developers-work", "enabling-approvals", "local-settings",
                      "enabling-a-private-npm-registry", "running-tests", "commands"):
             self.assertIn(f'id="readme:{slug}"', page)
 
