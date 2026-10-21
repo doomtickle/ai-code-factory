@@ -24,9 +24,11 @@ ROOT="$(dirname "$SCRIPTS")"
 # roles.sh initializes the broker/ submodule if needed and dies without it.
 # 'factory docs', 'factory help' and 'factory config' need neither, so they skip it: they must
 # work on a fresh clone, before 'factory setup' (a test sourcing this file
-# always gets roles.sh).
+# always gets roles.sh). 'doctor' and 'setup' skip it too: cmd_doctor checks
+# the submodule itself, reports what it finds, and loads roles.sh only when
+# broker/ is usable (see doctor_load_roles).
 case "${BASH_SOURCE[0]}:${1:-help}" in
-  "$0":docs|"$0":config|"$0":help|"$0":-h|"$0":--help) ;;
+  "$0":docs|"$0":config|"$0":help|"$0":-h|"$0":--help|"$0":doctor|"$0":setup) ;;
   *)
     # shellcheck source=../scripts/lib/roles.sh
     . "$SCRIPTS/lib/roles.sh" ;;
@@ -141,6 +143,12 @@ cmd_setup() {
   "$SCRIPTS/install-prereqs.sh"
   export PATH="$HOME/.local/bin:$PATH"
 
+  if sbx_not_signed_in; then
+    step "Signing in to Docker (sbx)"
+    say "Not signed in yet; a browser window opens:"
+    sbx login || die "sbx login failed: run 'sbx login' yourself, then 'factory setup' again"
+  fi
+
   step "Building sandbox images"
   local log
   log="$(mktemp)"
@@ -187,7 +195,34 @@ setup_done() {
 
 # --- doctor ------------------------------------------------------------------------
 # cmd_doctor -> checks everything setup and start need, printing the fix for
-# each problem. Fails if anything blocks setup. Changes nothing itself.
+# each problem. Fails if anything blocks setup. Changes nothing itself, except
+# that it tries once to initialize the broker/ submodule, as every command that
+# loads roles.sh does.
+#
+# doctor_load_roles -> load scripts/lib/roles.sh (the role helpers) once broker/
+# is usable; roles.sh dies without broker/tools.txt, so doctor checks that first.
+doctor_load_roles() {
+  declare -F list_roles >/dev/null && return 0
+  # shellcheck source=../scripts/lib/roles.sh
+  . "$SCRIPTS/lib/roles.sh"
+}
+
+# doctor_secret_tool_probe -> a read-only lookup of a name nothing stores.
+# A working secret-tool answers "not found" with exit 1 and no message; one with
+# no D-Bus session or no keyring service prints why on stderr. Prints that text
+# and fails when it can't answer, and prints nothing and succeeds otherwise.
+doctor_secret_tool_probe() {
+  local err status=0
+  if command -v timeout >/dev/null 2>&1; then
+    err="$(timeout 10 secret-tool lookup service factory-doctor-probe 2>&1 >/dev/null </dev/null)" || status=$?
+  else
+    err="$(secret-tool lookup service factory-doctor-probe 2>&1 >/dev/null </dev/null)" || status=$?
+  fi
+  if [ "$status" -eq 124 ]; then err="timed out after 10 seconds (is a keyring prompt waiting?)"; fi
+  if [ -n "$err" ]; then printf '%s' "$err"; return 1; fi
+  return 0
+}
+
 cmd_doctor() {
   local problems=0 missing_pkgs="" os linux="" t out status doctor hosts kit kit_hosts missing h r
   os="$(uname -s)"
@@ -224,6 +259,34 @@ cmd_doctor() {
     if [ -n "$linux" ]; then say "      Install them: sudo apt-get update && sudo apt-get install -y$missing_pkgs"
     else say "      Install them with Homebrew: brew install${missing_pkgs/bsdextrautils/}"; fi
   fi
+
+  if [ "$(keychain_backend)" = secret-tool ]; then
+    step "Credential store (secret-tool)"
+    if out="$(doctor_secret_tool_probe)"; then ok "secret-tool answers"
+    else
+      warn "secret-tool is installed but can't reach a keyring: ${out:-no reason given}"
+      say "      'factory secret save' will fail until it can. Start a keyring (e.g. gnome-keyring) in a desktop"
+      say "      session, or skip the keychain: 'factory secret set <name>' delivers a credential without one."
+    fi
+  fi
+
+  step "Gateway source (broker/ submodule)"
+  local roles_ready="" git_err=""
+  if [ -f "$ROOT/broker/tools.txt" ]; then
+    ok "broker/ is checked out"
+    roles_ready=1
+  elif ! command -v git >/dev/null 2>&1; then
+    warn "skipped: needs git"
+  else
+    if ! broker_initialized "$ROOT"; then git_err="$(broker_submodule_init "$ROOT")" || true; fi
+    if [ -f "$ROOT/broker/tools.txt" ]; then
+      ok "broker/ was empty; initialized it"
+      roles_ready=1
+    else
+      fail "$(broker_missing_message "$ROOT" "$git_err" | head -n1)" "$(broker_missing_message "$ROOT" "$git_err" | sed -n '2,$p')"
+    fi
+  fi
+  [ -z "$roles_ready" ] || doctor_load_roles
 
   step "Docker (builds the sandbox images)"
   if ! command -v docker >/dev/null 2>&1; then
@@ -318,7 +381,10 @@ $(sed -n 's/^[[:space:]]*-[[:space:]]*"\{0,1\}\([^"[:space:]#]*\).*/\1/p' "$kit"
   fi
   # This machine's role overrides (FACTORY_CONFIG/roles/<role>.conf), checked
   # exactly as `factory start` checks them; no step at all without the folder.
-  if [ -d "$FACTORY_CONFIG/roles" ]; then
+  if [ -d "$FACTORY_CONFIG/roles" ] && [ -z "$roles_ready" ]; then
+    step "Role overrides ($FACTORY_CONFIG/roles)"
+    warn "skipped: needs the broker/ submodule (see above)"
+  elif [ -d "$FACTORY_CONFIG/roles" ]; then
     step "Role overrides ($FACTORY_CONFIG/roles)"
     if out="$( (validate_role_overrides; for r in $(list_roles); do validate_role "$r"; done) 2>&1)"; then
       ok "role overrides are valid"
@@ -330,7 +396,7 @@ $(sed -n 's/^[[:space:]]*-[[:space:]]*"\{0,1\}\([^"[:space:]#]*\).*/\1/p' "$kit"
   # A warning, not a problem (owner decision): the fix is a Pro re-copy or a
   # policy edit, and `factory update` must stay usable meanwhile.
   local why
-  if why="$(gitlab_mr_unheld)"; then
+  if [ -n "$roles_ready" ] && why="$(gitlab_mr_unheld)"; then
     warn "GitLab merge requests open without approval: $why (see README: Enabling approvals)"
   fi
 
@@ -344,6 +410,18 @@ $(sed -n 's/^[[:space:]]*-[[:space:]]*"\{0,1\}\([^"[:space:]#]*\).*/\1/p' "$kit"
 }
 
 # --- start -------------------------------------------------------------------------
+# require_project_commits PROJECT -> die, naming the repo, if any repository
+# the roles would work in (project_repos) has no commits: the lane clone and
+# the review packet both need a HEAD, and would fail much later without one.
+require_project_commits() {
+  local project="$1" repo dir
+  for repo in $(project_repos "$project"); do
+    dir="$project/$repo"
+    git "${BROKER_GIT_SAFE[@]}" -C "$dir" rev-parse --verify --quiet 'HEAD^{commit}' >/dev/null 2>&1 \
+      || die "$dir is a git repository with no commits yet, so the developer has nothing to branch from. Make the first commit there (git -C '$dir' commit --allow-empty -m 'Initial commit'), then run 'factory start' again."
+  done
+}
+
 cmd_start() {
   # --no-ui (or FACTORY_NO_UI=1): everything but Herdr. Talk to the Coordinator
   # with `sbx run` in any terminal and follow roles with `factory logs`.
@@ -376,6 +454,7 @@ cmd_start() {
   require_sbx
   [ "$no_ui" = 1 ] || [ "$layout" = web ] || require_herdr
   setup_done || die "the factory is not set up yet: run 'factory setup' first"
+  require_project_commits "$project"
   case "$project" in
     /mnt/[a-z]/*) is_wsl && warn "$project is on a Windows drive: sandboxes will be slow and file permissions unreliable. Clone it into the Linux filesystem (e.g. ~/code) instead." ;;
   esac

@@ -10,11 +10,11 @@
 # Only a submodule with no trace of initialization: "submodule update" follows
 # broker/.git, which an agent can write (see "broker/ submodule safety" in
 # common.sh), so a broker/ that has one but lost tools.txt is left to a person.
+broker_init_error=""
 if [ ! -f "$ROOT/broker/tools.txt" ] && ! broker_initialized "$ROOT"; then
-  git "${BROKER_GIT_SAFE[@]}" -C "$ROOT" submodule update --init --quiet -- broker >/dev/null 2>&1 || true
+  broker_init_error="$(broker_submodule_init "$ROOT")" || true
 fi
-[ -f "$ROOT/broker/tools.txt" ] \
-  || die "missing $ROOT/broker/tools.txt - run 'git submodule update --init' in $ROOT"
+[ -f "$ROOT/broker/tools.txt" ] || die "$(broker_missing_message "$ROOT" "$broker_init_error")"
 KNOWN_BROKER_TOOLS="$(sed -e '/^#/d' -e '/^[[:space:]]*$/d' "$ROOT/broker/tools.txt" | tr '\n' ' ')"
 readonly KNOWN_BROKER_TOOLS="${KNOWN_BROKER_TOOLS% }"
 readonly KNOWN_TEMPLATES="developer reviewer"
