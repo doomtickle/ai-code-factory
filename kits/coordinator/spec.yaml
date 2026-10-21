@@ -3,7 +3,7 @@ kind: mixin
 name: factory-coordinator-kit
 displayName: Factory Coordinator
 description: "Plans work and delegates it to role agents through the dispatch bridge"
-version: "1.9.0"
+version: "1.10.0"
 requires:
   agent: claude
 
@@ -22,13 +22,21 @@ setup:
     # Coordinator's own model to Opus here: its planning and task specs set the
     # cost and quality of every role's work
     # ("model" is only a default: /model can still switch it for the session).
+    # Also raise Claude Code's own MCP tool idle-abort timeout: delegate and
+    # wait_for_job (dispatch/server.py, MAX_WAIT_SECONDS = 600) can legitimately
+    # block up to 600s, longer than Claude Code's default silent-tool abort
+    # (~330s), which then aborts a normal wait and costs the Coordinator an
+    # extra turn. 660000ms is that 600s maximum plus a margin. The sbx MCP
+    # gateway is registered with `sbx mcp add` (scripts/start-dispatch.sh), not
+    # as a Claude Code mcpServers entry, so there is no per-server "timeout" to
+    # set instead; this env var is the global equivalent.
     - command: >-
         mkdir -p /etc/claude-code &&
-        printf '%s\n' '{"model":"opus","permissions":{"deny":["Edit","Write","NotebookEdit","Bash","PowerShell","Monitor","EnterWorktree"]}}'
+        printf '%s\n' '{"model":"opus","env":{"CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT":"660000"},"permissions":{"deny":["Edit","Write","NotebookEdit","Bash","PowerShell","Monitor","EnterWorktree"]}}'
         > /etc/claude-code/managed-settings.json &&
         chmod 0444 /etc/claude-code/managed-settings.json
       user: "0"
-      description: "Deny file edits, shell commands and worktrees, and default the model to Opus, for the Coordinator"
+      description: "Deny file edits, shell commands and worktrees, default the model to Opus, and raise the MCP tool idle timeout, for the Coordinator"
     # Briefing for the Coordinator, as a root-owned managed CLAUDE.md: Claude
     # loads it in every session whatever the project, and it can't be edited
     # from the workspace. (A mixin's agentInstructions only become an
