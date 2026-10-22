@@ -457,9 +457,19 @@ class DeferredWriteTests(unittest.TestCase):
         self.queue(card())
         _, out, _ = self.run_cli("decline", "abcdef", "--reason", "no")
         self.assertIn("nothing is written", out)
-        self.put("pending", card("ffff000011112222"))
-        _, out, _ = self.run_cli("approve", "ffff")
-        self.assertIn("The agent's call proceeds if it is still waiting", out)
+        # A push, PR or MR whose hold runs out becomes a queue job: the gateway makes the write, not a retry.
+        for n, tool in enumerate(("git_push", "github_create_pr", "gitlab_create_mr")):
+            cid = "ffff00001111222{}".format(n)
+            self.put("pending", card(cid, tool=tool))
+            code, out, _ = self.run_cli("approve", cid)
+            self.assertEqual(code, 0, tool)
+            self.assertIn("The call proceeds if it is still waiting; otherwise the gateway makes it within seconds", out, tool)
+            self.assertNotIn("retry will", out, tool)
+        # Any other held tool returns to the agent, which retries.
+        self.put("pending", card("eeee000011112222", tool="github_create_issue"))
+        _, out, _ = self.run_cli("approve", "eeee")
+        self.assertIn("The agent's call proceeds if it is still waiting; otherwise its retry will.", out)
+        self.assertNotIn("gateway", out)
 
     def test_done_writes_listed_failures_first(self):
         self.put("done", done_rec("1111000011110000", result="Pushed 2 commit(s) to acme/widgets:factory/x (abc).\nremote: ..."))

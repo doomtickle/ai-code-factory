@@ -618,11 +618,13 @@ and there is no licence. They are off until you list the tools to hold.
    expired cards with no decision, and decided cards waiting for a retry).
    Decisions are plain files in the broker state folder, so nothing new
    listens on the network.
-   A decision is final for its card: the card stays listed until the agent
-   retries the held call (the retry picks the decision up, or the broker
-   files the card away once it expires), and meanwhile `factory approvals`
-   marks it "approved by X at T; waiting for the agent to retry" (or
-   declined). Approving or declining it again is refused, here and on the
+   A decision is final for its card. For a push, pull request or merge
+   request the call picks it up if it is still waiting, and otherwise the
+   gateway makes the write itself. For any other held tool the card stays
+   listed until the agent retries the held call (the retry picks the
+   decision up, or the broker files the card away once it expires), and
+   meanwhile `factory approvals` marks it "approved by X at T; waiting for
+   the agent to retry" (or declined). Approving or declining it again is refused, here and on the
    dashboard, rather than changing the first decision; of two people
    deciding at once, exactly one decision is written.
    A queued card is marked "queued: the agent has moved on; the gateway makes
@@ -1047,8 +1049,10 @@ your browser. It shows:
     base, PR title, commits and files, time left; ◀ ▶ step through several),
     a reason field, and DECLINE and APPROVE keys. One press decides, exactly
     as `factory approvals approve <id>` does (the same decision file);
-    declining needs a reason, which the agent reads. A decided card stays on
-    the gate until the agent retries the call, shown as "APPROVED, waiting
+    declining needs a reason, which the agent reads. For a push, PR or MR the
+    gateway makes an approved write itself if the call has moved on; any other
+    held tool's decided card stays on the gate until the agent retries the
+    call, shown as "APPROVED, waiting
     for the agent's retry" or "DECLINED" with who decided and when, and both
     keys dark: one decision per card. A card the gateway queued (undecided
     past its hold; the agent has moved on) is marked QUEUED, reads "APPROVED,

@@ -58,6 +58,9 @@ WRITES_LIMIT = 8      # deferred writes listed
 WRITES_SCAN = 60      # newest done/ files looked at for them
 MADE_WINDOW = 24 * 3600     # a write made is listed for a day
 FAILED_WINDOW = 3 * 24 * 3600  # a failure for three days
+# Tools whose hold, if it runs out, becomes a queue job the gateway carries out itself;
+# any other held tool returns to the agent, which retries the call.
+DEFERRED_TOOLS = ("git_push", "github_create_pr", "gitlab_create_mr")
 WRITE_STATES = {"running": "running", "done": "made", "failed": "failed"}  # done/ `write` -> shown
 
 
@@ -546,6 +549,8 @@ def decide(state, args, verdict):
         if queued:
             print("This write is queued: the gateway will make it within seconds (it checks every 5 s); the agent "
                   "need not retry. See the result with: factory approvals")
+        elif card.get("tool") in DEFERRED_TOOLS:  # a hold that runs out becomes a queue job
+            print("The call proceeds if it is still waiting; otherwise the gateway makes it within seconds.")
         else:
             print("The agent's call proceeds if it is still waiting; otherwise its retry will.")
     elif queued:

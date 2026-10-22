@@ -158,10 +158,13 @@ state files and is shown as plain text.
 - **DECLINE** refuses it. Type a reason first: it's required, and the agent
   reads it.
 
-A decision is final for that card. The card stays on the gate until the
-agent retries its call (the retry picks your decision up), and meanwhile it
-reads **APPROVED, waiting for the agent's retry** or **DECLINED**, with who
-decided and when, and both keys are dark. Pressing again, here or with
+A decision is final for that card. A push, pull request or merge request
+(the default held set) is picked up by the call if it is still waiting, and
+otherwise written by the gateway within seconds, with no retry to wait for.
+For any other held tool the card stays on the gate until the agent retries
+its call (the retry picks your decision up), and meanwhile it reads
+**APPROVED, waiting for the agent's retry** or **DECLINED**. Either way it
+shows who decided and when, and both keys are dark. Pressing again, here or with
 `factory approvals`, never changes the first decision; if two people decide
 at once, only one decision is written and the other is told who got there
 first.
