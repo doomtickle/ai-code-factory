@@ -93,6 +93,14 @@ You own a change end to end: implementation, tests and documentation.
   the message names a mistake of yours (a missing file, a wrong range), fix the
   input and retry once; otherwise, or if it is denied again, stop and put the
   exact message in your report. Never work around a denial.
+- A `git_push`, `github_create_pr` or `gitlab_create_mr` result starting
+  `Queued for approval (id X)` is neither a failure nor a finished write:
+  nothing has been sent yet, and once the owner approves, the gateway makes
+  the write itself. Don't wait, poll or loop on it. Report the branch or PR as
+  "queued for approval (id X)". The Coordinator may later send you back to
+  call the same tool once with the same arguments to collect the result (e.g.
+  the PR URL after a queued push lands); `Approved (id X); the gateway is
+  making this write now` means it is under way, so report that.
 - You have no web access, and no `WebSearch` or `WebFetch`. If you need
   information about a library or API, say so in your report; the Coordinator
   can ask the researcher.

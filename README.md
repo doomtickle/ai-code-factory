@@ -589,12 +589,14 @@ waits for a person: the broker records a card (what, who, how many commits
 and files, the secret-scan result) and the agent's call proceeds once you
 approve it, or hears your reason if you decline. A call that waits longer
 than `[approvals].hold_seconds` (45 by default) is **queued** (a push, PR or
-MR): the agent is told it is waiting for approval and moves on, and once you
-approve it the gateway makes the write itself within seconds (it checks
-every 5 s) and files the outcome, so nothing depends on the agent's retry.
-Any other held tool still returns to the agent with the approval id and asks
-it to retry the same call later. Holds are part of the gateway; nothing is installed
-and there is no licence. They are off until you list the tools to hold.
+MR): the agent hears "Queued for approval (id X); nothing has been sent yet"
+and reports it as queued, not done. Once you approve it the gateway makes
+the write itself within seconds (it checks every 5 s) and files the outcome;
+nobody retries it, and an unapproved card expires after a day by default
+(`expire_seconds`). `github_create_issue` and plugin tools keep the older
+flow: the call returns the approval id and asks the agent to retry the same
+call later. Holds are part of the gateway; nothing is installed and there
+is no licence. They are off until you list the tools to hold.
 
 1. In your local `policy.toml` (Local settings), set
    `[approvals] tools = ["git_push", "github_create_pr", "gitlab_create_mr"]`
@@ -624,9 +626,9 @@ and there is no licence. They are off until you list the tools to hold.
    listed until the agent retries the held call (the retry picks the
    decision up, or the broker files the card away once it expires), and
    meanwhile `factory approvals` marks it "approved by X at T; waiting for
-   the agent to retry" (or declined). Approving or declining it again is refused, here and on the
-   dashboard, rather than changing the first decision; of two people
-   deciding at once, exactly one decision is written.
+   the agent to retry" (or declined). Approving or declining it again is
+   refused, here and on the dashboard, rather than changing the first
+   decision; of two people deciding at once, exactly one decision is written.
    A queued card is marked "queued: the agent has moved on; the gateway makes
    the write when it is approved"; after `approve` the command says the
    gateway will make the write within seconds. `factory approvals` then lists
