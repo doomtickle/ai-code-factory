@@ -11,10 +11,14 @@ decision made meanwhile is honoured. Pending cards expire after
 and filed under STATE/approvals/done/ as `expired` (with `decision`,
 `approver`, `reason` and `decided` added if a decision had arrived in time
 to be seen), whether it is caught on a later retry of the same call or by
-the sweep every held call runs over the rest of `pending/`. That is a best
-effort, not a guarantee: a decision written in the narrow window between a
-read and the files being removed, or one that arrives after the card has
-already been filed as expired, can still go unrecorded.
+a sweep over the rest of `pending/`. The sweep runs inside every held call,
+once at server start-up and every `SWEEP_SECONDS` on a daemon thread
+(`start_sweeper`), so an expired card leaves `pending/` even while no agent
+is calling; the idle sweep also prunes patches no pending card names
+(core/approvals.py). The record itself is still a best effort, not a
+guarantee: a decision written in the narrow window between a read and the
+files being removed, or one that arrives after the card has already been
+filed as expired, can still go unrecorded.
 
 Policy, all optional, in `[approvals]`:
   tools = ["git_push", "github_create_pr", "gitlab_create_mr"]   which writes are held
@@ -35,6 +39,7 @@ import hashlib
 import json
 import os
 import secrets
+import sys
 import threading
 import time
 from pathlib import Path
@@ -57,6 +62,10 @@ _STABLE_FIELDS = {
 # nothing is held until the policy says so.
 SUGGESTED_TOOLS = ["git_push", "github_create_pr", "gitlab_create_mr"]
 POLL_SECONDS = 1.0
+# How often the idle sweep (start_sweeper) looks for expired cards. Expiry is
+# at least 60 s (settings), so a card leaves pending/ within about a minute
+# of expiring even when nothing calls.
+SWEEP_SECONDS = 60.0
 
 # Reentrant: _expire_pending is called both standalone (the sweep) and from
 # inside _ensure_pending's own locked section (a card expiring on retry).
@@ -202,6 +211,55 @@ def _sweep_expired(now: float) -> None:
             _expire_pending(cid, pending.get("nonce"), now)
 
 
+def _sweep_safely(now: float) -> None:
+    """_sweep_expired that never raises: a failure (a full disk, a
+    permission error under STATE) is logged by type only and the next sweep
+    tries again, so it can neither fail the held call that runs it nor stop
+    the idle sweeper."""
+    try:
+        _sweep_expired(now)
+    except Exception as e:  # noqa: BLE001 - nothing here may escape
+        print(f"approvals: the expiry sweep failed: {type(e).__name__}", file=sys.stderr)
+
+
+def sweep_idle(now: float | None = None) -> None:
+    """One idle sweep: expire past-due cards (as a held call's sweep does),
+    then prune the patches that leaves unnamed (core/approvals.py keeps any
+    younger than PATCH_KEEP_SECONDS). Does nothing unless this module's hook
+    is the installed one: with holds off there are no cards, and a plugin
+    that replaced the hook owns whatever is pending. Never raises."""
+    if not core_approvals.hook_is(hook):
+        return
+    now = time.time() if now is None else now
+    _sweep_safely(now)
+    try:
+        core_approvals.prune_patches(now)
+    except Exception as e:  # noqa: BLE001 - as above
+        print(f"approvals: pruning patches failed: {type(e).__name__}", file=sys.stderr)
+
+
+def _sweep_loop(stop: threading.Event, interval: float, clock) -> None:
+    while not stop.wait(interval):
+        sweep_idle(clock())
+
+
+def start_sweeper(interval: float | None = None, clock=time.time,
+                  stop: threading.Event | None = None) -> threading.Thread | None:
+    """Sweep once now, then every `interval` seconds (SWEEP_SECONDS) on a
+    daemon thread until `stop` is set. Called by the server at start-up,
+    after plugins load; returns None without starting anything unless this
+    module's hook is installed. A card that expired while the server was
+    down (or idle) is filed before the first call is served."""
+    if not core_approvals.hook_is(hook):
+        return None
+    sweep_idle(clock())
+    thread = threading.Thread(target=_sweep_loop, name="approvals-sweeper", daemon=True,
+                              args=(stop or threading.Event(), SWEEP_SECONDS if interval is None else interval,
+                                    clock))
+    thread.start()
+    return thread
+
+
 def _ensure_pending(card: dict, cid: str, expire: int, now: float) -> dict:
     """The pending card for cid: the existing one, or a fresh one (also when
     the existing one has expired). Notifies once per fresh card, off this
@@ -285,7 +343,7 @@ def hook(card: dict) -> None:
         return
     cid = card_id(card)
     now = time.time()
-    _sweep_expired(now)  # other cards nobody retried: give them a record too
+    _sweep_safely(now)  # other cards nobody retried: give them a record too
     pending = _ensure_pending(card, cid, expire, now)
     deadline = time.monotonic() + hold
     while True:

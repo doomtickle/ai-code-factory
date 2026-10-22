@@ -49,10 +49,10 @@ Passdesk Pro plugin and moved into core, licence removed, on 2026-10-21
   `[approvals] patch_max_bytes` (default 262,144; 4,096 to 2,000,000),
   followed by one line `[passdesk: patch truncated at N of M bytes]`. The
   file is written atomically, mode 0644, named by the sha256 of its bytes,
-  so the same bundle gives the same name. Before each write, core removes
-  every patch that no `approvals/pending/*.json` card names and that is
-  over two hours old (never following a symlink, ignoring unreadable
-  cards). The card gains three fields and no content: `patch_sha256`,
+  so the same bundle gives the same name. Before each write, and on each
+  idle sweep (below), core removes every patch that no
+  `approvals/pending/*.json` card names and that is over two hours old
+  (never following a symlink, ignoring unreadable cards). The card gains three fields and no content: `patch_sha256`,
   `patch_bytes` (the file's size) and `patch_truncated`. The webhook, the
   audit log and any future relay see only those; the patch itself is read
   by a console on the same machine (the AI Code Factory's dashboard), which
@@ -108,6 +108,18 @@ content that actually gets pushed is still pinned by `head` and
   so a decision made in between is honoured and the push goes through.
   Pending cards expire after `expire_seconds` (default 1800); an expired
   card is a denial, and a later retry makes a fresh one.
+- **Expired cards leave `pending/` on their own.** An expired card is
+  audited as `approval-expired` and filed under `approvals/done/` as
+  `expired` (with any decision that came too late), whether a retry of the
+  same call finds it or a sweep over `pending/` does. The sweep runs inside
+  every held call, once when the server starts (before it serves a call)
+  and every 60 seconds on a daemon thread, so a card left behind by an
+  agent that never retried, or one that expired while the gateway was down,
+  is filed without waiting for another held write. The idle sweep also
+  prunes the patches that leaves unnamed. It runs only while core's hold is
+  the installed hook (holds on, no plugin hook over it), and a failing
+  sweep is logged by error type and retried on the next tick; it never
+  stops the server or fails a held call.
 - **Decisions are files.** The state directory is shared between the gateway
   and its deployment and with nothing else, so it is the channel:
   `approvals/pending/<id>.json` is the card, `approvals/decisions/<id>.json`

@@ -53,6 +53,11 @@ def hook_installed() -> bool:
     return _hook is not None
 
 
+def hook_is(fn: Hook) -> bool:
+    """Whether fn is the installed hook (not replaced by a plugin's)."""
+    return _hook is fn
+
+
 def _redacted(value):
     """Recursively redact known secret patterns in every string value.
 
