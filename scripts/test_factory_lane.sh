@@ -138,7 +138,7 @@ assert_eq "prepare with an identity: set on a new lane, {lane} replaced" "$(iden
   "Acme Bot (identity) <bot+identity@example.com>"
 run "$LANE" prepare "$tmp/single" identity '$(touch pwned) `id` "Ünïcode" & co' 'x$(id)@example.com'
 assert_eq "prepare with an identity: values are taken literally, never run" \
-  "$RC:$(ident "$ilane"):$(ls "$ilane" "$PWD" | grep -c pwned)" \
+  "$RC:$(ident "$ilane"):$(find "$ilane" "$PWD" -maxdepth 1 -name '*pwned*' | wc -l | tr -d ' ')" \
   '0:$(touch pwned) `id` "Ünïcode" & co <x$(id)@example.com>:0'
 run "$LANE" prepare "$tmp/single" identity "" "team@example.com"
 assert_eq "prepare with an identity: an empty name means the default" "$(ident "$ilane")" \
