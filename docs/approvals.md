@@ -12,6 +12,11 @@ Passdesk Pro plugin and moved into core, licence removed, on 2026-10-21
   tool right before its external write, with a card describing what is about
   to happen. Core's default returns immediately. A deployment may install a
   hook with `set_hook(fn)`; the hook returns to allow or raises `Denied`.
+  When it allows a write that was held, it may return the outcome,
+  `{"id", "approver", "decided", "waited_seconds"}` (core's hold does);
+  `require` passes that back to the tool, and returns `None` for anything
+  else (no hook, a write that wasn't held, a plugin hook that returns
+  `None`), so a plugin written against the old contract still works.
 - **The caller's identity** for the card: `PRINCIPAL`, a context variable
   the protocol layer sets for each call.
 - **Plugin loading**, `core/plugins.py`: `PASSDESK_PLUGINS` names modules
@@ -106,6 +111,26 @@ content that actually gets pushed is still pinned by `head` and
   call is held, names the approval id, and asks it to retry the same call
   once a person has decided. A retry with the same bundle has the same id,
   so a decision made in between is honoured and the push goes through.
+- **The result says it was held** (doomtickle/passdesk-ops#141). An
+  approval that lands within the hold looks to the agent like a slow call,
+  so every write that went through a hold (approved in the call, or picked
+  up by a retry) ends its result with one more line: `Held for approval
+  (id X); approved by "NAME" at 2026-10-22T09:15:00Z after N s.` `decided`
+  is the decision's time in UTC and `waited_seconds` runs from the card's
+  creation (the first held call) to the decision, so a retry reports how
+  long the write really waited for a person; a decision or creation time
+  that isn't a usable Unix time (not a number, not finite, out of range)
+  counts as now. The approver's name comes from the console's file, so it
+  is filtered like any result (secrets redacted, control characters
+  removed), also loses Unicode format characters (bidi overrides, zero-width
+  characters) and C1 controls, is quoted (a `"` in it becomes `'`) and is
+  kept to one line of at most 100 characters. The line is added to every
+  result the tool returns after approval, including a push the forge
+  rejected or an HTTP error status from the API. A failure the tool
+  doesn't turn into a result (no connection, a timeout) comes back as
+  `Broker error: ...` without the line; then only the call's audit record
+  says it was held, with `approval: <id>`. A write that wasn't held is
+  unchanged, byte for byte.
   Pending cards expire after `expire_seconds` (default 1800); an expired
   card is a denial, and a later retry makes a fresh one.
 - **Expired cards leave `pending/` on their own.** An expired card is
@@ -141,7 +166,10 @@ content that actually gets pushed is still pinned by `head` and
 - **The record.** Every step is an audit event: `approval-requested`,
   `approval-granted` (with the approver), `approval-declined`,
   `approval-expired` (with any decision that came too late). The tool
-  call's own record follows as today.
+  call's own record follows as today, and carries `approval: <id>` when
+  the call went through a hold, also if the write then failed (its
+  `decision` is `deny` or `error`), so a review of the log can tell a held
+  write from an unheld one.
 - **No licence.** There is nothing to deliver, verify or renew.
 
 ## What the deployment ships (`ai-code-factory`)

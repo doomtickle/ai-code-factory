@@ -43,6 +43,9 @@ def call_tool(name: str, args: object, principal: str) -> tuple[str, bool]:
     # with the same value for the factory's scripts/analytics.py until that
     # consumer reads "principal" instead.
     record = {"principal": principal, "role": principal, "tool": name}
+    # Reset first: a call refused before it runs must not carry an earlier
+    # call's hold (same thread) onto its record.
+    approvals.HELD_ID.set("")
     try:
         # Argument shape/type checks live inside the try so a malformed call
         # (e.g. "arguments" not a JSON object) still gets an audit record and
@@ -81,6 +84,10 @@ def call_tool(name: str, args: object, principal: str) -> tuple[str, bool]:
         record.update(decision="error", reason=sanitize(f"{type(e).__name__}: {e}", 1000))
         return f"Broker error: {sanitize(str(e), 2000)}", True
     finally:
+        # The hold this call passed, so the record says the write was held
+        # even if the write itself then failed (doomtickle/passdesk-ops#141).
+        if approvals.HELD_ID.get():
+            record["approval"] = approvals.HELD_ID.get()
         record["ms"] = round((time.monotonic() - started) * 1000)
         audit(record)
 

@@ -6,7 +6,9 @@ console writes STATE/approvals/decisions/<id>.json, echoing the card's
 `nonce` so a decision never applies to a later card with the same id; the
 hook waits up to `hold_seconds` for that file, then tells the agent to retry
 the same call later. A retry with the same card has the same id, so a
-decision made meanwhile is honoured. Pending cards expire after
+decision made meanwhile is honoured. An approved hold returns the outcome
+(id, approver, when, how long it waited) so the tool can say in its result
+that the write was held (doomtickle/passdesk-ops#141). Pending cards expire after
 `expire_seconds`; an expired card is normally audited as `approval-expired`
 and filed under STATE/approvals/done/ as `expired` (with `decision`,
 `approver`, `reason` and `decided` added if a decision had arrived in time
@@ -37,6 +39,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import secrets
 import sys
@@ -304,8 +307,42 @@ def _decision_for(pending: dict, cid: str) -> dict | None:
     return decision
 
 
-def _consume(decision: dict, pending: dict, cid: str) -> None:
-    """Apply a decision: file the card as done, record it, allow or refuse.
+def _iso(ts: float) -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(ts))
+
+
+def _timestamp(value, now: float) -> float:
+    """`value` if it is a usable Unix time, else `now`. Not usable: not a
+    number (or a bool), not finite (json reads 1e999 as inf, and NaN), or
+    out of gmtime's range (1e20) - any of those would raise after the
+    approval was already filed and audited, so the write would never run."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return now
+    try:
+        if not math.isfinite(value):
+            return now
+        time.gmtime(value)
+    except (OverflowError, ValueError, OSError):
+        return now
+    return value
+
+
+def _outcome(pending: dict, cid: str, approver: str, ts) -> dict:
+    """What an approved hold returns: the card id, the approver, when they
+    decided (ISO 8601 UTC) and how long the write waited for them, from the
+    card's creation to the decision. A decision time or card creation time
+    that isn't a usable Unix time (the console writes time.time()) counts as
+    now; see _timestamp."""
+    now = time.time()
+    decided = _timestamp(ts, now)
+    created = _timestamp(pending.get("created"), now)
+    return {"id": cid, "approver": approver, "decided": _iso(decided),
+            "waited_seconds": max(0, round(decided - created))}
+
+
+def _consume(decision: dict, pending: dict, cid: str) -> dict:
+    """Apply a decision: file the card as done, record it, allow (returning
+    the outcome, see _outcome) or refuse.
 
     Re-checks under the lock that pending/<cid> is still the exact card this
     decision was read against (same nonce). The decision was read outside
@@ -330,17 +367,20 @@ def _consume(decision: dict, pending: dict, cid: str) -> None:
               "reason": reason}
     if verdict == "approve":
         audit({"event": "approval-granted", **record})
-        return
+        return _outcome(pending, cid, approver, decision.get("ts"))
     audit({"event": "approval-declined", **record})
     raise Denied(f"declined by {approver}" + (f": {reason}" if reason else ""))
 
 
-def hook(card: dict) -> None:
-    """The approval point's hook (core.approvals.set_hook)."""
+def hook(card: dict) -> dict | None:
+    """The approval point's hook (core.approvals.set_hook). Returns None for
+    a tool the policy doesn't hold, the outcome (_outcome) for a write that
+    was held and approved (in this call, or before this retry); raises
+    Denied for a decline or a hold that is still pending."""
     policy = load_policy()
     hold, expire, tools = settings(policy)
     if card.get("tool") not in tools:
-        return
+        return None
     cid = card_id(card)
     now = time.time()
     _sweep_safely(now)  # other cards nobody retried: give them a record too

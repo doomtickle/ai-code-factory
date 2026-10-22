@@ -41,6 +41,7 @@ from pathlib import Path
 
 from ..core import approvals, config, credentials, filters
 from ..core.approvals import require as require_approval
+from ..core.approvals import with_held_note
 from ..core.errors import Denied
 from ..core.filters import block_outbound_secrets, find_secrets, sanitize, untrusted
 from ..core.net import NO_REDIRECT_OPENER
@@ -474,9 +475,10 @@ def tool_git_push(args: dict, policy: dict) -> str:
         with open(bundle, "rb") as fh:
             bundle_digest = hashlib.file_digest(fh, "sha256").hexdigest()
     # Outside the tool lock: a pending approval must not block other git calls.
-    require_approval({"tool": "git_push", "repo": repo, "branch": branch, "base": base, "head": sha,
-                      "commits": count, "shortstat": shortstat, "file_count": len(files), "files": files[:50],
-                      "bundle_sha256": bundle_digest, "secret_scan": "clean", **patch_fields})
+    held = require_approval({"tool": "git_push", "repo": repo, "branch": branch, "base": base, "head": sha,
+                             "commits": count, "shortstat": shortstat, "file_count": len(files),
+                             "files": files[:50], "bundle_sha256": bundle_digest, "secret_scan": "clean",
+                             **patch_fields})
     with tool_lock:
         mirror = ensure_mirror(repo, remote)
         if git("rev-parse", incoming, cwd=mirror).stdout.strip() != sha:
@@ -485,8 +487,10 @@ def tool_git_push(args: dict, policy: dict) -> str:
                    auth=remote)
     if push.returncode != 0:
         body = sanitize(push.stderr + push.stdout, 3000)
-        return f"Push rejected by {remote.label}:\n" + untrusted(f"git push {repo}:{branch}", body)
-    return f"Pushed {count} commit(s) to {repo}:{branch} ({sha}).\n{sanitize(push.stdout, 2000)}"
+        return with_held_note(f"Push rejected by {remote.label}:\n" + untrusted(f"git push {repo}:{branch}", body),
+                              held)
+    return with_held_note(f"Pushed {count} commit(s) to {repo}:{branch} ({sha}).\n{sanitize(push.stdout, 2000)}",
+                          held)
 
 
 def tool_github_create_pr(args: dict, policy: dict) -> str:
@@ -499,8 +503,8 @@ def tool_github_create_pr(args: dict, policy: dict) -> str:
     block_outbound_secrets("PR title", title)
     block_outbound_secrets("PR body", body)
     draft = bool(args.get("draft", True))
-    require_approval({"tool": "github_create_pr", "repo": repo, "head": head, "base": base,
-                      "title": title, "body": body[:2000], "draft": draft})
+    held = require_approval({"tool": "github_create_pr", "repo": repo, "head": head, "base": base,
+                             "title": title, "body": body[:2000], "draft": draft})
     payload = json.dumps({"title": title, "body": body, "head": head, "base": base, "draft": draft}).encode()
     headers = {"Accept": "application/vnd.github+json", "Content-Type": "application/json",
                "X-GitHub-Api-Version": "2022-11-28", "User-Agent": config.USER_AGENT}
@@ -524,8 +528,9 @@ def tool_github_create_pr(args: dict, policy: dict) -> str:
             sbx = " (with sbx: sbx secret set github --sandbox factory-broker)" if config.DEPLOYMENT == "sbx" else ""
             fix = f"the GitHub credential is supplied by the deployment{sbx}"
         hint = f"\nHint: {fix}" if e.code in (401, 403, 404) else ""
-        return f"GitHub API returned HTTP {e.code}:\n" + untrusted(f"GitHub API ({repo})", detail) + hint
-    return f"Opened PR #{pr['number']}: {pr['html_url']}"
+        return with_held_note(f"GitHub API returned HTTP {e.code}:\n" + untrusted(f"GitHub API ({repo})", detail)
+                              + hint, held)
+    return with_held_note(f"Opened PR #{pr['number']}: {pr['html_url']}", held)
 
 
 _MR_TITLE_MAX = 255  # GitLab's limit
@@ -569,9 +574,10 @@ def tool_gitlab_create_mr(args: dict, policy: dict) -> str:
                      "(README, Configuring credentials)")
     # The card shows the body's start, and carries its digest so two merge
     # requests whose bodies differ only past the excerpt never share a card.
-    require_approval({"tool": "gitlab_create_mr", "repo": repo, "head": head, "base": base,
-                      "title": title, "body": body[:2000], "body_sha256": hashlib.sha256(body.encode()).hexdigest(),
-                      "body_chars": len(body), "draft": draft})
+    held = require_approval({"tool": "gitlab_create_mr", "repo": repo, "head": head, "base": base,
+                             "title": title, "body": body[:2000],
+                             "body_sha256": hashlib.sha256(body.encode()).hexdigest(), "body_chars": len(body),
+                             "draft": draft})
     # Read after approval, so a long wait still uses the current token.
     token = gitlab_token()
     if token is None:
@@ -587,10 +593,10 @@ def tool_gitlab_create_mr(args: dict, policy: dict) -> str:
         with NO_REDIRECT_OPENER.open(req, timeout=30) as resp:
             mr = json.load(resp)
     except urllib.error.HTTPError as e:
-        return _gitlab_failure(e, repo)
+        return with_held_note(_gitlab_failure(e, repo), held)
     if not isinstance(mr, dict) or not isinstance(mr.get("iid"), int):
         raise Denied(f"GitLab returned an unexpected response for the new merge request in {repo}")
-    return f"Opened MR !{mr['iid']}: {sanitize(str(mr.get('web_url', '')), 300)}"
+    return with_held_note(f"Opened MR !{mr['iid']}: {sanitize(str(mr.get('web_url', '')), 300)}", held)
 
 
 _ISSUE_TITLE_MAX = 256
@@ -698,8 +704,8 @@ def tool_github_create_issue(args: dict, policy: dict) -> str:
     # only past the excerpt never share a card, and the labels as the agent
     # named them (scanned above), not as the label lookup returned them:
     # nothing on a card comes from the network.
-    require_approval({"tool": "github_create_issue", "repo": repo, "title": title, "body": body[:2000],
-                      "body_sha256": hashlib.sha256(body.encode()).hexdigest(), "labels": wanted})
+    held = require_approval({"tool": "github_create_issue", "repo": repo, "title": title, "body": body[:2000],
+                             "body_sha256": hashlib.sha256(body.encode()).hexdigest(), "labels": wanted})
     payload: dict = {"title": title, "body": body}
     if labels:
         payload["labels"] = labels
@@ -708,10 +714,11 @@ def tool_github_create_issue(args: dict, policy: dict) -> str:
     try:
         issue = _github_api("POST", f"/repos/{repo}/issues", token, payload)
     except urllib.error.HTTPError as e:
-        return _github_api_failure(e, repo, token is not None, "Issues read/write")
+        return with_held_note(_github_api_failure(e, repo, token is not None, "Issues read/write"), held)
     if not isinstance(issue, dict) or not isinstance(issue.get("number"), int):
         raise Denied(f"GitHub returned an unexpected response for the new issue in {repo}")
-    return f"Opened issue #{issue['number']} in {repo}: {sanitize(str(issue.get('html_url', '')), 300)}"
+    return with_held_note(f"Opened issue #{issue['number']} in {repo}: "
+                          f"{sanitize(str(issue.get('html_url', '')), 300)}", held)
 
 
 _REPO_DESCRIPTION = "owner/name on GitHub, or <gitlab host>/<group>/<project> on the configured GitLab"
