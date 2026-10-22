@@ -25,7 +25,8 @@ dashboard in your browser (or laid out in [Herdr](https://herdr.dev) tabs).
 - **Coordinator:** runs in a VM that opens in your project but can't change it:
   Claude's editing tools and shell are disabled by root-owned managed settings,
   which also raise Claude Code's MCP tool idle timeout so a long `delegate` or
-  `wait_for_job` wait doesn't trip its own abort. It is briefed on the factory
+  `wait_for_job` wait doesn't trip its own abort, and turn off the claude.ai
+  connectors from your account (see the role split below). It is briefed on the factory
   and its roles before any task, whatever the project: a root-owned managed
   `CLAUDE.md` from its kit, plus the dispatch bridge's MCP instructions, which
   list the current roles.
@@ -716,6 +717,14 @@ The split follows the capabilities that matter:
   "Unverified"). The role kits deny the built-in `WebFetch` for every role (the
   sandboxes have no egress for it) and `WebSearch` for the developer and
   reviewer, through root-owned managed settings like the Coordinator's.
+- **No claude.ai connectors.** Every sandbox, the Coordinator's and each role's,
+  sets `disableClaudeAiConnectors` in those managed settings. Connectors you
+  added to your claude.ai account (Jira, DNS, design tools and the like) would
+  otherwise load in every sandbox. They are a way to act on the outside world
+  that skips the broker's policy checks and audit log, and their instructions
+  and tool names sit in every turn's prompt for nothing. The broker's gateway is
+  registered with `sbx mcp add`, not as a connector, so it keeps working. The
+  setting reaches existing sandboxes only when `factory update` recreates them.
 
 For a deeper security pass, the Coordinator can ask the reviewer for a
 security-only review.
@@ -861,6 +870,10 @@ The same managed settings also set `CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT` to
 legitimately block up to the dispatch bridge's 600 s maximum wait
 (`MAX_WAIT_SECONDS` in `dispatch/server.py`) and Claude Code's default idle
 abort is shorter than that; changing it needs the same `factory update`.
+The managed settings of the Coordinator and of every role also set
+`disableClaudeAiConnectors`, so connectors from your claude.ai account never
+load in a factory sandbox; sandboxes created before that change keep loading
+them until `factory update` recreates them.
 
 **Remove a role:** delete `roles/<role>/` and run `factory start`. It closes the role's
 tab (`tabs` layout; it drops out of `factory watch`'s lane list either way) and removes

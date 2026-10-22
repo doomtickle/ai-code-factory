@@ -45,7 +45,8 @@ socket, or host credentials. Full picture: README.md.
   agent egress rule. Managed settings also deny built-in `WebFetch` (every role) and
   `WebSearch` (every role but researcher): `WebSearch` bypasses the Broker (served by
   the model API), so only the role that can't write the project gets it, to verify
-  leads via `web_fetch`.
+  leads via `web_fetch`. They also set `disableClaudeAiConnectors`, so the user's
+  claude.ai account connectors (an outbound path around the Broker) never load.
 - The Broker never executes agent-controlled content: no git hooks or repo-local git
   config from the workspace, no package install scripts, no binaries/interpreters from
   the workspace. Code crosses as git bundles or plain files; dependencies cross as
