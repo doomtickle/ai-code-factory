@@ -94,7 +94,9 @@ socket, or host credentials. Full picture: README.md.
 - The factory is project/org-agnostic: nothing org-specific (registry URLs, Jira
   sites, repo names) is committed — such settings live in `FACTORY_CONFIG`
   (`scripts/lib/common.sh`, `~/.config/ai-code-factory/`, outside repo/workspace):
-  `policy.toml` overlays `broker/policy.toml` (baked into the broker image),
+  `policy.toml` overlays `broker/policy.toml` (baked into the broker image; its
+  `[git]` `author_name`/`author_email` are instead the lane git identity
+  `start-dispatch.sh` validates and snapshots for `factory-lane prepare`),
   `broker-kit/` mixes in broker egress hosts, `projects/<name>.md` holds per-project
   notes `start-dispatch.sh` appends to role instructions, and `roles/<role>.conf`
   overrides a role's tuning keys only (`ROLE_OVERRIDE_KEYS` in `scripts/lib/roles.sh`

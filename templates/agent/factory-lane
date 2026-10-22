@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Usage: factory-lane repos   <project>
-#        factory-lane prepare <project> <lane>
+#        factory-lane prepare <project> <lane> [<name> <email>]
 #        factory-lane export  <project> <lane> <rel> [full]
 #        factory-lane bundle  <project> <lane> <rel> <branch> [<base>]
 #        factory-lane review  <project> <ref> [<rel>]
@@ -20,7 +20,10 @@ set -euo pipefail
 #   prepare  Clone each repo into the lane (or fetch origin if it is already
 #            cloned). The last line of stdout is the lane dir:
 #            ${FACTORY_LANES_ROOT:-$HOME/lanes}/<lane> (repo "."), with the
-#            repos of a folder of repos as its subdirectories.
+#            repos of a folder of repos as its subdirectories. Each lane repo
+#            gets a repo-local git identity (user.name, user.email): <name> and
+#            <email> if given and not empty, else factory-<lane> and
+#            <lane>@factory.invalid. "{lane}" in either is replaced by <lane>.
 #   export   Write to stdout a git bundle of the lane repo's factory/* branches,
 #            without the commits the project's repo already has (its ref tips,
 #            read from the project itself, not from the lane's origin/* refs,
@@ -43,7 +46,7 @@ set -euo pipefail
 #
 # Baked into the developer and reviewer images (templates/*/Dockerfile).
 
-USAGE="usage: factory-lane repos <project> | prepare <project> <lane> | export <project> <lane> <rel> [full] | bundle <project> <lane> <rel> <branch> [<base>] | review <project> <ref> [<rel>]"
+USAGE="usage: factory-lane repos <project> | prepare <project> <lane> [<name> <email>] | export <project> <lane> <rel> [full] | bundle <project> <lane> <rel> <branch> [<base>] | review <project> <ref> [<rel>]"
 
 die() { echo "factory-lane: $*" >&2; exit 1; }
 say() { echo "factory-lane: $*" >&2; }
@@ -88,6 +91,25 @@ check_rel() { # check_rel PROJECT REL
   die "not a repo of $1: $2"
 }
 
+# check_identity NAME EMAIL: refuse what git or a reader could misread: a
+# control character (newline included), "<" or ">" (git's ident delimiters),
+# a leading "-" (an option to git config), whitespace in the email, or an
+# email without exactly one "@" between non-empty parts.
+check_identity() {
+  local name="$1" email="$2" bad='[[:cntrl:]<>]'
+  local email_re='^[^-@[:space:][:cntrl:]<>][^@[:space:][:cntrl:]<>]*@[^@[:space:][:cntrl:]<>]+$'
+  [ -n "${name//[[:space:]]/}" ] && [ "${#name}" -le 128 ] && ! [[ "$name" =~ $bad ]] \
+    && [ "${name#-}" = "$name" ] || die "invalid git author name: ${name//[[:cntrl:]]/?}"
+  [ "${#email}" -le 254 ] && [[ "$email" =~ $email_re ]] \
+    || die "invalid git author email: ${email//[[:cntrl:]]/?}"
+}
+
+# set_identity REPO NAME EMAIL: the lane's commits are authored as NAME <EMAIL>.
+set_identity() {
+  g -C "$1" config user.name "$2" && g -C "$1" config user.email "$3" \
+    || die "can't set the git identity in $1"
+}
+
 lanes_root() {
   local root="${FACTORY_LANES_ROOT:-$HOME/lanes}"
   case "$root" in /*) ;; *) die "FACTORY_LANES_ROOT must be absolute: $root" ;; esac
@@ -113,10 +135,15 @@ cmd_repos() {
 }
 
 cmd_prepare() {
-  [ $# -eq 2 ] || die "$USAGE"
-  local project="$1" lane="$2" root lanedir rel t s found=""
+  [ $# -eq 2 ] || [ $# -eq 4 ] || die "$USAGE"
+  local project="$1" lane="$2" name="${3:-}" email="${4:-}" root lanedir rel t s found=""
   check_project "$project"
   check_lane "$lane"
+  [ -n "$name" ] || name="factory-{lane}"
+  [ -n "$email" ] || email="{lane}@factory.invalid"
+  name="${name//"{lane}"/"$lane"}"
+  email="${email//"{lane}"/"$lane"}"
+  check_identity "$name" "$email"
   root="$(lanes_root)"
   lanedir="$root/$lane"
   mkdir -p "$root"
@@ -137,6 +164,7 @@ cmd_prepare() {
       [ "$rel" = . ] || mkdir -p "$lanedir"
       g clone --quiet --no-hardlinks -- "$s" "$t" >&2 || die "clone of $s failed"
     fi
+    set_identity "$t" "$name" "$email"
   done < <(project_repos "$project")
   [ -n "$found" ] || die "no git repos in $project (it has no .git, nor subdirectories with one)"
   (cd "$lanedir" && pwd -P)

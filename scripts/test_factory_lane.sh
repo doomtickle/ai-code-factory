@@ -11,7 +11,11 @@ set -euo pipefail
 # - repos: a single repo, and a folder of repos (hidden dirs, symlinks and
 #   non-repos skipped, byte-order sorted).
 # - prepare: clones, then fetches (a new host commit shows up as origin/main);
-#   the last stdout line is the lane dir.
+#   the last stdout line is the lane dir. Each lane repo gets a repo-local
+#   git identity: factory-<lane> <<lane>@factory.invalid> by default, or the
+#   given name and email ("{lane}" replaced, empty = default), taken literally;
+#   invalid identities (control characters, "<>", a leading "-", a malformed
+#   email) are rejected before anything is changed.
 # - export: exit 3 with no factory/* branches and for a branch already on
 #   origin; otherwise stdout is a bundle that "git fetch" into the source repo
 #   accepts, holding only factory/* refs, whose prerequisites the host has,
@@ -99,6 +103,9 @@ lane="$tmp/lanes/developer"
 assert_eq "prepare: the lane is a clone of the project" \
   "$(git -C "$lane" rev-parse HEAD)" "$(git -C "$tmp/single" rev-parse HEAD)"
 assert_eq "prepare: origin is the project" "$(git -C "$lane" remote get-url origin)" "$tmp/single"
+ident() { printf '%s <%s>' "$(git -C "$1" config --local user.name)" "$(git -C "$1" config --local user.email)"; }
+assert_eq "prepare: the lane has the default repo-local identity" "$(ident "$lane")" \
+  "factory-developer <developer@factory.invalid>"
 
 echo two > "$tmp/single/file.txt"
 git -C "$tmp/single" commit -q -am two
@@ -118,6 +125,43 @@ assert_eq "prepare (folder of repos): exit 0, lane dir last" \
   "$RC:$(printf '%s\n' "$OUT" | tail -n 1)" "0:$tmp/lanes/developer-lane2"
 assert_eq "prepare (folder of repos): each repo cloned as a subdirectory" \
   "$(cd "$tmp/lanes/developer-lane2" && echo *)" "Z-repo a-repo b-repo worktree"
+assert_eq "prepare (folder of repos): every repo has the lane's identity" \
+  "$(for r in Z-repo a-repo b-repo worktree; do ident "$tmp/lanes/developer-lane2/$r"; echo; done | sort -u)" \
+  "factory-developer-lane2 <developer-lane2@factory.invalid>"
+
+# --- prepare: configured identity ----------------------------------------------
+# A lane of its own: re-preparing "developer" would move its origin/HEAD.
+ilane="$tmp/lanes/identity"
+run "$LANE" prepare "$tmp/single" identity "Acme Bot ({lane})" "bot+{lane}@example.com"
+assert_eq "prepare with an identity: exit 0" "$RC" "0"
+assert_eq "prepare with an identity: set on a new lane, {lane} replaced" "$(ident "$ilane")" \
+  "Acme Bot (identity) <bot+identity@example.com>"
+run "$LANE" prepare "$tmp/single" identity '$(touch pwned) `id` "Ünïcode" & co' 'x$(id)@example.com'
+assert_eq "prepare with an identity: values are taken literally, never run" \
+  "$RC:$(ident "$ilane"):$(ls "$ilane" "$PWD" | grep -c pwned)" \
+  '0:$(touch pwned) `id` "Ünïcode" & co <x$(id)@example.com>:0'
+run "$LANE" prepare "$tmp/single" identity "" "team@example.com"
+assert_eq "prepare with an identity: an empty name means the default" "$(ident "$ilane")" \
+  "factory-identity <team@example.com>"
+run "$LANE" prepare "$tmp/single" identity "Team" ""
+assert_eq "prepare with an identity: an empty email means the default" "$(ident "$ilane")" \
+  "Team <identity@factory.invalid>"
+run "$LANE" prepare "$tmp/single" identity "Team"
+assert_eq "prepare: a name without an email is a usage error" "$RC:$OUT:$(ident "$ilane")" \
+  "1::Team <identity@factory.invalid>"
+long="$(printf 'n%.0s' $(seq 129))"
+for bad_name in "a
+b" "$(printf 'a\tb')" "$(printf 'a\033[31m')" "<x>" "a>b" "-x" "   " "$long"; do
+  run "$LANE" prepare "$tmp/single" identity "$bad_name" "ok@example.com"
+  assert_eq "invalid name '$bad_name' is rejected, the identity unchanged" "$RC:$OUT:$(ident "$ilane")" \
+    "1::Team <identity@factory.invalid>"
+done
+for bad_email in "a b@example.com" "no-at" "a@b@c" "-a@b" "a@" "@b" "a@b
+c" "<a@b>" "$(printf 'a\001@b')"; do
+  run "$LANE" prepare "$tmp/single" identity "Team" "$bad_email"
+  assert_eq "invalid email '$bad_email' is rejected, the identity unchanged" "$RC:$OUT:$(ident "$ilane")" \
+    "1::Team <identity@factory.invalid>"
+done
 
 run "$LANE" prepare "$tmp/multi/not-a-repo" developer-lane3
 assert_eq "prepare: a project without repos fails" "$RC" "1"

@@ -919,6 +919,38 @@ class LaneTests(Base):
         self.assertEqual(self.lane_calls("export")[0],
                          ["exec", "factory-developer", "factory-lane", "export", str(d.PROJECT), "developer", "."])
 
+    def test_prepare_passes_the_lane_identity_as_argv(self):
+        (d.STATE / "lane-identity.conf").write_text(
+            'AUTHOR_NAME="Acme \'$(id)\' Bot ({lane})"\nAUTHOR_EMAIL=""\n')
+        self.wait(self.delegate("developer", "x"))
+        self.assertEqual(self.lane_calls("prepare")[0],
+                         ["exec", "factory-developer", "factory-lane", "prepare", str(d.PROJECT), "developer",
+                          "Acme '$(id)' Bot ({lane})", ""])
+
+    def test_lane_identity(self):
+        path = d.STATE / "lane-identity.conf"
+        self.assertEqual(d.lane_identity(), [])
+        path.write_text('AUTHOR_NAME=""\nAUTHOR_EMAIL=""\n')
+        self.assertEqual(d.lane_identity(), [])
+        path.write_text('AUTHOR_NAME="Bot \u00fc"\nAUTHOR_EMAIL="bot+{lane}@example.com"\n')
+        self.assertEqual(d.lane_identity(), ["Bot \u00fc", "bot+{lane}@example.com"])
+        for text in ('AUTHOR_NAME="a\nb"\n', 'AUTHOR_NAME="a\rb"\n', 'AUTHOR_NAME="a\x1b[31m"\n',
+                     'AUTHOR_NAME="a\u0085b"\n', 'AUTHOR_NAME="<x>"\n', 'AUTHOR_NAME="-x"\n',
+                     'AUTHOR_NAME="  "\n', f'AUTHOR_NAME="{"n" * 129}"\n',
+                     'AUTHOR_EMAIL="a b@c"\n', 'AUTHOR_EMAIL="no-at"\n', 'AUTHOR_EMAIL="a@b@c"\n',
+                     'AUTHOR_EMAIL="-a@b"\n', 'AUTHOR_EMAIL="a@b\u00a0c"\n',
+                     'MODEL="x"\n', 'AUTHOR_NAME=x\n', 'AUTHOR_NAME="a"\nAUTHOR_NAME="b"\n'):
+            path.write_text(text)
+            with self.subTest(text=text), self.assertRaises(d.LaneError):
+                d.lane_identity()
+
+    def test_invalid_lane_identity_fails_the_job_before_the_lane(self):
+        (d.STATE / "lane-identity.conf").write_text('AUTHOR_EMAIL="not an email"\n')
+        report = self.wait(self.delegate("developer", "x"))
+        self.assertEqual(report["status"], "failed")
+        self.assertIn("invalid git author email", report["report"])
+        self.assertEqual(self.lane_calls("prepare") + self.claude_calls(), [])
+
     def test_prepare_failure_fails_the_job_without_claude_or_export(self):
         os.environ["FAKE_PREPARE"] = "fail"
         report = self.wait(self.delegate("developer", "x"))

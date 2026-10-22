@@ -552,11 +552,47 @@ def valid_lane_dir(path: str) -> bool:
             and not re.search(r"[\x00-\x1f\x7f-\x9f]", path))
 
 
+# The same rules as lane_identity_problem in scripts/lib/common.sh and
+# check_identity in templates/agent/factory-lane ("{lane}" is replaced there).
+_IDENTITY_BAD = re.compile(r"[\x00-\x1f\x7f-\x9f<>]")
+_IDENTITY_EMAIL = re.compile(r"[^-@\s\x00-\x1f\x7f-\x9f<>][^@\s\x00-\x1f\x7f-\x9f<>]*@[^@\s\x00-\x1f\x7f-\x9f<>]+")
+
+
+def lane_identity() -> list:
+    """The lanes' git identity as [name, email] (either may be empty: factory-lane's
+    default), from the snapshot start-dispatch.sh wrote of [git] author_name and
+    author_email; [] when there is none. Parsed as data and validated; raises
+    LaneError on anything else, so a bad value never reaches a lane."""
+    path = STATE / "lane-identity.conf"
+    try:
+        text = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return []
+    except (OSError, UnicodeDecodeError) as e:
+        raise LaneError(f"can't read {path}: {type(e).__name__}")
+    values = {}
+    for line in text.split("\n"):
+        if not line:
+            continue
+        m = _CONF_LINE.match(line)
+        if not m or m.group(1) not in ("AUTHOR_NAME", "AUTHOR_EMAIL") or m.group(1) in values:
+            raise LaneError(f"{path}: not an AUTHOR_NAME or AUTHOR_EMAIL line: {one_line(line, 80)!r}")
+        values[m.group(1)] = m.group(2)
+    name, email = values.get("AUTHOR_NAME", ""), values.get("AUTHOR_EMAIL", "")
+    if name and (not name.strip() or len(name) > 128 or _IDENTITY_BAD.search(name) or name.startswith("-")):
+        raise LaneError(f"{path}: invalid git author name {one_line(name, 80)!r}")
+    if email and (len(email) > 254 or not _IDENTITY_EMAIL.fullmatch(email)):
+        raise LaneError(f"{path}: invalid git author email {one_line(email, 80)!r}")
+    return [name, email] if name or email else []
+
+
 def prepare_lane(job: Job, log: Transcript) -> str | None:
-    """Clone or refresh the lane's private clone(s) in the role sandbox. Returns the
-    lane dir (the job's cwd), None if the job was cancelled meanwhile; raises LaneError."""
+    """Clone or refresh the lane's private clone(s) in the role sandbox, with the
+    lanes' git identity (lane_identity). Returns the lane dir (the job's cwd), None
+    if the job was cancelled meanwhile; raises LaneError."""
     log.write(f"   preparing lane {job.lane} (git clone/fetch from the project)")
-    argv = [SBX, "exec", sandbox_name(job.role), "factory-lane", "prepare", str(PROJECT), job.lane]
+    argv = [SBX, "exec", sandbox_name(job.role), "factory-lane", "prepare", str(PROJECT), job.lane,
+            *lane_identity()]
     with subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                           stderr=subprocess.PIPE, start_new_session=True) as proc:
         job.proc = proc

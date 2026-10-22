@@ -32,8 +32,8 @@ assert_eq() { [ "$2" = "$3" ] && ok "$1" || bad "$1 (expected '$3', got '$2')"; 
 # The functions under test, and what they call.
 fns="$tmp/fns.sh"
 for f in policy_value policy_string git_push_enabled github_repos_listed gitlab_needs_token gitlab_mr_unheld; do
-  sed -n "/^$f() {/,/^}/p" "$REPO_ROOT/bin/factory" >> "$fns"
-  grep -q "^$f() {" "$fns" || { echo "bin/factory has no $f()"; exit 1; }
+  sed -n "/^$f() {/,/^}/p" "$REPO_ROOT/bin/factory" "$REPO_ROOT/scripts/lib/common.sh" >> "$fns"
+  grep -q "^$f() {" "$fns" || { echo "bin/factory and lib/common.sh have no $f()"; exit 1; }
 done
 # shellcheck source=/dev/null
 . "$fns"

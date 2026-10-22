@@ -508,38 +508,6 @@ cmd_start() {
   fi
 }
 
-# policy_value SECTION KEY -> the raw value of KEY = ... in [SECTION], from this
-# machine's overlay ($FACTORY_CONFIG/policy.toml) if it sets KEY, else from
-# broker/policy.toml - the same precedence as the broker's load_policy().
-# Best-effort awk, not a TOML parser: good enough for the values these checks
-# read. An array spread over several lines comes back joined on one line (up
-# to its closing "]", comments dropped), so a check never mistakes
-# `tools = [` for an empty list.
-policy_value() {
-  local f v
-  for f in "$FACTORY_CONFIG/policy.toml" "$ROOT/broker/policy.toml"; do
-    [ -f "$f" ] || continue
-    if v="$(awk -v s="[$1]" -v k="$2" '
-        more { sub(/#.*/, ""); v = v " " $0; if (index($0, "]")) { print v; found = 1; exit } next }
-        index($0, s) == 1 { f = 1; next }
-        /^\[/ { f = 0 }
-        f && $0 ~ "^[[:space:]]*"k"[[:space:]]*=" {
-          sub(/^[^=]*=[[:space:]]*/, "")
-          if (substr($0, 1, 1) == "[" && !index($0, "]")) { sub(/#.*/, ""); v = $0; more = 1; next }
-          print; found = 1; exit
-        }
-        END { exit !found }' "$f")"; then
-      printf '%s\n' "$v"
-      return 0
-    fi
-  done
-}
-
-# policy_string SECTION KEY -> the string value of KEY = "..." in [SECTION]
-policy_string() {
-  policy_value "$1" "$2" | awk -F'"' '{ print $2 }'
-}
-
 # jira_cloud_id_set -> success if [jira].cloud_id is set to something other
 # than empty or the all-zero placeholder UUID from config.example/.
 jira_cloud_id_set() {

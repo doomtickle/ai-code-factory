@@ -22,6 +22,7 @@ affected, after listing what each one loses and asking you.
 | A new role, or a removed one | `factory start` |
 | A role's `TEMPLATE`, `WORKSPACE` or `kit/`, or whether it has any `BROKER_TOOLS` at all | `factory update` |
 | Your local `policy.toml` or `broker-kit/` | `factory update` |
+| Only the lane git identity (`[git]` `author_name`, `author_email`) in your local `policy.toml` | `factory start` |
 | The Coordinator's default model or briefing (`kits/coordinator/spec.yaml`) | `factory update` |
 
 > **Tip:** Not sure? `factory start` warns when a sandbox is out of date:
@@ -318,6 +319,12 @@ broker kit, and names any that aren't.
 > `factory secret save` (the GitHub token included) come back by themselves on
 > the next broker start; for the rest, `factory update` tells you before it removes
 > anything, and the run that creates the new broker lists what to set again.
+
+`[git]` `author_name` and `author_email` in the same `policy.toml` set the git
+identity of the developer's lane commits (default `factory-<lane>
+<<lane>@factory.invalid>`; `{lane}` stands for the lane's name). The dispatch
+bridge reads them, not the broker, so `factory start` applies them. See
+[Getting the developer's work](../../README.md#getting-the-developers-work).
 
 The same folder holds your `[git].repos` for pushes, a private npm registry and
 your Jira site. See [Local settings](../../README.md#local-settings) and the
