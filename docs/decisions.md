@@ -2,6 +2,30 @@
 
 Dated entries, for the user to review. Newest first.
 
+## 2026-10-22
+
+- **Expired held-write cards are swept while the gateway is idle**
+  (doomtickle/passdesk-ops#141). The expiry sweep ran only inside a held
+  call, so with no agent pushing an expired card stayed in
+  `approvals/pending/` (and on the factory's write gate) indefinitely, even
+  across a restart. Choices:
+  - **Start-up plus a 60 s daemon timer** (`holds.start_sweeper`, called
+    from `protocol.main` after plugins load), reusing `_sweep_expired` and
+    its lock and nonce re-check, so expiry, the `approval-expired` record
+    and the `done/` file are exactly as before. 60 s because
+    `expire_seconds` is at least 60; not a policy setting.
+  - **Only while core's hook is the installed one.** With holds off there
+    is nothing to sweep, and a plugin that replaces the hook owns
+    `pending/`; before this change core never swept under a plugin's hook
+    either.
+  - **The idle sweep also prunes patches** (`approvals.prune_patches`, same
+    two-hour rule), so a patch whose card expired while idle goes too
+    instead of waiting for the next `git_push`.
+  - **A sweep error is logged by type and swallowed**, on the timer and,
+    newly, inside a held call: a failure to file *other* cards no longer
+    turns this call into an error. The call's own card is untouched by
+    this (its expiry on retry still goes through `_ensure_pending`).
+
 ## 2026-10-21
 
 - **One decision per approval card.** A held write's card stays in

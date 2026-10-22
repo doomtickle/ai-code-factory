@@ -2,6 +2,7 @@
 and installation at start-up. Ported from passdesk-pro's tests when the
 hold moved into core (docs/decisions.md, 2026-10-21)."""
 
+import io
 import json
 import os
 import threading
@@ -387,6 +388,158 @@ class InstallTests(HoldBase):
         tools, problems = plugins.declared_tools()
         self.assertEqual(tools, {})
         self.assertEqual(problems[0][0], "passdesk_pro")
+
+
+class FakeStop:
+    """A stand-in for the sweeper's stop event: wait() returns the next of
+    `answers` at once (True stops the loop), runs `on_wait` first, and
+    records each timeout, so the timer is tested without sleeping."""
+
+    def __init__(self, answers, on_wait=None):
+        self.answers = list(answers)
+        self.on_wait = on_wait
+        self.timeouts = []
+
+    def wait(self, timeout=None):
+        self.timeouts.append(timeout)
+        if self.on_wait:
+            self.on_wait()
+        return self.answers.pop(0) if self.answers else True
+
+
+class IdleSweepTests(HoldBase):
+    """Expired cards leave pending/ with no held call: once at start-up and
+    on the sweeper's timer (doomtickle/passdesk-ops#141)."""
+
+    def setUp(self):
+        super().setUp()
+        core_approvals.set_hook(holds.hook)
+        self.cid = holds.card_id(CARD)
+        self.pending = config.STATE / "approvals" / "pending" / f"{self.cid}.json"
+        self.done = config.STATE / "approvals" / "done" / f"{self.cid}.json"
+
+    def run_sweeper(self, stop, clock=time.time, interval=None):
+        thread = holds.start_sweeper(interval=interval, clock=clock, stop=stop)
+        self.assertIsNotNone(thread)
+        self.assertTrue(thread.daemon)
+        thread.join(5)
+        self.assertFalse(thread.is_alive())
+
+    def expired_events(self, cid):
+        return [r for r in self.audit_records() if r.get("event") == "approval-expired" and r.get("id") == cid]
+
+    def test_start_up_sweep_files_an_expired_card_with_its_late_decision(self):
+        now = time.time()
+        self.write_pending(CARD, self.cid, "n1", now - 10)
+        self.decide(self.cid, verdict="decline", reason="too late")  # arrived, never applied
+        live_cid = holds.card_id(PR_CARD)
+        live = self.write_pending(PR_CARD, live_cid, "n2", now + 600)
+        self.run_sweeper(FakeStop([True]))
+        self.assertFalse(self.pending.exists())
+        self.assertFalse((config.STATE / "approvals" / "decisions" / f"{self.cid}.json").exists())
+        done = json.loads(self.done.read_text())
+        self.assertEqual((done["decision"], done["nonce"], done["approver"], done["reason"]),
+                         ("expired", "n1", "daron", "too late"))
+        [event] = self.expired_events(self.cid)
+        self.assertEqual((event["decision"], event["approver"]), ("decline", "daron"))
+        self.assertTrue(live.exists())  # not yet expired: untouched
+        self.assertEqual(self.expired_events(live_cid), [])
+
+    def test_the_timer_files_a_card_that_expires_while_idle_exactly_once(self):
+        start = time.time()
+        self.write_pending(CARD, self.cid, "n1", start + 100)
+        seen = []
+        stop = FakeStop([False, False, False, True], on_wait=lambda: seen.append(self.pending.exists()))
+        clock = iter([start, start + 50, start + 150, start + 210]).__next__
+        self.run_sweeper(stop, clock=clock)
+        # start-up (not yet expired), tick 1 (not yet), tick 2 (expired), tick 3 (already gone)
+        self.assertEqual(seen, [True, True, False, False])
+        self.assertEqual(stop.timeouts, [holds.SWEEP_SECONDS] * 4)
+        self.assertEqual(len(self.expired_events(self.cid)), 1)
+        self.assertEqual(json.loads(self.done.read_text())["decision"], "expired")
+
+    def test_the_interval_can_be_set(self):
+        stop = FakeStop([True])
+        self.run_sweeper(stop, interval=7)
+        self.assertEqual(stop.timeouts, [7])
+
+    def test_nothing_runs_when_holds_are_off_or_a_plugin_replaced_the_hook(self):
+        self.write_pending(CARD, self.cid, "n1", time.time() - 10)
+        for installed in (None, lambda card: None):
+            core_approvals.set_hook(installed)
+            self.assertIsNone(holds.start_sweeper(stop=FakeStop([True])))
+            holds.sweep_idle()
+        self.assertTrue(self.pending.exists())
+        self.assertEqual(self.audit_events(), [])
+
+    def test_a_failing_sweep_is_logged_and_the_timer_keeps_going(self):
+        self.write_pending(CARD, self.cid, "n1", time.time() - 10)
+        real = holds._sweep_expired
+        calls = []
+
+        def flaky(now):
+            calls.append(now)
+            if len(calls) == 1:
+                raise PermissionError("/state/approvals/pending: secret-looking detail")
+            real(now)
+
+        err = io.StringIO()
+        with mock.patch.object(holds, "_sweep_expired", flaky), mock.patch("sys.stderr", err):
+            self.run_sweeper(FakeStop([False, True]))
+        self.assertEqual(len(calls), 2)  # start-up (failed), then the first tick
+        self.assertIn("the expiry sweep failed: PermissionError", err.getvalue())
+        self.assertNotIn("secret-looking", err.getvalue())  # by type only
+        self.assertFalse(self.pending.exists())
+        self.assertEqual(len(self.expired_events(self.cid)), 1)
+
+    def test_a_failing_patch_prune_never_escapes(self):
+        err = io.StringIO()
+        with mock.patch.object(core_approvals, "prune_patches", side_effect=OSError("x")), \
+             mock.patch("sys.stderr", err):
+            holds.sweep_idle()
+        self.assertIn("pruning patches failed: OSError", err.getvalue())
+
+    def test_a_held_call_survives_a_failing_sweep(self):
+        self.policy["approvals"]["hold_seconds"] = 0
+        with mock.patch.object(holds, "_sweep_expired", side_effect=OSError("disk full")), \
+             mock.patch("sys.stderr", io.StringIO()), self.assertRaises(Denied) as cm:
+            holds.hook(CARD)
+        self.assertIn("held for approval", str(cm.exception))
+        self.assertTrue(self.pending.exists())
+
+    def test_the_idle_sweep_prunes_the_patch_only_an_expired_card_named(self):
+        now = time.time()
+        old = now - core_approvals.PATCH_KEEP_SECONDS - 60
+        expired_sha = core_approvals.store_patch(b"expired card's patch\n")
+        live_sha = core_approvals.store_patch(b"live card's patch\n")
+        for sha in (expired_sha, live_sha):
+            os.utime(core_approvals.patches_dir() / f"{sha}.patch", (old, old))
+        self.write_pending({**CARD, "patch_sha256": expired_sha}, self.cid, "n1", now - 10)
+        live_cid = holds.card_id(PR_CARD)
+        self.write_pending({**PR_CARD, "patch_sha256": live_sha}, live_cid, "n2", now + 600)
+        holds.sweep_idle(now)
+        self.assertFalse((core_approvals.patches_dir() / f"{expired_sha}.patch").exists())
+        self.assertTrue((core_approvals.patches_dir() / f"{live_sha}.patch").exists())
+        self.assertEqual(json.loads(self.done.read_text())["patch_sha256"], expired_sha)
+
+    def test_the_server_starts_the_sweeper_after_plugins_and_before_serving(self):
+        order = []
+
+        class FakeServer:
+            def serve_forever(self):
+                order.append("serve")
+
+        with mock.patch.object(protocol.config, "validate", lambda: None), \
+             mock.patch.object(protocol.config, "WORKSPACE", config.WORKSPACE), \
+             mock.patch.object(protocol.config, "STATE", config.STATE), \
+             mock.patch.object(protocol.config, "MIRRORS", config.STATE / "mirrors"), \
+             mock.patch.object(protocol.policy, "load_policy", lambda: self.policy), \
+             mock.patch.object(protocol.holds, "install", lambda pol: order.append("holds") or True), \
+             mock.patch.object(protocol.plugins, "load", lambda: order.append("plugins") or []), \
+             mock.patch.object(protocol, "make_server", lambda: FakeServer()), \
+             mock.patch.object(protocol.holds, "start_sweeper", lambda: order.append("sweeper")):
+            protocol.main()
+        self.assertEqual(order, ["holds", "plugins", "sweeper", "serve"])
 
 
 class CardRedactionTests(HoldBase):

@@ -971,7 +971,7 @@ def check_approvals(report: Report, pol: dict | None, granted: set[str]) -> None
         if stale:
             report.warn(text + f"; {stale} already expired and will be refused on retry",
                         "the agent must retry the call to make a fresh card; an un-retried card is "
-                        "filed as expired by the next held call")
+                        "filed as expired by the running gateway's sweep within a minute (or at its next start)")
         else:
             report.ok(text) if tools else report.warn(text + " although holds are off",
                                                        "left from an earlier policy; harmless, decide or delete them")

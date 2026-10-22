@@ -239,4 +239,5 @@ def main() -> None:
         sys.exit(f"cannot start the listener on {config.BIND_HOST}:{config.PORT}{tls}: {e}")
     audit({"event": "start", "version": config.SERVER_VERSION, "workspace": str(config.WORKSPACE),
            "approvals": approvals.hook_installed(), "tls": bool(config.TLS_CERT)})
+    holds.start_sweeper()  # expired cards leave pending/ without waiting for a held call
     server.serve_forever()
