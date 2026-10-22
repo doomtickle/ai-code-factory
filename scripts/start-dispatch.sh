@@ -82,6 +82,12 @@ mv "$STATE/instructions.tmp" "$STATE/instructions"
 rm -rf "$STATE/role-overrides"
 mv "$STATE/role-overrides.tmp" "$STATE/role-overrides"
 
+# The git identity lane commits are authored with ([git] author_name and
+# author_email in this machine's policy.toml), validated and snapshotted like
+# the overrides above; absent, factory-lane uses factory-<lane>.
+write_lane_identity "$STATE/lane-identity.conf"
+[ ! -f "$STATE/lane-identity.conf" ] || echo "Lane commits use the git identity from $FACTORY_CONFIG/policy.toml"
+
 # The factory's own docs, for the Coordinator's factory_docs tool. A snapshot,
 # like the instructions above: the bridge reads this copy, so a role working on
 # the factory's own repo can't change what the Coordinator is told.

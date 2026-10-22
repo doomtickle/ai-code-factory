@@ -32,6 +32,12 @@
 #   repos = ["my-org/my-project", "gitlab.example.com/my-group/my-project"]
 # Keep this on a single line: bin/factory's onboarding check depends on it.
 repos = []
+# The git identity the developer's lane commits are authored with (repo-local
+# user.name and user.email in each lane clone). "{lane}" stands for the lane's
+# name. Unset: factory-<lane> <<lane>@factory.invalid>. Read by the dispatch
+# bridge, not the broker: `factory start` applies a change, no rebuild needed.
+# author_name = "Example Bot ({lane})"
+# author_email = "bot+{lane}@example.com"
 
 # A self-hosted GitLab (or https://gitlab.com/) for the git tools and
 # gitlab_create_mr: https://<host>/, ending in "/". Its token goes in the host

@@ -316,7 +316,10 @@ factory update
 - `policy.toml` overrides `broker/policy.toml` table by table: a key it sets
   replaces the repo's value, and keys it leaves out keep it. `factory update`
   bakes it into the broker image next to the repo's policy (and recreates the
-  broker sandbox), so agents can't read or change it.
+  broker sandbox), so agents can't read or change it. Its `[git]`
+  `author_name` and `author_email` are the git identity of the developer's
+  lane commits instead ("Getting the developer's work"), applied on
+  `factory start` with no rebuild.
 - `broker-kit/spec.yaml` is a kit adding broker egress hosts that your
   `policy.toml` needs, such as your private registry's host. It applies to the
   broker sandbox only (agent sandboxes still reach only Anthropic), and only
@@ -737,6 +740,21 @@ before every task. It bases new work on your checked-out branch (or the base
 the task names) and commits to a `factory/<topic>` branch. It sees only what
 is committed: ask it to work on uncommitted changes and it will say they're
 missing, so commit first.
+
+Each lane clone has a repo-local git identity, set by the factory before every
+task, so the developer never picks an author itself: `factory-<lane>
+<<lane>@factory.invalid>` (e.g. `factory-developer-lane2`) unless your local
+`policy.toml` sets one. `{lane}` in either value stands for the lane's name:
+
+```toml
+[git]
+author_name = "Acme Bot ({lane})"
+author_email = "bot+{lane}@acme.example"
+```
+
+`factory start` applies it (no rebuild). A value with a control character,
+`<` or `>`, a leading `-`, or an email that isn't `name@domain` stops
+`factory start` with the reason.
 
 After each developer job, whether it finished, failed or was cancelled, the
 dispatch bridge brings the lane's committed `factory/*` branches into your
