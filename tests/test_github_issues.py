@@ -72,6 +72,14 @@ class StandaloneIssueTests(Base):
         self.assertEqual(req.get_header("Authorization"), f"Bearer {TOKEN}")
         self.assertEqual(json.loads(req.data), {"title": "Something broke", "body": "Steps:\n1. run it"})
 
+    def test_a_held_and_approved_issue_says_so_in_its_result(self):
+        approvals.set_hook(lambda card: {"id": "0123456789abcdef", "approver": "daron",
+                                         "decided": "2026-10-22T09:15:00Z", "waited_seconds": 31})
+        out = self.run_tool(ARGS, Fake())
+        self.assertEqual(out, "Opened issue #5 in acme/tracker: https://github.com/acme/tracker/issues/5\n"
+                              "Held for approval (id 0123456789abcdef); approved by daron at "
+                              "2026-10-22T09:15:00Z after 31 s.")
+
     def test_only_repos_on_the_issue_allowlist(self):
         fake = Fake()
         for policy, repo in ((ISSUE_POLICY, "acme/widgets"),  # in [git].repos, not issue_repos

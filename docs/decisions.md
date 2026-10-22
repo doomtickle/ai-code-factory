@@ -4,6 +4,34 @@ Dated entries, for the user to review. Newest first.
 
 ## 2026-10-22
 
+- **A held write's result says it was held, by whom and when**
+  (doomtickle/passdesk-ops#141, item 1). An approval inside
+  `hold_seconds` looked to a role like a slow call, so developers reported
+  held pushes as "not held". `holds.hook` now returns
+  `{id, approver, decided, waited_seconds}` for an approved hold,
+  `approvals.require` passes it back, and `git_push`, `github_create_pr`,
+  `gitlab_create_mr` and `github_create_issue` end their result with
+  `Held for approval (id X); approved by NAME at T after N s.` The
+  protocol layer puts `approval: <id>` on the call's audit record. Choices:
+  - **`waited_seconds` is from the card's creation to the decision**, not
+    how long this one call blocked: a retry that picks up a decision made
+    meanwhile is a held write too, and the number a person cares about is
+    how long it waited for them. A decision time or creation time that
+    isn't a number counts as now.
+  - **The note is on every result after approval**, success or not (a
+    push the forge rejected, an API error), because the write was held
+    either way. A `Denied` raised after approval (the mirror ref changed,
+    the gitlab credential removed) carries no note, but the call's record
+    still has `approval`, which is set by `require` itself.
+  - **Only a dict with a non-empty string `id` is an outcome.** Anything
+    else a hook returns (a plugin's `None`, `True`, a string) means
+    "allowed, not held", so old plugins keep working and can't inject a
+    note. Every field is filtered and cut to one line (the approver name
+    is read from a file the console writes).
+  - **Not here:** a hold that times out still raises `Denied` asking for a
+    retry; the queued result and the gateway completing approved writes
+    itself are item 2, a separate PR (#91).
+
 - **Expired held-write cards are swept while the gateway is idle**
   (doomtickle/passdesk-ops#141). The expiry sweep ran only inside a held
   call, so with no agent pushing an expired card stayed in

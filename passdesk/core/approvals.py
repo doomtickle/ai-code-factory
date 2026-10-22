@@ -25,6 +25,7 @@ import contextvars
 import errno
 import hashlib
 import json
+import math
 import os
 import stat
 import tempfile
@@ -34,11 +35,16 @@ from typing import Callable
 
 from . import config, filters
 
-Hook = Callable[[dict], None]
+# Returns None to allow, or (core/holds.py) the outcome of a hold that was
+# approved; raises Denied to refuse.
+Hook = Callable[[dict], "dict | None"]
 
 # The principal whose call is running, set by the protocol layer per call so
 # a card can say who asked.
 PRINCIPAL: contextvars.ContextVar[str] = contextvars.ContextVar("passdesk_principal", default="")
+# The id of the hold the running call passed (`require` sets it, the protocol
+# layer resets it per call and puts it on the call's audit record).
+HELD_ID: contextvars.ContextVar[str] = contextvars.ContextVar("passdesk_held_id", default="")
 
 _hook: Hook | None = None
 
@@ -77,21 +83,69 @@ def _redacted(value):
     return value
 
 
-def require(card: dict) -> None:
+def require(card: dict) -> dict | None:
     """Hold here until the write described by `card` may proceed.
 
     Returns to allow it; raises Denied (from the hook) to refuse it. The
+    return value is the hold's outcome when the write was held and approved
+    (`{"id", "approver", "decided", "waited_seconds"}`, see `held_note`),
+    else None: no hook, a tool the policy doesn't hold, or a hook (a
+    plugin's) that returns None or anything that isn't such an outcome. The
     card gains the calling principal before the hook sees it, and every
     string value in the copy the hook sees has gone through
     `filters.redact` - so a leaked credential cannot reach a notification,
     the pending card file or the console through a card field (the title,
     say). The write itself, which runs only after `require` returns
-    (`passdesk/tools/git.py:187,209`), still uses the original arguments;
-    only the copy shown to the hook is scrubbed.
+    (`passdesk/tools/git.py`), still uses the original arguments; only the
+    copy shown to the hook is scrubbed.
     """
     if _hook is None:
-        return
-    _hook(_redacted({**card, "principal": PRINCIPAL.get()}))
+        return None
+    outcome = _outcome(_hook(_redacted({**card, "principal": PRINCIPAL.get()})))
+    if outcome is not None:
+        HELD_ID.set(outcome["id"])
+    return outcome
+
+
+def _one_line(value, limit: int) -> str:
+    """value as one line of at most limit characters, filtered as anything
+    returned to an agent is (the approver's name comes from a file the
+    deployment's console wrote)."""
+    return " ".join(filters.sanitize(str(value), 10 * limit).split())[:limit]
+
+
+def _outcome(value) -> dict | None:
+    """A hook's return value as an outcome, or None if it isn't one: a dict
+    with a non-empty `id`. The other fields are made safe to show."""
+    if not isinstance(value, dict) or not isinstance(value.get("id"), str) or not value["id"].strip():
+        return None
+    waited = value.get("waited_seconds")
+    if isinstance(waited, bool) or not isinstance(waited, (int, float)) or not math.isfinite(waited):
+        waited = None
+    return {"id": _one_line(value["id"], 64), "approver": _one_line(value.get("approver") or "unknown", 100),
+            "decided": _one_line(value.get("decided") or "", 40),
+            "waited_seconds": None if waited is None else max(0, round(waited))}
+
+
+def held_note(outcome: dict | None) -> str:
+    """The line a tool adds to its result when its write was held:
+    "Held for approval (id X); approved by NAME at T after N s." Empty for
+    a write that wasn't held (outcome None), so the result is unchanged."""
+    if outcome is None:
+        return ""
+    note = f"Held for approval (id {outcome['id']}); approved by {outcome['approver']}"
+    if outcome.get("decided"):
+        note += f" at {outcome['decided']}"
+    if outcome.get("waited_seconds") is not None:
+        note += f" after {outcome['waited_seconds']} s"
+    return note + "."
+
+
+def with_held_note(text: str, outcome: dict | None) -> str:
+    """A tool's result with held_note appended on its own line (unchanged
+    when the write wasn't held)."""
+    note = held_note(outcome)
+    return f"{text}\n{note}" if note else text
 
 
 # --- the patch an approver can inspect (doomtickle/passdesk-ops#113) --------

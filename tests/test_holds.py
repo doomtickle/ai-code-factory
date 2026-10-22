@@ -2,6 +2,7 @@
 and installation at start-up. Ported from passdesk-pro's tests when the
 hold moved into core (docs/decisions.md, 2026-10-21)."""
 
+import calendar
 import io
 import json
 import os
@@ -308,7 +309,7 @@ class HoldTests(HoldBase):
 
     def test_tools_not_in_policy_are_not_held(self):
         self.policy["approvals"]["tools"] = ["github_create_pr"]
-        holds.hook(CARD)  # git_push passes straight through
+        self.assertIsNone(holds.hook(CARD))  # git_push passes straight through
         self.assertEqual(self.audit_events(), [])
 
     def test_a_pending_card_with_an_unreadable_expiry_is_discarded_not_wedged(self):
@@ -540,6 +541,78 @@ class IdleSweepTests(HoldBase):
              mock.patch.object(protocol.holds, "start_sweeper", lambda: order.append("sweeper")):
             protocol.main()
         self.assertEqual(order, ["holds", "plugins", "sweeper", "serve"])
+
+
+ISO_UTC = r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$"
+
+
+class HeldOutcomeTests(HoldBase):
+    """An approved hold tells the tool who approved it and when, so its
+    result can say the write was held (doomtickle/passdesk-ops#141)."""
+
+    def pending(self, cid):
+        return config.STATE / "approvals" / "pending" / f"{cid}.json"
+
+    def test_approval_during_the_hold_returns_the_approver_and_time(self):
+        cid = holds.card_id(CARD)
+        self.decide(cid, approver="daron", delay=0.3)
+        outcome = holds.hook(CARD)
+        self.assertEqual(set(outcome), {"id", "approver", "decided", "waited_seconds"})
+        self.assertEqual((outcome["id"], outcome["approver"]), (cid, "daron"))
+        self.assertRegex(outcome["decided"], ISO_UTC)
+        self.assertIsInstance(outcome["waited_seconds"], int)
+        self.assertLessEqual(outcome["waited_seconds"], 2)
+
+    def test_a_retry_after_the_decision_reports_how_long_the_write_waited(self):
+        cid = holds.card_id(CARD)
+        with self.assertRaises(Denied):
+            holds.hook(CARD)
+        card = json.loads(self.pending(cid).read_text())
+        card["created"] -= 600  # first held ten minutes ago
+        self.pending(cid).write_text(json.dumps(card))
+        p = config.STATE / "approvals" / "decisions" / f"{cid}.json"
+        p.parent.mkdir(parents=True, exist_ok=True)
+        decided = card["created"] + 125
+        p.write_text(json.dumps({"id": cid, "nonce": card["nonce"], "decision": "approve", "approver": "sam",
+                                 "reason": "", "ts": decided}))
+        outcome = holds.hook(CARD)
+        self.assertEqual(outcome["approver"], "sam")
+        self.assertEqual(outcome["waited_seconds"], 125)
+        self.assertEqual(outcome["decided"], time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(decided)))
+
+    def test_an_odd_decision_time_counts_as_now(self):
+        cid = holds.card_id(PR_CARD)
+        with self.assertRaises(Denied):
+            holds.hook(PR_CARD)
+        card = json.loads(self.pending(cid).read_text())
+        p = config.STATE / "approvals" / "decisions" / f"{cid}.json"
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps({"id": cid, "nonce": card["nonce"], "decision": "approve", "approver": "",
+                                 "ts": "yesterday"}))
+        before = time.time()
+        outcome = holds.hook(PR_CARD)
+        self.assertEqual(outcome["approver"], "unknown")
+        self.assertRegex(outcome["decided"], ISO_UTC)
+        self.assertGreaterEqual(calendar.timegm(time.strptime(outcome["decided"], "%Y-%m-%dT%H:%M:%SZ")),
+                                int(before) - 1)
+
+    def test_require_passes_the_outcome_on_and_the_note_names_it(self):
+        core_approvals.set_hook(holds.hook)
+        cid = holds.card_id(CARD)
+        self.decide(cid, approver="daron", delay=0.2)
+        outcome = core_approvals.require(dict(CARD))
+        self.assertEqual(core_approvals.HELD_ID.get(), cid)
+        note = core_approvals.held_note(outcome)
+        self.assertRegex(note, rf"^Held for approval \(id {cid}\); approved by daron at "
+                               r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ after \d+ s\.$")
+
+    def test_a_write_the_policy_does_not_hold_gets_no_outcome(self):
+        core_approvals.set_hook(holds.hook)
+        core_approvals.HELD_ID.set("")
+        self.policy["approvals"]["tools"] = ["github_create_pr"]
+        self.assertIsNone(core_approvals.require(dict(CARD)))
+        self.assertEqual(core_approvals.HELD_ID.get(), "")
+        self.assertEqual(core_approvals.with_held_note("Pushed.", None), "Pushed.")
 
 
 class CardRedactionTests(HoldBase):
