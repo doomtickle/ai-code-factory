@@ -4,6 +4,83 @@ Dated entries, for the user to review. Newest first.
 
 ## 2026-10-22
 
+- **Approve later: a held push, PR or MR is queued and the gateway makes it
+  on approval** (doomtickle/passdesk-ops#91, item 2 of #141). A write
+  undecided after `hold_seconds` used to be refused with "retry this exact
+  call"; every held push past 45 s then cost the factory a separate job just
+  to retry, and the window sometimes expired in between (4 times for 3
+  branches in one day). Now `git_push`, `github_create_pr` and
+  `gitlab_create_mr` pass `approvals.require` a job (their checked write
+  arguments) and register a completer; the hook stores the job as
+  `approvals/queued/<id>.json` and raises `errors.Queued`, which the
+  protocol layer returns as a non-error result. Choices:
+  - **The queued result is plain text, not an error**, starting `Queued for
+    approval (id X); nothing has been sent yet.`, naming the write, the
+    deadline (ISO time and how long), and saying "Report it as queued, not
+    done" and that the same call reports its status and later its result.
+    The call's record has `decision: queued`, `approval: <id>`. A retry
+    while the gateway is writing gets `Approved (id X); the gateway is
+    making this write now...`; after the write, its result plus the held
+    line with `; written by the gateway at T`.
+  - **Exactly once.** The job is stored under the hold's lock only if no
+    decision has arrived (one that has is applied in the call instead), and
+    the runner claims a write by filing `done/<id>.json` as `running` and
+    removing card, decision and job in one locked step. The sweeper and a
+    retry both run the same claim, so whichever is first writes and the
+    other reports. A retry looks for the settled outcome again under the
+    lock before it makes a fresh card, so a claim landing between its first
+    look and the card is reported, never made into a second request. A
+    process that dies mid-write leaves `running`; the next
+    start files it as failed ("may or may not have reached the forge") and
+    never retries it, because a second push or PR could be wrong.
+  - **What the deferred write trusts.** Only the gateway's state: the job,
+    the card and the mirror. On approval the completer re-checks the job
+    against today's policy (allowlist, branch prefix, protected branches, a
+    secret scan of title and body) and against the card (head, bundle
+    digest, title, body or its digest, draft), the card's fields must still
+    hash to its id, and a push needs the mirror and its ref unchanged.
+    It also secret-scans the range again: a refused push leaves its commits
+    on the incoming ref, so a job forged by someone with write access to
+    the state directory could otherwise push them. The threat model trusts
+    that person (they are the approver), but the scan costs one `git log`.
+    The job holds no credential; the token is read at write time, as before.
+  - **A concurrent push to the same branch supersedes the queued one.** Both
+    use the branch's one incoming ref, so the first's approval then fails
+    ("changed in the broker's mirror after the push was queued") and only the
+    newer push can go out. Per-card refs would let an older push go out
+    after a newer one, which is the wrong order.
+  - **Retries after the outcome.** A written result and a decline are
+    reported to the same call for `expire_seconds` after they happened, so
+    an agent that checks back never writes twice or re-asks. A failure is
+    reported once; the call after that is a new request (a fresh card),
+    since the cause, e.g. a moved ref, may have been fixed. An expired card
+    makes a fresh one, as before.
+  - **Done file shape.** The card and decision as before, plus `queued:
+    true`, `write` (`running`, `done`, `failed`, `skipped`), `result`
+    (filtered, at most 3,000 characters), `finished` (Unix time) and
+    `outcome`. The webhook gets one more line per write made or failed,
+    using the result's first line only. New audit events:
+    `approval-queued`, `approval-write-done` and `approval-write-failed`; the
+    granted, declined and expired events of a queued card carry
+    `queued: true`.
+  - **Poll cadence: the idle sweeper now ticks every 5 s** (was 60 s), and
+    each tick runs the approved queued writes before it expires cards. Each
+    tick costs a listdir of `queued/` and `pending/` and a stat of the
+    patches, so 5 s is cheap, and a person who approves sees the push
+    within seconds. A retry after approval doesn't wait for the tick.
+  - **Expiry: default 86,400 s (a day), bounds 60 s to 604,800 s (a week);
+    values outside are clamped and the doctor warns.** With the queue, the
+    window is how long a person has to decide, not how long an agent keeps
+    retrying, so a day covers an overnight agent with no setting. Past a
+    week the base has usually moved on, and the card, the mirror ref and
+    the patch would sit there for nothing. The old 1800 s default applies
+    to anyone who leaves it unset, so upgrading lengthens their window.
+  - **Scope.** `github_create_issue` keeps the retry hold. Its labels are
+    checked against the repo before the hold and could be gone by
+    approval, and filing an issue late has no retry cost worth the extra
+    path. A plugin's tools also keep it: core never stores a job for, or
+    runs one under, a hook it didn't install.
+
 - **A held write's result says it was held, by whom and when**
   (doomtickle/passdesk-ops#141, item 1). An approval inside
   `hold_seconds` looked to a role like a slow call, so developers reported

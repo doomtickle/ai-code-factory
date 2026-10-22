@@ -9,6 +9,8 @@ carries the same plain-text summary under the keys Slack (`text`), Discord
 (`content`) and ntfy (`message`) read. A failure is logged and never blocks
 or leaks the card. `send_async` runs the POST on its own thread so a slow
 webhook never eats into the hold (doomtickle/passdesk-ops#14).
+`send_result_async` posts, the same way, the outcome of a queued write the
+gateway made (or failed to make) after approval (doomtickle/passdesk-ops#91).
 """
 
 from __future__ import annotations
@@ -74,12 +76,25 @@ def summary(card: dict, cid: str, expires_in_minutes: int) -> str:
     return prefix + what + tail
 
 
+def result_summary(cid: str, what: str, ok: bool, result: str) -> str:
+    """One line for the outcome of a queued write: what it was and the first
+    line of its result (already filtered by the caller), capped like a
+    card's summary."""
+    first = " ".join((result.strip().splitlines() or [""])[0].split())
+    text = (f"Passdesk approval {cid}: the gateway made the approved {what}: {first}" if ok else
+            f"Passdesk approval {cid}: the approved {what} FAILED: {first} (factory approvals show {cid})")
+    return text if len(text) <= MAX_SUMMARY_LEN else text[:MAX_SUMMARY_LEN - 1] + "…"
+
+
 def send(card: dict, cid: str, expires_in_minutes: int, url: str | None = None) -> bool:
     """POST the summary; True if the webhook accepted it. Never raises."""
+    return _post(summary(card, cid, expires_in_minutes), cid, url)
+
+
+def _post(text: str, cid: str, url: str | None = None) -> bool:
     url = url or webhook_url()
     if not url:
         return False
-    text = summary(card, cid, expires_in_minutes)
     body = json.dumps({"text": text, "content": text, "message": text}).encode()
     req = urllib.request.Request(url, data=body, method="POST",
                                  headers={"Content-Type": "application/json", "User-Agent": config.USER_AGENT})
@@ -106,5 +121,15 @@ def send_async(card: dict, cid: str, expires_in_minutes: int) -> threading.Threa
     Returns the thread (tests join it); the card is the redacted copy the
     hook was given, so nothing new leaves with it."""
     t = threading.Thread(target=send, args=(card, cid, expires_in_minutes), name=f"notify-{cid}", daemon=True)
+    t.start()
+    return t
+
+
+def send_result_async(card: dict, cid: str, what: str, ok: bool, result: str) -> threading.Thread:
+    """POST result_summary on a daemon thread (the queue's runner never
+    waits on the webhook). `card` is the stored, redacted card; only `what`
+    and the result's first line leave with the message."""
+    t = threading.Thread(target=_post, args=(result_summary(cid, what, ok, result), cid),
+                         name=f"notify-result-{cid}", daemon=True)
     t.start()
     return t

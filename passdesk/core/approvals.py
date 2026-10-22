@@ -17,6 +17,14 @@ STATE/approvals/patches/<sha256>.patch, for the person at the machine to
 inspect; the card carries only its digest, size and whether it was cut
 (`patch_sha256`, `patch_bytes`, `patch_truncated`). `store_patch` writes it
 and prunes patches no pending card names any more.
+
+A core tool that can have its write completed later by the gateway (the
+approve-later queue, doomtickle/passdesk-ops#91) passes `require` a `job` as
+well: the exact, already-checked arguments of the write, and registers with
+`register_deferred` the function that performs it from those. Core's hold
+stores the job if nobody decides within `hold_seconds` and raises `Queued`;
+it is the only reader of the job (a plugin's hook is given the card, as
+before), and a call without one keeps the retry-the-call behaviour.
 """
 
 from __future__ import annotations
@@ -35,6 +43,7 @@ from pathlib import Path
 from typing import Callable
 
 from . import config, filters
+from .errors import Queued
 
 # Returns None to allow, or (core/holds.py) the outcome of a hold that was
 # approved; raises Denied to refuse.
@@ -46,8 +55,32 @@ PRINCIPAL: contextvars.ContextVar[str] = contextvars.ContextVar("passdesk_princi
 # The id of the hold the running call passed (`require` sets it, the protocol
 # layer resets it per call and puts it on the call's audit record).
 HELD_ID: contextvars.ContextVar[str] = contextvars.ContextVar("passdesk_held_id", default="")
+# The job of the write `require` is holding, while its hook runs (see job()).
+_JOB: contextvars.ContextVar[dict | None] = contextvars.ContextVar("passdesk_job", default=None)
 
 _hook: Hook | None = None
+# tool name -> fn(job, card, policy) -> result text; raises on any failure.
+Deferred = Callable[[dict, dict, dict], str]
+_deferred: dict[str, Deferred] = {}
+
+
+def register_deferred(tool: str, fn: Deferred) -> None:
+    """Register how the gateway completes a queued `tool` write itself, from
+    the job the tool passed to `require` and the stored card (core tools
+    only: tools/git.py). fn must re-check the job against the policy and
+    the card, use nothing but them (never the agent's workspace), return the
+    result text and raise (Denied, or anything else) if nothing was written."""
+    _deferred[tool] = fn
+
+
+def deferred(tool: str) -> Deferred | None:
+    return _deferred.get(tool)
+
+
+def job() -> dict | None:
+    """The job passed to the `require` call that is running (core's hold
+    reads it), else None."""
+    return _JOB.get()
 
 
 def set_hook(fn: Hook | None) -> None:
@@ -84,7 +117,7 @@ def _redacted(value):
     return value
 
 
-def require(card: dict) -> dict | None:
+def require(card: dict, job: dict | None = None) -> dict | None:
     """Hold here until the write described by `card` may proceed.
 
     Returns to allow it; raises Denied (from the hook) to refuse it. The
@@ -99,10 +132,23 @@ def require(card: dict) -> dict | None:
     say). The write itself, which runs only after `require` returns
     (`passdesk/tools/git.py`), still uses the original arguments; only the
     copy shown to the hook is scrubbed.
+
+    `job`, from a tool registered with `register_deferred`, is what the
+    gateway needs to make the write itself later (JSON-serializable, no
+    credential, every field already checked; not redacted, since it is
+    the write). Core's hold may then raise `Queued` instead of returning:
+    the write is queued (or was already completed), not refused.
     """
     if _hook is None:
         return None
-    outcome = _outcome(_hook(_redacted({**card, "principal": PRINCIPAL.get()})))
+    token = _JOB.set(job)
+    try:
+        outcome = _outcome(_hook(_redacted({**card, "principal": PRINCIPAL.get()})))
+    except Queued as e:
+        HELD_ID.set(_one_line(e.cid, 64))
+        raise
+    finally:
+        _JOB.reset(token)
     if outcome is not None:
         HELD_ID.set(outcome["id"])
     return outcome
@@ -122,7 +168,8 @@ def _one_line(value, limit: int) -> str:
 
 def _outcome(value) -> dict | None:
     """A hook's return value as an outcome, or None if it isn't one: a dict
-    with a non-empty `id`. The other fields are made safe to show."""
+    with a non-empty `id`. The other fields are made safe to show. A
+    `completed` time (core's hold, for a write it made itself) is kept."""
     if not isinstance(value, dict) or not isinstance(value.get("id"), str) or not value["id"].strip():
         return None
     waited = value.get("waited_seconds")
@@ -130,9 +177,17 @@ def _outcome(value) -> dict | None:
         waited = None
     # The note quotes the approver; a double quote in the name would end it early.
     approver = _one_line(value.get("approver") or "unknown", 100).replace('"', "'")
-    return {"id": _one_line(value["id"], 64), "approver": approver,
-            "decided": _one_line(value.get("decided") or "", 40),
-            "waited_seconds": None if waited is None else max(0, round(waited))}
+    outcome = {"id": _one_line(value["id"], 64), "approver": approver,
+               "decided": _one_line(value.get("decided") or "", 40),
+               "waited_seconds": None if waited is None else max(0, round(waited))}
+    if value.get("completed"):
+        outcome["completed"] = _one_line(value["completed"], 40)
+    return outcome
+
+
+def as_outcome(value) -> dict | None:
+    """_outcome, for core's hold to build the note of a queued write."""
+    return _outcome(value)
 
 
 def held_note(outcome: dict | None) -> str:
@@ -146,6 +201,8 @@ def held_note(outcome: dict | None) -> str:
         note += f" at {outcome['decided']}"
     if outcome.get("waited_seconds") is not None:
         note += f" after {outcome['waited_seconds']} s"
+    if outcome.get("completed"):
+        note += f"; written by the gateway at {outcome['completed']}"
     return note + "."
 
 

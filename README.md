@@ -66,7 +66,9 @@ The package is `passdesk/`:
   cleaning and audit as core tools (`docs/plugin-tools.md`, with an example
   in `examples/plugins/`). The hold (`holds.py`, `notify.py`): with
   `[approvals].tools` set, each listed write waits for a person's decision,
-  recorded as files in the state directory, and a webhook is told; the
+  recorded as files in the state directory, and a webhook is told; a push,
+  pull or merge request still undecided after `hold_seconds` is queued, and
+  the gateway makes it itself once approved. The
   design is in `docs/approvals.md`. With a hook installed, `git_push` also stores
   the pushed commits' patch in the state directory
   (`approvals/patches/<sha256>.patch`, capped by `[approvals]

@@ -216,6 +216,10 @@ def _check_policy_shape(report: Report, pol: dict) -> None:
             value = appr.get(key)
             if value is not None and (isinstance(value, bool) or not isinstance(value, int) or value < 0):
                 report.fail(f"[approvals].{key} = {value!r} is not a whole number of seconds")
+            elif key == "expire_seconds" and value is not None \
+                    and not holds.EXPIRE_MIN <= value <= holds.EXPIRE_MAX:
+                report.warn(f"[approvals].expire_seconds = {value} is outside {holds.EXPIRE_MIN} to "
+                            f"{holds.EXPIRE_MAX} (a week)", f"the gateway uses {holds.settings(pol)[1]} instead")
     if isinstance(appr, dict) and "patch_max_bytes" in appr:
         value = appr["patch_max_bytes"]
         lo, hi = approvals.PATCH_MAX_BYTES_MIN, approvals.PATCH_MAX_BYTES_MAX
@@ -975,6 +979,9 @@ def check_approvals(report: Report, pol: dict | None, granted: set[str]) -> None
         else:
             report.ok(text) if tools else report.warn(text + " although holds are off",
                                                        "left from an earlier policy; harmless, decide or delete them")
+        queued = len(_card_files("queued"))
+        if queued:
+            report.info(f"{queued} of them queued: the gateway makes each of those writes itself once it is approved")
     elif tools:
         report.ok("no pending approvals")
     if tools and not credentials.secrets_dir().is_dir():
