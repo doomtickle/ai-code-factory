@@ -22,6 +22,15 @@ It is handled exactly like a gateway-held GitHub token, scoped to the
 [gitlab].url prefix instead: git gets it as an extraHeader for that prefix
 only, gitlab_create_mr as a Bearer header through NO_REDIRECT_OPENER, and it
 is redacted everywhere. Neither forge's token is ever sent to the other.
+
+Approve later (doomtickle/passdesk-ops#91): git_push, github_create_pr and
+gitlab_create_mr pass the approval point a job (the checked arguments of
+their write) and register a completer (complete_*), so a write still
+undecided when the hold runs out is queued and, on approval, made by the
+gateway itself from that job: never from the agent's workspace, and only
+after the job is checked again against the policy and the stored card (and,
+for a push, the mirror's ref and a fresh secret scan of what it would push).
+github_create_issue keeps the retry-the-call hold.
 """
 
 from __future__ import annotations
@@ -405,6 +414,43 @@ def check_commit_patches(patches: str, base: str) -> None:
                          f"branch history (e.g. git rebase -i origin/{base}), re-create the bundle and retry")
 
 
+def check_range(rng: str, mirror: Path, branch: str, base: str, limits: dict) -> int:
+    """The number of commits in rng (base..branch in the mirror), after
+    refusing an empty or oversized range and any commit whose patch,
+    message or author/committer names and emails look like secrets."""
+    max_diff = int(limits.get("max_diff_bytes", 2_000_000))
+    count = int(git("rev-list", "--count", rng, cwd=mirror).stdout.strip())
+    if count == 0:
+        raise Denied(f"{branch} has no commits beyond origin/{base}")
+    if count > int(limits.get("max_commits", 200)):
+        raise Denied(f"{count} commits exceeds the per-push limit")
+    # Every commit is pushed, so every commit's patch is scanned (not the
+    # net diff, where a secret added and later deleted would not show).
+    # -a: binary files are scanned and counted as text; --cc: merge
+    # commits show what they change beyond their parents.
+    patches = git_capped("log", "-p", "--cc", "-a", "--no-ext-diff", "--no-textconv", "--no-color",
+                         "--unified=0", "--format=commit %H", rng, cwd=mirror, limit=max_diff)
+    if patches is None:
+        raise Denied(f"the pushed commits' patches exceed [filters].max_diff_bytes ({max_diff} bytes, "
+                     "counted over every commit, binary files included); push fewer or smaller commits")
+    check_commit_patches(patches, base)
+    meta = git_capped("log", "--format=%an <%ae>%n%cn <%ce>%n%B", rng, cwd=mirror, limit=max_diff)
+    if meta is None:
+        raise Denied(f"the commit messages exceed [filters].max_diff_bytes ({max_diff} bytes)")
+    block_outbound_secrets("commit messages or author/committer names and emails", meta)
+    return count
+
+
+def _mirror_ref(mirror: Path, ref: str) -> str:
+    """The commit ref names in the mirror, or "" if there is none."""
+    return git("rev-parse", "--verify", "-q", f"{ref}^{{commit}}", cwd=mirror, check=False).stdout.strip()
+
+
+def _push_failure(push: subprocess.CompletedProcess, remote: Remote, repo: str, branch: str) -> str:
+    body = sanitize(push.stderr + push.stdout, 3000)
+    return f"Push rejected by {remote.label}:\n" + untrusted(f"git push {repo}:{branch}", body)
+
+
 def tool_git_push(args: dict, policy: dict) -> str:
     repo = check_repo(args["repo"], policy)
     remote = remote_of(repo, policy)
@@ -416,7 +462,7 @@ def tool_git_push(args: dict, policy: dict) -> str:
         raise Denied(f"bundle must be a file name ending in .bundle inside {outgoing}/")
     limits = policy.get("filters", {})
     max_bundle = int(limits.get("max_bundle_bytes", 100_000_000))
-    max_diff = int(limits.get("max_diff_bytes", 2_000_000))
+    max_diff = int(limits.get("max_diff_bytes", 2_000_000))  # the file list below
 
     with tool_lock, private_tempdir() as tmp:
         # One read of the agent's file, as a regular file within the cap; every
@@ -439,25 +485,7 @@ def tool_git_push(args: dict, policy: dict) -> str:
         git("fetch", "--no-tags", str(bundle), f"+refs/heads/{branch}:{incoming}", cwd=mirror)
 
         rng = f"refs/remotes/origin/{base}..{incoming}"
-        count = int(git("rev-list", "--count", rng, cwd=mirror).stdout.strip())
-        if count == 0:
-            raise Denied(f"{branch} has no commits beyond origin/{base}")
-        if count > int(limits.get("max_commits", 200)):
-            raise Denied(f"{count} commits exceeds the per-push limit")
-        # Every commit is pushed, so every commit's patch is scanned (not the
-        # net diff, where a secret added and later deleted would not show).
-        # -a: binary files are scanned and counted as text; --cc: merge
-        # commits show what they change beyond their parents.
-        patches = git_capped("log", "-p", "--cc", "-a", "--no-ext-diff", "--no-textconv", "--no-color",
-                             "--unified=0", "--format=commit %H", rng, cwd=mirror, limit=max_diff)
-        if patches is None:
-            raise Denied(f"the pushed commits' patches exceed [filters].max_diff_bytes ({max_diff} bytes, "
-                         "counted over every commit, binary files included); push fewer or smaller commits")
-        check_commit_patches(patches, base)
-        meta = git_capped("log", "--format=%an <%ae>%n%cn <%ce>%n%B", rng, cwd=mirror, limit=max_diff)
-        if meta is None:
-            raise Denied(f"the commit messages exceed [filters].max_diff_bytes ({max_diff} bytes)")
-        block_outbound_secrets("commit messages or author/committer names and emails", meta)
+        count = check_range(rng, mirror, branch, base, limits)
         # With a hook installed, the person deciding can read the code: the
         # same mirror and range, written before the lock is released. The
         # card names the file by digest; it never carries the content.
@@ -475,22 +503,77 @@ def tool_git_push(args: dict, policy: dict) -> str:
         with open(bundle, "rb") as fh:
             bundle_digest = hashlib.file_digest(fh, "sha256").hexdigest()
     # Outside the tool lock: a pending approval must not block other git calls.
+    # The job is what the gateway pushes itself if the write is queued
+    # (complete_git_push): the verified ref, pinned by head and bundle digest.
     held = require_approval({"tool": "git_push", "repo": repo, "branch": branch, "base": base, "head": sha,
                              "commits": count, "shortstat": shortstat, "file_count": len(files),
                              "files": files[:50], "bundle_sha256": bundle_digest, "secret_scan": "clean",
-                             **patch_fields})
+                             **patch_fields},
+                            job={"repo": repo, "branch": branch, "base": base, "head": sha,
+                                 "bundle_sha256": bundle_digest, "commits": count})
     with tool_lock:
         mirror = ensure_mirror(repo, remote)
-        if git("rev-parse", incoming, cwd=mirror).stdout.strip() != sha:
+        if _mirror_ref(mirror, incoming) != sha:
             raise Denied(f"{branch} changed in the broker's mirror while awaiting approval; retry the push")
         push = git("push", "--porcelain", "origin", f"{incoming}:refs/heads/{branch}", cwd=mirror, check=False,
                    auth=remote)
     if push.returncode != 0:
-        body = sanitize(push.stderr + push.stdout, 3000)
-        return with_held_note(f"Push rejected by {remote.label}:\n" + untrusted(f"git push {repo}:{branch}", body),
-                              held)
+        return with_held_note(_push_failure(push, remote, repo, branch), held)
     return with_held_note(f"Pushed {count} commit(s) to {repo}:{branch} ({sha}).\n{sanitize(push.stdout, 2000)}",
                           held)
+
+
+_SHA_RE = re.compile(r"[0-9a-f]{40}(?:[0-9a-f]{24})?")
+
+
+def _job_str(job: dict, key: str) -> str:
+    value = job.get(key)
+    if not isinstance(value, str):
+        raise Denied(f"the queued write's {key} is missing or not text; nothing was written")
+    return value
+
+
+def _job_matches(job: dict, card: dict, keys: tuple[str, ...]) -> None:
+    """The job a queued write runs from must say what its card says."""
+    for key in keys:
+        if job.get(key) != card.get(key):
+            raise Denied(f"the queued write's {key} does not match its approval card; nothing was written")
+
+
+def complete_git_push(job: dict, card: dict, policy: dict) -> str:
+    """Make a queued push the person approved (core/holds.py runs it): the
+    ref git_push verified, still in the broker's mirror, with nothing read
+    from the workspace. Every argument is checked again against the policy
+    and must match the card; the mirror must still exist and its ref still
+    point at the card's head; that range is secret-scanned again (so even a
+    hand-made job can push only what passes the scan); then the push runs
+    exactly as git_push's own. Raises Denied, with nothing pushed, if any
+    check fails or the forge rejects it."""
+    repo = check_repo(_job_str(job, "repo"), policy)
+    remote = remote_of(repo, policy)
+    branch = check_push_branch(_job_str(job, "branch"), policy)
+    base = check_branch_name(_job_str(job, "base"))
+    sha = _job_str(job, "head")
+    if not _SHA_RE.fullmatch(sha):
+        raise Denied("the queued push's head is not a commit id; nothing was pushed")
+    _job_matches(job, card, ("repo", "branch", "base", "head", "bundle_sha256"))
+    if not (config.MIRRORS / mirror_name(remote)).is_dir():
+        raise Denied(f"the broker's mirror of {repo} is gone; nothing was pushed")
+    if remote.forge == "gitlab" and gitlab_token() is None:
+        raise Denied("the gateway holds no gitlab credential; nothing was pushed")
+    incoming = f"{config.REF_NAMESPACE}/{branch}"
+    with tool_lock:
+        mirror = ensure_mirror(repo, remote)
+        if _mirror_ref(mirror, incoming) != sha:
+            raise Denied(f"{branch} changed in the broker's mirror after the push was queued (another push to the "
+                         "same branch?); nothing was pushed")
+        count = check_range(f"refs/remotes/origin/{base}..{incoming}", mirror, branch, base,
+                            policy.get("filters", {}))
+        push = git("push", "--porcelain", "origin", f"{incoming}:refs/heads/{branch}", cwd=mirror, check=False,
+                   auth=remote)
+    if push.returncode != 0:
+        raise Denied(_push_failure(push, remote, repo, branch))
+    return f"Pushed {count} commit(s) to {repo}:{branch} ({sha}).\n{sanitize(push.stdout, 2000)}"
 
 
 def tool_github_create_pr(args: dict, policy: dict) -> str:
@@ -504,7 +587,16 @@ def tool_github_create_pr(args: dict, policy: dict) -> str:
     block_outbound_secrets("PR body", body)
     draft = bool(args.get("draft", True))
     held = require_approval({"tool": "github_create_pr", "repo": repo, "head": head, "base": base,
-                             "title": title, "body": body[:2000], "draft": draft})
+                             "title": title, "body": body[:2000], "draft": draft},
+                            job={"repo": repo, "head": head, "base": base, "title": title, "body": body,
+                                 "draft": draft})
+    _, text = _open_pr(repo, head, base, title, body, draft)
+    return with_held_note(text, held)
+
+
+def _open_pr(repo: str, head: str, base: str, title: str, body: str, draft: bool) -> tuple[bool, str]:
+    """POST the pull request: (True, "Opened PR ...") or, for an HTTP error,
+    (False, the error with a hint). Anything else raises."""
     payload = json.dumps({"title": title, "body": body, "head": head, "base": base, "draft": draft}).encode()
     headers = {"Accept": "application/vnd.github+json", "Content-Type": "application/json",
                "X-GitHub-Api-Version": "2022-11-28", "User-Agent": config.USER_AGENT}
@@ -528,9 +620,37 @@ def tool_github_create_pr(args: dict, policy: dict) -> str:
             sbx = " (with sbx: sbx secret set github --sandbox factory-broker)" if config.DEPLOYMENT == "sbx" else ""
             fix = f"the GitHub credential is supplied by the deployment{sbx}"
         hint = f"\nHint: {fix}" if e.code in (401, 403, 404) else ""
-        return with_held_note(f"GitHub API returned HTTP {e.code}:\n" + untrusted(f"GitHub API ({repo})", detail)
-                              + hint, held)
-    return with_held_note(f"Opened PR #{pr['number']}: {pr['html_url']}", held)
+        return False, f"GitHub API returned HTTP {e.code}:\n" + untrusted(f"GitHub API ({repo})", detail) + hint
+    return True, f"Opened PR #{pr['number']}: {pr['html_url']}"
+
+
+def _queued_pr_args(job: dict, card: dict, policy: dict, forge: str) -> tuple[str, str, str, str, str, bool]:
+    """A queued PR/MR job's (repo, head, base, title, body, draft), checked
+    again as the tool checked them and against the card."""
+    repo = check_repo(_job_str(job, "repo"), policy)
+    if remote_of(repo, policy).forge != forge:
+        raise Denied(f"{repo} is not on the forge this queued write is for; nothing was written")
+    head = check_push_branch(_job_str(job, "head"), policy)
+    base = check_branch_name(_job_str(job, "base"))
+    title, body, draft = _job_str(job, "title"), _job_str(job, "body"), job.get("draft")
+    if not isinstance(draft, bool):
+        raise Denied("the queued write's draft flag is not true or false; nothing was written")
+    block_outbound_secrets("title", title)
+    block_outbound_secrets("body", body)
+    _job_matches(job, card, ("repo", "head", "base", "title", "draft"))
+    if card.get("body") != body[:2000]:
+        raise Denied("the queued write's body does not match its approval card; nothing was written")
+    return repo, head, base, title, body, draft
+
+
+def complete_github_create_pr(job: dict, card: dict, policy: dict) -> str:
+    """Open a queued pull request the person approved (core/holds.py runs
+    it) from the arguments github_create_pr checked and stored. Raises
+    Denied if a check fails or GitHub refuses it."""
+    ok, text = _open_pr(*_queued_pr_args(job, card, policy, "github"))
+    if not ok:
+        raise Denied(text)
+    return text
 
 
 _MR_TITLE_MAX = 255  # GitLab's limit
@@ -577,7 +697,17 @@ def tool_gitlab_create_mr(args: dict, policy: dict) -> str:
     held = require_approval({"tool": "gitlab_create_mr", "repo": repo, "head": head, "base": base,
                              "title": title, "body": body[:2000],
                              "body_sha256": hashlib.sha256(body.encode()).hexdigest(), "body_chars": len(body),
-                             "draft": draft})
+                             "draft": draft},
+                            job={"repo": repo, "head": head, "base": base, "title": title, "body": body,
+                                 "draft": draft})
+    _, text = _open_mr(repo, remote, head, base, title, body)
+    return with_held_note(text, held)
+
+
+def _open_mr(repo: str, remote: Remote, head: str, base: str, title: str, body: str) -> tuple[bool, str]:
+    """POST the merge request: (True, "Opened MR ...") or, for an HTTP
+    error, (False, the error with a hint). Raises Denied with no token or
+    an unexpected answer, and anything else it meets."""
     # Read after approval, so a long wait still uses the current token.
     token = gitlab_token()
     if token is None:
@@ -593,10 +723,26 @@ def tool_gitlab_create_mr(args: dict, policy: dict) -> str:
         with NO_REDIRECT_OPENER.open(req, timeout=30) as resp:
             mr = json.load(resp)
     except urllib.error.HTTPError as e:
-        return with_held_note(_gitlab_failure(e, repo), held)
+        return False, _gitlab_failure(e, repo)
     if not isinstance(mr, dict) or not isinstance(mr.get("iid"), int):
         raise Denied(f"GitLab returned an unexpected response for the new merge request in {repo}")
-    return with_held_note(f"Opened MR !{mr['iid']}: {sanitize(str(mr.get('web_url', '')), 300)}", held)
+    return True, f"Opened MR !{mr['iid']}: {sanitize(str(mr.get('web_url', '')), 300)}"
+
+
+def complete_gitlab_create_mr(job: dict, card: dict, policy: dict) -> str:
+    """Open a queued merge request the person approved (core/holds.py runs
+    it) from the arguments gitlab_create_mr checked and stored (its title
+    already as sent, "Draft: " included). Raises Denied if a check fails, the
+    gitlab credential is gone or GitLab refuses it."""
+    repo, head, base, title, body, _ = _queued_pr_args(job, card, policy, "gitlab")
+    if card.get("body_sha256") != hashlib.sha256(body.encode()).hexdigest():
+        raise Denied("the queued write's body does not match its approval card; nothing was written")
+    if _TITLE_BAD_RE.search(title) or len(title) > _MR_TITLE_MAX or len(body) > _MR_BODY_MAX:
+        raise Denied("the queued merge request's title or body is not one GitLab takes; nothing was written")
+    ok, text = _open_mr(repo, remote_of(repo, policy), head, base, title, body)
+    if not ok:
+        raise Denied(text)
+    return text
 
 
 _ISSUE_TITLE_MAX = 256
@@ -722,6 +868,12 @@ def tool_github_create_issue(args: dict, policy: dict) -> str:
 
 
 _REPO_DESCRIPTION = "owner/name on GitHub, or <gitlab host>/<group>/<project> on the configured GitLab"
+_QUEUED_NOTE = (" If the deployment holds it for approval, the result may say it is queued: the gateway makes "
+                "the write itself once approved, so report it as queued, not done.")
+
+approvals.register_deferred("git_push", complete_git_push)
+approvals.register_deferred("github_create_pr", complete_github_create_pr)
+approvals.register_deferred("gitlab_create_mr", complete_gitlab_create_mr)
 
 register({
     "git_fetch": (tool_git_fetch, f"Fetch a branch of an allowlisted GitHub repo or GitLab project. Writes a "
@@ -731,20 +883,20 @@ register({
     "git_push": (tool_git_push, "Push a branch to an allowlisted GitHub repo or GitLab project. First run "
                  f"`git bundle create {config.EXCHANGE_DIR}/outgoing/<name>.bundle origin/<base>..<branch>` "
                  "(or the whole branch). Diff, commit messages and the branch name are secret-scanned; "
-                 "protected branches are refused and force-pushes are impossible.",
+                 "protected branches are refused and force-pushes are impossible." + _QUEUED_NOTE,
                  {"repo": {"type": "string", "description": _REPO_DESCRIPTION},
                   "branch": {"type": "string", "description": "branch to push; must use the allowed prefix"},
                   "bundle": {"type": "string", "description": f"file name inside {config.EXCHANGE_DIR}/outgoing/"},
                   "base": {"type": "string", "description": "branch the work is based on (default from policy)"}},
                  ["repo", "branch", "bundle"]),
     "github_create_pr": (tool_github_create_pr, "Open a pull request on an allowlisted GitHub repo. "
-                         "Title, body and branch names are secret-scanned. Draft by default.",
+                         "Title, body and branch names are secret-scanned. Draft by default." + _QUEUED_NOTE,
                          {"repo": {"type": "string"}, "head": {"type": "string"}, "base": {"type": "string"},
                           "title": {"type": "string"}, "body": {"type": "string"},
                           "draft": {"type": "boolean"}}, ["repo", "head", "title"]),
     "gitlab_create_mr": (tool_gitlab_create_mr, "Open a merge request on an allowlisted GitLab project "
                          "(<gitlab host>/<group>/<project>). Title, body and branch names are secret-scanned. "
-                         "Draft by default (the title gets GitLab's \"Draft: \" prefix).",
+                         "Draft by default (the title gets GitLab's \"Draft: \" prefix)." + _QUEUED_NOTE,
                          {"repo": {"type": "string", "description": "<gitlab host>/<group>/<project>"},
                           "head": {"type": "string", "description": "source branch; must use the allowed prefix"},
                           "base": {"type": "string", "description": "target branch (default from policy)"},

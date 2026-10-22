@@ -163,6 +163,11 @@ class PolicyChecks(DoctorBase):
         doctor.check_policy(report, self.policy_path)
         self.assertWarns(report, "names git_psuh, which is not a tool")
         self.assertFails(report, "[approvals].hold_seconds = -1")
+        self.policy(GOOD_POLICY + '\n[approvals]\ntools = ["git_push"]\nexpire_seconds = 2_000_000\n')
+        report = doctor.Report()
+        doctor.check_policy(report, self.policy_path)
+        self.assertWarns(report, "[approvals].expire_seconds = 2000000 is outside 60 to 604800")
+        self.assertTrue(any("uses 604800 instead" in line for line in self.all_text(report)))
 
     def test_shape_errors(self):
         bad = GOOD_POLICY.replace('repos = ["acme/widgets"]', 'repos = ["https://github.com/acme/widgets"]') \
@@ -727,6 +732,12 @@ class ApprovalChecks(DoctorBase):
         oks = report.messages(doctor.OK)
         self.assertTrue(any(m.startswith("holds on for git_push, github_create_pr: a call waits 30 s") for m in oks))
         self.assertIn("1 pending approval(s), the oldest 2 min old", oks)
+        self.assertFalse(any("queued" in t for _, _, t, _ in report.items))
+        queued = config.STATE / "approvals" / "queued" / f"{'a' * 16}.json"
+        queued.parent.mkdir(parents=True)
+        queued.write_text('{"id": "aaaaaaaaaaaaaaaa"}')
+        report = self.run_doctor()
+        self.assertTrue(any(t.startswith("1 of them queued: the gateway makes") for _, _, t, _ in report.items))
         self.assertIn("approvals-webhook credential present: each new card is posted to it", oks)
 
     def test_expired_pending_and_a_missing_webhook_are_flagged(self):

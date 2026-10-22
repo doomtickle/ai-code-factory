@@ -12,7 +12,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from . import approvals, auth, config, credentials, holds, plugins, policy
 from .audit import audit, summarize_args
 from .auth import authenticate, principal_tools
-from .errors import Denied
+from .errors import Denied, Queued
 from .filters import sanitize
 from .registry import TOOLS, WRITES_EXTERNALLY, tool_list
 
@@ -77,6 +77,11 @@ def call_tool(name: str, args: object, principal: str) -> tuple[str, bool]:
         text = fn(args, policy.load_policy())
         record.update(decision="allow", result=sanitize(text, 500))
         return text, False
+    except Queued as e:
+        # A held write the gateway will complete itself (or already has):
+        # a result, not a refusal (core/holds.py, docs/approvals.md).
+        record.update(decision=e.state, result=sanitize(e.text, 500))
+        return e.text, False
     except Denied as e:
         record.update(decision="deny", reason=str(e))
         return f"DENIED by broker policy: {e}", True

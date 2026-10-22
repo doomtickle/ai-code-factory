@@ -9,13 +9,16 @@ import os
 import threading
 import time
 import unittest
+import urllib.error
 from unittest import mock
 
 from passdesk.core import approvals as core_approvals
 from passdesk.core import config, holds, notify, plugins, protocol
-from passdesk.core.errors import Denied
+from passdesk.core.errors import Denied, Queued
+from passdesk.tools import git
 
-from .base import Base
+from . import test_git
+from .base import POLICY, Base, _FakeHTTPResponse
 
 CARD = {"tool": "git_push", "principal": "developer", "repo": "acme/widgets", "branch": "factory/x", "base": "main",
         "head": "abc123", "commits": 2, "shortstat": "1 file changed", "file_count": 1, "files": ["a.py"],
@@ -331,11 +334,16 @@ class HoldTests(HoldBase):
     def test_odd_seconds_values_fall_back_to_the_defaults(self):
         for bad in ("abc", None, [1], True, {"x": 1}):
             hold, expire, _ = holds.settings({"approvals": {"hold_seconds": bad, "expire_seconds": bad}})
-            self.assertEqual((hold, expire), (45, 1800), bad)
+            self.assertEqual((hold, expire), (45, 86400), bad)
         self.assertEqual(holds.settings({"approvals": {"hold_seconds": 7.9, "expire_seconds": 100}})[:2], (7, 100))
 
+    def test_expiry_allows_long_windows_up_to_a_week(self):
+        for given, used in ((86400, 86400), (3 * 86400, 3 * 86400), (7 * 86400, 7 * 86400),
+                            (30 * 86400, 7 * 86400), (10, 60), (-5, 60)):
+            self.assertEqual(holds.settings({"approvals": {"expire_seconds": given}})[1], used, given)
+
     def test_settings_default_to_off(self):
-        self.assertEqual(holds.settings({}), (45, 1800, []))
+        self.assertEqual(holds.settings({}), (45, 86400, []))
         self.assertEqual(holds.settings({"approvals": {"tools": []}})[2], [])
         self.assertEqual(holds.settings({"approvals": {"tools": "git_push"}})[2], [])  # not a list: off
         self.assertEqual(holds.settings({"approvals": {"tools": ["git_push", 3, ""]}})[2], ["git_push"])
@@ -747,6 +755,34 @@ class NotifyTests(HoldBase):
         self.assertEqual(seen["body"]["text"], seen["body"]["content"])
         self.assertEqual(seen["body"]["text"], seen["body"]["message"])
 
+    def test_a_queued_writes_outcome_is_posted_as_one_line(self):
+        self.write_webhook("https://hooks.example.invalid/abc")
+        seen = []
+
+        class Resp:
+            status = 200
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+        def fake_open(req, timeout=0):
+            seen.append(json.loads(req.data)["text"])
+            return Resp()
+        with mock.patch.object(notify.NO_REDIRECT_OPENER, "open", fake_open):
+            notify.send_result_async(CARD, "abc", "push of factory/x to acme/widgets", True,
+                                     "Pushed 2 commit(s) to acme/widgets:factory/x (abc123).\nok").join(5)
+            notify.send_result_async(CARD, "abc", "push of factory/x to acme/widgets", False,
+                                     "Push rejected by GitHub:\n<untrusted>...").join(5)
+        self.assertEqual(seen, [
+            "Passdesk approval abc: the gateway made the approved push of factory/x to acme/widgets: "
+            "Pushed 2 commit(s) to acme/widgets:factory/x (abc123).",
+            "Passdesk approval abc: the approved push of factory/x to acme/widgets FAILED: Push rejected by GitHub: "
+            "(factory approvals show abc)"])
+        self.assertLessEqual(len(notify.result_summary("abc", "x", True, "y" * 5000)), notify.MAX_SUMMARY_LEN)
+
     def test_the_hold_does_not_wait_for_the_webhook(self):
         # A webhook that hangs for longer than the hold must not stretch
         # the held call: the POST runs on its own thread.
@@ -774,3 +810,654 @@ class NotifyTests(HoldBase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# --- the approve-later queue (doomtickle/passdesk-ops#91) ----------------------
+
+JOB = {"repo": "acme/widgets", "branch": "factory/x", "base": "main", "head": "abc123",
+       "bundle_sha256": "f" * 64, "commits": 2}
+
+
+class QueueBase(HoldBase):
+    """Core's hook installed, a call that waits no time, and a completer for
+    git_push that records what it is asked to write."""
+
+    def setUp(self):
+        super().setUp()
+        self.policy["approvals"]["hold_seconds"] = 0
+        core_approvals.set_hook(holds.hook)
+        token = core_approvals.PRINCIPAL.set("developer")
+        self.addCleanup(core_approvals.PRINCIPAL.reset, token)
+        self.writes = []
+        self.write_result = "Pushed 2 commit(s) to acme/widgets:factory/x (abc123)."
+        self.write_delay = 0.0
+        self.write_error = None
+
+        def complete(job, card, policy):
+            self.writes.append((job, card))
+            time.sleep(self.write_delay)
+            if self.write_error:
+                raise self.write_error
+            return self.write_result
+        deferred = mock.patch.dict(core_approvals._deferred, {"git_push": complete})
+        deferred.start()
+        self.addCleanup(deferred.stop)
+        self.results = []
+        results = mock.patch.object(notify, "send_result_async",
+                                    lambda card, cid, what, ok, result: self.results.append((cid, ok, result)))
+        results.start()
+        self.addCleanup(results.stop)
+        self.cid = holds.card_id(CARD)
+
+    def path(self, kind, cid=None):
+        return config.STATE / "approvals" / kind / f"{cid or self.cid}.json"
+
+    def read(self, kind, cid=None):
+        return json.loads(self.path(kind, cid).read_text())
+
+    def call(self, card=CARD, job=JOB):
+        """The tool's side: require with a job, as git_push calls it."""
+        card = {k: v for k, v in card.items() if k != "principal"}
+        return core_approvals.require(card, job=job)
+
+    def queue(self):
+        with self.assertRaises(Queued) as cm:
+            self.call()
+        return cm.exception
+
+
+class QueueTests(QueueBase):
+    def test_undecided_after_the_hold_is_queued_as_a_result_not_a_refusal(self):
+        q = self.queue()
+        self.assertEqual((q.cid, q.state), (self.cid, "queued"))
+        self.assertTrue(q.text.startswith(f"Queued for approval (id {self.cid}); nothing has been sent yet."), q.text)
+        self.assertIn("push of factory/x to acme/widgets", q.text)
+        self.assertIn("Report it as queued, not done.", q.text)
+        self.assertIn(f"factory approvals approve {self.cid}", q.text)
+        rec = self.read("queued")
+        self.assertEqual((rec["id"], rec["nonce"], rec["tool"], rec["job"]),
+                         (self.cid, self.read("pending")["nonce"], "git_push", JOB))
+        self.assertEqual(self.audit_events(), ["approval-requested", "approval-queued"])
+        self.assertEqual(core_approvals.HELD_ID.get(), self.cid)
+        self.assertEqual(self.writes, [])
+
+    def test_approval_inside_the_hold_is_unchanged(self):
+        self.policy["approvals"]["hold_seconds"] = 2
+        self.decide(self.cid, delay=0.3)
+        outcome = self.call()
+        self.assertEqual((outcome["id"], outcome["approver"]), (self.cid, "daron"))
+        self.assertEqual(self.writes, [])  # the tool writes, in the call
+        self.assertFalse(self.path("queued").exists())
+        self.assertNotIn("queued", self.read("done"))
+        self.assertEqual(self.audit_events(), ["approval-requested", "approval-granted"])
+
+    def test_approval_makes_the_queued_write_once_and_files_the_result(self):
+        self.queue()
+        self.decide(self.cid, approver="daron")
+        holds.sweep_idle()
+        [(job, card)] = self.writes
+        self.assertEqual(job, JOB)
+        self.assertEqual((card["id"], card["head"], card["bundle_sha256"]), (self.cid, "abc123", "f" * 64))
+        done = self.read("done")
+        self.assertEqual((done["queued"], done["decision"], done["approver"], done["write"], done["result"]),
+                         (True, "approve", "daron", "done", self.write_result))
+        self.assertIsInstance(done["finished"], float)
+        self.assertNotIn("job", done)
+        for kind in ("pending", "decisions", "queued"):
+            self.assertFalse(self.path(kind).exists(), kind)
+        self.assertEqual(self.audit_events(), ["approval-requested", "approval-queued", "approval-granted",
+                                               "approval-write-done"])
+        granted = self.audit_records()[2]
+        self.assertTrue(granted["queued"])
+        self.assertEqual(self.results, [(self.cid, True, self.write_result)])
+        holds.sweep_idle()
+        holds.run_queued()
+        self.assertEqual(len(self.writes), 1)
+
+    def test_a_retry_while_queued_reports_the_same_id_and_queues_nothing_more(self):
+        first = self.queue()
+        nonce = self.read("queued")["nonce"]
+        second = self.queue()
+        self.assertEqual((second.cid, second.state), (first.cid, "queued"))
+        self.assertTrue(second.text.startswith(f"Queued for approval (id {self.cid})"))
+        self.assertEqual(self.read("queued")["nonce"], nonce)
+        self.assertEqual(self.sent, [self.cid])  # notified once
+        self.assertEqual(self.audit_events().count("approval-queued"), 1)
+        self.assertEqual(self.writes, [])
+
+    def test_a_retry_after_approval_makes_the_write_in_that_call_once(self):
+        self.queue()
+        self.decide(self.cid, approver="daron")
+        with self.assertRaises(Queued) as cm:
+            self.call()
+        self.assertEqual(cm.exception.state, "completed")
+        lines = cm.exception.text.splitlines()
+        self.assertEqual(lines[0], self.write_result)
+        self.assertRegex(lines[-1], rf'^Held for approval \(id {self.cid}\); approved by "daron" at '
+                                    r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ after \d+ s; written by the gateway at "
+                                    r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ\.$")
+        holds.sweep_idle()
+        with self.assertRaises(Queued):
+            self.call()
+        self.assertEqual(len(self.writes), 1)
+
+    def test_a_retry_after_the_gateway_made_the_write_reports_its_result(self):
+        self.queue()
+        self.decide(self.cid)
+        holds.sweep_idle()
+        for _ in range(2):
+            with self.assertRaises(Queued) as cm:
+                self.call()
+            self.assertEqual((cm.exception.state, cm.exception.text.splitlines()[0]), ("completed", self.write_result))
+            self.assertIn("written by the gateway", cm.exception.text)
+        self.assertEqual(len(self.writes), 1)
+        self.assertFalse(self.path("pending").exists())  # no new card
+
+    def test_after_the_result_window_the_same_call_is_a_new_request(self):
+        self.queue()
+        self.decide(self.cid)
+        holds.sweep_idle()
+        done = self.read("done")
+        self.path("done").write_text(json.dumps({**done, "finished": time.time() - 61}))
+        q = self.queue()  # expire_seconds is 60 in this fixture
+        self.assertEqual(q.state, "queued")
+        self.assertTrue(self.path("pending").exists())
+
+    def test_a_retry_while_the_gateway_is_writing_says_so(self):
+        self.queue()
+        self.decide(self.cid)
+        self.write_delay = 0.5
+        runner = threading.Thread(target=holds.run_queued)
+        runner.start()
+        deadline = time.monotonic() + 5
+        while not self.writes and time.monotonic() < deadline:
+            time.sleep(0.01)
+        with self.assertRaises(Queued) as cm:
+            self.call()
+        runner.join(5)
+        self.assertEqual(cm.exception.state, "queued")
+        self.assertTrue(cm.exception.text.startswith(f"Approved (id {self.cid}); the gateway is making this write"))
+        self.assertEqual(len(self.writes), 1)
+
+    def test_a_decline_is_recorded_nothing_is_written_and_a_retry_hears_it(self):
+        self.queue()
+        self.decide(self.cid, verdict="decline", approver="daron", reason="wrong branch")
+        holds.sweep_idle()
+        self.assertEqual(self.writes, [])
+        done = self.read("done")
+        self.assertEqual((done["decision"], done["write"], done["queued"]), ("decline", "skipped", True))
+        self.assertEqual(self.audit_events()[-1], "approval-declined")
+        self.assertTrue(self.audit_records()[-1]["queued"])
+        self.assertEqual(self.results, [])
+        for _ in range(2):
+            with self.assertRaises(Denied) as cm:
+                self.call()
+            self.assertEqual(str(cm.exception), f"declined by daron: wrong branch (approval {self.cid}, queued)")
+        self.assertEqual(self.writes, [])
+
+    def test_expiry_is_recorded_nothing_is_written_and_a_late_approval_does_nothing(self):
+        self.queue()
+        holds.sweep_idle(time.time() + 61)
+        done = self.read("done")
+        self.assertEqual((done["decision"], done["write"], done["queued"]), ("expired", "skipped", True))
+        self.assertFalse(self.path("queued").exists())
+        expired = self.audit_records()[-1]
+        self.assertEqual((expired["event"], expired["queued"]), ("approval-expired", True))
+        self.decide(self.cid, nonce=done["nonce"])  # too late: no card to apply it to
+        holds.sweep_idle()
+        self.assertEqual(self.writes, [])
+        q = self.queue()  # the same call again: a fresh card, queued again
+        self.assertEqual(q.state, "queued")
+        self.assertNotEqual(self.read("pending")["nonce"], done["nonce"])
+
+    def test_a_decision_exactly_as_the_hold_ends_is_applied_in_the_call_once(self):
+        real = holds._queue
+
+        def decided_meanwhile(pending, cid, job):
+            self.decide(cid)
+            return real(pending, cid, job)
+        with mock.patch.object(holds, "_queue", decided_meanwhile):
+            outcome = self.call()
+        self.assertEqual(outcome["id"], self.cid)  # approved: the tool writes, in the call
+        self.assertFalse(self.path("queued").exists())
+        holds.sweep_idle()
+        self.assertEqual(self.writes, [])
+        self.assertEqual(self.audit_events(), ["approval-requested", "approval-granted"])
+
+    def test_a_decision_just_after_queueing_is_made_by_the_queue_once(self):
+        real = holds._queue
+
+        def decided_after(pending, cid, job):
+            queued = real(pending, cid, job)
+            self.decide(cid)
+            return queued
+        with mock.patch.object(holds, "_queue", decided_after), self.assertRaises(Queued):
+            self.call()
+        self.write_delay = 0.2
+        racers = [threading.Thread(target=holds.run_queued) for _ in range(3)]
+        racers.append(threading.Thread(target=lambda: self.assertRaises(Queued, self.call)))
+        for t in racers:
+            t.start()
+        for t in racers:
+            t.join(5)
+        self.assertEqual(len(self.writes), 1)
+        self.assertEqual(self.audit_events().count("approval-write-done"), 1)
+
+    def test_a_failed_write_is_recorded_and_reported_once_then_a_new_request(self):
+        self.write_error = Denied("factory/x changed in the broker's mirror after the push was queued")
+        self.queue()
+        self.decide(self.cid)
+        holds.sweep_idle()
+        done = self.read("done")
+        self.assertEqual((done["write"], done["result"]),
+                         ("failed", "factory/x changed in the broker's mirror after the push was queued"))
+        failed = self.audit_records()[-1]
+        self.assertEqual((failed["event"], failed["id"]), ("approval-write-failed", self.cid))
+        self.assertEqual(self.results, [(self.cid, False, done["result"])])
+        with self.assertRaises(Denied) as cm:
+            self.call()
+        self.assertIn(f"the gateway could not make the approved write (id {self.cid}): factory/x changed",
+                      str(cm.exception))
+        self.assertEqual(self.queue().state, "queued")  # reported once; this call asks again
+
+    def test_a_crashing_completer_is_recorded_by_the_runner_not_raised(self):
+        self.write_error = RuntimeError("boom")
+        self.queue()
+        self.decide(self.cid)
+        holds.sweep_idle()
+        self.assertEqual((self.read("done")["write"], self.read("done")["result"]), ("failed", "RuntimeError: boom"))
+
+    def test_a_tampered_card_or_job_writes_nothing(self):
+        cases = {
+            "card": lambda: self.path("pending").write_text(json.dumps({**self.read("pending"), "head": "def456"})),
+            "job": lambda: self.path("queued").write_text(json.dumps({**self.read("queued"), "tool": "github_create_pr"})),
+            "job-shape": lambda: self.path("queued").write_text(json.dumps({**self.read("queued"), "job": "x"})),
+        }
+        for name, tamper in cases.items():
+            with self.subTest(name):
+                for kind in ("done", "pending", "queued", "decisions"):
+                    self.path(kind).unlink(missing_ok=True)
+                self.queue()
+                tamper()
+                self.decide(self.cid)
+                holds.sweep_idle()
+                done = self.read("done")
+                self.assertEqual(done["write"], "failed")
+                self.assertIn("does not match", done["result"])
+                self.assertEqual(self.audit_events()[-1], "approval-write-failed")
+        self.assertEqual(self.writes, [])
+
+    def test_a_job_with_no_matching_card_is_dropped_and_recorded(self):
+        self.queue()
+        self.path("queued").write_text(json.dumps({**self.read("queued"), "nonce": "other"}))
+        self.decide(self.cid)
+        holds.sweep_idle()
+        self.assertFalse(self.path("queued").exists())
+        self.assertEqual(self.audit_records()[-1]["event"], "approval-write-failed")
+        self.assertIn("no matching pending card", self.audit_records()[-1]["reason"])
+        self.assertEqual(self.writes, [])
+
+    def test_a_card_with_an_unreadable_expiry_writes_nothing(self):
+        self.queue()
+        self.path("pending").write_text(json.dumps({**self.read("pending"), "expires": "soon"}))
+        self.decide(self.cid)
+        holds.run_queued()
+        self.assertEqual(self.writes, [])
+        self.assertEqual(self.audit_records()[-1]["event"], "approval-discarded")
+        for kind in ("pending", "queued", "decisions"):
+            self.assertFalse(self.path(kind).exists(), kind)
+
+    def test_a_restart_while_queued_still_makes_the_write_on_approval(self):
+        self.queue()
+        self.decide(self.cid)
+        # A new process: nothing in memory, the files as they were.
+        with mock.patch.object(holds, "_running", set()):
+            holds.start_sweeper(stop=FakeStop([True])).join(5)
+        self.assertEqual(len(self.writes), 1)
+        self.assertEqual(self.read("done")["write"], "done")
+
+    def test_a_restart_past_the_expiry_files_the_queued_card_as_expired(self):
+        self.queue()
+        later = time.time() + 120
+        holds.start_sweeper(clock=lambda: later, stop=FakeStop([True])).join(5)
+        self.assertEqual(self.writes, [])
+        self.assertEqual((self.read("done")["decision"], self.read("done")["write"]), ("expired", "skipped"))
+
+    def test_a_write_cut_off_by_a_restart_is_filed_as_failed_never_retried(self):
+        self.queue()
+        self.decide(self.cid)
+        events, work = holds._claim(self.cid, time.time())  # claimed, then the process died
+        self.assertIsNotNone(work)
+        self.assertEqual(self.read("done")["write"], "running")
+        with mock.patch.object(holds, "_running", set()):
+            holds.start_sweeper(stop=FakeStop([True])).join(5)
+        done = self.read("done")
+        self.assertEqual(done["write"], "failed")
+        self.assertIn("may or may not have reached the forge", done["result"])
+        self.assertEqual(self.writes, [])
+        with self.assertRaises(Denied) as cm:
+            self.call()
+        self.assertIn("may or may not have reached the forge", str(cm.exception))
+
+    def test_a_call_without_a_job_keeps_the_retry_hold(self):
+        with self.assertRaises(Denied) as cm:
+            self.call(job=None)
+        self.assertIn("then retry this exact call", str(cm.exception))
+        self.assertFalse(self.path("queued").exists())
+
+    def test_a_tool_with_no_completer_keeps_the_retry_hold(self):
+        issue = {"tool": "github_create_issue", "repo": "acme/widgets", "title": "T", "body": "", "labels": []}
+        self.policy["approvals"]["tools"].append("github_create_issue")
+        with self.assertRaises(Denied) as cm:
+            self.call(card=issue, job={"repo": "acme/widgets"})
+        self.assertIn("then retry this exact call", str(cm.exception))
+
+    def test_nothing_is_queued_or_run_under_a_plugins_hook_or_with_holds_off(self):
+        self.queue()
+        self.decide(self.cid)
+        for installed in (None, lambda card: None):
+            core_approvals.set_hook(installed)
+            holds.sweep_idle()
+            self.assertIsNone(holds.start_sweeper(stop=FakeStop([True])))
+            self.assertIsNone(self.call())
+        self.assertEqual(self.writes, [])
+        self.assertTrue(self.path("queued").exists())
+
+    def test_the_protocol_returns_a_queued_write_as_a_result(self):
+        (config.STATE / "roles.json").write_text(json.dumps({"developer": ["github_create_pr"]}))
+        args = {"repo": "acme/widgets", "head": "factory/x", "title": "T", "body": "b"}
+        with mock.patch("passdesk.core.protocol.policy.load_policy", return_value=POLICY), \
+                mock.patch("urllib.request.urlopen", side_effect=AssertionError("written before approval")):
+            text, is_error = protocol.call_tool("github_create_pr", args, "developer")
+        self.assertFalse(is_error, text)
+        self.assertTrue(text.startswith("Queued for approval (id "), text)
+        last = self.audit_records()[-1]
+        cid = text.split("(id ", 1)[1].split(")", 1)[0]
+        self.assertEqual((last["tool"], last["decision"], last["approval"]), ("github_create_pr", "queued", cid))
+
+
+class QueuedPullRequestTests(QueueBase):
+    """github_create_pr and gitlab_create_mr, queued and opened by the
+    gateway from the arguments they checked."""
+
+    PR = {"repo": "acme/widgets", "head": "factory/x", "title": "Add it", "body": "x" * 3000}
+
+    def setUp(self):
+        super().setUp()
+        self.policy.update({k: v for k, v in POLICY.items()})
+        self.posts = []
+        self.answer = b'{"number": 7, "html_url": "https://github.com/acme/widgets/pull/7"}'
+        self.status = None
+
+        def fake_urlopen(req, timeout):
+            self.posts.append(req)
+            if self.status:
+                raise urllib.error.HTTPError(req.full_url, self.status, "x", None, io.BytesIO(b'{"message":"no"}'))
+            return _FakeHTTPResponse(self.answer)
+        for target in ("urllib.request.urlopen",):
+            p = mock.patch(target, side_effect=fake_urlopen)
+            p.start()
+            self.addCleanup(p.stop)
+
+    def open_pr(self):
+        return git.tool_github_create_pr(dict(self.PR), POLICY)
+
+    def queued_pr(self):
+        with self.assertRaises(Queued) as cm:
+            self.open_pr()
+        self.assertEqual(self.posts, [])
+        return cm.exception.cid
+
+    def test_an_approved_queued_pr_is_opened_once_with_the_whole_body(self):
+        cid = self.queued_pr()
+        self.assertIn("pull request factory/x -> main on acme/widgets", self.queue_text(cid))
+        self.decide(cid)
+        holds.sweep_idle()
+        [req] = self.posts
+        self.assertEqual(json.loads(req.data), {"title": "Add it", "body": "x" * 3000, "head": "factory/x",
+                                                "base": "main", "draft": True})
+        self.assertEqual(self.read("done", cid)["result"], "Opened PR #7: https://github.com/acme/widgets/pull/7")
+        with self.assertRaises(Queued) as cm:
+            self.open_pr()  # a retry reports it, never opens a second
+        self.assertTrue(cm.exception.text.startswith("Opened PR #7: https://github.com/acme/widgets/pull/7\n"))
+        self.assertEqual(len(self.posts), 1)
+
+    def queue_text(self, cid):
+        with self.assertRaises(Queued) as cm:
+            self.open_pr()
+        self.assertEqual(cm.exception.cid, cid)
+        return cm.exception.text
+
+    def test_a_declined_or_expired_queued_pr_is_never_opened(self):
+        cid = self.queued_pr()
+        self.decide(cid, verdict="decline")
+        holds.sweep_idle()
+        self.assertRaises(Denied, self.open_pr)
+        self.path("done", cid).unlink()
+        cid = self.queued_pr()
+        holds.sweep_idle(time.time() + 61)
+        self.assertEqual(self.read("done", cid)["decision"], "expired")
+        self.assertEqual(self.posts, [])
+
+    def test_a_pr_job_that_does_not_match_its_card_is_never_opened(self):
+        cid = self.queued_pr()
+        rec = self.read("queued", cid)
+        self.path("queued", cid).write_text(json.dumps({**rec, "job": {**rec["job"], "body": "y" * 3000}}))
+        self.decide(cid)
+        holds.sweep_idle()
+        self.assertEqual(self.posts, [])
+        self.assertIn("body does not match its approval card", self.read("done", cid)["result"])
+
+    def test_github_refusing_the_queued_pr_is_a_recorded_failure(self):
+        cid = self.queued_pr()
+        self.status = 422
+        self.decide(cid)
+        holds.sweep_idle()
+        done = self.read("done", cid)
+        self.assertEqual(done["write"], "failed")
+        self.assertIn("GitHub API returned HTTP 422", done["result"])
+        self.assertEqual(len(self.posts), 1)
+
+    def test_a_queued_merge_request_is_opened_once_with_the_gitlab_token(self):
+        from . import test_gitlab
+        self.policy.update(test_gitlab.GL_POLICY)
+        self.addCleanup(setattr, config, "MIRRORS", config.MIRRORS)
+        self.write_secret(config.SECRETS_DIR / "gitlab", test_gitlab.GL_TOKEN + "\n")
+        sent = []
+
+        def fake_open(req, timeout):
+            sent.append(req)
+            return _FakeHTTPResponse(b'{"iid": 12, "web_url": "https://gitlab.acme.net/platform/api/-/merge_requests/12"}')
+        mr = dict(test_gitlab.MR_ARGS)
+        with mock.patch.object(git.NO_REDIRECT_OPENER, "open", side_effect=fake_open):
+            with self.assertRaises(Queued) as cm:
+                git.tool_gitlab_create_mr(mr, test_gitlab.GL_POLICY)
+            cid = cm.exception.cid
+            self.assertIn("merge request factory/x -> main on gitlab.acme.net/platform/api", cm.exception.text)
+            self.decide(cid)
+            holds.sweep_idle()
+            with self.assertRaises(Queued) as cm:
+                git.tool_gitlab_create_mr(mr, test_gitlab.GL_POLICY)
+        self.assertEqual(cm.exception.state, "completed")
+        [req] = sent
+        self.assertEqual(req.get_header("Authorization"), f"Bearer {test_gitlab.GL_TOKEN}")
+        self.assertEqual(json.loads(req.data)["title"], "Draft: Add the thing")
+        self.assertNotIn(test_gitlab.GL_TOKEN, json.dumps(self.read("done", cid)))
+
+    def test_a_queued_merge_request_whose_token_is_gone_is_not_opened(self):
+        from . import test_gitlab
+        self.policy.update(test_gitlab.GL_POLICY)
+        secret = config.SECRETS_DIR / "gitlab"
+        self.write_secret(secret, test_gitlab.GL_TOKEN + "\n")
+        with mock.patch.object(git.NO_REDIRECT_OPENER, "open", side_effect=AssertionError("sent")):
+            with self.assertRaises(Queued) as cm:
+                git.tool_gitlab_create_mr(dict(test_gitlab.MR_ARGS), test_gitlab.GL_POLICY)
+            secret.unlink()
+            self.decide(cm.exception.cid)
+            holds.sweep_idle()
+        done = self.read("done", cm.exception.cid)
+        self.assertEqual(done["write"], "failed")
+        self.assertIn("gitlab credential", done["result"])
+
+
+class QueuedPushTests(HoldBase, test_git.GitFlowTests):
+    """git_push queued for real: a local bare repo stands in for GitHub, and
+    the gateway pushes the verified ref from its mirror on approval."""
+
+    def setUp(self):
+        super().setUp()
+        self.policy = {**POLICY, "approvals": {"tools": list(HELD), "hold_seconds": 0, "expire_seconds": 60}}
+        core_approvals.set_hook(holds.hook)
+        results = mock.patch.object(notify, "send_result_async", lambda *a: None)
+        results.start()
+        self.addCleanup(results.stop)
+
+    def make(self, branch="factory/feature", files=None, fname="f.bundle"):
+        """A commit on branch (cumulative across calls) and its bundle."""
+        if not (self.ws / ".git" / "refs" / "heads" / branch).exists():
+            out = git.tool_git_fetch({"repo": "acme/widgets", "branch": "main"}, POLICY)
+            self.sh(*out.splitlines()[-1].split(), cwd=self.ws)
+            self.sh("git", "checkout", "-q", "-b", branch, "refs/remotes/origin/main", cwd=self.ws)
+        for name, text in (files or {"feature.txt": "new feature\n"}).items():
+            (self.ws / name).write_text(text)
+            self.sh("git", "add", name, cwd=self.ws)
+        self.sh("git", "commit", "-q", "-m", "work", cwd=self.ws)
+        (self.ws / ".factory/outgoing").mkdir(parents=True, exist_ok=True)
+        self.sh("git", "bundle", "create", "-q", f".factory/outgoing/{fname}",
+                f"refs/remotes/origin/main..{branch}", cwd=self.ws)
+        self.canary.unlink(missing_ok=True)
+        return self.sh("git", "rev-parse", branch, cwd=self.ws)
+
+    def push(self, branch="factory/feature", fname="f.bundle", policy=POLICY):
+        return git.tool_git_push({"repo": "acme/widgets", "branch": branch, "bundle": fname}, policy)
+
+    def queued_push(self, **kw):
+        with self.assertRaises(Queued) as cm:
+            self.push(**kw)
+        return cm.exception
+
+    def on_origin(self, branch="factory/feature"):
+        return self.sh("git", "ls-remote", "--heads", str(self.origin), branch, cwd=self.ws).split("\t")[0]
+
+    def done(self, cid):
+        return json.loads((config.STATE / "approvals" / "done" / f"{cid}.json").read_text())
+
+    def test_an_approved_queued_push_goes_out_from_the_mirror_alone(self):
+        head = self.make()
+        q = self.queued_push()
+        self.assertIn("push of factory/feature to acme/widgets", q.text)
+        self.assertEqual(self.on_origin(), "")
+        saved = (self.ws / ".factory/outgoing/f.bundle").read_bytes()
+        (self.ws / ".factory/outgoing/f.bundle").unlink()  # the workspace is never read again
+        self.decide(q.cid)
+        holds.sweep_idle()
+        self.assertEqual(self.on_origin(), head)
+        self.assert_no_canary()
+        done = self.done(q.cid)
+        self.assertEqual(done["write"], "done")
+        self.assertTrue(done["result"].startswith(f"Pushed 1 commit(s) to acme/widgets:factory/feature ({head})."))
+        (self.ws / ".factory/outgoing/f.bundle").write_bytes(saved)
+        with self.assertRaises(Queued) as cm:
+            self.push()  # the retry: the result, not a second push
+        self.assertEqual(cm.exception.state, "completed")
+        self.assertTrue(cm.exception.text.startswith("Pushed 1 commit(s)"))
+
+    def test_a_queued_push_whose_ref_moved_pushes_nothing(self):
+        self.make()
+        q = self.queued_push()
+        mirror = git.ensure_mirror("acme/widgets")
+        git.git("update-ref", f"{config.REF_NAMESPACE}/factory/feature", "refs/remotes/origin/main", cwd=mirror)
+        self.decide(q.cid)
+        holds.sweep_idle()
+        self.assertEqual(self.on_origin(), "")
+        self.assertIn("changed in the broker's mirror after the push was queued", self.done(q.cid)["result"])
+
+    def test_a_second_push_to_the_branch_while_queued_supersedes_the_first(self):
+        self.make()
+        first = self.queued_push()
+        head2 = self.make(files={"more.txt": "more\n"}, fname="g.bundle")
+        second = self.queued_push(fname="g.bundle")
+        self.assertNotEqual(first.cid, second.cid)
+        self.decide(first.cid)
+        holds.sweep_idle()
+        self.assertEqual(self.on_origin(), "")  # the first's ref moved: nothing pushed
+        self.assertEqual(self.done(first.cid)["write"], "failed")
+        self.decide(second.cid)
+        holds.sweep_idle()
+        self.assertEqual(self.on_origin(), head2)
+
+    def test_a_queued_push_whose_mirror_is_gone_pushes_nothing(self):
+        import shutil
+        self.make()
+        q = self.queued_push()
+        shutil.rmtree(config.MIRRORS)
+        self.decide(q.cid)
+        holds.sweep_idle()
+        self.assertIn("mirror of acme/widgets is gone", self.done(q.cid)["result"])
+        self.assertFalse(config.MIRRORS.exists())  # not re-created to push from
+
+    def test_a_restart_while_queued_still_pushes_after_approval(self):
+        head = self.make()
+        q = self.queued_push()
+        self.decide(q.cid)
+        with mock.patch.object(holds, "_running", set()):
+            holds.start_sweeper(stop=FakeStop([True])).join(5)
+        self.assertEqual(self.on_origin(), head)
+
+    def test_a_decision_as_the_hold_ends_pushes_exactly_once(self):
+        head = self.make()
+        pushes = []
+        real_git, real_queue = git.git, holds._queue
+
+        def counting(*args, **kw):
+            if args and args[0] == "push":
+                pushes.append(args)
+            return real_git(*args, **kw)
+
+        def decided_meanwhile(pending, cid, job):
+            self.decide(cid)
+            return real_queue(pending, cid, job)
+        with mock.patch.object(git, "git", counting), mock.patch.object(holds, "_queue", decided_meanwhile):
+            out = self.push()
+            holds.sweep_idle()
+        self.assertTrue(out.startswith("Pushed 1 commit(s)"), out)
+        self.assertIn("Held for approval", out)
+        self.assertEqual(len(pushes), 1)
+        self.assertEqual(self.on_origin(), head)
+
+    def test_a_declined_queued_push_never_leaves(self):
+        self.make()
+        q = self.queued_push()
+        self.decide(q.cid, verdict="decline", reason="no")
+        holds.sweep_idle()
+        self.assertEqual(self.on_origin(), "")
+        with self.assertRaisesRegex(Denied, "declined by daron: no"):
+            self.push()
+
+    def test_a_hand_made_job_can_push_only_what_passes_the_secret_scan(self):
+        # A push the scan refused still leaves its commits on the mirror's
+        # incoming ref. A card and job forged for that head (by whoever can
+        # write the state directory) must still not get them out.
+        from .base import FAKE_GH
+        head = self.make(files={"config.py": f"TOKEN = '{FAKE_GH}'\n"})
+        with self.assertRaisesRegex(Denied, "github-token"):
+            self.push()
+        card = {"tool": "git_push", "principal": "", "repo": "acme/widgets", "branch": "factory/feature",
+                "base": "main", "head": head, "bundle_sha256": "0" * 64}
+        cid = holds.card_id(card)
+        job = {k: card[k] for k in ("repo", "branch", "base", "head", "bundle_sha256")}
+        self.write_pending(card, cid, "n1", time.time() + 600)
+        q = config.STATE / "approvals" / "queued" / f"{cid}.json"
+        q.parent.mkdir(parents=True, exist_ok=True)
+        q.write_text(json.dumps({"id": cid, "nonce": "n1", "tool": "git_push", "job": job}))
+        self.decide(cid)
+        holds.sweep_idle()
+        self.assertEqual(self.on_origin(), "")
+        self.assertIn("appears to contain secrets", self.done(cid)["result"])
+        self.assertNotIn(FAKE_GH, json.dumps(self.done(cid)))
+
+
+# QueuedPushTests borrows GitFlowTests' fixture, not its tests (test_git runs those).
+for _name in dir(test_git.GitFlowTests):
+    if _name.startswith("test_"):
+        setattr(QueuedPushTests, _name, None)
