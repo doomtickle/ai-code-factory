@@ -77,7 +77,7 @@ class StandaloneIssueTests(Base):
                                          "decided": "2026-10-22T09:15:00Z", "waited_seconds": 31})
         out = self.run_tool(ARGS, Fake())
         self.assertEqual(out, "Opened issue #5 in acme/tracker: https://github.com/acme/tracker/issues/5\n"
-                              "Held for approval (id 0123456789abcdef); approved by daron at "
+                              'Held for approval (id 0123456789abcdef); approved by "daron" at '
                               "2026-10-22T09:15:00Z after 31 s.")
 
     def test_only_repos_on_the_issue_allowlist(self):

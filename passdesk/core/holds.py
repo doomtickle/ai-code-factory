@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import secrets
 import sys
@@ -310,16 +311,31 @@ def _iso(ts: float) -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(ts))
 
 
+def _timestamp(value, now: float) -> float:
+    """`value` if it is a usable Unix time, else `now`. Not usable: not a
+    number (or a bool), not finite (json reads 1e999 as inf, and NaN), or
+    out of gmtime's range (1e20) - any of those would raise after the
+    approval was already filed and audited, so the write would never run."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return now
+    try:
+        if not math.isfinite(value):
+            return now
+        time.gmtime(value)
+    except (OverflowError, ValueError, OSError):
+        return now
+    return value
+
+
 def _outcome(pending: dict, cid: str, approver: str, ts) -> dict:
     """What an approved hold returns: the card id, the approver, when they
     decided (ISO 8601 UTC) and how long the write waited for them, from the
     card's creation to the decision. A decision time or card creation time
-    that isn't a number (the console writes time.time()) counts as now."""
+    that isn't a usable Unix time (the console writes time.time()) counts as
+    now; see _timestamp."""
     now = time.time()
-    decided = ts if isinstance(ts, (int, float)) and not isinstance(ts, bool) else now
-    created = pending.get("created")
-    if isinstance(created, bool) or not isinstance(created, (int, float)):
-        created = now
+    decided = _timestamp(ts, now)
+    created = _timestamp(pending.get("created"), now)
     return {"id": cid, "approver": approver, "decided": _iso(decided),
             "waited_seconds": max(0, round(decided - created))}
 

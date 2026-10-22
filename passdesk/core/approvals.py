@@ -30,6 +30,7 @@ import os
 import stat
 import tempfile
 import time
+import unicodedata
 from pathlib import Path
 from typing import Callable
 
@@ -110,8 +111,13 @@ def require(card: dict) -> dict | None:
 def _one_line(value, limit: int) -> str:
     """value as one line of at most limit characters, filtered as anything
     returned to an agent is (the approver's name comes from a file the
-    deployment's console wrote)."""
-    return " ".join(filters.sanitize(str(value), 10 * limit).split())[:limit]
+    deployment's console wrote), and without the format characters
+    (Unicode category Cf: bidi overrides and isolates, zero-width
+    characters) and C1 controls that filters.sanitize leaves, which could
+    make the line read differently from what it holds."""
+    text = filters.sanitize(str(value), 10 * limit)
+    text = "".join(c for c in text if not ("\x80" <= c <= "\x9f" or unicodedata.category(c) == "Cf"))
+    return " ".join(text.split())[:limit]
 
 
 def _outcome(value) -> dict | None:
@@ -122,18 +128,20 @@ def _outcome(value) -> dict | None:
     waited = value.get("waited_seconds")
     if isinstance(waited, bool) or not isinstance(waited, (int, float)) or not math.isfinite(waited):
         waited = None
-    return {"id": _one_line(value["id"], 64), "approver": _one_line(value.get("approver") or "unknown", 100),
+    # The note quotes the approver; a double quote in the name would end it early.
+    approver = _one_line(value.get("approver") or "unknown", 100).replace('"', "'")
+    return {"id": _one_line(value["id"], 64), "approver": approver,
             "decided": _one_line(value.get("decided") or "", 40),
             "waited_seconds": None if waited is None else max(0, round(waited))}
 
 
 def held_note(outcome: dict | None) -> str:
     """The line a tool adds to its result when its write was held:
-    "Held for approval (id X); approved by NAME at T after N s." Empty for
+    'Held for approval (id X); approved by "NAME" at T after N s.' Empty for
     a write that wasn't held (outcome None), so the result is unchanged."""
     if outcome is None:
         return ""
-    note = f"Held for approval (id {outcome['id']}); approved by {outcome['approver']}"
+    note = f"Held for approval (id {outcome['id']}); approved by \"{outcome['approver']}\""
     if outcome.get("decided"):
         note += f" at {outcome['decided']}"
     if outcome.get("waited_seconds") is not None:

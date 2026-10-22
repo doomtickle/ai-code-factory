@@ -77,7 +77,7 @@ class PushApprovalTests(test_git.GitFlowTests):
         self.make_bundle()
         out = git.tool_git_push({"repo": "acme/widgets", "branch": "factory/feature", "bundle": "f.bundle"}, POLICY)
         self.assertTrue(out.startswith("Pushed 1 commit(s)"), out)
-        self.assertEqual(out.splitlines()[-1], "Held for approval (id 0123456789abcdef); approved by daron at "
+        self.assertEqual(out.splitlines()[-1], 'Held for approval (id 0123456789abcdef); approved by "daron" at '
                                                "2026-10-22T09:15:00Z after 31 s.")
         self.assertNotEqual(self.sh("git", "ls-remote", "--heads", str(self.origin), "factory/feature",
                                     cwd=self.ws), "")
@@ -353,14 +353,24 @@ class ApprovalPointTests(Base):
                                          "decided": None, "waited_seconds": float("inf")})
         outcome = approvals.require({"tool": "git_push"})
         note = approvals.held_note(outcome)
-        self.assertEqual(note, "Held for approval (id abc 123); approved by Mallory Bob "
-                               "[REDACTED:github-token].")
+        self.assertEqual(note, 'Held for approval (id abc 123); approved by "Mallory Bob '
+                               '[REDACTED:github-token]".')
         approvals.set_hook(lambda card: {"id": "abc", "waited_seconds": True})
         self.assertEqual(approvals.held_note(approvals.require({"tool": "git_push"})),
-                         "Held for approval (id abc); approved by unknown.")
+                         'Held for approval (id abc); approved by "unknown".')
         approvals.set_hook(lambda card: {"id": "abc", "approver": "x" * 500, "waited_seconds": 2.6})
         self.assertEqual(approvals.held_note(approvals.require({"tool": "git_push"})),
-                         f"Held for approval (id abc); approved by {'x' * 100} after 3 s.")
+                         f'Held for approval (id abc); approved by "{"x" * 100}" after 3 s.')
+
+    def test_the_note_drops_format_characters_and_c1_controls(self):
+        # filters.sanitize leaves these: bidi overrides and isolates would
+        # reorder the line on screen, zero-width characters hide in it, and
+        # a C1 CSI (\x9b) starts a terminal escape on some terminals.
+        approvals.set_hook(lambda card: {
+            "id": "ab\u200bc\u2066", "decided": "2026-10-22T09:15:00Z\u202e",
+            "approver": "ev\u202eil\u200b\u202a\u202b\u202c\u202d\u2067\u2068\u2069\ufeff\x9b31m\x85\x80 \"x\" Bob"})
+        self.assertEqual(approvals.held_note(approvals.require({"tool": "git_push"})),
+                         'Held for approval (id abc); approved by "evil31m \'x\' Bob" at 2026-10-22T09:15:00Z.')
 
     def call_pr(self, principal="reviewer"):
         fake_pr = {"html_url": "https://github.com/acme/widgets/pull/1", "number": 1, "draft": True}
@@ -388,13 +398,14 @@ class ApprovalPointTests(Base):
         text, is_error, last = self.call_pr()
         self.assertFalse(is_error, text)
         self.assertEqual(text, "Opened PR #1: https://github.com/acme/widgets/pull/1\n"
-                               "Held for approval (id feedfacecafebeef); approved by daron at "
+                               'Held for approval (id feedfacecafebeef); approved by "daron" at '
                                "2026-10-22T09:15:00Z after 12 s.")
         self.assertEqual((last["tool"], last["decision"], last["approval"]),
                          ("github_create_pr", "allow", "feedfacecafebeef"))
         # The next call on the same thread wasn't held: no approval on its record.
         approvals.set_hook(lambda card: None)
         text, is_error, last = self.call_pr()
+        self.assertFalse(is_error, text)
         self.assertEqual(text, "Opened PR #1: https://github.com/acme/widgets/pull/1")
         self.assertNotIn("approval", last)
 
@@ -402,6 +413,7 @@ class ApprovalPointTests(Base):
         approvals.HELD_ID.set("feedfacecafebeef")  # left over from an earlier call on this thread
         text, is_error = protocol.call_tool("no_such_tool", {}, "reviewer")
         self.assertTrue(is_error)
+        self.assertEqual(text, "DENIED by broker policy: unknown tool 'no_such_tool'")
         last = json.loads((config.STATE / "audit.jsonl").read_text().strip().splitlines()[-1])
         self.assertNotIn("approval", last)
 
@@ -419,6 +431,9 @@ class ApprovalPointTests(Base):
             text, is_error = protocol.call_tool(
                 "github_create_pr", {"repo": "acme/widgets", "head": "factory/x", "title": "T"}, "reviewer")
         self.assertTrue(is_error)
+        # An exception the tool doesn't turn into a result (a URLError, a
+        # timeout) has no note; only the record's `approval` names the hold.
+        self.assertEqual(text, "Broker error: network down")
         last = json.loads((config.STATE / "audit.jsonl").read_text().strip().splitlines()[-1])
         self.assertEqual((last["decision"], last["approval"]), ("error", "feedfacecafebeef"))
 

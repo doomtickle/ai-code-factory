@@ -242,7 +242,7 @@ class MergeRequestTests(GitLabBase):
         self.addCleanup(approvals.set_hook, None)
         out, _ = self.open_mr()
         self.assertEqual(out, "Opened MR !12: https://gitlab.acme.net/platform/api/-/merge_requests/12\n"
-                              "Held for approval (id 0123456789abcdef); approved by daron at "
+                              'Held for approval (id 0123456789abcdef); approved by "daron" at '
                               "2026-10-22T09:15:00Z after 31 s.")
 
     def test_bodies_differing_past_the_excerpt_get_different_cards(self):

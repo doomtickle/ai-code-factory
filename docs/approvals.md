@@ -115,15 +115,22 @@ content that actually gets pushed is still pinned by `head` and
   approval that lands within the hold looks to the agent like a slow call,
   so every write that went through a hold (approved in the call, or picked
   up by a retry) ends its result with one more line: `Held for approval
-  (id X); approved by NAME at 2026-10-22T09:15:00Z after N s.` `decided`
+  (id X); approved by "NAME" at 2026-10-22T09:15:00Z after N s.` `decided`
   is the decision's time in UTC and `waited_seconds` runs from the card's
   creation (the first held call) to the decision, so a retry reports how
-  long the write really waited for a person. The approver's name comes
-  from the console's file, so it is filtered like any result (secrets
-  redacted, control characters removed) and kept to one line of at most
-  100 characters. The line is added to every result the tool returns after
-  approval, including a push the forge rejected or an API error; a write
-  that wasn't held is unchanged, byte for byte.
+  long the write really waited for a person; a decision or creation time
+  that isn't a usable Unix time (not a number, not finite, out of range)
+  counts as now. The approver's name comes from the console's file, so it
+  is filtered like any result (secrets redacted, control characters
+  removed), also loses Unicode format characters (bidi overrides, zero-width
+  characters) and C1 controls, is quoted (a `"` in it becomes `'`) and is
+  kept to one line of at most 100 characters. The line is added to every
+  result the tool returns after approval, including a push the forge
+  rejected or an HTTP error status from the API. A failure the tool
+  doesn't turn into a result (no connection, a timeout) comes back as
+  `Broker error: ...` without the line; then only the call's audit record
+  says it was held, with `approval: <id>`. A write that wasn't held is
+  unchanged, byte for byte.
   Pending cards expire after `expire_seconds` (default 1800); an expired
   card is a denial, and a later retry makes a fresh one.
 - **Expired cards leave `pending/` on their own.** An expired card is

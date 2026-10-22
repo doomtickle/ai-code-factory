@@ -596,6 +596,34 @@ class HeldOutcomeTests(HoldBase):
         self.assertGreaterEqual(calendar.timegm(time.strptime(outcome["decided"], "%Y-%m-%dT%H:%M:%SZ")),
                                 int(before) - 1)
 
+    def test_a_non_finite_or_out_of_range_time_counts_as_now(self):
+        # Python's json reads 1e999 as inf and accepts NaN; gmtime raises on
+        # those and on 1e20. The approval is filed and audited by then, so a
+        # crash would lose the write and a retry would need a second approval.
+        for raw in ("1e999", "-1e999", "NaN", "1e20"):
+            for field in ("ts", "created"):
+                with self.subTest(raw=raw, field=field):
+                    cid = holds.card_id(PR_CARD)
+                    with self.assertRaises(Denied):
+                        holds.hook(PR_CARD)
+                    pending = self.pending(cid)
+                    card = json.loads(pending.read_text())
+                    ts = time.time()
+                    if field == "created":
+                        pending.write_text(json.dumps({**card, "created": 0}).replace('"created": 0', f'"created": {raw}'))
+                    p = config.STATE / "approvals" / "decisions" / f"{cid}.json"
+                    p.parent.mkdir(parents=True, exist_ok=True)
+                    p.write_text(json.dumps({"id": cid, "nonce": card["nonce"], "decision": "approve",
+                                             "approver": "daron", "ts": 0}).replace('"ts": 0', f'"ts": {raw if field == "ts" else ts}'))
+                    before = time.time()
+                    outcome = holds.hook(PR_CARD)
+                    self.assertEqual(outcome["approver"], "daron")
+                    self.assertRegex(outcome["decided"], ISO_UTC)
+                    self.assertGreaterEqual(calendar.timegm(time.strptime(outcome["decided"], "%Y-%m-%dT%H:%M:%SZ")),
+                                            int(min(before, ts)) - 1)
+                    self.assertGreaterEqual(outcome["waited_seconds"], 0)
+                    self.assertFalse(pending.exists())
+
     def test_require_passes_the_outcome_on_and_the_note_names_it(self):
         core_approvals.set_hook(holds.hook)
         cid = holds.card_id(CARD)
@@ -603,7 +631,7 @@ class HeldOutcomeTests(HoldBase):
         outcome = core_approvals.require(dict(CARD))
         self.assertEqual(core_approvals.HELD_ID.get(), cid)
         note = core_approvals.held_note(outcome)
-        self.assertRegex(note, rf"^Held for approval \(id {cid}\); approved by daron at "
+        self.assertRegex(note, rf"^Held for approval \(id {cid}\); approved by \"daron\" at "
                                r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ after \d+ s\.$")
 
     def test_a_write_the_policy_does_not_hold_gets_no_outcome(self):

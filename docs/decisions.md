@@ -11,23 +11,31 @@ Dated entries, for the user to review. Newest first.
   `{id, approver, decided, waited_seconds}` for an approved hold,
   `approvals.require` passes it back, and `git_push`, `github_create_pr`,
   `gitlab_create_mr` and `github_create_issue` end their result with
-  `Held for approval (id X); approved by NAME at T after N s.` The
+  `Held for approval (id X); approved by "NAME" at T after N s.` The
   protocol layer puts `approval: <id>` on the call's audit record. Choices:
   - **`waited_seconds` is from the card's creation to the decision**, not
     how long this one call blocked: a retry that picks up a decision made
     meanwhile is a held write too, and the number a person cares about is
     how long it waited for them. A decision time or creation time that
-    isn't a number counts as now.
+    isn't a usable Unix time counts as now: not a number, not finite
+    (json reads `1e999` as inf, and accepts `NaN`) or out of `gmtime`'s
+    range. Those raised after the card was filed and audited as granted,
+    so the write never ran and a retry needed a second approval.
   - **The note is on every result after approval**, success or not (a
-    push the forge rejected, an API error), because the write was held
-    either way. A `Denied` raised after approval (the mirror ref changed,
-    the gitlab credential removed) carries no note, but the call's record
-    still has `approval`, which is set by `require` itself.
+    push the forge rejected, an HTTP error status), because the write was
+    held either way. A `Denied` or an exception raised after approval (the
+    mirror ref changed, the gitlab credential removed, no connection, a
+    timeout) carries no note, but the call's record still has `approval`,
+    which is set by `require` itself.
   - **Only a dict with a non-empty string `id` is an outcome.** Anything
     else a hook returns (a plugin's `None`, `True`, a string) means
     "allowed, not held", so old plugins keep working and can't inject a
     note. Every field is filtered and cut to one line (the approver name
-    is read from a file the console writes).
+    is read from a file the console writes). `filters.sanitize` leaves
+    Unicode format characters (category Cf: bidi overrides and isolates,
+    zero-width characters) and C1 controls, which can make the line read
+    differently on screen, so the note drops those too, and it quotes the
+    name (`"` inside becomes `'`) so it reads as data.
   - **Not here:** a hold that times out still raises `Denied` asking for a
     retry; the queued result and the gateway completing approved writes
     itself are item 2, a separate PR (#91).
