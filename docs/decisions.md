@@ -27,7 +27,10 @@ Dated entries, for the user to review. Newest first.
     the runner claims a write by filing `done/<id>.json` as `running` and
     removing card, decision and job in one locked step. The sweeper and a
     retry both run the same claim, so whichever is first writes and the
-    other reports. A process that dies mid-write leaves `running`; the next
+    other reports. A retry looks for the settled outcome again under the
+    lock before it makes a fresh card, so a claim landing between its first
+    look and the card is reported, never made into a second request. A
+    process that dies mid-write leaves `running`; the next
     start files it as failed ("may or may not have reached the forge") and
     never retries it, because a second push or PR could be wrong.
   - **What the deferred write trusts.** Only the gateway's state: the job,

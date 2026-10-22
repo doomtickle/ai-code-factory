@@ -134,8 +134,11 @@ content that actually gets pushed is still pinned by `head` and
     makes the write itself, from the sweeper (every 5 seconds) or from a
     retry of the same call, whichever comes first: in one locked step it
     files `done/<id>.json` as `running` and removes the card, decision and
-    job, so the write is claimed exactly once. The completer then checks the
-    job again against the current policy (repo allowlist, branch prefix and
+    job, so the write is claimed exactly once (a retry that finds no card
+    checks for that record under the same lock before making a new card,
+    so it reports a write claimed meanwhile rather than asking again). The
+    completer then checks the job again against the current policy (repo
+    allowlist, branch prefix and
     protection, secret scan of a title and body) and against the stored
     card (same `head` and `bundle_sha256`; same title, body and draft; the
     card's own fields still hash to its id), and only then writes. A push

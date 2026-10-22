@@ -995,6 +995,57 @@ class QueueTests(QueueBase):
             self.assertEqual(str(cm.exception), f"declined by daron: wrong branch (approval {self.cid}, queued)")
         self.assertEqual(self.writes, [])
 
+    def claim_after_first_look(self, claim):
+        """Run claim() right after the hook's first look for a settled
+        outcome, before it ensures a card: the sweeper's race window."""
+        first = holds._report_settled
+        calls = []
+
+        def look(cid, now, expire):
+            first(cid, now, expire)
+            if not calls:
+                calls.append(cid)
+                claim()
+        patch = mock.patch.object(holds, "_report_settled", side_effect=look)
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def test_a_retry_racing_the_claim_reports_the_running_write_and_makes_no_second_card(self):
+        self.queue()
+        self.decide(self.cid, approver="daron")
+        self.write_delay = 0.5
+        runner = threading.Thread(target=holds.run_queued)
+
+        def claim():
+            runner.start()
+            deadline = time.monotonic() + 5
+            while not self.writes and time.monotonic() < deadline:
+                time.sleep(0.01)
+        self.claim_after_first_look(claim)
+        with self.assertRaises(Queued) as cm:
+            self.call()
+        runner.join(5)
+        self.assertTrue(cm.exception.text.startswith(f"Approved (id {self.cid}); the gateway is making this write"),
+                        cm.exception.text)
+        for kind in ("pending", "decisions", "queued"):
+            self.assertFalse(self.path(kind).exists(), kind)
+        self.assertEqual(self.sent, [self.cid])  # no second webhook
+        self.assertEqual(self.audit_events().count("approval-requested"), 1)
+        self.assertEqual(self.read("done")["write"], "done")
+        holds.sweep_idle()
+        self.assertEqual(len(self.writes), 1)
+
+    def test_a_retry_racing_a_declined_claim_reports_the_decline(self):
+        self.queue()
+        self.decide(self.cid, verdict="decline", approver="daron", reason="wrong branch")
+        self.claim_after_first_look(holds.run_queued)
+        with self.assertRaises(Denied) as cm:
+            self.call()
+        self.assertEqual(str(cm.exception), f"declined by daron: wrong branch (approval {self.cid}, queued)")
+        self.assertFalse(self.path("pending").exists())
+        self.assertEqual(self.sent, [self.cid])
+        self.assertEqual(self.writes, [])
+
     def test_expiry_is_recorded_nothing_is_written_and_a_late_approval_does_nothing(self):
         self.queue()
         holds.sweep_idle(time.time() + 61)

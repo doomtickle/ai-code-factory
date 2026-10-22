@@ -304,10 +304,13 @@ def start_sweeper(interval: float | None = None, clock=time.time,
     return thread
 
 
-def _ensure_pending(card: dict, cid: str, expire: int, now: float) -> dict:
+def _ensure_pending(card: dict, cid: str, expire: int, now: float, queueable: bool = False) -> dict:
     """The pending card for cid: the existing one, or a fresh one (also when
     the existing one has expired). Notifies once per fresh card, off this
-    thread, so a slow webhook never eats into the hold."""
+    thread, so a slow webhook never eats into the hold. For a queueable
+    call, a settled queued outcome is reported (_report_settled) instead of
+    making a fresh card: the queue's runner may have claimed the card since
+    the hook last looked, and a second card would make the write twice."""
     with _lock:
         existing = _read(_path("pending", cid))
         if existing:
@@ -328,6 +331,8 @@ def _ensure_pending(card: dict, cid: str, expire: int, now: float) -> dict:
                        "reason": "the pending card's expiry is unreadable"})
             else:
                 _expire_pending(cid, existing.get("nonce"), now)
+        if queueable:
+            _report_settled(cid, now, expire)  # under the lock, so no claim slips in before the card
         # The nonce ties a decision to this card, not an earlier one with the
         # same id; timestamps would do that only if the clock never jumped.
         pending = {**card, "id": cid, "nonce": secrets.token_hex(8), "created": now, "expires": now + expire}
@@ -688,7 +693,7 @@ def hook(card: dict) -> dict | None:
     queueable = isinstance(job, dict) and core_approvals.deferred(card["tool"]) is not None
     if queueable:
         _report_settled(cid, now, expire)  # this write's queued outcome, if there is one
-    pending = _ensure_pending(card, cid, expire, now)
+    pending = _ensure_pending(card, cid, expire, now, queueable)
     if queueable and _queued_job(cid, pending):
         # A retry while queued: apply a decision made since (the write is
         # then made here, once), else report the same queued status.
