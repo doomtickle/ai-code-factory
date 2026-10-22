@@ -831,7 +831,9 @@ def broker_calls(role: str, start: float, end: float) -> list:
             continue
         if ts < start - 2 or ts > end + 2:
             continue
-        line = f"{str(rec['ts'])[11:19]}  {one_line(rec['tool'], 40)}  {one_line(rec.get('decision', ''), 20)}"
+        # A call has a decision (allow, deny, error, queued); the gateway's approval
+        # events (approval-queued, approval-granted, ...) have an event name instead.
+        line = f"{str(rec['ts'])[11:19]}  {one_line(rec['tool'], 40)}  {one_line(rec.get('decision') or rec.get('event') or '', 24)}"
         if rec.get("reason"):
             line += f"  {one_line(rec['reason'], 200)}"
         lines.append(line)

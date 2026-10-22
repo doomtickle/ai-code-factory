@@ -9,17 +9,25 @@ only, and touches nothing but those files. The dashboard's control unit
 (scripts/dashboard_controls.py) writes decisions through write_decision()
 here, so both write the same record.
 
-    factory approvals                      pending cards (decided ones marked)
-    factory approvals show <id>
+    factory approvals                      pending cards (decided ones marked), then recent deferred writes
+    factory approvals show <id>            a pending card, or a finished deferred write
     factory approvals approve <id> [--as NAME] [--reason TEXT]
     factory approvals decline <id> [--as NAME] [--reason TEXT]
-    factory approvals watch                print cards as they arrive
+    factory approvals watch                print cards, queued cards and deferred writes as they arrive
     factory approvals summary              one line for scripts: "pending oldest_min expired_unhandled decided"
 
 A decision is final for its card: the gateway keeps the card in pending/
 until the agent retries the held call (the retry picks the decision up), and
 a second approve or decline of the same card is refused, here and in the
 dashboard, rather than overwriting the first.
+
+A card still undecided after the gateway's hold is queued (approvals/queued/
+<id>.json): the agent has moved on, and once the card is approved the gateway
+makes the write itself within seconds and files the outcome under
+approvals/done/<id>.json (write: running, done, failed). Lists mark queued
+cards and show those outcomes, failures first. Every field read from these
+files is untrusted text: clean() makes it one line with control and format
+characters removed and a length cap.
 """
 
 import argparse
@@ -34,12 +42,45 @@ import sys
 import stat
 import tempfile
 import time
+import unicodedata
 from pathlib import Path
 
 
 # What a card id may be before it names a file (decisions/<id>.json). Passdesk
 # Pro's ids fit; anything else is refused rather than joined onto a path.
 CARD_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
+
+
+LINE_MAX = 160        # longest field shown on one line (clean's default cap)
+SUMMARY_MAX = 200     # longest deferred-write summary
+FILE_MAX = 256 * 1024  # largest queued/ or done/ file read (the gateway caps results at 3,000 characters)
+WRITES_LIMIT = 8      # deferred writes listed
+WRITES_SCAN = 60      # newest done/ files looked at for them
+MADE_WINDOW = 24 * 3600     # a write made is listed for a day
+FAILED_WINDOW = 3 * 24 * 3600  # a failure for three days
+# Tools whose hold, if it runs out, becomes a queue job the gateway carries out itself;
+# any other held tool returns to the agent, which retries the call.
+DEFERRED_TOOLS = ("git_push", "github_create_pr", "gitlab_create_mr")
+WRITE_STATES = {"running": "running", "done": "made", "failed": "failed"}  # done/ `write` -> shown
+
+
+def clean(value, cap=LINE_MAX):
+    """Text from a state file as one safe line: whitespace (newlines, tabs,
+    line and paragraph separators) becomes single spaces; control, format
+    (bidi, zero-width), surrogate and private-use characters are dropped; cut
+    at cap characters with an ellipsis. Anything that is not text is shown as
+    its str(); None is empty."""
+    if value is None:
+        return ""
+    text = value if isinstance(value, str) else str(value)
+    out = []
+    for ch in text[:cap * 4 + 16]:
+        if ch.isspace():
+            out.append(" ")
+        elif unicodedata.category(ch) not in ("Cc", "Cf", "Cs", "Co"):
+            out.append(ch)
+    text = " ".join("".join(out).split())
+    return text if len(text) <= cap else text[:max(0, cap - 1)] + "\u2026"
 
 
 def default_state():
@@ -67,56 +108,222 @@ def find(state, cid):
     return None
 
 
+def read_json(path):
+    """A state file as a dict, or None: opened without following a symlink or
+    blocking on a FIFO (the gateway can write there), regular files of at
+    most FILE_MAX bytes only, and only a JSON object."""
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_CLOEXEC", 0)
+    try:
+        fd = os.open(str(path), flags)
+    except OSError:
+        return None
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            return None
+        with os.fdopen(fd, "rb", closefd=False) as f:
+            data = f.read(FILE_MAX + 1)
+        if len(data) > FILE_MAX:
+            return None
+        rec = json.loads(data.decode("utf-8"))
+    except (OSError, ValueError):  # UnicodeDecodeError is a ValueError
+        return None
+    finally:
+        os.close(fd)
+    return rec if isinstance(rec, dict) else None
+
+
+def is_queued(state, card):
+    """True if the gateway queued this very card (approvals/queued/<id>.json
+    with the card's id and nonce): undecided after its hold, the agent has
+    moved on, and the gateway makes the write itself once it is approved."""
+    cid, nonce = card.get("id"), card.get("nonce")
+    if not isinstance(cid, str) or not CARD_ID.fullmatch(cid) or not isinstance(nonce, str) or not nonce:
+        return False
+    rec = read_json(state / "approvals" / "queued" / "{}.json".format(cid))
+    return rec is not None and rec.get("id") == cid and rec.get("nonce") == nonce
+
+
+def finite(value):
+    """value as a float if it is a finite number (not a bool), else None."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    value = float(value)
+    return value if value - value == 0 else None
+
+
+def write_record(rec, cid):
+    """A done/ record of a deferred write as a display dict, or None if it
+    is not one (not queued, declined or expired: those wrote nothing, or
+    another state). Every text field is clean()ed."""
+    if rec.get("queued") is not True or rec.get("id") != cid:
+        return None
+    shown = WRITE_STATES.get(rec.get("write")) if isinstance(rec.get("write"), str) else None
+    if shown is None:
+        return None
+    result = rec.get("result")
+    result = result if isinstance(result, str) else ""
+    if shown == "failed":
+        summary = clean(result, SUMMARY_MAX)  # the reason, whole
+    else:  # the first line, as the webhook shows it
+        summary = clean(next((ln for ln in result.splitlines() if ln.strip()), ""), SUMMARY_MAX)
+    at = finite(rec.get("finished"))
+    if at is None:
+        at = finite(rec.get("started"))
+    return {"id": cid, "tool": clean(rec.get("tool"), 40), "role": clean(rec.get("principal"), 40),
+            "repo": clean(rec.get("repo"), 100), "target": clean(rec.get("branch") or rec.get("head"), 100),
+            "title": clean(rec.get("title"), 80),
+            "state": shown, "summary": summary, "at": at, "approver": clean(rec.get("approver"), 60)}
+
+
+def read_writes(state, now=None, limit=WRITES_LIMIT):
+    """Deferred writes the gateway made on approval (approvals/done/<id>.json
+    with queued: true), newest first with failures ahead: running ones, those
+    made in the last day and those that failed in the last three. At most
+    `limit`, from the WRITES_SCAN newest files. Dicts as write_record()."""
+    now = time.time() if now is None else now
+    folder = state / "approvals" / "done"
+    try:
+        with os.scandir(str(folder)) as it:
+            files = []
+            for entry in it:
+                stem = entry.name[:-5]
+                if not entry.name.endswith(".json") or not CARD_ID.fullmatch(stem):
+                    continue
+                try:
+                    if entry.is_file(follow_symlinks=False):
+                        files.append((entry.stat(follow_symlinks=False).st_mtime, stem))
+                except OSError:
+                    continue
+    except OSError:
+        return []
+    files.sort(reverse=True)
+    out = []
+    for _, cid in files[:WRITES_SCAN]:
+        rec = read_json(folder / "{}.json".format(cid))
+        item = write_record(rec, cid) if rec else None
+        if item is None:
+            continue
+        age = None if item["at"] is None else now - item["at"]
+        window = {"made": MADE_WINDOW, "failed": FAILED_WINDOW}.get(item["state"])
+        if window is not None and (age is None or age > window):
+            continue
+        out.append(item)
+    rank = {"failed": 0, "running": 1, "made": 2}
+    out.sort(key=lambda w: (rank[w["state"]], -(w["at"] or 0)))
+    return out[:limit]
+
+
+def find_write(state, cid):
+    """The deferred write whose id is cid or starts with it (no age limit)."""
+    folder = state / "approvals" / "done"
+    try:
+        names = sorted(n[:-5] for n in os.listdir(str(folder)) if n.endswith(".json") and CARD_ID.fullmatch(n[:-5]))
+    except OSError:
+        return None
+    for name in names:
+        if name == cid or name.startswith(cid):
+            rec = read_json(folder / "{}.json".format(name))
+            item = write_record(rec, name) if rec else None
+            if item:
+                return item
+    return None
+
+
+def write_line(item):
+    """One display line for a deferred write."""
+    label = {"failed": "!! FAILED", "running": "running", "made": "made"}[item["state"]]
+    what = item["tool"] + (" " + item["target"] if item["target"] else "") + (" -> " + item["repo"] if item["repo"] else "")
+    if item["tool"] in ("github_create_pr", "gitlab_create_mr") and item["title"]:
+        what += " \"{}\"".format(item["title"])
+    text = "{}  {:<9} {}".format(item["id"], label, what)
+    if item["state"] != "running" and item["summary"]:
+        text += "\n    " + item["summary"]
+    elif item["state"] == "running":
+        text += "  (the gateway is making it now)"
+    return text
+
+
 def minutes_left(card, now=None):
     now = time.time() if now is None else now
     return int((float(card.get("expires", 0)) - now) // 60)
 
 
 def one_line(card):
-    tool = card.get("tool")
-    who = card.get("principal") or "?"
+    tool = clean(card.get("tool"), 40)
+    who = clean(card.get("principal"), 40) or "?"
     if tool == "git_push":
         what = "push {} -> {} ({} commit(s), {} file(s))".format(
-            card.get("branch"), card.get("repo"), card.get("commits"), card.get("file_count"))
+            clean(card.get("branch"), 100), clean(card.get("repo"), 100), clean(card.get("commits"), 12),
+            clean(card.get("file_count"), 12))
     elif tool in ("github_create_pr", "gitlab_create_mr"):
         what = "{}{} on {}: {} -> {} \"{}\"".format(
             "draft " if card.get("draft", True) else "", "MR" if tool == "gitlab_create_mr" else "PR",
-            card.get("repo"), card.get("head"), card.get("base"), (card.get("title") or "")[:60])
+            clean(card.get("repo"), 100), clean(card.get("head"), 100), clean(card.get("base"), 100),
+            clean(card.get("title"), 60))
     else:
         what = tool
-    return "{}  {:<10} {}  ({} min left)".format(card["id"], who, what, minutes_left(card))
+    return "{}  {:<10} {}  ({} min left)".format(clean(card["id"], 64), who, what, minutes_left(card))
+
+
+QUEUED_NOTE = "queued: the agent has moved on; the gateway makes the write when it is approved"
 
 
 def status_note(state, card, now=None):
-    """What the card is waiting for, if not for a decision: "" while it is."""
+    """What the card is waiting for, if not for a decision: "" while it is.
+    A queued card says so (the gateway, not the agent, makes the write)."""
+    queued = is_queued(state, card)
     info = decided(state, card)
     if info["decided"]:
-        return info, decided_text(info)
+        return info, decided_text(info, queued)
     if minutes_left(card, now) < 0:
         return info, "expired; the agent's retry will make a fresh card"
-    return info, ""
+    return info, QUEUED_NOTE if queued else ""
+
+
+def print_writes(writes):
+    print("Deferred writes (the gateway made these after approval):")
+    for item in writes:
+        print(write_line(item))
 
 
 def cmd_list(state, _args):
     cards = read_cards(state)
+    writes = read_writes(state)
     if not cards:
         print("No approvals pending.")
-        return 0
     for card in cards:
         _, note = status_note(state, card)
         print(one_line(card) + ("\n    [{}]".format(note) if note else ""))
-    print("\nfactory approvals show <id> | approve <id> | decline <id> --reason ...")
+    if writes:
+        print()
+        print_writes(writes)
+    if cards:
+        print("\nfactory approvals show <id> | approve <id> | decline <id> --reason ...")
     return 0
+
+
+def show_write(item):
+    print("deferred write {}  ({})".format(item["id"], item["state"]))
+    for key, label in (("tool", "tool"), ("role", "role"), ("repo", "repo"), ("target", "branch"), ("title", "title"),
+                       ("approver", "approved_by")):
+        if item[key]:
+            print("  {:<14} {}".format(label, item[key]))
+    print("  {:<14} {}".format("finished", when(item["at"])))
+    print("  {:<14} {}".format("result" if item["state"] != "failed" else "reason", item["summary"] or "-"))
 
 
 def cmd_show(state, args):
     card = find(state, args.id)
     if not card:
+        item = find_write(state, args.id)
+        if item:
+            show_write(item)
+            return 0
         print("no pending approval matches {}".format(args.id), file=sys.stderr)
         return 1
     skip = {"created", "expires", "nonce"}
     info, note = status_note(state, card)
-    print("approval {}  ({} min left)".format(card["id"], minutes_left(card)))
+    print("approval {}  ({} min left)".format(clean(card["id"], 64), minutes_left(card)))
     print("  {:<14} {}".format("decided", info["decided"] or "no"))
     if info["decided"]:
         print("  {:<14} {}".format("decided_by", info["decided_by"]))
@@ -128,11 +335,11 @@ def cmd_show(state, args):
             continue
         val = card[key]
         if isinstance(val, list):
-            print("  {:<14}".format(key))
+            print("  {:<14}".format(clean(key, 40)))
             for item in val:
-                print("    {}".format(item))
+                print("    {}".format(clean(item)))
         else:
-            print("  {:<14} {}".format(key, val))
+            print("  {:<14} {}".format(clean(key, 40), clean(val, 500)))
     return 0
 
 
@@ -188,10 +395,17 @@ def when(ts):
         return "?"
 
 
-def decided_text(info):
-    """ "approved by X at T; waiting for the agent to retry" (or declined)."""
-    return "{} by {} at {}; waiting for the agent to retry".format(
-        "approved" if info["decided"] == "approve" else "declined", info["decided_by"], when(info["decided_at"]))
+def decided_text(info, queued=False):
+    """ "approved by X at T; waiting for the agent to retry" (or declined). A
+    queued card waits for the gateway instead: an approved one is written
+    within seconds, a declined one never."""
+    wait = "waiting for the agent to retry"
+    if queued:
+        wait = ("the gateway makes the write within seconds" if info["decided"] == "approve"
+                else "the gateway files it; nothing is written")
+    return "{} by {} at {}; {}".format(
+        "approved" if info["decided"] == "approve" else "declined", clean(info["decided_by"], 60),
+        when(info["decided_at"]), wait)
 
 
 def card_fingerprint(card):
@@ -308,12 +522,13 @@ def decide(state, args, verdict):
     if not card:
         print("no pending approval matches {}".format(args.id), file=sys.stderr)
         return 1
+    queued = is_queued(state, card)
     info = decided(state, card)
     if info["decided"]:
-        print("approval {} is already {}".format(card["id"], decided_text(info)), file=sys.stderr)
+        print("approval {} is already {}".format(clean(card["id"], 64), decided_text(info, queued)), file=sys.stderr)
         return 1
     if minutes_left(card) < 0:
-        print("approval {} has expired; the agent's retry will make a fresh one".format(card["id"]), file=sys.stderr)
+        print("approval {} has expired; the agent's retry will make a fresh one".format(clean(card["id"], 64)), file=sys.stderr)
         return 1
     if verdict == "decline" and not args.reason:
         print("give the agent a reason: --reason \"...\"", file=sys.stderr)
@@ -323,15 +538,23 @@ def decide(state, args, verdict):
         write_decision(state, card, verdict, approver, args.reason)
     except AlreadyDecided as e:  # someone else decided it a moment ago
         info = decision_info(e.decision)
-        print("approval {} is already {}".format(card["id"], decided_text(info)), file=sys.stderr)
+        print("approval {} is already {}".format(clean(card["id"], 64), decided_text(info, queued)), file=sys.stderr)
         return 1
     except (ValueError, OSError) as e:
-        print("cannot decide {}: {}".format(card["id"], e), file=sys.stderr)
+        print("cannot decide {}: {}".format(clean(card["id"], 64), clean(e, 200)), file=sys.stderr)
         return 1
     print("{} {} as {}: {}".format("approved" if verdict == "approve" else "declined", card["id"], approver,
                                    one_line(card)))
     if verdict == "approve":
-        print("The agent's call proceeds if it is still waiting; otherwise its retry will.")
+        if queued:
+            print("This write is queued: the gateway will make it within seconds (it checks every 5 s); the agent "
+                  "need not retry. See the result with: factory approvals")
+        elif card.get("tool") in DEFERRED_TOOLS:  # a hold that runs out becomes a queue job
+            print("The call proceeds if it is still waiting; otherwise the gateway makes it within seconds.")
+        else:
+            print("The agent's call proceeds if it is still waiting; otherwise its retry will.")
+    elif queued:
+        print("This write is queued: the gateway files the decline and nothing is written.")
     return 0
 
 
@@ -377,15 +600,31 @@ def cmd_summary(state, _args):
     return 0
 
 
+def watch_once(state, seen, queued, writes, out=print):
+    """One pass of watch: print each new card, each card that has become
+    queued and each deferred write that is new or has changed state. seen,
+    queued and writes (id -> state) carry what was printed between passes."""
+    stamp = time.strftime("%H:%M:%S")
+    for card in read_cards(state):
+        if card["id"] not in seen:
+            seen.add(card["id"])
+            out("{} {}".format(stamp, one_line(card)))
+        if card["id"] not in queued and is_queued(state, card):
+            queued.add(card["id"])
+            out("{} {}  [{}]".format(stamp, clean(card["id"], 64), QUEUED_NOTE))
+    for item in read_writes(state):
+        if writes.get(item["id"]) != item["state"]:
+            writes[item["id"]] = item["state"]
+            out("{} {}".format(stamp, write_line(item)))
+
+
 def cmd_watch(state, _args):
-    seen = set()
+    seen, queued, writes = set(), set(), {}
     print("Watching {} (Ctrl-C to stop)".format(state / "approvals" / "pending"))
     try:
         while True:
-            for card in read_cards(state):
-                if card["id"] not in seen:
-                    seen.add(card["id"])
-                    print(time.strftime("%H:%M:%S"), one_line(card))
+            watch_once(state, seen, queued, writes)
+            sys.stdout.flush()
             time.sleep(2)
     except KeyboardInterrupt:
         return 0

@@ -81,10 +81,15 @@ decline needs a reason). One decision per card: `write_decision` hard-links a fu
 written file onto the final name (never replaces it), so a second decision for the
 same id and nonce is refused (`decided`, a 409 naming the verdict that stands) and of
 two at once exactly one wins; a decision with another nonce (an earlier card) is
-set aside under a lock and never blocks the new card. A decided card stays pending
-until the agent retries the call, and the unit shows it as decided with its keys dark. A decided or expired card never marks a lane HELD
-(`Dashboard.held()`): the broker's hook waits only `hold_seconds`, so the agent's call has
-already returned.
+set aside under a lock and never blocks the new card. A decided card of a tool the
+gateway doesn't queue stays pending until the agent retries the call; a queued card
+(`approvals/queued/<id>.json` with the card's id and nonce: a push, PR or MR whose hold
+ran out) is written by the gateway within seconds of approval, not by a retry. The unit
+shows either as decided with its keys dark, and a queued one is marked QUEUED. A decided,
+expired or queued card never marks a lane HELD (`Dashboard.held()`): the broker's hook
+waits only `hold_seconds`, so the agent's call has already returned. The unit's
+deferred-writes list (`writes` in its state, from `approvals.read_writes`) is display
+only, every field cleaned to one line and drawn as text.
 
 RESTART and UPDATE run host commands, so no single request can start one: a `prepare`
 request shows what it would do (the jobs it cancels, the held writes it drops; for

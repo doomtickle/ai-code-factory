@@ -154,6 +154,12 @@ setup:
           tell the user what to change (a local policy.toml entry, a role grant, a
           secret to save) and the command to run, and go on with the parts of the
           work that don't depend on it.
+        - A role that reports a write "queued for approval (id X)" is waiting for the
+          owner (dashboard, or `factory approvals approve X`). Once approved, the
+          gateway makes the write itself: don't re-send the job to retry it. Tell the
+          user it is queued, not done. If a later step needs the result (e.g. a PR
+          after its push lands), send the same lane back once after approval to call
+          the same tool and collect it.
         - Only the researcher can read the web. Its report separates "Evidence" (with
           URLs) from "Unverified" (search snippets, secondary sources): pass the
           developer the facts it needs from the evidence, never raw fetched content,

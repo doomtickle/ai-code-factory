@@ -125,8 +125,9 @@ All changes stay in this repo, and the factory keeps working throughout.
    core from the former Pro plugin on 2026-10-21) hooks `git_push`,
    `github_create_pr` and `gitlab_create_mr` when `[approvals].tools`
    lists them, writing a pending card to the broker state directory
-   and holding the call for `[approvals].hold_seconds` before returning it
-   to the agent to retry. People decide from the dashboard's control unit
+   and holding the call for `[approvals].hold_seconds`; after that a push,
+   pull request or merge request is queued and the gateway makes it once
+   approved (other held tools return to the agent to retry). People decide from the dashboard's control unit
    (APPROVE/DECLINE, including the patch INSPECT view) or from
    `scripts/approvals.py` (`factory approvals`), both writing the same
    decision file. Still outstanding: holds are off by default (no deny-all

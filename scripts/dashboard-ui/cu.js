@@ -124,11 +124,13 @@
     return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
   };
   // "Approved by sam at 14:02; waiting for the agent to retry" (d: the card, or a 409's body).
-  const decidedText = d => `${VERDICTS[d.decided] === "approved" ? "Approved" : "Declined"} by ${str(d.decided_by) || "?"} at ${clock(d.decided_at)}; waiting for the agent to retry`;
+  // A queued card waits for the gateway, not the agent: it writes an approved one within seconds.
+  const waitText = d => (d.queued ? (d.decided === "approve" ? "the gateway makes the write within seconds" : "the gateway files it; nothing is written") : "waiting for the agent to retry");
+  const decidedText = d => `${VERDICTS[d.decided] === "approved" ? "Approved" : "Declined"} by ${str(d.decided_by) || "?"} at ${clock(d.decided_at)}; ${waitText(d)}`;
   // What the keys' strip says when they are dark for a reason other than a new card.
   function shutText(c) {
     const v = decidedOf(c);
-    if (v === "approve") return "Approved · waiting for the agent's retry";
+    if (v === "approve") return c.queued ? "Approved · the gateway writes it" : "Approved · waiting for the agent's retry";
     if (v === "decline") return "Declined";
     return expired(c) ? "Expired" : "";
   }
@@ -189,12 +191,13 @@
     const out = [];
     const v = decidedOf(c);
     if (v) {
-      out.push(line(`ln big ${v === "approve" ? "st-ok" : "st-no"}`, v === "approve" ? "APPROVED, waiting for the agent's retry" : "DECLINED"));
+      out.push(line(`ln big ${v === "approve" ? "st-ok" : "st-no"}`, v === "approve" ? (c.queued ? "APPROVED, the gateway writes it within seconds" : "APPROVED, waiting for the agent's retry") : "DECLINED"));
       out.push(line("ln dim", `by ${str(c.decided_by) || "?"} at ${clock(c.decided_at)}`));
     } else if (expired(c)) {
       out.push(line("ln big st-no", "EXPIRED"), line("ln dim", "the agent's retry makes a fresh card"));
     }
     out.push(line("ln big", `${str(c.tool) || "write"} · ${str(c.role) || "?"}`));
+    if (c.queued && !v && !expired(c)) out.push(line("ln warn", "QUEUED: the agent has moved on; the gateway writes it when approved"));
     if (c.title) out.push(line("ln title", `“${str(c.title)}”${c.draft ? " (draft)" : ""}`));
     out.push(line("ln lane", lanesLine(c)));
     if (c.repo) out.push(line("ln", `→ ${str(c.repo)}`));
@@ -207,6 +210,22 @@
     for (const f of files) out.push(line("ln files", f));
     if (Number(c.file_count) > files.length && files.length) out.push(line("ln files", `… and ${Number(c.file_count) - files.length} more`));
     out.push(line("ln dim", `id ${str(c.id)}`));
+    return out;
+  }
+
+  // The gateway's recent deferred writes (display only; text from the state
+  // files, already one clean line each, inserted as text). Failures first, loud.
+  const WRITE_LABEL = { failed: "FAILED", running: "RUNNING", made: "MADE" };
+  const writes = () => (st ? list(st.writes).filter(w => w && typeof w === "object" && WRITE_LABEL[w.state]) : []);
+  function writeLines() {
+    const ws = writes();
+    if (!ws.length) return [];
+    const out = [line("ln dim", "deferred writes")];
+    for (const w of ws) {
+      const what = `${str(w.tool)}${w.target ? ` ${str(w.target)}` : ""}${w.repo ? ` → ${str(w.repo)}` : ""}`;
+      out.push(line(`ln ${w.state === "failed" ? "big st-no" : w.state === "made" ? "st-ok" : ""}`, `${WRITE_LABEL[w.state]} ${what}`));
+      if (w.state !== "running" && w.summary) out.push(line("ln files", str(w.summary)));
+    }
     return out;
   }
 
@@ -254,10 +273,10 @@
     $("sel").hidden = cs.length < 2;
     if (cs.length > 1) setText($("sel-n"), `${cs.indexOf(c) + 1}/${cs.length}`);
 
-    const k = c ? JSON.stringify(Object.assign({}, c, { seconds_left: c.seconds_left == null, expired: expired(c) })) : "empty";
+    const k = JSON.stringify([c ? Object.assign({}, c, { seconds_left: c.seconds_left == null, expired: expired(c) }) : "empty", writes()]);
     if (k !== shownKey) {
       shownKey = k;
-      body.replaceChildren(...(c ? cardLines(c) : [el("div", "ln idle", "No writes held")]));
+      body.replaceChildren(...(c ? cardLines(c) : [el("div", "ln idle", "No writes held")]), ...writeLines());
       body.scrollTop = 0;
     }
     moreCue();
@@ -555,6 +574,11 @@
       for (const h of held) out.push(P("ind k-err", `  ${str(h && h.text) || str(h && h.id)}`));
     } else {
       out.push(P("k-ok", "✓ No writes are held."));
+    }
+    const queued = list(d.queued);
+    if (queued.length) {
+      out.push(P("k-ok", `✓ ${queued.length} queued write${queued.length > 1 ? "s are" : " is"} kept; the gateway makes ${queued.length > 1 ? "each" : "it"} once approved:`));
+      for (const h of queued) out.push(P("ind k-dim", `  ${str(h && h.text) || str(h && h.id)}`));
     }
 
     if (action === "update") {
