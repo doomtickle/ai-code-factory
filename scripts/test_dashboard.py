@@ -235,6 +235,33 @@ class HeldTests(unittest.TestCase):
         detail = d.Dashboard(self.state, self.roles, "proj").lane_detail("developer", self.now)
         self.assertEqual(detail["state"], "held")
 
+    def queue(self, cid, nonce="n"):
+        folder = self.state / "broker" / "approvals" / "queued"
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / f"{cid}.json").write_text(json.dumps({"id": cid, "nonce": nonce, "tool": "git_push"}))
+
+    def test_queued_card_holds_nothing_and_is_marked(self):
+        write_lane(self.logs, "developer", "20261019-000001-aaaaaa", self.now)
+        self.card("q1", "developer", nonce="n")
+        self.queue("q1")
+        lanes, gate = self.snap()
+        self.assertEqual(lanes["developer"]["state"], "running")  # the agent's call already returned
+        self.assertEqual(lanes["developer"]["held_note"], "")
+        self.assertEqual([(c["id"], c["queued"], c["decided"]) for c in gate], [("q1", True, None)])
+        # A live card beside it still holds the lane, and is not marked queued.
+        self.card("live", "developer", nonce="m")
+        lanes, gate = self.snap()
+        self.assertEqual(lanes["developer"]["state"], "held")
+        self.assertEqual({c["id"]: c["queued"] for c in gate}, {"q1": True, "live": False})
+
+    def test_queued_file_for_another_card_marks_nothing(self):
+        write_lane(self.logs, "developer", "20261019-000001-aaaaaa", self.now)
+        self.card("q1", "developer", nonce="new")
+        self.queue("q1", nonce="old")  # an earlier card with the same id
+        lanes, gate = self.snap()
+        self.assertEqual(lanes["developer"]["state"], "held")
+        self.assertFalse(gate[0]["queued"])
+
     def test_card_for_role_with_no_running_lane(self):
         write_lane(self.logs, "developer", "20261019-000001-aaaaaa", self.now)
         self.card("c1", "reviewer")
@@ -296,6 +323,121 @@ class BrokerEventTests(unittest.TestCase):
             self.assertEqual(len(audit.calls), 500)
             self.assertTrue(all(r.get("decision") == "allow" for r in audit.calls))
             self.assertEqual(audit.calls[0]["n"], 100)
+
+
+class QueuedEventTests(unittest.TestCase):
+    def test_queue_events_are_printed(self):
+        ev = d.broker_event({"ts": "2026-10-19T06:00:00Z", "event": "approval-queued", "id": "c1", "tool": "git_push",
+                             "repo": "o/r", "branch": "factory/x"})
+        self.assertEqual((ev["kind"], ev["red"], ev["text"]), ("QUEUED", True, "git_push o/r factory/x"))
+        ev = d.broker_event({"event": "approval-write-done", "id": "c1", "tool": "github_create_pr", "repo": "o/r",
+                             "result": "\n\nhttps://github.com/o/r/pull/9\nsecond line"})
+        self.assertEqual((ev["kind"], ev["red"]), ("WRITTEN", False))
+        self.assertTrue(ev["text"].endswith("· https://github.com/o/r/pull/9"), ev["text"])
+        self.assertNotIn("second line", ev["text"])
+        ev = d.broker_event({"event": "approval-write-failed", "id": "c1", "tool": "git_push", "repo": "o/r",
+                             "reason": "denied: branch moved"})
+        self.assertEqual((ev["kind"], ev["red"]), ("FAILED", True))
+        self.assertTrue(ev["text"].endswith("· denied: branch moved"), ev["text"])
+
+    def test_queued_call_record_prints_nothing(self):
+        # The call itself is audited with decision "queued"; its approval-queued event is the line.
+        self.assertIsNone(d.broker_event({"tool": "git_push", "role": "developer", "decision": "queued"}))
+
+    def test_hostile_reason_and_result_print_as_one_clean_line(self):
+        evil = "bad\x1b[2J\r\n‮evil​\x00" + "x" * 5000
+        for event, field in (("approval-write-failed", "reason"), ("approval-write-done", "result")):
+            ev = d.broker_event({"event": event, "tool": "git_push", field: evil})
+            self.assertEqual(len(ev["text"].splitlines()), 1)
+            for ch in ev["text"]:
+                self.assertGreaterEqual(ch, " ")
+                self.assertNotIn(ch, "‮​\x7f")
+            self.assertLess(len(ev["text"]), 400)
+
+    def test_non_string_fields_do_not_break_it(self):
+        for rec in ({"event": "approval-write-failed", "tool": "t", "reason": {"a": 1}},
+                    {"event": "approval-write-done", "tool": "t", "result": 5},
+                    {"event": "approval-write-done", "tool": "t", "result": ["x"]}):
+            self.assertEqual(len(d.broker_event(rec)["text"].splitlines()), 1)
+
+
+class WritesTests(unittest.TestCase):
+    """The snapshot's deferred-write list: display only, every field one clean line."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.fx = Fixture(Path(self.tmp.name))
+        self.done = self.fx.state / "broker" / "approvals" / "done"
+        self.done.mkdir(parents=True)
+        self.board = d.Dashboard(self.fx.state, self.fx.roles, "proj")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def put(self, cid, write, age=60, **over):
+        rec = {"id": cid, "tool": "git_push", "principal": "developer", "repo": "o/r", "branch": "factory/x",
+               "nonce": "n", "decision": "approve", "approver": "daron", "queued": True, "write": write,
+               "result": "pushed 2 commits\nmore", "finished": self.fx.now - age}
+        rec.update(over)
+        (self.done / f"{cid}.json").write_text(json.dumps(rec))
+
+    def test_snapshot_lists_failures_first(self):
+        self.put("made1", "done", age=30)
+        self.put("bad1", "failed", age=300, result="denied: branch moved")
+        self.put("run1", "running", age=5)
+        self.put("declined1", "skipped")
+        self.put("plain1", "done", queued=False)  # approved while the agent waited: not a deferred write
+        snap = self.board.snapshot(self.fx.now)
+        json.dumps(snap)
+        self.assertEqual([(w["id"], w["state"]) for w in snap["writes"]],
+                         [("bad1", "failed"), ("run1", "running"), ("made1", "made")])
+        self.assertEqual(snap["writes"][0]["summary"], "denied: branch moved")
+        self.assertEqual(snap["writes"][2]["summary"], "pushed 2 commits")
+
+    def test_no_done_folder(self):
+        self.done.rmdir()
+        self.assertEqual(self.board.snapshot(self.fx.now)["writes"], [])
+
+    def test_hostile_contents_come_out_clean(self):
+        evil = "\x1b]0;pwned\x07\r\n‮<img src=x onerror=alert(1)>​\x00" + "y" * 5000
+        self.put("evil1", "failed", tool=evil, principal=evil, repo=evil, branch=evil, title=evil, result=evil,
+                 approver=evil)
+        w = self.board.snapshot(self.fx.now)["writes"][0]
+        for key in ("tool", "role", "repo", "target", "title", "summary", "approver"):
+            value = w[key]
+            self.assertEqual(len(value.splitlines()), 1, key)
+            for ch in value:
+                self.assertGreaterEqual(ch, " ", key)
+                self.assertNotIn(ch, "‮​\x7f", key)
+            self.assertLessEqual(len(value), 200, key)
+        # Text stays text: the page draws it with textContent, so markup is only ever characters.
+        self.assertIn("<img", w["summary"])
+
+    def test_bad_files_are_skipped(self):
+        self.put("good1", "done")
+        (self.done / "junk.json").write_text("{not json")
+        (self.done / "list.json").write_text("[1, 2]")
+        (self.done / "wrongid.json").write_text(json.dumps({"id": "other", "queued": True, "write": "done"}))
+        (self.done / "weird.json").write_text(json.dumps({"id": "weird", "queued": True, "write": ["done"],
+                                                           "finished": "soon", "result": 7}))
+        writes = self.board.snapshot(self.fx.now)["writes"]
+        self.assertEqual([w["id"] for w in writes], ["good1"])
+
+    def test_read_is_cached_between_polls(self):
+        self.put("made1", "done")
+        with mock.patch.object(d.approvals, "read_writes", wraps=d.approvals.read_writes) as spy:
+            self.board.writes(self.fx.now)
+            self.board.writes(self.fx.now + 1)
+            self.assertEqual(spy.call_count, 1)
+            self.put("bad1", "failed")
+            self.assertEqual(len(self.board.writes(self.fx.now + d.WRITES_TTL + 1)), 2)
+            self.assertEqual(spy.call_count, 2)
+
+    def test_cached_list_cannot_be_changed_by_a_caller(self):
+        self.put("made1", "done")
+        first = self.board.writes(self.fx.now)
+        first[0]["summary"] = "tampered"
+        self.assertEqual(self.board.writes(self.fx.now + 1)[0]["summary"], "pushed 2 commits")
 
 
 class TailTests(unittest.TestCase):
@@ -518,6 +660,8 @@ class ServerTests(unittest.TestCase):
         for card in state["gate"]:
             self.assertNotIn("fp", card)  # the fingerprint is for the control unit only
             self.assertNotIn("nonce", card)
+            self.assertIs(card["queued"], False)
+        self.assertEqual(state["writes"], [])
         self.assertNotIn(self.server.term_server.cu_key, json.dumps(state))
 
 

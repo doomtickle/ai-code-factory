@@ -235,6 +235,13 @@ press APPROVE (or DECLINE, with a reason) on the dashboard's control unit, or
 use `factory approvals`
 ([Enabling approvals](../../README.md#enabling-approvals)).
 
+You don't have to be quick. A push or PR you haven't decided within the
+broker's hold (45 seconds) is **queued**: the agent is told it is waiting for
+approval and moves on, and the gateway makes the write itself, within seconds,
+when you approve it. `factory approvals` and the dashboard's write gate mark a
+queued write, and then show what became of it: made (with the PR's address),
+failed (with why, in red) or still running.
+
 ## Keep the Coordinator's context small
 
 Your conversation with the Coordinator is re-read on every turn. When a feature

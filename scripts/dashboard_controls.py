@@ -9,8 +9,10 @@ the right Host and Origin, the dashboard cookie and the key in the
 X-Factory-Control header (dashboard_term.control_refusal). This module is what
 those requests reach:
 
-  state    the held writes (with each card's fingerprint), the bound project
-           and the current service action
+  state    the held writes (with each card's fingerprint, and whether the
+           gateway has queued it), the recent deferred writes the gateway made
+           on approval (display only: made, failed, running), the bound
+           project and the current service action
   decide   approve or decline one held write: one press, a file write through
            approvals.write_decision(), the same record `factory approvals`
            writes. Exact id, and the card's fingerprint must still match.
@@ -79,7 +81,7 @@ MAX_REASON = 500       # characters in a decision's reason
 MAX_OFFSET = 2 ** 53   # largest log offset accepted (a page's JSON number stays exact)
 CARD_KEYS = ("id", "tool", "role", "lanes", "repo", "branch", "base", "title", "draft", "commits",
              "file_count", "files", "seconds_left", "fp", "patch", "patch_truncated", "decided", "decided_by",
-             "decided_at")
+             "decided_at", "queued")
 PATCH_SHA = re.compile(r"[0-9a-f]{64}")  # a card's patch_sha256 (fullmatch), before it names a file
 PATCH_MAX = 2 * 1024 * 1024              # largest patch file read (the broker caps them at 256 KiB by default)
 
@@ -230,10 +232,13 @@ class Controls:
     def api_state(self, body: dict) -> tuple:
         now = self.clock()
         cards, _, _ = self.gate(now)
+        with self.board.lock:
+            writes = self.board.writes(now)  # display only: deferred writes the gateway made (or failed)
         project = self.bound()
         with self.lock:
             action = self.action_json()
-        return 200, {"now": now, "project": project, "bound": bool(project), "cards": cards, "action": action}
+        return 200, {"now": now, "project": project, "bound": bool(project), "cards": cards, "writes": writes,
+                     "action": action}
 
     def held_card(self, cid: str, fp: str) -> dict:
         """The pending card with exactly this id, if its fingerprint is still fp."""
@@ -358,13 +363,13 @@ class Controls:
         _, raw, running = self.gate(self.clock())
         if action not in HANGS_UP:
             raw, running = {}, []  # it stops nothing: no jobs or held writes to warn about
-        held = []
+        held, queued = [], []  # queued cards are files the gateway keeps: a restart drops none of them
         for cid, card in raw.items():
             try:
                 text = approvals.one_line(card)
             except (TypeError, ValueError):
-                text = cid
-            held.append({"id": cid, "text": text})
+                text = approvals.clean(cid, 64)
+            (queued if approvals.is_queued(self.state / "broker", card) else held).append({"id": cid, "text": text})
         plan, plan_error = {"commits": [], "recreate": [], "maybe": [], "notes": []}, None
         if action == "update":
             with self.plan_lock:
@@ -375,7 +380,7 @@ class Controls:
                 raise Refused(409, f"{self.action} is still running")
             self.confirm = (token, action, self.clock() + CONFIRM_TTL)  # replaces any earlier token
         return 200, dict({"action": action, "confirm": token, "expires_in": CONFIRM_TTL, "project": project,
-                          "jobs": running, "held": held, "plan_error": plan_error}, **plan)
+                          "jobs": running, "held": held, "queued": queued, "plan_error": plan_error}, **plan)
 
     def plan(self) -> tuple:
         """(parsed plan, error or None) from `<factory> update --plan` (fixed argv)."""

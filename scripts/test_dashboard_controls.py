@@ -325,6 +325,37 @@ class DecideTests(unittest.TestCase):
         self.assertEqual(out["action"], {"name": None, "phase": "idle", "started": None, "ended": None,
                                          "exit": None, "reload": "none"})
 
+    def test_state_marks_queued_cards_and_lists_deferred_writes(self):
+        e = self.env
+        card = write_card(e.fx.state, "pr1", e.fx.now)
+        queued = e.fx.state / "broker" / "approvals" / "queued"
+        queued.mkdir(parents=True)
+        (queued / "pr1.json").write_text(json.dumps({"id": "pr1", "nonce": card["nonce"], "tool": card["tool"]}))
+        done = e.fx.state / "broker" / "approvals" / "done"
+        done.mkdir(parents=True)
+        evil = "\x1b[2J‮<script>alert(1)</script>\r\n​"
+        for cid, write, result in (("w1", "done", "https://github.com/o/r/pull/9\nmore"), ("w2", "failed", evil)):
+            (done / f"{cid}.json").write_text(json.dumps({
+                "id": cid, "tool": "github_create_pr", "principal": "developer", "repo": "o/r", "head": "factory/y",
+                "title": evil, "nonce": "secret-" + cid, "queued": True, "write": write, "result": result,
+                "decision": "approve", "approver": "daron", "finished": e.fx.now - 20}))
+        out = self.state()
+        cards = {c["id"]: c for c in out["cards"]}
+        self.assertEqual((cards["pr1"]["queued"], cards["c0ffee"]["queued"]), (True, False))
+        self.assertEqual(set(cards["pr1"]), set(dc.CARD_KEYS))
+        self.assertEqual([(w["id"], w["state"]) for w in out["writes"]], [("w2", "failed"), ("w1", "made")])
+        self.assertEqual(out["writes"][1]["summary"], "https://github.com/o/r/pull/9")
+        for w in out["writes"]:
+            for value in w.values():
+                if isinstance(value, str):
+                    self.assertEqual(len(value.splitlines()), 1)
+                    self.assertNotIn("‮", value)
+                    self.assertNotIn("\x1b", value)
+        self.assertNotIn("secret-w1", json.dumps(out))  # a nonce never leaves the server
+
+    def test_state_with_no_deferred_writes(self):
+        self.assertEqual(self.state()["writes"], [])
+
     def decide(self, **body):
         return self.env.post("decide", body)
 
@@ -745,6 +776,22 @@ class ActionTests(unittest.TestCase):
         self.assertEqual(e.argv(), [])  # prepare ran nothing
         self.assertEqual(self.prepare("reboot")[0], 400)
         self.assertEqual(e.post("prepare", {})[0], 400)
+
+    def test_prepare_lists_queued_writes_apart_from_the_ones_it_drops(self):
+        e = self.env
+        e.bind()
+        card = write_card(e.fx.state, "pr1", e.fx.now)
+        queued = e.fx.state / "broker" / "approvals" / "queued"
+        queued.mkdir(parents=True)
+        (queued / "pr1.json").write_text(json.dumps({"id": "pr1", "nonce": card["nonce"]}))
+        code, out, _ = self.prepare("restart")
+        self.assertEqual(code, 200, out)
+        self.assertEqual([h["id"] for h in out["held"]], ["c0ffee"])
+        self.assertEqual([h["id"] for h in out["queued"]], ["pr1"])
+        self.assertEqual(e.argv(), [])
+        # A command that stops nothing lists neither.
+        code, out, _ = self.prepare("doctor")
+        self.assertEqual((out["held"], out["queued"]), ([], []))
 
     def test_prepare_update_runs_the_plan(self):
         e = self.env

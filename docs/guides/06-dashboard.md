@@ -125,12 +125,32 @@ waits here for you ([Enabling approvals](../../README.md#enabling-approvals)).
 With holds off, the gate always reads NO WRITES HELD and the agents' writes go
 through under the broker's policy alone.
 
-The gate's display gives one line: how many writes are held, the first
-one's tool and role, and the time left before it expires. Under it, the
+The gate's display gives one line: how many writes are held (and how many of
+them are queued, below), the first one's tool and role, and the time left
+before it expires. Under it, the
 **control unit** shows the selected write in full: the tool, the role and its
 lanes, the repo, the branch (or head and base for a PR or merge request), its title, the
 commits and files, and the time left. **◀ ▶** step through several held
 writes.
+
+### Queued writes and their outcomes
+
+A write you haven't decided within the broker's hold (45 seconds by default)
+is **queued**: the agent is told it is waiting for approval and moves on, so
+the lane no longer shows HELD for it. The card stays on the gate, marked
+**QUEUED: the agent has moved on; the gateway writes it when approved**. When
+you approve it the gateway makes the write itself, within seconds, and the
+card reads **APPROVED, the gateway writes it within seconds**; there is no
+retry to wait for.
+
+Under the card, **deferred writes** lists what the gateway did with recent
+approvals, failures first: **FAILED** (in red, with the reason, kept three
+days), **RUNNING** (the gateway is making it now) and **MADE** (with the
+first line of its result, such as the new PR's address; kept a day). A write
+that failed was not retried: ask the agent to make the request again. The
+event printer shows QUEUED, WRITTEN and FAILED lines for the same steps. This
+list only displays; it has no keys. The text in it comes from the gateway's
+state files and is shown as plain text.
 
 ### Decide a held write
 
@@ -195,7 +215,8 @@ The **SERVICE** row has three keys. None runs on the first press.
   FOUND; fix what it lists, then press DIAG again.
 
 - **RESTART** runs `factory restart`. First the unit shows what it will
-  cancel: the running jobs and the held writes it drops.
+  cancel: the running jobs and the held writes it drops. Queued writes are
+  files the gateway keeps, so they are listed as kept, not dropped.
 - **UPDATE** runs `factory update --yes`. First the unit shows the incoming
   commits, the sandboxes it will recreate and what each loses (from `factory
   update --plan`), plus the jobs and held writes it drops.
@@ -221,9 +242,10 @@ Stands in for: `factory doctor`, `factory restart`, `factory update` and
 
 - **Spend / hour:** today's cost as a bar per hour since midnight, then per
   role, with today's job count.
-- **Event printer:** today's broker calls (allowed, denied, held and decided)
-  and finished jobs, newest at the bottom. Denied and held calls, and failed
-  or cancelled jobs, print in red; the header counts the denied ones. Scroll up to read older lines; the printer stays put
+- **Event printer:** today's broker calls (allowed, denied, held, queued and
+  decided), the gateway's deferred writes (WRITTEN, or FAILED in red) and
+  finished jobs, newest at the bottom. Denied, held, queued and failed calls,
+  and failed or cancelled jobs, print in red; the header counts the denied ones. Scroll up to read older lines; the printer stays put
   until you scroll back down.
 
 For the full report, run `factory analytics` (or `factory analytics --html`).

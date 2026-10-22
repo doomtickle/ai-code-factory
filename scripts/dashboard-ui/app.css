@@ -307,6 +307,12 @@ a.tabkey { display: inline-block; text-decoration: none; }
 .gate-lcd .one { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-transform: uppercase; }
 .rail.has-cu .gate-hint { display: none; }
 .gate-to-cu { margin-left: 6px; color: var(--silk); }
+.gate-writes { padding: 5px 10px; font-family: var(--f-crt); font-size: 1.05rem; line-height: 1.1; display: grid; gap: 1px; margin-top: 6px; }
+.gate-writes[hidden], .rail.has-cu .gate-writes { display: none; }
+.gate-writes .wr { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gate-writes .wr-failed { background: var(--lcd-red); color: var(--lcd-bg); padding: 0 3px; font-weight: 700; }
+.gate-writes .wr-made { color: var(--lcd-green); }
+.gate-writes .wr-running { color: var(--lcd-amber); }
 .cu-slot { flex: 1; min-height: 0; min-width: 0; border-radius: 5px; }
 .cu-frame { display: block; width: 100%; height: 100%; border: 0; background: transparent; }
 /* Expanded for the unit's confirmation and log screens: a fixed layer over the whole

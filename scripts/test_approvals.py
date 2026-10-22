@@ -366,5 +366,221 @@ class SharedWriterTests(unittest.TestCase):
         self.assertEqual(set(rec), {"id", "nonce", "decision", "approver", "reason", "ts"})
         self.assertEqual((rec["decision"], rec["approver"], rec["reason"]), ("approve", "bob", ""))
 
+
+BIDI = "\u202e"
+HOSTILE = "evil\x1b[2J\x1b]0;pwned\x07\r\n" + BIDI + "text\u200b\u2028more\ud800\x00"
+
+
+def done_rec(cid="abcdef0123456789", write="done", result="https://github.com/acme/widgets/pull/9\nmore", **over):
+    base = card(cid, tool="github_create_pr", head="factory/y", title="Add thing", draft=True)
+    base.update({"decision": "approve", "approver": "daron", "reason": "", "decided": "1", "queued": True,
+                 "write": write, "result": result, "finished": time.time()})
+    base.update(over)
+    return base
+
+
+class CleanTests(unittest.TestCase):
+    def test_one_line_without_control_or_format_characters(self):
+        out = approvals.clean(HOSTILE)
+        self.assertEqual(out, "evil[2J]0;pwned text more")
+        for ch in out:
+            self.assertGreaterEqual(ch, " ")
+        self.assertNotIn(BIDI, out)
+
+    def test_cap_and_non_text(self):
+        self.assertEqual(approvals.clean("x" * 500, 10), "x" * 9 + "\u2026")
+        self.assertEqual(len(approvals.clean("x" * 5000)), approvals.LINE_MAX)
+        self.assertEqual(approvals.clean(None), "")
+        self.assertEqual(approvals.clean(12), "12")
+        self.assertEqual(approvals.clean({"a": "\n"}), "{'a': '\\n'}")
+        self.assertEqual(approvals.clean("  a \t\n b  "), "a b")
+
+
+class DeferredWriteTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.state = Path(self.tmp.name)
+        for kind in ("pending", "queued", "done", "decisions"):
+            (self.state / "approvals" / kind).mkdir(parents=True)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def put(self, kind, rec, name=None):
+        (self.state / "approvals" / kind / "{}.json".format(name or rec["id"])).write_text(json.dumps(rec))
+
+    def queue(self, c):
+        self.put("pending", c)
+        self.put("queued", {"id": c["id"], "nonce": c["nonce"], "tool": c["tool"], "queued": time.time(), "job": {}})
+
+    def run_cli(self, *argv):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = approvals.main(["--state", str(self.state)] + list(argv))
+        return code, out.getvalue(), err.getvalue()
+
+    def test_is_queued_needs_the_same_card(self):
+        c = card()
+        self.put("pending", c)
+        self.assertFalse(approvals.is_queued(self.state, c))
+        self.put("queued", {"id": c["id"], "nonce": "other", "tool": "git_push", "job": {}})
+        self.assertFalse(approvals.is_queued(self.state, c))  # an earlier card's job
+        self.put("queued", {"id": c["id"], "nonce": c["nonce"], "tool": "git_push", "job": {}})
+        self.assertTrue(approvals.is_queued(self.state, c))
+        self.assertFalse(approvals.is_queued(self.state, dict(c, nonce=None)))
+        self.assertFalse(approvals.is_queued(self.state, dict(c, id="../x")))
+
+    def test_list_marks_queued_cards(self):
+        self.queue(card())
+        self.put("pending", card("ffff000011112222"))
+        code, out, _ = self.run_cli()
+        self.assertEqual(code, 0)
+        first, second = out.split("ffff000011112222")
+        self.assertIn("[queued: the agent has moved on; the gateway makes the write when it is approved]", first)
+        self.assertNotIn("queued", second)
+
+    def test_approve_a_queued_card_says_the_gateway_writes_it(self):
+        self.queue(card())
+        code, out, _ = self.run_cli("approve", "abcdef", "--as", "daron")
+        self.assertEqual(code, 0)
+        self.assertIn("the gateway will make it within seconds", out)
+        self.assertNotIn("retry will", out)
+        code, _, err = self.run_cli("approve", "abcdef")
+        self.assertEqual(code, 1)
+        self.assertIn("the gateway makes the write within seconds", err)
+        _, out, _ = self.run_cli("list")
+        self.assertIn("approved by daron", out)
+        self.assertIn("the gateway makes the write within seconds", out)
+        self.assertNotIn("agent to retry", out)
+
+    def test_decline_and_plain_approve_keep_their_words(self):
+        self.queue(card())
+        _, out, _ = self.run_cli("decline", "abcdef", "--reason", "no")
+        self.assertIn("nothing is written", out)
+        self.put("pending", card("ffff000011112222"))
+        _, out, _ = self.run_cli("approve", "ffff")
+        self.assertIn("The agent's call proceeds if it is still waiting", out)
+
+    def test_done_writes_listed_failures_first(self):
+        self.put("done", done_rec("1111000011110000", result="Pushed 2 commit(s) to acme/widgets:factory/x (abc).\nremote: ..."))
+        self.put("done", done_rec("2222000022220000", write="failed", finished=time.time() - 60,
+                                  result="factory/x changed in the broker's mirror after the push was queued\nretry"))
+        self.put("done", done_rec("3333000033330000", write="running"))
+        self.put("done", done_rec("4444000044440000", write="skipped"))      # declined: no write
+        self.put("done", dict(done_rec("5555000055550000"), queued=False))   # a held call, not a deferred write
+        code, out, _ = self.run_cli()
+        self.assertEqual(code, 0)
+        self.assertIn("No approvals pending.", out)
+        lines = [ln for ln in out.splitlines() if ln[:4] in ("1111", "2222", "3333", "4444", "5555")]
+        self.assertEqual([ln[:4] for ln in lines], ["2222", "3333", "1111"])
+        self.assertIn("!! FAILED", lines[0])
+        self.assertIn("changed in the broker's mirror after the push was queued retry", out)
+        self.assertIn("(the gateway is making it now)", lines[1])
+        self.assertIn("made", lines[2])
+        self.assertIn("Pushed 2 commit(s) to acme/widgets:factory/x (abc).", out)
+        self.assertNotIn("remote:", out)  # the first line of a result, as the webhook shows it
+
+    def test_old_outcomes_drop_off(self):
+        old = time.time() - 2 * 24 * 3600
+        self.put("done", done_rec("1111000011110000", finished=old))                    # made two days ago
+        self.put("done", done_rec("2222000022220000", write="failed", finished=old))    # failed two days ago
+        self.put("done", done_rec("3333000033330000", write="failed", finished=time.time() - 5 * 24 * 3600))
+        self.put("done", done_rec("4444000044440000", write="done", finished="soon"))
+        self.put("done", done_rec("5555000055550000", write="failed", finished=None))
+        ids = [w["id"] for w in approvals.read_writes(self.state)]
+        self.assertEqual(ids, ["2222000022220000"])
+
+    def test_limit_and_scan(self):
+        for i in range(12):
+            self.put("done", done_rec("{:016x}".format(i)))
+        self.assertEqual(len(approvals.read_writes(self.state)), approvals.WRITES_LIMIT)
+
+    def test_show_a_finished_write(self):
+        self.put("done", done_rec(result="https://github.com/acme/widgets/pull/9"))
+        code, out, _ = self.run_cli("show", "abcdef")
+        self.assertEqual(code, 0)
+        self.assertIn("deferred write abcdef0123456789  (made)", out)
+        self.assertIn("result         https://github.com/acme/widgets/pull/9", out)
+        self.assertIn("approved_by    daron", out)
+        self.put("done", done_rec("bbbb000011112222", write="failed", result="nope"))
+        _, out, _ = self.run_cli("show", "bbbb")
+        self.assertIn("reason         nope", out)
+        code, _, err = self.run_cli("show", "cccc")
+        self.assertEqual(code, 1)
+
+    def test_hostile_fields_never_reach_the_terminal(self):
+        rec = done_rec(write="failed", result=HOSTILE * 40, tool=HOSTILE, repo=HOSTILE, head=HOSTILE,
+                       approver=HOSTILE, title=HOSTILE)
+        self.put("done", rec)
+        self.put("pending", card("ffff000011112222", title=HOSTILE, branch=HOSTILE, principal=HOSTILE, repo=HOSTILE))
+        for argv in ((), ("show", "abcdef"), ("show", "ffff")):
+            _, out, _ = self.run_cli(*argv)
+            for bad in ("\x1b", "\x07", "\r", BIDI, "\u200b", "\u2028", "\x00", "\ud800"):
+                self.assertNotIn(bad, out, (argv, bad))
+        _, out, _ = self.run_cli()
+        for line in out.splitlines():
+            self.assertLessEqual(len(line), 400)
+        item = approvals.read_writes(self.state)[0]
+        self.assertLessEqual(len(item["summary"]), approvals.SUMMARY_MAX)
+        self.assertEqual(set(item), {"id", "tool", "role", "repo", "target", "title", "state", "summary", "at", "approver"})
+
+    def test_a_pending_card_with_hostile_fields_in_the_decide_messages(self):
+        self.put("pending", card(title=HOSTILE, expires=time.time() - 600))
+        _, _, err = self.run_cli("approve", "abcdef")
+        self.assertNotIn("\x1b", err)
+
+    def test_bad_files_are_ignored(self):
+        done = self.state / "approvals" / "done"
+        (done / "1111000011110000.json").write_text("{not json")
+        (done / "2222000022220000.json").write_text("[1, 2]")
+        (done / "3333000033330000.json").write_bytes(b"\xff\xfe")
+        (done / "4444000044440000.json").write_text(json.dumps(done_rec("4444000044440000")) + " " * approvals.FILE_MAX)
+        (done / "not a card.json").write_text(json.dumps(done_rec("not a card")))
+        (done / "6666000066660000.json").write_text(json.dumps(done_rec("7777000077770000")))  # wrong id inside
+        os.symlink(str(self.state / "elsewhere"), str(done / "8888000088880000.json"))
+        os.mkfifo(str(done / "9999000099990000.json"))
+        (self.state / "elsewhere").write_text(json.dumps(done_rec("8888000088880000")))
+        self.assertEqual(approvals.read_writes(self.state), [])
+        (self.state / "approvals" / "queued" / "abcdef0123456789.json").write_bytes(b"\x00" * 10)
+        self.assertFalse(approvals.is_queued(self.state, card()))
+
+    def test_missing_folders(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual(approvals.read_writes(Path(tmp)), [])
+            self.assertIsNone(approvals.find_write(Path(tmp), "ab"))
+
+    def test_watch_prints_each_change_once(self):
+        lines = []
+        seen, queued, writes = set(), set(), {}
+        c = card()
+        self.put("pending", c)
+        approvals.watch_once(self.state, seen, queued, writes, lines.append)
+        self.assertEqual(len(lines), 1)
+        self.queue(c)
+        approvals.watch_once(self.state, seen, queued, writes, lines.append)
+        self.assertEqual(len(lines), 2)
+        self.assertIn("queued: the agent has moved on", lines[1])
+        approvals.watch_once(self.state, seen, queued, writes, lines.append)
+        self.assertEqual(len(lines), 2)
+        self.put("done", done_rec(write="running"))
+        approvals.watch_once(self.state, seen, queued, writes, lines.append)
+        self.put("done", done_rec(write="done"))
+        approvals.watch_once(self.state, seen, queued, writes, lines.append)
+        approvals.watch_once(self.state, seen, queued, writes, lines.append)
+        self.assertEqual(len(lines), 4)
+        self.assertIn("running", lines[2])
+        self.assertIn("made", lines[3])
+        self.put("done", done_rec(write="failed", result="boom"))
+        approvals.watch_once(self.state, seen, queued, writes, lines.append)
+        self.assertIn("!! FAILED", lines[4])
+        self.assertIn("boom", lines[4])
+
+    def test_summary_is_unchanged_by_queued_cards(self):
+        self.queue(card())
+        self.assertEqual(approvals.summarize(self.state)["pending"], 1)
+        _, out, _ = self.run_cli("summary")
+        self.assertEqual(len(out.split()), 4)
+
+
 if __name__ == "__main__":
     unittest.main()

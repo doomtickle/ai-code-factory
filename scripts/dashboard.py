@@ -156,6 +156,7 @@ COOKIE = "factory_dashboard"  # prefix: the cookie is COOKIE_<port> (see cookie_
 TAIL = 40          # transcript lines per lane in /api/state (taller lane screens)
 FULL = 1500        # transcript lines per lane in /api/lane
 EVENTS = 80        # event printer lines
+WRITES_TTL = 4     # seconds between reads of approvals/done/ for the deferred-write list
 VERDICT = re.compile(r"^- Verdict: (\S+)", re.M)
 
 
@@ -230,18 +231,25 @@ def call_target(rec: dict) -> str:
 def broker_event(rec: dict) -> dict | None:
     """A broker audit record as a printer line, or None for records not worth one."""
     event, decision = rec.get("event"), rec.get("decision")
-    kind = {"approval-requested": "HELD", "approval-granted": "OK", "approval-declined": "NO"}.get(event)
+    kind = {"approval-requested": "HELD", "approval-granted": "OK", "approval-declined": "NO",
+            "approval-queued": "QUEUED", "approval-write-done": "WRITTEN", "approval-write-failed": "FAILED"}.get(event)
     if kind is None and decision in ("allow", "deny"):
         kind = "ALLOW" if decision == "allow" else "DENY"
     if kind is None:
-        return None  # an "intent" record; its allow/deny record follows
+        # An "intent" record (its allow/deny record follows), or the call that
+        # was queued (decision "queued"; its approval-queued event is the line).
+        return None
     who = rec.get("role") or rec.get("principal") or ""
     bits = [str(rec["tool"]), str(who), call_target(rec)]
     if kind == "DENY" and rec.get("reason"):
         bits.append(f"· {rec['reason']}")
     if kind in ("OK", "NO") and rec.get("approver"):
         bits.append(f"· by {rec['approver']}")
-    return {"t": utc_ts(rec.get("ts")), "kind": kind, "red": kind in ("DENY", "HELD", "NO"),
+    if kind == "FAILED" and rec.get("reason"):
+        bits.append("· " + approvals.clean(rec["reason"]))
+    if kind == "WRITTEN" and rec.get("result"):
+        bits.append("· " + approvals.clean(next((ln for ln in str(rec["result"]).splitlines() if ln.strip()), "")))
+    return {"t": utc_ts(rec.get("ts")), "kind": kind, "red": kind in ("DENY", "HELD", "NO", "QUEUED", "FAILED"),
             "text": " ".join(b for b in bits if b)}
 
 
@@ -255,6 +263,7 @@ class Dashboard:
         self.broker = BrokerAudit(state / "broker" / "audit.jsonl")
         self.verdicts: dict = {}
         self.lock = threading.Lock()
+        self._writes: tuple = (0.0, [])
 
     def refresh(self) -> None:
         self.watch.refresh()
@@ -279,6 +288,17 @@ class Dashboard:
                 out[lane.role].append(lane.name)
         return out
 
+    def writes(self, now: float) -> list:
+        """Recent deferred writes (approvals.read_writes: made, failed and running,
+        failures first), every text field already one clean line. The folder is
+        read at most every WRITES_TTL seconds: the page polls every 2 s, the
+        gateway files an outcome every few seconds at most."""
+        at, cached = self._writes
+        if now - at >= WRITES_TTL or now < at:
+            cached = approvals.read_writes(self.state / "broker", now)
+            self._writes = (now, cached)
+        return [dict(w) for w in cached]
+
     def cards(self, now: float, fp: bool = False) -> list:
         """The pending approval cards. A card's principal is the broker token's
         name, which is the role (developer), never the lane (developer-lane2),
@@ -287,7 +307,9 @@ class Dashboard:
         page's /api/state), each card also carries approvals.card_fingerprint.
         A card someone has decided stays pending until the agent retries the
         call: "decided" is then "approve" or "decline", with "decided_by"
-        and "decided_at" (else all three are None)."""
+        and "decided_at" (else all three are None). "queued" is true for a
+        card the gateway queued (undecided past its hold): the agent has moved
+        on and the gateway makes the write once it is approved."""
         running = self.running()
         out = []
         for card in approvals.read_cards(self.state / "broker"):
@@ -306,6 +328,7 @@ class Dashboard:
                 "commits": None if commits is None else int(commits),
                 "file_count": None if file_count is None else int(file_count),
                 "files": [str(f) for f in files[:12]],
+                "queued": approvals.is_queued(self.state / "broker", card),
                 "seconds_left": None if expires is None else int(expires - now),
                 **approvals.decided(self.state / "broker", card),
             })
@@ -318,11 +341,11 @@ class Dashboard:
         """Lane name -> note for each running lane whose role has a write held.
         With one running lane the hold is surely its own (note ""); with several
         the card can't say which, so each is marked held and the note says so.
-        A decided or expired card holds nothing: the broker's hook waits only
-        hold_seconds, so by then the agent's call has returned."""
+        A decided, expired or queued card holds nothing: the broker's hook waits
+        only hold_seconds, so by then the agent's call has returned."""
         out: dict = {}
         for card in cards:
-            if card["decided"] or (card["seconds_left"] is not None and card["seconds_left"] < 0):
+            if card["decided"] or card.get("queued") or (card["seconds_left"] is not None and card["seconds_left"] < 0):
                 continue
             lanes = card["lanes"]
             note = "" if len(lanes) == 1 else (
@@ -402,6 +425,7 @@ class Dashboard:
                       "roles": [{"role": r, "cost": round(c, 4)} for r, c in sorted(roles.items(), key=lambda x: -x[1])]},
             "events": events,
             "gate": cards,
+            "writes": self.writes(now),
         }
 
     @staticmethod

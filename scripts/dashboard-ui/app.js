@@ -272,14 +272,19 @@
   // the expiry as a fixed clock time instead), so it is never re-announced.
   function renderGate() {
     const cards = state.gate;
-    const key = JSON.stringify(cards.map(c => Object.assign({}, c, { seconds_left: c.seconds_left == null })));
+    const writes = (Array.isArray(state.writes) ? state.writes : []).filter(w => w && typeof w === "object" && WRITE_LABEL[w.state]);
+    const key = JSON.stringify([cards.map(c => Object.assign({}, c, { seconds_left: c.seconds_left == null })), writes]);
     if (key === gateKey) { tickGate(); return; }
     gateKey = key;
+    renderWrites(writes);
     const lcd = $("gate-lcd");
     // A decided card stays held until the agent retries; it waits for no one here.
     const decided = cards.filter(x => x.decided === "approve" || x.decided === "decline").length;
     $("gate-led").className = `led ${cards.length > decided ? "a blink" : cards.length ? "a" : ""}`;
-    $("gate-state").textContent = cards.length ? `Held · ${cards.length}${decided ? ` · ${decided} decided` : ""}` : "Clear";
+    const queued = cards.filter(x => x.queued).length;
+    const failed = writes.filter(w => w.state === "failed").length;
+    $("gate-state").textContent = (cards.length ? `Held · ${cards.length}${queued ? ` · ${queued} queued` : ""}${decided ? ` · ${decided} decided` : ""}` : "Clear")
+      + (failed ? ` · ✕ ${failed} write${failed > 1 ? "s" : ""} failed` : "");
     gateCd = null;
     if (!cards.length) {
       lcd.replaceChildren(el("div", cuFrame ? "one" : "big", "No writes held"));
@@ -303,7 +308,7 @@
     if (cuFrame) {
       // The control unit under this display shows every card in full and has the
       // keys: here, one line of what is waiting.
-      const tail = ` · ${c.tool} · ${role}${cards.length > 1 ? ` +${cards.length - 1}` : ""}`;
+      const tail = ` · ${c.tool} · ${role}${c.queued ? " · queued" : ""}${cards.length > 1 ? ` +${cards.length - 1}` : ""}`;
       const one = gateCd ? countdown(`${cards.length} held · next `, tail) : el("div", null, `${cards.length} held${tail}`);
       one.className = "one";
       one.title = `${cards.length} held${tail}`;
@@ -322,10 +327,25 @@
       ...(lanes.length ? [el("div", null, `from ${role} (lane${lanes.length > 1 ? "s" : ""}: ${lanes.join(", ")})`)] : []),
       el("div", null, `→ ${c.repo}`),
       el("div", null, c.base ? `${c.branch} → ${c.base}` : c.branch),
+      ...(c.queued ? [el("div", null, c.decided === "approve" ? "QUEUED · the gateway is writing it" : "QUEUED · the gateway writes it once approved")] : []),
       line,
       ...(cards.length > 1 ? [el("div", null, `+ ${cards.length - 1} more held`)] : []));
     tickGate();
     $("gate-hint").textContent = `Decide in a terminal: factory approvals approve ${c.id}  (or decline ${c.id} --reason "...")`;
+  }
+  // The gateway's recent deferred writes (approvals/done/, display only): one line each, failures
+  // first and loud. Text comes from state files, already one clean line each; set as text only.
+  // Hidden under the control unit, which shows the same list.
+  const WRITE_LABEL = { failed: "FAILED", running: "RUNNING", made: "MADE" };
+  function renderWrites(writes) {
+    const box = $("gate-writes");
+    box.replaceChildren(...writes.map(w => {
+      const what = `${w.tool || "write"}${w.target ? ` ${w.target}` : ""}${w.repo ? ` → ${w.repo}` : ""}`;
+      const n = el("div", `wr wr-${w.state}`, `${WRITE_LABEL[w.state]} ${what}${w.state !== "running" && w.summary ? ` · ${w.summary}` : ""}`);
+      n.title = n.textContent;
+      return n;
+    }));
+    box.hidden = !writes.length;
   }
   function tickGate() {
     const cd = document.querySelector("#gate-lcd .gate-cd");
