@@ -3,7 +3,7 @@ kind: mixin
 name: factory-researcher-kit
 displayName: Factory Researcher
 description: "Investigates on the web and reports (read-only)"
-version: "5.1.0"
+version: "5.2.0"
 requires:
   agent: claude
 
@@ -23,11 +23,15 @@ setup:
     # read that doesn't pass the broker, so unaudited and not allowlisted), and
     # this role can't write to the project; its instructions treat results as
     # leads to verify through web_fetch, never as sources.
+    # Also turn off the claude.ai connectors from the user's account
+    # ("disableClaudeAiConnectors"): they reach the outside world without the
+    # broker's policy and audit. The broker gateway is an sbx MCP server, so it
+    # still loads.
     # Root-owned managed settings: bypassPermissions can't override them.
     - command: >-
         mkdir -p /etc/claude-code &&
-        printf '%s\n' '{"permissions":{"deny":["WebFetch"]}}'
+        printf '%s\n' '{"disableClaudeAiConnectors":true,"permissions":{"deny":["WebFetch"]}}'
         > /etc/claude-code/managed-settings.json &&
         chmod 0444 /etc/claude-code/managed-settings.json
       user: "0"
-      description: "Deny the built-in WebFetch (no egress); WebSearch stays for this role only"
+      description: "Deny the built-in WebFetch (no egress); WebSearch stays for this role only; disable claude.ai connectors"
