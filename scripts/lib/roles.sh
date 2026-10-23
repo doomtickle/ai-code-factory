@@ -20,7 +20,8 @@ readonly KNOWN_BROKER_TOOLS="${KNOWN_BROKER_TOOLS% }"
 readonly KNOWN_TEMPLATES="developer reviewer"
 readonly RESERVED_ROLE_NAMES="broker coordinator dispatch"
 
-list_roles() {
+# list_all_roles -> every role in roles/, enabled or not
+list_all_roles() {
   local d
   for d in "$ROOT"/roles/*/; do
     [ -f "$d/role.conf" ] && basename "$d"
@@ -28,9 +29,82 @@ list_roles() {
   return 0
 }
 
+# list_roles -> the roles this machine runs: every role in roles/ except an
+# optional one (OPTIONAL="1" in its committed role.conf) that FACTORY_CONFIG/
+# enabled-roles doesn't list. Everything that creates, grants, snapshots or
+# reports on roles goes through this, so a disabled role gets no sandbox, no
+# broker token or grants, and no entry in the bridge.
+list_roles() {
+  local r
+  for r in $(list_all_roles); do
+    ! role_optional "$r" || role_listed_enabled "$r" || continue
+    printf '%s\n' "$r"
+  done
+  return 0
+}
+
 # conf_get FILE KEY -> value of KEY="value" in FILE (parsed, never sourced)
 conf_get() {
   sed -n "s/^$2=\"\(.*\)\"[[:space:]]*\$/\1/p" "$1" | tail -n 1
+}
+
+# --- Optional roles ---------------------------------------------------------------
+# A role whose committed role.conf sets OPTIONAL="1" is off by default. A
+# machine turns it on by naming it in FACTORY_CONFIG/enabled-roles: one role
+# name per line, blank lines and #-comments allowed. That file only switches a
+# role on or off: it can't grant tools or change WORKSPACE/TEMPLATE (those stay
+# in role.conf, and OPTIONAL itself isn't a local-override key). Absent file =
+# every optional role stays off. start-dispatch.sh snapshots the validated list
+# into DISPATCH_STATE/enabled-roles for the bridge, so a change applies on the
+# next `factory start`.
+
+enabled_roles_file() { printf '%s/enabled-roles' "$FACTORY_CONFIG"; }
+
+# enabled_roles_listed -> the names in enabled-roles, one per line (lines that
+# aren't plain role names are skipped here; validate_enabled_roles reports them)
+enabled_roles_listed() {
+  local f
+  f="$(enabled_roles_file)"
+  [ -f "$f" ] || return 0
+  sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' "$f" | grep -E '^[a-z][a-z0-9-]*$' || true
+}
+
+role_listed_enabled() { in_list "$1" "$(enabled_roles_listed | tr '\n' ' ')"; }
+
+# role_optional ROLE -> success if ROLE's committed role.conf sets OPTIONAL="1"
+role_optional() { [ "$(conf_get "$ROOT/roles/$1/role.conf" OPTIONAL)" = 1 ]; }
+
+# disabled_role_sandboxes -> sandboxes that still exist for optional roles this
+# machine has switched off (one per line). Nothing removes them: a role being
+# turned off must never delete its sandbox on its own; `factory doctor` names
+# them and prints the command to remove each.
+disabled_role_sandboxes() {
+  local existing r
+  existing="$(sbx ls -q 2>/dev/null || true)"
+  for r in $(list_all_roles); do
+    role_optional "$r" || continue
+    ! role_listed_enabled "$r" || continue
+    ! printf '%s\n' "$existing" | grep -qx "$(role_sandbox "$r")" || role_sandbox "$r"
+  done
+  return 0
+}
+
+# validate_enabled_roles -> dies unless enabled-roles holds only blank lines,
+# comments and names of roles in roles/ (a typo would silently enable nothing).
+validate_enabled_roles() {
+  local f line trimmed
+  f="$(enabled_roles_file)"
+  [ -e "$f" ] || return 0
+  [ -f "$f" ] || die "$f: not a regular file"
+  while IFS= read -r line || [ -n "$line" ]; do
+    trimmed="${line#"${line%%[![:space:]]*}"}"
+    trimmed="${trimmed%"${trimmed##*[![:space:]]}"}"
+    case "$trimmed" in ''|'#'*) continue ;; esac
+    printf '%s' "$trimmed" | grep -Eq '^[a-z][a-z0-9-]*$' \
+      || die "$f: not a role name (one per line, e.g. researcher): $line"
+    [ -f "$ROOT/roles/$trimmed/role.conf" ] \
+      || die "$f: no role named '$trimmed' in $ROOT/roles (see: factory roles)"
+  done < "$f"
 }
 
 # --- Local role overrides ------------------------------------------------------------
@@ -88,9 +162,11 @@ validate_role_override() {
   done < "$f"
 }
 
-# validate_role_overrides -> dies if an override names no role in roles/.
+# validate_role_overrides -> dies if an override names no role in roles/, or if
+# enabled-roles (see Optional roles above) is malformed.
 validate_role_overrides() {
   local f r
+  validate_enabled_roles
   for f in "$FACTORY_CONFIG"/roles/*.conf; do
     [ -e "$f" ] || continue
     r="$(basename "$f" .conf)"
@@ -155,6 +231,8 @@ validate_role() {
   [ -f "$ROOT/roles/$r/kit/spec.yaml" ] || die "role $r: missing roles/$r/kit/spec.yaml"
   [ -s "$ROOT/roles/$r/instructions.md" ] || die "role $r: missing or empty roles/$r/instructions.md"
   validate_role_override "$r"
+  m="$(conf_get "$ROOT/roles/$r/role.conf" OPTIONAL)"
+  [ -z "$m" ] || in_list "$m" "0 1" || die "role $r: OPTIONAL must be 1 (off unless enabled-roles names it) or empty"
   in_list "$(role_get "$r" TEMPLATE)" "$KNOWN_TEMPLATES" \
     || die "role $r: TEMPLATE must be one of: $KNOWN_TEMPLATES"
   in_list "$(role_get "$r" WORKSPACE)" "rw ro" || die "role $r: WORKSPACE must be rw or ro"

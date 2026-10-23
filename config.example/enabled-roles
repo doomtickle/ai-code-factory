@@ -1,0 +1,12 @@
+# Optional roles switched on for this machine. Copy to
+# ~/.config/ai-code-factory/enabled-roles (`factory config init` does) and
+# uncomment a line; `factory start` applies it (`factory update` isn't needed).
+#
+# One role name per line. Only roles that are optional (OPTIONAL="1" in their
+# roles/<name>/role.conf) are off by default; today that is the researcher.
+# Naming a role here only switches it on: its tools, WORKSPACE and TEMPLATE
+# still come from its role.conf, and roles/<role>.conf can't change them.
+# Removing a line turns the role off again; its sandbox is left in place, and
+# `factory doctor` prints the command to remove it.
+#
+# researcher

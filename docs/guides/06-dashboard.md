@@ -28,7 +28,7 @@ back. `--no-open` only prints the link; `--port N` picks the port.
 │ Terminal 0                │ Lanes                                                               │
 │ (the Coordinator)         │  ┌ 1 developer ─────────────────┐ ┌ 2 developer-lane2 ───────────┐  │
 │                           │  └──────────────────────────────┘ └──────────────────────────────┘  │
-│                           │  ·3 developer-lane3  ·4 researcher  ·5 reviewer   (idle lanes)      │
+│                           │  ·3 developer-lane3  ·4 reviewer   (idle lanes)                     │
 │                           ├──────────────┬────────────────────┬─────────────────────────────────┤
 │                           │ Spend / hour │ Event printer      │ Write gate + control unit       │
 └───────────────────────────┴──────────────┴────────────────────┴─────────────────────────────────┘

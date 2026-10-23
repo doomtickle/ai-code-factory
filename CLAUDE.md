@@ -23,8 +23,11 @@ socket, or host credentials. Full picture: README.md.
   (`FACTORY_STATE/roles/<name>`) plus the project `:ro`. rw roles (`WORKSPACE="rw"`,
   the developer) work in private git clones ("lanes") on their sandbox's own disk and
   hand back only committed `factory/*` branches as bundles the bridge imports; the
-  user merges them. The only writable project path any role mounts is
-  `PROJECT/.factory/outgoing`. A role runs up to `LANES` jobs at once, each its own
+  user merges them. A role with `OPTIONAL="1"` in its committed `role.conf` (the
+  researcher) is off unless `FACTORY_CONFIG/enabled-roles` names it: `list_roles`
+  (`scripts/lib/roles.sh`) and the bridge's `load_roles` leave it out, so it
+  gets no sandbox, broker token or grants. The only writable project path any
+  role mounts is `PROJECT/.factory/outgoing`. A role runs up to `LANES` jobs at once, each its own
   session/transcript. The bridge passes each role its instructions (snapshotted
   into `FACTORY_STATE` by `factory start`) via `--append-system-prompt`
   (a mixin kit's `agentInstructions` aren't reliably loaded).
@@ -43,7 +46,7 @@ socket, or host credentials. Full picture: README.md.
 - Agent kits (`roles/*/kit`, `kits/coordinator`) allow only Anthropic hosts; new
   outbound capability = a Broker tool with policy checks and audit logging, never an
   agent egress rule. Managed settings also deny built-in `WebFetch` (every role) and
-  `WebSearch` (every role but researcher): `WebSearch` bypasses the Broker (served by
+  `WebSearch` (every role but researcher, which is optional and off by default): `WebSearch` bypasses the Broker (served by
   the model API), so only the role that can't write the project gets it, to verify
   leads via `web_fetch`. They also set `disableClaudeAiConnectors`, so the user's
   claude.ai account connectors (an outbound path around the Broker) never load.
@@ -102,7 +105,9 @@ socket, or host credentials. Full picture: README.md.
   overrides a role's tuning keys only (`ROLE_OVERRIDE_KEYS` in `scripts/lib/roles.sh`
   and `dispatch/server.py`; never `BROKER_TOOLS`, `WORKSPACE`, `TEMPLATE` or anything
   else that moves the security boundary), parsed as data and snapshotted by
-  `start-dispatch.sh` into `FACTORY_STATE` for the bridge. `config.example/` holds
+  `start-dispatch.sh` into `FACTORY_STATE` for the bridge. `enabled-roles` (one
+  role name per line, validated, snapshotted the same way) only switches optional
+  roles on; it grants nothing and `OPTIONAL` is not an override key. `config.example/` holds
   placeholders only; features needing these settings must be inert when absent.
 
 ### Credentials

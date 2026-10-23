@@ -147,7 +147,7 @@ settings are kept), then `factory start` in the new project.
 ### Role sandboxes weren't created
 
 ```text
-note: no Claude login is stored yet, so these role sandboxes were not created: developer researcher reviewer
+note: no Claude login is stored yet, so these role sandboxes were not created: developer reviewer
 ```
 
 Or, later, the Coordinator reports:
@@ -218,13 +218,13 @@ configured. Other ones:
 
 | Message (after `DENIED by broker policy:`) | Fix |
 |---|---|
-| `principal 'developer' is not granted tool 'web_fetch' (see roles/developer/role.conf)` | Working as designed: only the researcher reads the web. Grant a tool in `BROKER_TOOLS` only if you mean to (README, [Fixing DENIED](../../README.md#fixing-denied)). |
+| `principal 'developer' is not granted tool 'web_fetch' (see roles/developer/role.conf)` | Working as designed: only the researcher (if you enabled it) reads the web. Grant a tool in `BROKER_TOOLS` only if you mean to (README, [Fixing DENIED](../../README.md#fixing-denied)). |
 | `host fastify.dev is not in the web allowlist (policy.toml [web].allow_hosts)` | Add the host to `[web].allow_hosts` in your local `policy.toml` and to your local `broker-kit/spec.yaml`, then `factory update` ([Make it yours](04-customize.md)). |
 | `repo my-org/my-api is not in the broker allowlist (policy.toml [git].repos)` | Add it to `[git].repos` in your local `policy.toml`, then `factory update`. |
 | `agents may only push branches starting with 'factory/'` | Push a `factory/*` branch. Protected branches (`main`, `master`, `release/*`) are always refused. |
 | `'.factory/outgoing/x.bundle' does not exist in the workspace` or `factory/x has no commits beyond origin/main` | The developer bundled by hand, into the wrong folder or with the wrong range. It should run `factory-lane bundle "$FACTORY_PROJECT" "$FACTORY_LANE" <rel> factory/x` and pass the printed name to `git_push`. |
 | `commit 3f9c2ab01d4e appears to contain secrets (...)` | Remove the secret from the branch's history (the developer can rewrite its `factory/*` branch), then push again. |
-| `no Gemini API key found for the broker sandbox; ...` | Opt-in tool (the researcher is granted it only if you add it to its `BROKER_TOOLS`): see [Enabling Gemini Flash queries](../../README.md#enabling-gemini-flash-queries). |
+| `no Gemini API key found for the broker sandbox; ...` | Opt-in tool (the researcher, itself optional, is granted it only if you add it to its `BROKER_TOOLS`): see [Enabling Gemini Flash queries](../../README.md#enabling-gemini-flash-queries). |
 
 ### npm_fetch errors
 

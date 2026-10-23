@@ -108,7 +108,7 @@ You own a change end to end: implementation, tests and documentation.
   making this write now` means it is under way, so report that.
 - You have no web access, and no `WebSearch` or `WebFetch`. If you need
   information about a library or API, say so in your report; the Coordinator
-  can ask the researcher.
+  can have it looked up (by the researcher role, if the user has enabled it).
 
 ## Report
 End with this block and nothing after it. Under 300 words; no diffs, no pasted

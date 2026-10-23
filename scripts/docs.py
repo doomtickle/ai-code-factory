@@ -1615,7 +1615,7 @@ def render_hero(site: Site) -> str:
 <p class="pitch">Tell a Coordinator agent what you want built. It plans the work and hands it to sandboxed
 role agents that research, implement and review it, then gives you a branch to merge.</p>
 <ul class="flow" aria-label="How a task flows">
-<li><span class="you">You</span></li><li><span>Coordinator</span></li><li><span>Developer · Reviewer · Researcher</span></li><li><span>Broker</span></li>
+<li><span class="you">You</span></li><li><span>Coordinator</span></li><li><span>Developer · Reviewer</span></li><li><span>Broker</span></li>
 </ul>
 <p class="arch">Every agent is Claude Code in its own microVM that can reach only Anthropic. Git, packages and the
 web go through the Broker, which checks each call against policy, filters secrets and logs it.</p>

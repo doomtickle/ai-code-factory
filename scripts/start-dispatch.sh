@@ -81,6 +81,11 @@ rm -rf "$STATE/instructions"
 mv "$STATE/instructions.tmp" "$STATE/instructions"
 rm -rf "$STATE/role-overrides"
 mv "$STATE/role-overrides.tmp" "$STATE/role-overrides"
+# Which optional roles this machine switched on (FACTORY_CONFIG/enabled-roles,
+# validated above): the bridge treats an optional role not named here as off.
+# Written even when empty, so an old list never outlives its source file.
+enabled_roles_listed > "$STATE/enabled-roles.tmp"
+mv "$STATE/enabled-roles.tmp" "$STATE/enabled-roles"
 
 # The git identity lane commits are authored with ([git] author_name and
 # author_email in this machine's policy.toml), validated and snapshotted like
