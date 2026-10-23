@@ -412,9 +412,33 @@ echo junk > "$rdir/untracked.txt"
 run "$LANE" review "$tmp/single" refs/remotes/factory-developer/factory/feature
 assert_eq "review (long ref): exit 0, same checkout reused" "$RC:$(printf '%s\n' "$OUT" | tail -n 1)" "0:$rdir"
 assert_eq "review again: local edits discarded" "$(cat "$rdir/file.txt"):$(test -e "$rdir/untracked.txt" && echo kept || echo gone)" "three:gone"
+assert_eq "review: without FACTORY_LANE the checkout is \$HOME/review/_/_" "$rdir" "$HOME/review/_/_"
+
+# Another ref in the same lane reuses the checkout; ignored leftovers go too.
+echo ignored.txt >> "$rdir/.git/info/exclude"
+echo leftover > "$rdir/ignored.txt"
+run "$LANE" review "$tmp/single" main
+assert_eq "review (another ref): same checkout reused" "$RC:$(printf '%s\n' "$OUT" | tail -n 1)" "0:$rdir"
+assert_eq "review (another ref): HEAD is that ref" "$(git -C "$rdir" rev-parse HEAD)" "$(git -C "$tmp/single" rev-parse main)"
+assert_eq "review (another ref): ignored files from the last review are gone" \
+  "$(test -e "$rdir/ignored.txt" && echo kept || echo gone)" "gone"
+
+# Each lane has its own; the old per-ref checkouts of this lane (only) are removed.
+mkdir -p "$HOME/review/reviewer--feature-0123abcd/.git" "$HOME/review/reviewer-lane2--feature-0123abcd/.git"
+run env FACTORY_LANE=reviewer "$LANE" review "$tmp/single" main
+ldir="$(printf '%s\n' "$OUT" | tail -n 1)"
+assert_eq "review with FACTORY_LANE: the lane's own checkout" "$RC:$ldir" "0:$HOME/review/reviewer/_"
+assert_eq "review with FACTORY_LANE: the lane's old per-ref checkout is removed" \
+  "$(test -e "$HOME/review/reviewer--feature-0123abcd" && echo kept || echo gone)" "gone"
+assert_eq "review with FACTORY_LANE: another lane's old checkout is left alone" \
+  "$(test -e "$HOME/review/reviewer-lane2--feature-0123abcd" && echo kept || echo gone)" "kept"
+run env FACTORY_LANE=Bad "$LANE" review "$tmp/single" main
+assert_eq "review: an invalid FACTORY_LANE is refused" "$RC" "1"
 
 run "$LANE" review "$tmp/multi" main a-repo
 assert_eq "review (folder of repos, rel a-repo, branch main): exit 0" "$RC" "0"
+assert_eq "review: a repo of a folder of repos is checked out at \$HOME/review/<lane>/<rel>" \
+  "$(printf '%s\n' "$OUT" | tail -n 1)" "$HOME/review/_/a-repo"
 assert_eq "review: rel's checkout is at its main" \
   "$(git -C "$(printf '%s\n' "$OUT" | tail -n 1)" rev-parse HEAD)" "$(git -C "$tmp/multi/a-repo" rev-parse main)"
 run "$LANE" review "$tmp/multi" main

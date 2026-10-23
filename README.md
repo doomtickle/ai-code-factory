@@ -858,7 +858,11 @@ project. Instead:
    from its lane, the reviewer from its checkout of the branch under review;
    both use the mirror in the project's `.factory/npm-mirror/`. It sets `CI=true` so
    runners like Vitest and Jest don't start in watch mode. Snapshots or
-   coverage the tests write stay in the copy. Every run says which mode it used:
+   coverage the tests write stay in the copy. The copy is kept for the next run
+   from the same directory, and each run removes the copies of directories that
+   no longer exist; the reviewer reuses one checkout per lane and repo
+   (`$HOME/review/<lane>/<repo>`) for every branch, so neither grows with the
+   number of reviews. Every run says which mode it used:
    - **clean** (tried first): syncs the project, minus `node_modules` and
      `.git`, and installs dependencies offline from the mirror, exactly as the
      lockfile pins them, with install scripts disabled. It reinstalls only
