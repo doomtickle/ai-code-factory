@@ -138,6 +138,7 @@ check_value 'LANES="9"' "LANES must be a whole number from 1 to 8"
 check_value 'LANES="0"' "LANES must be a whole number from 1 to 8"
 check_value 'MAX_SESSION_TOKENS="lots"' "MAX_SESSION_TOKENS must be a whole number"
 check_value 'MAX_TURNS="-1"' "MAX_TURNS must be a whole number"
+check_value 'MAX_JOB_SECONDS="1h"' "MAX_JOB_SECONDS must be a whole number"
 
 # 5. Strict lines; never executed.
 for line in 'LANES=2' "LANES='2'" 'lanes="2"' 'export LANES="2"' '$(touch '"$tmp"'/pwned)' 'source /etc/profile'; do

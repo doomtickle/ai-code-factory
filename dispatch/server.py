@@ -80,6 +80,9 @@ MIN_WAIT_SECONDS = 300
 # Every turn of a resumed session re-reads its whole history, so a large one
 # makes even a one-line task expensive.
 DEFAULT_MAX_SESSION_TOKENS = 100_000
+# Wall-clock limit for one job's claude (role.conf MAX_JOB_SECONDS overrides it;
+# "0" = no limit). A stuck claude otherwise holds its lane until cancel_job.
+DEFAULT_MAX_JOB_SECONDS = 3600
 MAX_INSTRUCTIONS_CHARS = 20_000
 # Fixed environment for every role's claude. Roles keep their context in their
 # saved sessions and in the Coordinator's tasks; auto memory would only add
@@ -157,7 +160,8 @@ _LANE_SUFFIX = re.compile(r"-lane[0-9]+$")
 # <role>.conf, snapshotted by start-dispatch.sh into STATE/role-overrides): tuning
 # only, nothing that moves the security boundary. Keep in sync with
 # ROLE_OVERRIDE_KEYS in scripts/lib/roles.sh.
-ROLE_OVERRIDE_KEYS = ("MODEL", "MODELS", "EFFORT", "LANES", "MAX_SESSION_TOKENS", "MAX_TURNS")
+ROLE_OVERRIDE_KEYS = ("MODEL", "MODELS", "EFFORT", "LANES", "MAX_SESSION_TOKENS", "MAX_TURNS",
+                      "MAX_JOB_SECONDS")
 
 
 def role_overrides_dir() -> Path:
@@ -232,6 +236,7 @@ def load_roles(include_disabled: bool = False) -> dict:
             "effort": values.get("EFFORT", "").strip() if values.get("EFFORT", "").strip() in EFFORTS else "",
             "max_session_tokens": parse_session_cap(values.get("MAX_SESSION_TOKENS", "")),
             "max_turns": parse_turns(values.get("MAX_TURNS", "")),
+            "max_job_seconds": parse_job_seconds(values.get("MAX_JOB_SECONDS", "")),
             "lanes": parse_lanes(values.get("LANES", "")),
         }
     return roles
@@ -293,6 +298,13 @@ def parse_turns(value: str) -> int:
     """role.conf MAX_TURNS: claude's --max-turns for one job; empty or 0 means none."""
     value = value.strip()
     return int(value) if value.isdigit() else 0
+
+
+def parse_job_seconds(value: str) -> int:
+    """role.conf MAX_JOB_SECONDS: wall-clock limit for one job's claude; empty or
+    invalid means DEFAULT_MAX_JOB_SECONDS, 0 means none."""
+    value = value.strip()
+    return int(value) if value.isascii() and value.isdigit() else DEFAULT_MAX_JOB_SECONDS
 
 
 def sandbox_name(role: str) -> str:
@@ -369,6 +381,8 @@ class Job:
         self.model = model
         self.effort = effort
         self.max_turns = 0  # claude --max-turns, from role.conf MAX_TURNS; 0 = none
+        # Wall-clock limit for claude, from role.conf MAX_JOB_SECONDS; 0 = none.
+        self.max_job_seconds = DEFAULT_MAX_JOB_SECONDS
         self.instructions = instructions
         self.status = "running"  # running | done | failed | cancelled
         self.started = time.time()
@@ -468,7 +482,7 @@ def save_session(job: Job) -> None:
         session_meta_file(job.lane).unlink(missing_ok=True)
         return
     meta = {"session_id": job.session_id, "total_cost_usd": job.session_cost_usd,
-            "context_tokens": job.context_tokens or 0, "model": job.model}
+            "context_tokens": job.context_tokens, "model": job.model}
     session_meta_file(job.lane).write_text(json.dumps(meta) + "\n")
 
 
@@ -499,7 +513,9 @@ def render_event(event: dict, log: Transcript, job: Job) -> None:
             job.context_tokens = sum(int(usage.get(k) or 0) for k in (
                 "input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"))
         for block in (event.get("message") or {}).get("content") or []:
-            if block.get("type") == "text" and block.get("text", "").strip():
+            if not isinstance(block, dict):
+                continue
+            if block.get("type") == "text" and isinstance(block.get("text"), str) and block["text"].strip():
                 for para in sanitize(block["text"], 4000).strip().splitlines():
                     log.write(f"   {para}")
             elif block.get("type") == "tool_use":
@@ -939,23 +955,47 @@ def run_claude(job: Job, log: Transcript, workdir: str, lane_root: str | None) -
         job.claude_session = attempt_resume or fresh_id
         argv = claude_argv(job, workdir, lane_root, attempt_resume, fresh_id)
         stderr_lines: list = []
+        timed_out = threading.Event()
         with subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                              stderr=subprocess.PIPE, text=True, start_new_session=True) as proc:
+                              stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace",
+                              start_new_session=True) as proc:
             job.proc = proc
             if job.status == "cancelled":  # cancelled while this run was starting
                 kill_group(proc, signal.SIGTERM)
+
+            def expire():
+                timed_out.set()
+                kill_group(proc)
+
+            timer = threading.Timer(job.max_job_seconds, expire) if job.max_job_seconds else None
+            if timer:
+                timer.daemon = True
+                timer.start()
             err_thread = threading.Thread(target=lambda: stderr_lines.extend(proc.stderr), daemon=True)
             err_thread.start()
-            for raw in proc.stdout:
-                try:
-                    render_event(json.loads(raw), log, job)
-                except json.JSONDecodeError:
-                    if raw.strip():
-                        log.write(f"   {one_line(raw, 200)}")
-            code = proc.wait()
+            try:
+                for raw in proc.stdout:
+                    try:
+                        render_event(json.loads(raw), log, job)
+                    except json.JSONDecodeError:
+                        if raw.strip():
+                            log.write(f"   {one_line(raw, 200)}")
+                    except Exception as e:  # noqa: BLE001 - one odd event must not wedge the job
+                        log.write(f"   (skipped a malformed event: {one_line(f'{type(e).__name__}: {e}', 200)})")
+                code = proc.wait()
+            finally:
+                if timer:
+                    timer.cancel()
             err_thread.join(timeout=5)
         stderr = "".join(stderr_lines)
         if job.status == "cancelled":
+            break
+        if timed_out.is_set():
+            job.status = "failed"
+            job.result = (job.result + "\n" if job.result else "") + (
+                f"[stopped: the job ran past the role's MAX_JOB_SECONDS limit of {job.max_job_seconds}s "
+                "and was killed; the lane is free again]")
+            log.write(f"   (killed after the {job.max_job_seconds}s MAX_JOB_SECONDS limit)")
             break
         # A saved session can vanish (e.g. the sandbox was recreated): retry fresh once.
         if code != 0 and attempt_resume and "No conversation found" in (stderr + job.result):
@@ -1000,7 +1040,8 @@ def run_job(job: Job) -> None:
     except Exception as e:  # noqa: BLE001 - surface every failure to the Coordinator
         if job.status != "cancelled":
             job.status = "failed"
-        job.result = f"dispatch error: {type(e).__name__}: {e}"
+        error = f"dispatch error: {type(e).__name__}: {e}"
+        job.result = f"{job.result}\n[{error}]" if job.result else error
     finally:
         try:
             if job.rw and claude_started:
@@ -1022,9 +1063,12 @@ def run_job(job: Job) -> None:
 # Tools
 
 def session_note(meta: dict) -> str:
-    tokens = meta.get("context_tokens") or 0
-    size = f"~{round(tokens / 1000)}k" if tokens >= 1000 else str(tokens)
-    return f"{size} tokens, ${float(meta.get('total_cost_usd') or 0):.2f} so far"
+    tokens = meta.get("context_tokens")
+    if isinstance(tokens, bool) or not isinstance(tokens, int):
+        size = "unknown context size"
+    else:
+        size = (f"~{round(tokens / 1000)}k" if tokens >= 1000 else str(tokens)) + " tokens"
+    return f"{size}, ${float(meta.get('total_cost_usd') or 0):.2f} so far"
 
 
 def tool_list_roles(args: dict) -> str:
@@ -1134,12 +1178,16 @@ def tool_delegate(args: dict) -> str:
         resume, start_cost, mode = None, 0.0, "fresh session (requested)"
         if not args.get("fresh_session"):
             resume, meta = saved_session(lane)
-            cap, size = roles[role]["max_session_tokens"], (meta or {}).get("context_tokens") or 0
+            cap, size = roles[role]["max_session_tokens"], (meta or {}).get("context_tokens", 0)  # absent: saved before the size was tracked
             previous = (meta or {}).get("model")
             if resume and not _SESSION_ID.match(resume):
                 resume = None
                 mode = "fresh session (automatic: the saved session id is malformed)"
-            elif resume and cap and isinstance(size, int) and size > cap:
+            elif resume and cap and (isinstance(size, bool) or not isinstance(size, int)):
+                resume = None
+                mode = ("fresh session (automatic: the previous one's context size is unknown, so the "
+                        f"{round(cap / 1000)}k cap can't be checked; it starts without that history)")
+            elif resume and cap and size > cap:
                 resume = None
                 mode = (f"fresh session (automatic: the previous one carried ~{round(size / 1000)}k tokens, "
                         f"over the {round(cap / 1000)}k cap; it starts without that history)")
@@ -1157,6 +1205,7 @@ def tool_delegate(args: dict) -> str:
         job = Job(role, task, resume, model, start_cost, instructions, effort, lane=lane, rw=rw)
         job.session_mode = mode
         job.max_turns = roles[role]["max_turns"]
+        job.max_job_seconds = roles[role]["max_job_seconds"]
         _jobs[job.id] = job
     threading.Thread(target=run_job, args=(job,), daemon=True).start()
     if wait:
