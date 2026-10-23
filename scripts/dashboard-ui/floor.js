@@ -355,7 +355,7 @@
   const OUT_Y = () => H - 32, DOCK_Y = () => H - 16;
   function toArch(role, then) {
     const [x, y] = origin(role), oy = OUT_Y();
-    travel("crate", [[x, y], [x, oy], [ARCH_X - 4, oy]], then);
+    return travel("crate", [[x, y], [x, oy], [ARCH_X - 4, oy]], then);
   }
   function pass(fromX) {
     const oy = OUT_Y();
@@ -374,7 +374,7 @@
     const role = words[1] || "";
     switch (ev.kind) {
       case "ALLOW": toArch(role, () => pass(ARCH_X - 4)); break;
-      case "DENY": toArch(role, () => confiscate(ARCH_X - 4, line(ev))); break;
+      case "DENY": if (!toArch(role, () => confiscate(ARCH_X - 4, line(ev)))) binCrate(line(ev)); break;   // too many crates moving: bin it unseen
       case "HELD": toArch(role); break;           // it waits in the queue (drawn from the gate cards)
       case "OK": case "WRITTEN": pass(ARCH_X - 12); break;
       case "NO": case "FAILED": confiscate(ARCH_X - 12, line(ev)); break;

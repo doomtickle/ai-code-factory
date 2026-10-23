@@ -723,6 +723,13 @@ class PageTests(unittest.TestCase):
         self.assertIn('setAttribute("aria-label", label)', js)
         self.assertIn('setAttribute("tabindex", "0")', js)
         self.assertIn("MAX_BINNED = 5", js)
+        self.assertRegex(js, r"if \(binned\.length > MAX_BINNED\) binned\.shift\(\);")
+        self.assertIn('new Set(["DENY", "NO", "FAILED"])', js)
+        self.assertIn("else if (primed && BAD.has(ev.kind)) binCrate(line(ev));", js)
+        self.assertIn("[c.tool, c.role, c.repo, c.branch]", js)
+        # A capped DENY (no free crate for the trip to the arch) is binned directly.
+        self.assertIn('return travel("crate", [[x, y], [x, oy], [ARCH_X - 4, oy]], then);', js)
+        self.assertIn('case "DENY": if (!toArch(role, () => confiscate(ARCH_X - 4, line(ev)))) binCrate(line(ev));', js)
 
     def test_page_obeys_its_csp(self):
         html = (UI / "index.html").read_text()
