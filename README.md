@@ -578,14 +578,17 @@ MR): the agent hears "Queued for approval (id X); nothing has been sent yet"
 and reports it as queued, not done. Once you approve it the gateway makes
 the write itself within seconds (it checks every 5 s) and files the outcome;
 nobody retries it, and an unapproved card expires after a day by default
-(`expire_seconds`). A call you approve within the wait completes as usual: its
-result is one first line stating the write and the approval (for example
-"Pushed 2 commit(s) to repo:branch (sha); held for approval (id X), approved by
-..."); older brokers print the approval on a separate last line instead
-("Held for approval (id X); approved by ..."). `github_create_issue` and plugin tools keep the older
-flow: the call returns the approval id and asks the agent to retry the same
-call later. Holds are part of the gateway; nothing is installed and there
-is no licence. They are off until you list the tools to hold.
+(`expire_seconds`). While the gateway is making the write, the result's first
+line is "Approved (id X); the gateway is making this write now", and the agent
+reports it as under way. A call you approve within the wait completes as
+usual: its result is one first line stating the write and the approval (for
+example "Pushed 2 commit(s) to repo:branch (sha); held for approval (id X),
+approved by ..."); older brokers print the approval on a separate last line
+instead ("Held for approval (id X); approved by ..."). `github_create_issue`
+and plugin tools keep the older flow: the call returns the approval id and
+asks the agent to retry the same call later. Holds are part of the gateway;
+nothing is installed and there is no licence. They are off until you list the
+tools to hold.
 
 1. In your local `policy.toml` (Local settings), set
    `[approvals] tools = ["git_push", "github_create_pr", "gitlab_create_mr"]`

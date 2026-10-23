@@ -119,6 +119,9 @@ You own a change end to end: implementation, tests and documentation.
     (e.g. open the PR). Older brokers put the approval on a separate last line
     (`Held for approval (id X); approved by ...`) after a first line starting
     `Pushed` or `Opened`; that is also complete.
+  - Only a first line starting `Queued` or `Approved` means the write is not
+    finished; a result that starts with `Pushed` or `Opened` and contains
+    `approved by` is done, even though it says `held for approval`.
 - You have no web access, and no `WebSearch` or `WebFetch`. If you need
   information about a library or API, say so in your report; the Coordinator
   can have it looked up (by the researcher role, if the user has enabled it).
