@@ -869,9 +869,9 @@ def tool_github_create_issue(args: dict, policy: dict) -> str:
 
 _REPO_DESCRIPTION = "owner/name on GitHub, or <gitlab host>/<group>/<project> on the configured GitLab"
 _QUEUED_NOTE = (" If the deployment holds it for approval, the result may say it is queued: the gateway makes "
-                "the write itself once approved, so report it as queued, not done. A result whose first line ends "
-                "with \"held for approval ... approved by\" and the approver's name is complete, not queued: the "
-                "write was made after the approval.")
+                "the write itself once approved, so report it as queued, not done. A result whose first line "
+                "says \"held for approval ... approved by\" and the approver's name is finished, not queued: its "
+                "first words say whether the write succeeded or was refused.")
 
 approvals.register_deferred("git_push", complete_git_push)
 approvals.register_deferred("github_create_pr", complete_github_create_pr)

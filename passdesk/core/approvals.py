@@ -216,16 +216,26 @@ def held_note(outcome: dict | None) -> str:
 
 def with_held_note(text: str, outcome: dict | None) -> str:
     """A tool's result with the hold folded into its first line, so the one
-    line says both that the write happened and that it was held:
+    line says both what happened and that it was held:
     'Pushed 2 commit(s) to o/r:b (sha); held for approval (id X), approved by
-    "NAME" at T after N s.' The rest of the result is unchanged, and so is the
-    whole result when the write wasn't held."""
+    "NAME" at T after N s.' A first line that introduces the lines below it
+    ('Push rejected by GitHub:') keeps its colon at the end, after the
+    clause. The rest of the result is unchanged, and so is the whole result
+    when the write wasn't held. A result with no first line gets the
+    standalone sentence in front of it."""
     if outcome is None:
         return text
+    if not text.strip():
+        return held_note(outcome)
+    if text.startswith("\n"):
+        return held_note(outcome) + text
     first, sep, rest = text.partition("\n")
-    if first.endswith("."):
+    end = "."
+    if first.endswith(":"):
+        first, end = first[:-1], ":"
+    elif first.endswith("."):
         first = first[:-1]
-    return f"{first}; {_held_clause(outcome)}.{sep}{rest}"
+    return f"{first}; {_held_clause(outcome)}{end}{sep}{rest}"
 
 
 # --- the patch an approver can inspect (doomtickle/passdesk-ops#113) --------

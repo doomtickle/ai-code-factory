@@ -189,7 +189,9 @@ content that actually gets pushed is still pinned by `head` and
   a developer read as "pushed" and "held" at once): `Pushed 2 commit(s) to
   o/r:factory/x (abc...); held for approval (id X), approved by "NAME" at
   2026-10-22T09:15:00Z after N s.` The tool's first line loses its final
-  full stop to the clause, and the rest of the result follows unchanged.
+  full stop to the clause (a first line ending in a colon, as `Push
+  rejected by GitHub:` does, keeps it after the clause), and the rest of the
+  result follows unchanged.
   An agent therefore sees one of three shapes, and each says where the write
   stands: `Queued for approval (id X); nothing has been sent yet...` means
   nothing was sent; `Approved (id X); the gateway is making this write

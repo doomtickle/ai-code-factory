@@ -19,9 +19,12 @@ Dated entries, for the user to review. Newest first.
   read back by a retry (with `; written by the gateway at T`). Later lines
   are unchanged and an unheld result is byte-identical. `held_note` keeps
   the standalone sentence with a comma instead of a semicolon so both forms
-  read alike; the `Queued` and `Approved` strings did not change. The tool
-  descriptions' queued note says a first line ending in "held for approval
-  ... approved by" is complete. Consumers checked: nothing in the broker or
+  read alike; a first line ending in a colon (`Push rejected by GitHub:`)
+  gets the clause before the colon, so the colon still introduces the error
+  text below; the `Queued` and `Approved` strings did not change. The tool
+  descriptions' queued note says a first line with "held for approval ...
+  approved by" is finished, not queued, and that its first words say whether
+  the write succeeded or was refused. Consumers checked: nothing in the broker or
   the AI Code Factory parses the result text (the dashboard's held note and
   `factory approvals` read the cards and decisions). What would change it:
   an agent that still misreads the line, or a consumer that needs the old

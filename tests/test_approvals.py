@@ -5,6 +5,7 @@ import json
 import os
 import re
 import stat
+import subprocess
 import sys
 import time
 import types
@@ -71,6 +72,23 @@ class PushApprovalTests(test_git.GitFlowTests):
             git.tool_git_push({"repo": "acme/widgets", "branch": "factory/feature", "bundle": "f.bundle"}, POLICY)
         self.assertIn("declined by t", str(cm.exception))
         self.assertEqual(self.sh("git", "ls-remote", "--heads", str(self.origin), "factory/feature", cwd=self.ws), "")
+
+    def test_a_held_push_the_forge_rejects_says_so_before_the_colon(self):
+        approvals.set_hook(lambda card: {"id": "0123456789abcdef", "approver": "daron",
+                                         "decided": "2026-10-22T09:15:00Z", "waited_seconds": 31})
+        self.make_bundle()
+        fake_push = subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="remote: hook declined\n")
+        real_git = git.git
+
+        def spy(*args, **kw):
+            return fake_push if args[:1] == ("push",) else real_git(*args, **kw)
+        with mock.patch.object(git, "git", side_effect=spy):
+            out = git.tool_git_push({"repo": "acme/widgets", "branch": "factory/feature", "bundle": "f.bundle"},
+                                    POLICY)
+        self.assertEqual(out.splitlines()[0], 'Push rejected by GitHub; held for approval (id 0123456789abcdef), '
+                                              'approved by "daron" at 2026-10-22T09:15:00Z after 31 s:')
+        self.assertIn("hook declined", out)
+        self.assertIn("UNTRUSTED CONTENT", out)
 
     def test_a_held_and_approved_push_says_so_in_its_result(self):
         approvals.set_hook(lambda card: {"id": "0123456789abcdef", "approver": "daron",
@@ -349,9 +367,12 @@ class ApprovalPointTests(Base):
         self.assertEqual(approvals.with_held_note("Pushed 2 commit(s) to o/r:b (abc).\nremote: ok\nlast", outcome),
                          "Pushed 2 commit(s) to o/r:b (abc)" + held + "\nremote: ok\nlast")
         self.assertEqual(approvals.with_held_note("Opened PR #1: https://x/1", outcome), "Opened PR #1: https://x/1" + held)
-        failure = "Push to o/r:b was rejected: non-fast-forward.\nhint: fetch first"
+        failure = "Push rejected by GitHub:\nhint: fetch first"
         self.assertEqual(approvals.with_held_note(failure, outcome),
-                         "Push to o/r:b was rejected: non-fast-forward" + held + "\nhint: fetch first")
+                         "Push rejected by GitHub" + held[:-1] + ":\nhint: fetch first")
+        for empty in ("", "\nbody"):
+            self.assertEqual(approvals.with_held_note(empty, outcome),
+                             approvals.held_note(outcome) + ("\nbody" if empty else ""))
         self.assertEqual(approvals.with_held_note("", None), "")
 
     def test_a_hook_value_that_is_not_an_outcome_is_ignored(self):
