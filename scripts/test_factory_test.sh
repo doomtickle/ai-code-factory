@@ -173,6 +173,25 @@ run "$FTEST" -C "$plain" -- ls
 assert_contains "no lockfile, no requirements: project files only" "$ERR" "mode: project files only"
 assert_eq "no lockfile, no requirements: the files are copied" "$OUT" "main.go"
 
+# --- 6. copies of directories that are gone ------------------------------------------
+gone="$tmp/lane/gone"
+mkdir -p "$gone"
+gone_copy="$(run "$FTEST" -C "$gone"; echo "$OUT")"
+mkdir -p "$gone_copy-host"
+legacy="$FACTORY_TEST_ROOT/old-0123456789ab"
+mkdir -p "$legacy" "$FACTORY_TEST_ROOT/yarn-cache"
+rm -rf "$gone"
+run "$FTEST" -C "$plain"
+plain_copy="$OUT"
+assert_eq "cleanup: the copy (and -host twin) of a removed directory is removed" \
+  "$(test -e "$gone_copy" || test -e "$gone_copy-host" || test -e "$gone_copy.src" || echo gone)" "gone"
+assert_contains "cleanup: says why" "$ERR" "its source, $gone, is gone"
+assert_eq "cleanup: a copy with no recorded source (made before .src) is removed" \
+  "$(test -e "$legacy" && echo kept || echo gone)" "gone"
+assert_eq "cleanup: the copy of a directory that exists is kept, with its venv" \
+  "$(test -x "$copy/.venv/bin/python" && test -d "$plain_copy" && echo kept)" "kept"
+assert_eq "cleanup: the package caches are kept" "$(test -d "$FACTORY_TEST_ROOT/yarn-cache" && echo kept)" "kept"
+
 echo "---"
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]

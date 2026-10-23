@@ -41,7 +41,9 @@ set -euo pipefail
 #            factory/* branch; <base> is a branch name on origin (default:
 #            origin/HEAD, the branch the project has checked out).
 #   review   For read-only roles: clone <project>/<rel> (default ".") into
-#            $HOME/review/, check out <ref> (e.g.
+#            $HOME/review/<lane>/<rel> (one checkout per $FACTORY_LANE and repo,
+#            reused for every ref; <lane> is "_" without FACTORY_LANE, <rel> "_"
+#            for "."), check out <ref> (e.g.
 #            factory-developer/factory/x, or refs/remotes/factory-developer/factory/x)
 #            as branch "review", discarding local edits there, and print the
 #            checkout's path as the last line of stdout. origin is the project,
@@ -318,7 +320,7 @@ cmd_bundle() {
 
 cmd_review() {
   [ $# -eq 2 ] || [ $# -eq 3 ] || die "$USAGE"
-  local project="$1" ref="$2" rel="${3:-.}" src full cand name dir
+  local project="$1" ref="$2" rel="${3:-.}" src full cand name dir lanekey old
   check_project "$project"
   check_rel "$project" "$rel"
   [[ "$ref" =~ ^[A-Za-z0-9._/-]+$ ]] || die "invalid ref: $ref"
@@ -339,19 +341,25 @@ cmd_review() {
   g check-ref-format "$full" || die "invalid ref: $ref"
   g -C "$src" show-ref --verify --quiet "$full" || die "no such ref in $src: $full"
 
-  name="${full#refs/remotes/}"
-  [ "$rel" = . ] || name="$rel--$name"
-  name="$(printf '%s' "$name" | tr -c 'A-Za-z0-9._-' '_')"
-  name="$name-$(printf '%s\n%s' "$rel" "$full" | sha256sum | cut -c1-8)"
-  # Each lane of a reviewer gets its own checkout, so two lanes reviewing the
-  # same ref don't share one.
+  # One checkout per lane and repo, whatever the ref, so the disk doesn't grow
+  # with every review (and factory-test keeps one copy, with its installed
+  # dependencies, per checkout). Each lane of a reviewer gets its own, so two
+  # lanes reviewing at once don't share one; "_" (not a valid lane name) is the
+  # checkout used without FACTORY_LANE.
   case "${FACTORY_LANE:-}" in
-    '') ;;
+    '') lanekey=_ ;;
     *[!a-z0-9-]*) die "invalid FACTORY_LANE: $FACTORY_LANE" ;;
-    *) name="$FACTORY_LANE--$name" ;;
+    *) lanekey="$FACTORY_LANE" ;;
   esac
-  dir="$HOME/review/$name"
-  mkdir -p "$HOME/review"
+  name="$rel"
+  [ "$rel" != . ] || name=_
+  dir="$HOME/review/$lanekey/$name"
+  mkdir -p "$HOME/review/$lanekey"
+  # Checkouts from before this layout were one per ref, at
+  # $HOME/review/<lane>--<name>-<hash>, never removed: remove this lane's.
+  for old in "$HOME/review/$lanekey--"*; do
+    [ ! -d "$old/.git" ] || { say "removing old per-ref checkout $old"; rm -rf "$old"; }
+  done
   if [ -e "$dir/.git" ]; then
     say "refreshing $dir from $src"
     set_origin "$dir" "$src"
@@ -364,7 +372,9 @@ cmd_review() {
     || die "fetch of $full failed"
   g -C "$dir" checkout --quiet --force --no-recurse-submodules -B review refs/factory-review/target >&2 \
     || die "checkout of $full failed in $dir"
-  g -C "$dir" clean --quiet -fd >&2
+  # -x too: ignored files the last review left (build output, caches) would
+  # otherwise reach the next review's factory-test copy.
+  g -C "$dir" clean --quiet -ffdx >&2
   init_submodules "$src" "$dir"
   say "checked out $full ($(g -C "$dir" rev-parse --short HEAD)) as branch review"
   (cd "$dir" && pwd -P)

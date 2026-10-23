@@ -44,6 +44,8 @@ set -euo pipefail
 # Why a copy: the project folder is shared with the host, whose node_modules
 # holds the host platform's native binaries, and read-only roles can't write
 # to it at all. Files the command writes (snapshots, coverage) stay in the copy.
+# The copy is kept for the next run from the same directory; each run removes
+# the copies of directories that no longer exist.
 #
 # Baked into the developer and reviewer images (templates/*/Dockerfile).
 
@@ -72,6 +74,31 @@ case "$mode" in auto|clean|host) ;; *) die "unknown mode '$mode' (auto, clean or
 src="$(cd "$src" && pwd -P)" || die "no such directory: $src"
 root="${FACTORY_TEST_ROOT:-$HOME/.cache/factory-test}"
 base="$root/$(basename "$src")-$(printf '%s' "$src" | sha256sum | cut -c1-12)"
+
+# Copies are kept between runs (installed dependencies survive), so remove the
+# ones nothing will use again: each copy's source path is recorded in <copy>.src
+# (written before the copy is made, so a concurrent run's new copy always has
+# one); a copy whose source is gone is removed, with its -host twin. A copy with
+# no .src predates this and is removed too: it is only a cache, rebuilt on its
+# next run.
+mkdir -p "$root"
+printf '%s' "$src" > "$base.src"
+for d in "$root"/*; do
+  copy="${d%.src}"
+  copy="${copy%-host}"
+  [[ "${copy##*/}" =~ -[0-9a-f]{12}$ ]] || continue  # logs, yarn-cache, npm-cache
+  if [ -f "$copy.src" ]; then
+    from="$(cat "$copy.src")"
+    [ ! -d "$from" ] || continue
+    why="its source, $from, is gone"
+  else
+    why="it has no recorded source"
+  fi
+  [ ! -d "$d" ] || say "removing the copy $d: $why"
+  rm -rf "$d"
+  rm -f "$copy.src"
+done
+copy="" from="" why=""
 # find_factory_dir NAME: .factory/NAME at the nearest directory at or above
 # <project-dir> (npm_fetch writes the mirror at the workspace root, which is above
 # <project-dir> when the lockfile is in a subdirectory), else the host project's
