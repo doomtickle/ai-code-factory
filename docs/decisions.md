@@ -2,6 +2,21 @@
 
 Dated entries, for the user to review. Newest first.
 
+## 2026-10-23
+
+- **Herdr is removed from the factory** (doomtickle/passdesk-ops#146). The
+  owner no longer wants the terminal UI; the dashboard (`--layout web`) has
+  been the default since 20 Oct. Gone: the `--layout watch` and `tabs`
+  layouts, Herdr's install and version pin (`factory setup` no longer
+  downloads it; an existing `herdr` binary is left alone on the machine),
+  its `factory doctor` check, its session and `FACTORY_NO_ATTACH`. Kept:
+  `factory dashboard`, `factory chat`, the standalone `factory watch`
+  printer, `--no-ui`, and the one-attachment rule for the Coordinator's
+  terminal (`coordinator_attached`, `runs_sandbox`). A saved or passed
+  `watch` or `tabs` layout falls back to the dashboard with a one-line
+  warning rather than failing. What would change it: the owner asking for a
+  terminal UI again. (Repo: ai-code-factory.)
+
 ## 2026-10-22
 
 - **Approve later: a held push, PR or MR is queued and the gateway makes it
