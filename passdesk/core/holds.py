@@ -519,7 +519,7 @@ def _report_settled(cid: str, now: float, expire: int) -> None:
         raw = done.get("outcome") if isinstance(done.get("outcome"), dict) else {}
         outcome = core_approvals.as_outcome({**raw, "id": cid, "approver": raw.get("approver") or done.get("approver"),
                                              "completed": _iso(_timestamp(done.get("finished"), now))})
-        raise Queued(f"{result}\n{core_approvals.held_note(outcome)}", cid, "completed")
+        raise Queued(core_approvals.with_held_note(result, outcome), cid, "completed")
     if write == "failed":
         with _lock:
             current = _read(_path("done", cid))

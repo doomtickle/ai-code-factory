@@ -162,7 +162,7 @@ content that actually gets pushed is still pinned by `head` and
   the gateway is making this write now. Call this exact tool again with the
   same arguments in a minute for its result; until then, report it as
   queued, not done.` Once made, the retry gets the write's result and the
-  held line with `; written by the gateway at T` added, for
+  held clause (see below) with `; written by the gateway at T` added, for
   `expire_seconds` after the write; after that the same call is a new
   request. Declined, it gets `DENIED ... declined by NAME: REASON (approval
   X, queued)` for the same window. Failed, it gets the failure once
@@ -184,8 +184,18 @@ content that actually gets pushed is still pinned by `head` and
 - **The result says it was held** (doomtickle/passdesk-ops#141). An
   approval that lands within the hold looks to the agent like a slow call,
   so every write that went through a hold (approved in the call, or picked
-  up by a retry) ends its result with one more line: `Held for approval
-  (id X); approved by "NAME" at 2026-10-22T09:15:00Z after N s.` `decided`
+  up by a retry) says so in the first line of its result, after the write
+  itself (doomtickle/passdesk-ops#153; before that it was a last line that
+  a developer read as "pushed" and "held" at once): `Pushed 2 commit(s) to
+  o/r:factory/x (abc...); held for approval (id X), approved by "NAME" at
+  2026-10-22T09:15:00Z after N s.` The tool's first line loses its final
+  full stop to the clause, and the rest of the result follows unchanged.
+  An agent therefore sees one of three shapes, and each says where the write
+  stands: `Queued for approval (id X); nothing has been sent yet...` means
+  nothing was sent; `Approved (id X); the gateway is making this write
+  now...` means it is in progress; a first line with `; held for approval
+  (id X), approved by "NAME"...` means the write was made (or the forge
+  refused it, if the line says so) after the approval. `decided`
   is the decision's time in UTC and `waited_seconds` runs from the card's
   creation (the first held call) to the decision, so a retry reports how
   long the write really waited for a person; a decision or creation time

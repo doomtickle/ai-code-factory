@@ -50,7 +50,8 @@ class PushApprovalTests(test_git.GitFlowTests):
         self.make_bundle()
         out = git.tool_git_push({"repo": "acme/widgets", "branch": "factory/feature", "bundle": "f.bundle"}, POLICY)
         self.assertIn("Pushed 1 commit(s)", out)
-        self.assertNotIn("Held for approval", out)  # a hook that returns None: not held
+        self.assertNotIn("held for approval", out.lower())  # a hook that returns None: not held
+        self.assertRegex(out.splitlines()[0], r"^Pushed 1 commit\(s\) to acme/widgets:factory/feature \([0-9a-f]{40}\)\.$")
         card = seen[-1]
         self.assertEqual(card["tool"], "git_push")
         self.assertEqual(card["principal"], "developer")
@@ -77,8 +78,10 @@ class PushApprovalTests(test_git.GitFlowTests):
         self.make_bundle()
         out = git.tool_git_push({"repo": "acme/widgets", "branch": "factory/feature", "bundle": "f.bundle"}, POLICY)
         self.assertTrue(out.startswith("Pushed 1 commit(s)"), out)
-        self.assertEqual(out.splitlines()[-1], 'Held for approval (id 0123456789abcdef); approved by "daron" at '
-                                               "2026-10-22T09:15:00Z after 31 s.")
+        self.assertRegex(out.splitlines()[0], r'^Pushed 1 commit\(s\) to acme/widgets:factory/feature \([0-9a-f]{40}\); '
+                                              r'held for approval \(id 0123456789abcdef\), approved by "daron" at '
+                                              r"2026-10-22T09:15:00Z after 31 s\.$")
+        self.assertNotIn("Held for approval", out)  # no separate last line
         self.assertNotEqual(self.sh("git", "ls-remote", "--heads", str(self.origin), "factory/feature",
                                     cwd=self.ws), "")
 
@@ -340,6 +343,17 @@ class ApprovalPointTests(Base):
         self.assertEqual(approvals.held_note(None), "")
         self.assertEqual(approvals.with_held_note("Opened PR #1", None), "Opened PR #1")
 
+    def test_the_note_joins_the_first_line_and_leaves_the_rest_alone(self):
+        outcome = {"id": "abc", "approver": "daron", "decided": "2026-10-22T09:15:00Z", "waited_seconds": 4}
+        held = ('; held for approval (id abc), approved by "daron" at 2026-10-22T09:15:00Z after 4 s.')
+        self.assertEqual(approvals.with_held_note("Pushed 2 commit(s) to o/r:b (abc).\nremote: ok\nlast", outcome),
+                         "Pushed 2 commit(s) to o/r:b (abc)" + held + "\nremote: ok\nlast")
+        self.assertEqual(approvals.with_held_note("Opened PR #1: https://x/1", outcome), "Opened PR #1: https://x/1" + held)
+        failure = "Push to o/r:b was rejected: non-fast-forward.\nhint: fetch first"
+        self.assertEqual(approvals.with_held_note(failure, outcome),
+                         "Push to o/r:b was rejected: non-fast-forward" + held + "\nhint: fetch first")
+        self.assertEqual(approvals.with_held_note("", None), "")
+
     def test_a_hook_value_that_is_not_an_outcome_is_ignored(self):
         for value in (True, "approved", 1, [], {}, {"id": ""}, {"id": "  "}, {"id": 7, "approver": "x"}):
             approvals.set_hook(lambda card, v=value: v)
@@ -353,14 +367,14 @@ class ApprovalPointTests(Base):
                                          "decided": None, "waited_seconds": float("inf")})
         outcome = approvals.require({"tool": "git_push"})
         note = approvals.held_note(outcome)
-        self.assertEqual(note, 'Held for approval (id abc 123); approved by "Mallory Bob '
+        self.assertEqual(note, 'Held for approval (id abc 123), approved by "Mallory Bob '
                                '[REDACTED:github-token]".')
         approvals.set_hook(lambda card: {"id": "abc", "waited_seconds": True})
         self.assertEqual(approvals.held_note(approvals.require({"tool": "git_push"})),
-                         'Held for approval (id abc); approved by "unknown".')
+                         'Held for approval (id abc), approved by "unknown".')
         approvals.set_hook(lambda card: {"id": "abc", "approver": "x" * 500, "waited_seconds": 2.6})
         self.assertEqual(approvals.held_note(approvals.require({"tool": "git_push"})),
-                         f'Held for approval (id abc); approved by "{"x" * 100}" after 3 s.')
+                         f'Held for approval (id abc), approved by "{"x" * 100}" after 3 s.')
 
     def test_the_note_drops_format_characters_and_c1_controls(self):
         # filters.sanitize leaves these: bidi overrides and isolates would
@@ -370,7 +384,7 @@ class ApprovalPointTests(Base):
             "id": "ab\u200bc\u2066", "decided": "2026-10-22T09:15:00Z\u202e",
             "approver": "ev\u202eil\u200b\u202a\u202b\u202c\u202d\u2067\u2068\u2069\ufeff\x9b31m\x85\x80 \"x\" Bob"})
         self.assertEqual(approvals.held_note(approvals.require({"tool": "git_push"})),
-                         'Held for approval (id abc); approved by "evil31m \'x\' Bob" at 2026-10-22T09:15:00Z.')
+                         'Held for approval (id abc), approved by "evil31m \'x\' Bob" at 2026-10-22T09:15:00Z.')
 
     def call_pr(self, principal="reviewer"):
         fake_pr = {"html_url": "https://github.com/acme/widgets/pull/1", "number": 1, "draft": True}
@@ -397,9 +411,8 @@ class ApprovalPointTests(Base):
                                          "decided": "2026-10-22T09:15:00Z", "waited_seconds": 12})
         text, is_error, last = self.call_pr()
         self.assertFalse(is_error, text)
-        self.assertEqual(text, "Opened PR #1: https://github.com/acme/widgets/pull/1\n"
-                               'Held for approval (id feedfacecafebeef); approved by "daron" at '
-                               "2026-10-22T09:15:00Z after 12 s.")
+        self.assertEqual(text, "Opened PR #1: https://github.com/acme/widgets/pull/1; held for approval "
+                               '(id feedfacecafebeef), approved by "daron" at 2026-10-22T09:15:00Z after 12 s.')
         self.assertEqual((last["tool"], last["decision"], last["approval"]),
                          ("github_create_pr", "allow", "feedfacecafebeef"))
         # The next call on the same thread wasn't held: no approval on its record.

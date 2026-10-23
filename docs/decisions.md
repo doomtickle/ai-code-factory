@@ -4,6 +4,29 @@ Dated entries, for the user to review. Newest first.
 
 ## 2026-10-23
 
+- **A write made after a hold says so in one first line**
+  (doomtickle/passdesk-ops#153). The note added in #141 was a last line,
+  `Held for approval (id X); approved by "NAME" at T after N s.`, under a
+  first line like `Pushed 2 commit(s) to o/r:b (sha).` A developer run read
+  "Pushed" plus "Held for approval" as ambiguous and refused to open the PR
+  until told the push had landed; agents are also taught `Queued for
+  approval ...; nothing has been sent yet` and `Approved ...; the gateway is
+  making this write now`, so a lone "Held for approval" line looked like a
+  third not-yet-done state. `with_held_note` now folds the note into the
+  first line (final full stop dropped, then `; held for approval (id X),
+  approved by "NAME" at T after N s` and a new full stop), for push, PR, MR
+  and issue results, success and failure, and for a queued write's result
+  read back by a retry (with `; written by the gateway at T`). Later lines
+  are unchanged and an unheld result is byte-identical. `held_note` keeps
+  the standalone sentence with a comma instead of a semicolon so both forms
+  read alike; the `Queued` and `Approved` strings did not change. The tool
+  descriptions' queued note says a first line ending in "held for approval
+  ... approved by" is complete. Consumers checked: nothing in the broker or
+  the AI Code Factory parses the result text (the dashboard's held note and
+  `factory approvals` read the cards and decisions). What would change it:
+  an agent that still misreads the line, or a consumer that needs the old
+  last line.
+
 - **Herdr is removed from the factory** (doomtickle/passdesk-ops#146). The
   owner no longer wants the terminal UI; the dashboard (`--layout web`) has
   been the default since 20 Oct. Gone: the `--layout watch` and `tabs`
@@ -63,7 +86,7 @@ Dated entries, for the user to review. Newest first.
     The call's record has `decision: queued`, `approval: <id>`. A retry
     while the gateway is writing gets `Approved (id X); the gateway is
     making this write now...`; after the write, its result plus the held
-    line with `; written by the gateway at T`.
+    clause with `; written by the gateway at T`, in its first line.
   - **Exactly once.** The job is stored under the hold's lock only if no
     decision has arrived (one that has is applied in the call instead), and
     the runner claims a write by filing `done/<id>.json` as `running` and
