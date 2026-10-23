@@ -965,6 +965,7 @@ def run_claude(job: Job, log: Transcript, workdir: str, lane_root: str | None) -
 
             def expire():
                 timed_out.set()
+                stop_claude_in_sandbox(job)
                 kill_group(proc)
 
             timer = threading.Timer(job.max_job_seconds, expire) if job.max_job_seconds else None
@@ -1247,6 +1248,18 @@ def cancel_pattern(session: str) -> str:
     return f"^claude -p .*--(session-id|resume) {session}( |$)"
 
 
+def stop_claude_in_sandbox(job: Job) -> None:
+    """SIGINT this job's claude inside its sandbox (other lanes keep running); killing
+    the local sbx exec client alone isn't known to stop the remote process."""
+    session = job.claude_session
+    if session and _SESSION_ID.match(session):
+        try:
+            subprocess.run([SBX, "exec", sandbox_name(job.role), "pkill", "-INT", "-f",
+                            cancel_pattern(session)], capture_output=True, timeout=60)
+        except (OSError, subprocess.SubprocessError):
+            pass
+
+
 def tool_cancel_job(args: dict) -> str:
     job = _jobs.get(args["job_id"])
     if job is None:
@@ -1254,12 +1267,7 @@ def tool_cancel_job(args: dict) -> str:
     if job.status != "running":
         return f"Job {job.id} already {job.status}."
     job.status = "cancelled"
-    # Stop this job's claude inside the sandbox (other lanes keep running), then the
-    # local sbx exec client.
-    session = job.claude_session
-    if session and _SESSION_ID.match(session):
-        subprocess.run([SBX, "exec", sandbox_name(job.role), "pkill", "-INT", "-f",
-                        cancel_pattern(session)], capture_output=True, timeout=60)
+    stop_claude_in_sandbox(job)
     kill_group(job.proc, signal.SIGTERM)
     job.done.wait(30)
     return f"Cancelled job {job.id} on {job.lane}."

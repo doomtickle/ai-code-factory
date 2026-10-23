@@ -573,6 +573,11 @@ class DelegateTests(Base):
         self.assertEqual(report["status"], "failed")
         self.assertIn("MAX_JOB_SECONDS limit of 1s", report["report"])
         self.assertIn("killed", (d.STATE / "logs" / "developer.log").read_text())
+        call = self.claude_calls()[0]
+        sid = call[call.index("--session-id") + 1]
+        pkill = [c for c in self.sbx_calls() if c[2:3] == ["pkill"]]
+        pattern = f"^claude -p .*--(session-id|resume) {sid}( |$)"
+        self.assertEqual(pkill, [["exec", "factory-developer", "pkill", "-INT", "-f", pattern]])
         out = json.loads(d.tool_delegate({"role": "developer", "task": "next", "wait_seconds": 30}))
         self.assertEqual(out["status"], "done")  # the lane took a new job
 
