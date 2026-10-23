@@ -182,10 +182,23 @@ def read_role_override(path: Path) -> dict:
     return values
 
 
-def load_roles() -> dict:
+def enabled_roles_snapshot() -> set:
+    """Role names this machine switched on (FACTORY_CONFIG/enabled-roles,
+    snapshotted by start-dispatch.sh into STATE/enabled-roles). Missing or
+    unreadable means none: optional roles stay off."""
+    try:
+        text = (STATE / "enabled-roles").read_text(encoding="utf-8")
+    except OSError:
+        return set()
+    return {line.strip() for line in text.splitlines() if _ROLE_NAME.match(line.strip())}
+
+
+def load_roles(include_disabled: bool = False) -> dict:
     """Roles from ROOT/roles/*/role.conf (parsed, never executed), each with this
     machine's local override (if any) layered on top. Override values go through
-    the same parsing as role.conf's."""
+    the same parsing as role.conf's. A role whose committed role.conf sets
+    OPTIONAL="1" is left out unless the enabled-roles snapshot names it (all of
+    them, flagged "enabled", with include_disabled)."""
     roles = {}
     confs = sorted((ROOT / "roles").glob("*/role.conf"))
     overrides = role_overrides_dir()
@@ -203,10 +216,14 @@ def load_roles() -> dict:
             m = _CONF_LINE.match(line)
             if m:
                 values[m.group(1)] = m.group(2)
+        enabled = values.get("OPTIONAL") != "1" or name in enabled_roles_snapshot()
+        if not enabled and not include_disabled:
+            continue
         override = overrides / f"{name}.conf"
         if override.is_file():
             values.update(read_role_override(override))
         roles[name] = {
+            "enabled": enabled,
             "description": values.get("DESCRIPTION", ""),
             "workspace": values.get("WORKSPACE", "rw"),
             "broker_tools": values.get("BROKER_TOOLS", "").split(),
@@ -1057,7 +1074,13 @@ def tool_list_roles(args: dict) -> str:
 
 def tool_delegate(args: dict) -> str:
     role, task = args["role"], args["task"].strip()
-    roles = load_roles()
+    roles = load_roles(include_disabled=True)
+    if role in roles and not roles[role]["enabled"]:
+        raise Denied(f"the {role} role is disabled on this machine (it is optional and off by default). "
+                     f"To enable it, the user adds a line '{role}' to the enabled-roles file in the "
+                     "factory config folder (~/.config/ai-code-factory/enabled-roles) and runs "
+                     "'factory start'. Until then, do the work with the roles in list_roles.")
+    roles = {name: info for name, info in roles.items() if info["enabled"]}
     if role not in roles:
         raise Denied(f"unknown role {role!r}; available: {', '.join(roles) or 'none'}")
     if not task:
@@ -1453,7 +1476,8 @@ def server_instructions() -> str:
         "",
         "Roles:",
     ]
-    for name, info in load_roles().items():
+    roles = load_roles()
+    for name, info in roles.items():
         access = "edits a private clone" if info["workspace"] == "rw" else "project read-only"
         if info["lanes"] > 1:
             access += f", {info['lanes']} lanes"
@@ -1462,8 +1486,8 @@ def server_instructions() -> str:
         "",
         "Delegate self-contained tasks (goal, files, known facts, constraints, what done "
         "looks like); delegate waits for the job by default, so one call returns the report. Typical "
-        "flow: researcher (only if outside information is needed) -> developer -> "
-        "reviewer, sending REVISE feedback back to the developer. Pick each task's model and "
+        "flow: " + ("researcher (only if outside information is needed) -> " if "researcher" in roles else "")
+        + "developer -> reviewer, sending REVISE feedback back to the developer. Pick each task's model and "
         "effort (delegate's optional model and effort) as the cheapest that will do it well, "
         "stepping up after a weaker run falls short. Ask the user before anything irreversible.",
         "",

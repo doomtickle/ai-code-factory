@@ -124,8 +124,8 @@ ${B}Usage${N}
 ${B}Examples${N}
   factory docs
   cd ~/code/my-app && factory start
-  factory logs researcher
-  factory role new designer researcher
+  factory logs developer
+  factory role new designer reviewer
   factory analytics --json | jq '.roles'
 EOF
 }
@@ -385,6 +385,22 @@ $(sed -n 's/^[[:space:]]*-[[:space:]]*"\{0,1\}\([^"[:space:]#]*\).*/\1/p' "$kit"
       fail "${out#error: }" "fix or remove the override, then 'factory start' applies it (docs/guides/04-customize.md)"
     fi
   fi
+  # Optional roles (README, "Optional roles"): a malformed enabled-roles file is
+  # a problem; a sandbox left from when a role was on is only a note, with the
+  # command that removes it (never run automatically).
+  if [ -n "$roles_ready" ] && { [ -e "$(enabled_roles_file)" ] || [ -n "$(disabled_role_sandboxes)" ]; }; then
+    step "Optional roles"
+    if out="$(validate_enabled_roles 2>&1)"; then
+      if [ -e "$(enabled_roles_file)" ]; then ok "enabled-roles is valid ($(enabled_roles_listed | tr '\n' ' ' | sed 's/ $//'))"; fi
+    else
+      fail "${out#error: }" "fix the file ($(enabled_roles_file)): one role name per line"
+    fi
+    for t in $(disabled_role_sandboxes); do
+      warn "$t exists but its role (${t#factory-}) is disabled, so it is not started or used"
+      say "      To remove it:  sbx rm --force $t"
+      say "      To use it again: add '${t#factory-}' to $(enabled_roles_file), then 'factory start'"
+    done
+  fi
   approvals_doctor_check
   # A warning, not a problem (owner decision): the fix is a Pro re-copy or a
   # policy edit, and `factory update` must stay usable meanwhile.
@@ -392,6 +408,9 @@ $(sed -n 's/^[[:space:]]*-[[:space:]]*"\{0,1\}\([^"[:space:]#]*\).*/\1/p' "$kit"
   if [ -n "$roles_ready" ] && why="$(gitlab_mr_unheld)"; then
     warn "GitLab merge requests open without approval: $why (see README: Enabling approvals)"
   fi
+  step "sbx CLI reference (docs/reference/sbx-cli.md)"
+  if why="$(sbx_reference_problem "$ROOT/docs/reference/sbx-cli.md")"; then warn "$why"
+  else ok "matches sbx $SBX_VERSION"; fi
 
   say ""
   if [ "$problems" -eq 0 ]; then
@@ -847,6 +866,10 @@ cmd_roles() {
     printf '  %snetwork tools: %s%s\n' "$D" "$(role_get "$r" BROKER_TOOLS | sed 's/ /, /g; s/^$/none/')" "$N"
     [ ! -f "$(role_override_file "$r")" ] \
       || printf '  %slocal overrides: %s%s\n' "$D" "$(role_override_file "$r")" "$N"
+  done
+  for r in $(list_all_roles); do
+    role_optional "$r" && ! role_listed_enabled "$r" || continue
+    printf '%s%-18s%s off (optional)  enable: add "%s" to %s, then factory start\n' "$D" "$r" "$N" "$r" "$(enabled_roles_file)"
   done
 }
 

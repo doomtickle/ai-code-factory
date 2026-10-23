@@ -128,6 +128,17 @@ class DiscoverLanesTests(unittest.TestCase):
                          ["developer", "developer-lane2", "developer-lane3", "reviewer"])
 
 
+    def test_optional_role_has_lanes_only_when_enabled(self):
+        (self.roles / "researcher").mkdir()
+        (self.roles / "researcher" / "role.conf").write_text('LANES="1"\nOPTIONAL="1"\n')
+        base = ["developer", "developer-lane2", "reviewer"]
+        self.assertEqual(self.names(self.overrides), base)
+        enabled = self.logs.parent / "enabled-roles"
+        self.assertEqual(self.names(self.overrides, enabled), base)  # no snapshot yet
+        enabled.write_text("researcher\n")
+        self.assertEqual(self.names(self.overrides, enabled), ["developer", "developer-lane2", "researcher", "reviewer"])
+
+
 class AuditTests(unittest.TestCase):
     def test_skips_malformed_job_ids(self):
         # A job_id that isn't a string (a list, say) can't be a dict key; one such

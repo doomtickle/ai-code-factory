@@ -16,6 +16,13 @@ set -euo pipefail
 #    1-8, ...), and the error names the override file.
 # 5. A line that isn't KEY="value" is refused; the override is never executed.
 # 6. validate_role_overrides refuses an override for a role not in roles/.
+# 7. Optional roles (OPTIONAL="1" in role.conf): list_roles leaves them out
+#    unless FACTORY_CONFIG/enabled-roles names them (list_all_roles never
+#    does); the file takes comments and blanks, a malformed line or unknown
+#    name is refused, naming the file; it grants nothing (BROKER_TOOLS stays
+#    role.conf's) and a local override can't set OPTIONAL; a leftover sandbox of
+#    a disabled role is reported, never removed.
+# 8. new-role.sh copying an optional role makes an ordinary (enabled) one.
 #
 # Uses a fixture repo (roles/, broker/tools.txt) rather than this checkout, so
 # it needs neither the broker/ submodule nor this repo's role.conf values.
@@ -153,6 +160,87 @@ assert_contains "unknown role error names the file" "$R_OUT" "$overrides/designe
 rm -f "$overrides/designer.conf"
 run validate_role_overrides
 assert_eq "empty override folder passes" "$R_RC" "0"
+
+# 7. Optional roles.
+mkdir -p "$ROOT/roles/researcher/kit"
+echo "name: researcher" > "$ROOT/roles/researcher/kit/spec.yaml"
+echo "Research." > "$ROOT/roles/researcher/instructions.md"
+cat > "$ROOT/roles/researcher/role.conf" <<'EOF'
+# Off by default (test fixture).
+OPTIONAL="1"
+DESCRIPTION="Looks things up"
+TEMPLATE="developer"
+WORKSPACE="ro"
+BROKER_TOOLS="npm_fetch"
+EOF
+enabled="$FACTORY_CONFIG/enabled-roles"
+mkdir -p "$FACTORY_CONFIG"
+assert_eq "optional role is off with no enabled-roles file" "$(list_roles | tr '\n' ' ')" "developer "
+assert_eq "list_all_roles still lists it" "$(list_all_roles | tr '\n' ' ')" "developer researcher "
+run validate_role researcher
+assert_eq "an optional role is still a valid role" "$R_RC" "0"
+run validate_role_overrides
+assert_eq "no enabled-roles file passes validation" "$R_RC" "0"
+printf '' > "$enabled"
+assert_eq "an empty enabled-roles leaves it off" "$(list_roles | tr '\n' ' ')" "developer "
+printf '# on for this laptop\n\n  researcher  \n' > "$enabled"
+assert_eq "enabled-roles switches it on (comments, blanks, spaces ok)" "$(list_roles | tr '\n' ' ')" "developer researcher "
+run validate_role_overrides
+assert_eq "a valid enabled-roles passes" "$R_RC" "0"
+assert_eq "enabling grants nothing: BROKER_TOOLS from role.conf" "$(role_get researcher BROKER_TOOLS)" "npm_fetch"
+assert_eq "enabling changes no WORKSPACE" "$(role_get researcher WORKSPACE)" "ro"
+printf 'developer\n' > "$enabled"
+assert_eq "naming only a non-optional role leaves the optional one off" "$(list_roles | tr '\n' ' ')" "developer "
+run validate_role_overrides
+assert_eq "naming a non-optional role is harmless" "$R_RC" "0"
+printf 'reseacher\n' > "$enabled"
+run validate_role_overrides
+assert_eq "an unknown name is refused" "$R_RC" "1"
+assert_contains "the error names the file and the name" "$R_OUT" "$enabled: no role named 'reseacher'"
+for line in 'researcher=1' 'enable researcher' 'Researcher' '$(touch '"$tmp"'/pwned)'; do
+  printf '%s\n' "$line" > "$enabled"
+  run validate_role_overrides
+  assert_eq "refuses enabled-roles line: $line" "$R_RC" "1"
+  assert_contains "error names the file for: $line" "$R_OUT" "$enabled: not a role name"
+done
+[ ! -e "$tmp/pwned" ] && ok "enabled-roles never executed" || bad "enabled-roles was executed"
+printf 'researcher\n' > "$enabled"
+mkdir -p "$overrides"
+echo 'OPTIONAL="0"' > "$overrides/researcher.conf"
+run validate_role researcher
+assert_eq "a local override can't set OPTIONAL" "$R_RC" "1"
+assert_contains "the error says OPTIONAL isn't overridable" "$R_OUT" "OPTIONAL can't be set in a local override"
+rm -f "$overrides/researcher.conf"
+sed -i.bak 's/^OPTIONAL="1"/OPTIONAL="2"/' "$ROOT/roles/researcher/role.conf"
+run validate_role researcher
+assert_eq "OPTIONAL other than 1 is refused" "$R_RC" "1"
+mv "$ROOT/roles/researcher/role.conf.bak" "$ROOT/roles/researcher/role.conf"
+
+# Leftover sandboxes: reported while the role is off, never touched.
+sbx() { [ "$1 $2" = "ls -q" ] || { echo "unexpected sbx $*" >&2; return 1; }; printf 'factory-developer\nfactory-researcher\n'; }
+rm -f "$enabled"
+assert_eq "a disabled role's existing sandbox is reported" "$(disabled_role_sandboxes)" "factory-researcher"
+printf 'researcher\n' > "$enabled"
+assert_eq "an enabled role's sandbox is not reported" "$(disabled_role_sandboxes)" ""
+rm -f "$enabled"
+sbx() { [ "$1 $2" = "ls -q" ] || { echo "unexpected sbx $*" >&2; return 1; }; printf 'factory-developer\n'; }
+assert_eq "no leftover, nothing to report" "$(disabled_role_sandboxes)" ""
+unset -f sbx
+
+# 8. new-role.sh copies an optional role as an ordinary one. Runs in a scratch
+# copy of the scripts (it works on the repo it lives in) with a stub sbx.
+nr="$tmp/nr"
+mkdir -p "$nr/scripts" "$nr/roles" "$nr/broker" "$nr/stubs"
+cp -R "$REPO_ROOT/scripts/new-role.sh" "$REPO_ROOT/scripts/lib" "$nr/scripts/"
+cp -R "$ROOT/roles/researcher" "$nr/roles/researcher"
+cp "$ROOT/broker/tools.txt" "$nr/broker/tools.txt"
+printf '#!/bin/sh\nexit 0\n' > "$nr/stubs/sbx"
+chmod +x "$nr/stubs/sbx"
+run env PATH="$nr/stubs:$PATH" "$nr/scripts/new-role.sh" designer researcher
+assert_eq "new-role.sh copies an optional role" "$R_RC" "0"
+assert_eq "the copy is not optional" "$(grep -c OPTIONAL "$nr/roles/designer/role.conf" || true)" "0"
+assert_eq "the copy keeps the other settings" "$(conf_get "$nr/roles/designer/role.conf" WORKSPACE)" "ro"
+assert_eq "the original is untouched" "$(conf_get "$nr/roles/researcher/role.conf" OPTIONAL)" "1"
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

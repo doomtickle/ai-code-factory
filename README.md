@@ -4,8 +4,8 @@
 Docs site: <https://doomtickle.github.io/ai-code-factory/> (the same page `factory docs` opens locally)
 
 A local multi-agent coding setup. You talk to a **Coordinator** agent; it breaks
-the work down and delegates it to **role agents** (Developer, Reviewer and
-Researcher, or any role you add). Every agent is
+the work down and delegates it to **role agents** (Developer and Reviewer, an
+optional Researcher you can switch on, or any role you add). Every agent is
 Claude Code running in its own Docker Sandboxes (`sbx`) microVM, shown on a
 dashboard in your browser.
 
@@ -114,7 +114,7 @@ dashboard in your browser.
 - A Claude Pro or Max subscription
 - Optional: a GitHub fine-grained token, only if agents should push or open PRs
 - Optional: a GitLab project access token, only if agents should push to or open merge requests on GitLab
-- Optional: a Gemini API key, only if the researcher should use `gemini_flash_query`
+- Optional: a Gemini API key, only if the (optional, off by default) researcher is enabled and should use `gemini_flash_query`
 - Optional: a scoped Atlassian API token, only if the Coordinator should use
   `jira_my_issues` / `jira_get_issue`
 - Optional: a read-only token for your private npm registry, only if your
@@ -312,6 +312,9 @@ factory update
   `roles/<role>/role.conf`: only `MODEL`, `MODELS`, `EFFORT`, `LANES`,
   `MAX_SESSION_TOKENS` and `MAX_TURNS`, applied on `factory start` (Roles,
   "Tuning a role locally"). No rebuild.
+- `enabled-roles` names the optional roles (today: the researcher) to switch on
+  on this machine, one per line (Roles, "Optional roles"). It only turns a role
+  on or off; it can't grant tools. Applied on `factory start`. No rebuild.
 - `plugins/<module>/` holds broker plugins (Python packages that add tools to
   the gateway; see the broker's `docs/plugin-tools.md`). `factory update`
   copies the folder into the broker image and the broker sandbox imports each
@@ -489,8 +492,9 @@ are redacted), and whether the token was attached.
 ### Enabling Gemini Flash queries
 
 The researcher's `gemini_flash_query` tool lets it send a prompt to Gemini Flash
-for cheap/fast summarization or triage. It is an opt-in: the researcher is not
-granted it by default, and without a key the tool just returns a DENIED error.
+for cheap/fast summarization or triage. It is an opt-in on top of an opt-in: the
+researcher itself is off unless you enable it (Roles, "Optional roles"), and it
+is not granted this tool by default, and without a key the tool just returns a DENIED error.
 `gemini` is not an `sbx` secret service, so unlike
 GitHub the key can't be proxy-injected. Instead it lives in the host OS keychain
 and is delivered as a file **inside the broker sandbox only**, never seen by any
@@ -631,13 +635,14 @@ is no licence. They are off until you list the tools to hold.
 
 ## Roles
 
-Three roles, split by what each is allowed to do rather than by job title:
+Two roles that always run and one optional one, split by what each is allowed to
+do rather than by job title:
 
 | Role | Does | Project access | Lanes | Broker tools |
 |---|---|---|---|---|
 | developer | implements the change, writes and runs its tests, updates the docs | read-only; works in its own clones, hands back `factory/*` branches | 3 | `npm_fetch`, `pip_download`, `git_fetch`, `git_push`, `github_create_pr`, `gitlab_create_mr` |
 | reviewer | independent check of correctness, tests, security and docs; runs the tests; APPROVED / REVISE; files issues when asked | read-only | 2 | `npm_fetch`, `github_create_issue` |
-| researcher | looks things up on the web and reports with sources | read-only | 1 | `web_fetch` (`gemini_flash_query` as an opt-in) |
+| researcher (optional, off by default) | looks things up on the web and reports with sources | read-only | 1 | `web_fetch` (`gemini_flash_query` as an opt-in) |
 
 **Lanes.** A role with `LANES="3"` runs up to three tasks at once, in lanes
 named `developer`, `developer-lane2` and `developer-lane3`. Each lane has its
@@ -657,7 +662,7 @@ model of that tier):
 | Coordinator | `opus` | Few calls, but its task specs and batching set the cost and quality of all the work below it |
 | developer | `claude-sonnet-5-5` | Most of the tokens; Sonnet is built for everyday agentic coding |
 | reviewer | `opus` | Independent judgment and security review, and a different model from the one that wrote the code |
-| researcher | `claude-sonnet-5-5` | Judges sources and resists text planted in web pages; low volume |
+| researcher (when enabled) | `claude-sonnet-5-5` | Judges sources and resists text planted in web pages; low volume |
 
 If you hit your subscription's usage limits, move the Coordinator to `sonnet`
 first.
@@ -705,7 +710,8 @@ The split follows the capabilities that matter:
 - **No role can change your project.** The developer proposes changes as
   branches; you merge them.
 - **The reviewer judges work it didn't write** and can't alter it.
-- **Only the researcher reads the web.** Web pages are the main way
+- **Only the researcher reads the web** (and with it off, which is the
+  default, no role does). Web pages are the main way
   prompt-injection attacks arrive, and anything fetched lands in a role that
   can't modify your project. The developer gets the researcher's findings only
   as a report relayed by the Coordinator. Pages come through the broker's
@@ -728,6 +734,31 @@ The split follows the capabilities that matter:
 
 For a deeper security pass, the Coordinator can ask the reviewer for a
 security-only review.
+
+**Optional roles.** A role whose committed `role.conf` sets `OPTIONAL="1"` is
+off until you switch it on, and the researcher is the only one so far (it ran
+about 3% of jobs and was rarely useful). While it is off, `factory start` and
+`factory update` create no `factory-researcher` sandbox and issue it no broker
+token or grants, the Coordinator's `list_roles` doesn't show it, and the
+Coordinator's `delegate` refuses it with a message saying how to enable it. To
+switch it on, name it in `~/.config/ai-code-factory/enabled-roles` (one role
+per line; `factory config init` writes a commented example) and run
+`factory start`:
+
+```sh
+echo researcher >> ~/.config/ai-code-factory/enabled-roles
+factory start
+```
+
+Behaviour is then exactly as for any other role. The file only switches a role
+on or off: tools (`BROKER_TOOLS`), `WORKSPACE` and `TEMPLATE` stay in the
+committed `role.conf`, and `roles/<role>.conf` still can't change them
+(`OPTIONAL` is not an overridable key). A name that isn't a role in `roles/` is
+refused, naming the file. Removing the line turns the role off again, but
+never deletes its sandbox: if one is left, `factory doctor` notes it and
+prints the command that removes it (`sbx rm --force factory-researcher`).
+`factory roles` lists optional roles that are off. To make a role of your own
+optional, add `OPTIONAL="1"` to its `role.conf`.
 
 ### Getting the developer's work
 
@@ -931,8 +962,8 @@ broker image, recreates what needs it and restarts), then ask the role again.
 tool 'web_fetch' (see roles/developer/role.conf)`). Add the tool to
 `BROKER_TOOLS` in that file (the Coordinator's is `kits/coordinator/broker.conf`).
 Only names in `broker/tools.txt` are accepted, and a local `roles/<role>.conf`
-can't grant tools. Grant only what the role needs: only the researcher reads
-the web.
+can't grant tools. Grant only what the role needs: only the researcher, if you
+enabled it, reads the web.
 
 ```conf
 BROKER_TOOLS="npm_fetch web_fetch"
@@ -1337,6 +1368,8 @@ scripts/analytics.py, scripts/test_analytics.py      Cost/performance report (fa
 scripts/approvals.py         Approval cards (factory approvals)
 scripts/docs.py              Builds the docs site (factory docs)
 scripts/lint.sh              Pinned shellcheck over every shell script (CI)
+scripts/gen-sbx-reference.sh Saves the installed sbx's help to docs/reference/sbx-cli.md (host; see Upgrading a pin)
+docs/reference/sbx-cli.md    Saved sbx CLI reference agents check before using an sbx flag
 .github/workflows/            CI (ci.yml) and the docs site on GitHub Pages (docs.yml)
 ```
 
@@ -1361,6 +1394,10 @@ Change pins on purpose, in their own commit, and re-run the full setup to test.
 
   Kit keys, CLI flags and lifecycle behavior have changed between sbx releases, so
   re-run `sbx kit validate` on every kit and the broker/dispatch lifecycle checks.
+  Then regenerate the saved CLI reference on the host and commit it:
+  `scripts/gen-sbx-reference.sh` (writes `docs/reference/sbx-cli.md`; agents have
+  no `sbx`, so they check it before using a flag, and `factory doctor` warns while
+  it is missing, not yet generated, or for a different version than `SBX_VERSION`).
 - **ruff:** change `RUFF_VERSION` in `templates/reviewer/Dockerfile`.
 - **yarn:** change `YARN_VERSION` and `YARN_SHA256` in **both**
   `templates/developer/Dockerfile` and `templates/reviewer/Dockerfile`. Get the

@@ -92,7 +92,7 @@ The very first time, there is no Claude login stored yet, so `factory start`
 creates only the Coordinator and tells you so:
 
 ```text
-note: no Claude login is stored yet, so these role sandboxes were not created: developer researcher reviewer
+note: no Claude login is stored yet, so these role sandboxes were not created: developer reviewer
   Type /login in the Coordinator (POWER ON on the dashboard), then run 'factory start' again (or press RESTART on the dashboard).
 ```
 
@@ -221,17 +221,18 @@ Local settings none (see config.example/)
   ✓ dispatch bridge running (pid 48211)
   ✓ Claude login stored
 Coordinator broker tools none
-Roles developer (3 lanes), researcher (1 lane), reviewer (2 lanes)
+Roles developer (3 lanes), reviewer (2 lanes)
 
 Sandboxes
   factory-broker       running
   factory-coordinator  running
   factory-developer    running
-  factory-researcher   running
   factory-reviewer     running
 ```
 
-`factory roles` lists each role's project access, lanes and network tools.
+`factory roles` lists each role's project access, lanes and network tools. The
+researcher, which reads the web, is optional and off by default; see
+[Optional roles](../../README.md#roles) to switch it on.
 
 ## Next steps
 

@@ -302,5 +302,37 @@ fn "approvals_summary() { echo '0 -1 0 3'; }; approvals_doctor_check"
 fn "approvals_summary() { echo '1 40 1 0'; }; approvals_doctor_check"
 assert_contains "doctor still warns about an expired undecided card" "$(cat "$tmp/out")" "1 expired approval(s) with no decision"
 
+# --- Part 8: optional roles in doctor ---------------------------------------------
+# A disabled optional role's leftover sandbox is noted with the command that
+# removes it (never run); an enabled-roles typo is a problem; both stay silent
+# when there is nothing to say.
+mkdir -p "$rdy/roles/researcher/kit"
+printf 'OPTIONAL="1"\nTEMPLATE="developer"\nWORKSPACE="ro"\n' > "$rdy/roles/researcher/role.conf"
+osb="$tmp/osb"
+mkdir -p "$osb"
+printf '#!/bin/sh\necho "$*" >> "%s/osb-calls"\n[ "$1 $2" = "ls -q" ] && echo factory-researcher\nexit 0\n' "$tmp" > "$osb/sbx"
+chmod +x "$osb/sbx"
+rm -rf "$tmp/config"
+fn "PATH='$osb':\$PATH; cmd_doctor"
+out="$(cat "$tmp/out")"
+assert_contains "doctor notes the leftover sandbox of a disabled role" "$out" "factory-researcher exists but its role (researcher) is disabled"
+assert_contains "doctor prints the removal command" "$out" "sbx rm --force factory-researcher"
+assert_contains "doctor says how to turn the role on again" "$out" "add 'researcher' to $tmp/config/ai-code-factory/enabled-roles"
+assert_not_contains "doctor removes nothing itself" "$(cat "$tmp/osb-calls")" "rm"
+mkdir -p "$tmp/config/ai-code-factory"
+printf 'researcher\n' > "$tmp/config/ai-code-factory/enabled-roles"
+fn "PATH='$osb':\$PATH; cmd_doctor"
+out="$(cat "$tmp/out")"
+assert_contains "doctor reports a valid enabled-roles" "$out" "enabled-roles is valid (researcher)"
+assert_not_contains "no leftover note once the role is enabled" "$out" "is disabled"
+printf 'reseacher\n' > "$tmp/config/ai-code-factory/enabled-roles"
+fn "PATH='$osb':\$PATH; cmd_doctor"
+assert_contains "doctor flags an unknown name in enabled-roles" "$(cat "$tmp/out")" "no role named 'reseacher'"
+rm -rf "$tmp/config"
+sed -i.bak 's/^echo factory-researcher//' /dev/null 2>/dev/null || true
+printf '#!/bin/sh\nexit 0\n' > "$osb/sbx"
+fn "PATH='$osb':\$PATH; cmd_doctor"
+assert_not_contains "no optional-roles step when there is nothing to say" "$(cat "$tmp/out")" "Optional roles"
+
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

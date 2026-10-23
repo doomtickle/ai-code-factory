@@ -42,6 +42,7 @@ MODEL = re.compile(r"^   model: (.*)$")
 BRANCH = re.compile(r"^⎇ (?:branch )?(.*)$")
 PACKET = re.compile(r"^📄 review packet: factory packet (\S+)")
 CONF_LANES = re.compile(r'^LANES="(\d*)"', re.M)
+CONF_OPTIONAL = re.compile(r'^OPTIONAL="1"', re.M)
 # A tool call's JSON arguments are cut at 140 characters in the transcript, so
 # the JSON may not parse; these pull the one field worth showing out of the text.
 FIELD = re.compile(r'"(command|file_path|notebook_path|query|description|pattern|prompt)": "(.*)')
@@ -282,15 +283,23 @@ class Audit(Tail):
         return jobs, cost
 
 
-def discover_lanes(roles_dir: Path, logs_dir: Path, overrides_dir: Path | None = None) -> list:
+def discover_lanes(roles_dir: Path, logs_dir: Path, overrides_dir: Path | None = None,
+                   enabled_file: Path | None = None) -> list:
     """Every lane of every role in roles/ (in LANES order), then any other
     transcript in the logs folder (a removed role's, say). A role's LANES comes
     from its local override as the bridge sees it (overrides_dir: the dispatch
     state's role-overrides snapshot, validated by start-dispatch.sh) if that
-    sets it, else from role.conf."""
+    sets it, else from role.conf. An optional role (OPTIONAL="1") has no lanes
+    unless enabled_file (the state's enabled-roles snapshot) names it."""
     lanes = []
+    try:
+        enabled = set(enabled_file.read_text(errors="replace").split()) if enabled_file else set()
+    except OSError:
+        enabled = set()
     for conf in sorted(roles_dir.glob("*/role.conf")):
         role = conf.parent.name
+        if CONF_OPTIONAL.search(conf.read_text(errors="replace")) and role not in enabled:
+            continue
         m = None
         override = overrides_dir / f"{role}.conf" if overrides_dir else None
         if override and override.is_file():
@@ -310,7 +319,7 @@ def discover_lanes(roles_dir: Path, logs_dir: Path, overrides_dir: Path | None =
 class Watch:
     def __init__(self, state: Path, roles: Path, project: str):
         self.state, self.project = state, project
-        self.lanes = discover_lanes(roles, state / "logs", state / "role-overrides")
+        self.lanes = discover_lanes(roles, state / "logs", state / "role-overrides", state / "enabled-roles")
         self.audit = Audit(state / "audit.jsonl")
         self.focus: int | None = None  # index into lanes
         self.all = False  # grid of every lane, not only the active ones

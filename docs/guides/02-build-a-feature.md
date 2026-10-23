@@ -2,7 +2,7 @@
 
 This guide follows one feature from idea to merged code. You'll write a prompt
 that gets good results from the Coordinator, see how it hands the work to the
-researcher, developer and reviewer, read a job result, handle a REVISE round,
+developer and reviewer (and the optional researcher), read a job result, handle a REVISE round,
 and merge the developer's branch into your project. If you've set up GitHub
 or GitLab access, you'll also see how to push the branch and open a pull (or
 merge) request.
@@ -59,7 +59,8 @@ Get it reviewed, then tell me which branch to merge.
 
 It names the goal, the files, the constraints, the edge cases and what "done"
 looks like. It also says when outside information is needed, which is the
-only time the researcher gets involved.
+only time the researcher gets involved, if you've enabled it (it is off by
+default, so without it the Coordinator works from what you wrote).
 
 > **Tip:** You don't need to say which model to use. The Coordinator picks the
 > cheapest model and effort that will do each task well, steps up when a run
@@ -69,9 +70,10 @@ only time the researcher gets involved.
 
 For a prompt like the one above, the typical flow is:
 
-1. **Researcher** (only when outside information is needed): reads the docs
-   through the broker's `web_fetch` tool and reports back with sources. Only
-   the researcher reads the web.
+1. **Researcher** (optional: off unless you enabled it with `enabled-roles`,
+   see [Roles](../../README.md#roles); used only when outside information is
+   needed): reads the docs through the broker's `web_fetch` tool and reports
+   back with sources. Only the researcher reads the web.
 2. **Developer**: works in a private git clone of your project, creates a
    `factory/<topic>` branch, implements the change with tests, runs the checks
    with `factory-test`, commits, and reports the branch.
