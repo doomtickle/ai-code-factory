@@ -1,6 +1,6 @@
 # Developer sandbox template: pinned Claude Code base. Its tools (ripgrep, git,
-# jq, curl, node, rsync) come from the pinned base, plus pinned yarn,
-# factory-test and factory-lane below, so nothing is installed at sandbox start
+# jq, curl, node, rsync, python3, uv) come from the pinned base, plus pinned
+# ruff, yarn, factory-test and factory-lane below, so nothing is installed at sandbox start
 # and every teammate gets byte-identical tooling. Built with the repo root as
 # the build context (see scripts/00-build-templates.sh).
 # Pinned to the multi-arch index digest (linux/amd64 + linux/arm64). To upgrade, run:
@@ -10,7 +10,18 @@
 FROM docker/sandbox-templates:claude-code@sha256:868e3f5ef10579e06903d42e86448851ed59319ab8b9fba6dea2772c449bb2a6
 
 # Fail the build if a digest bump drops a tool the developer agent relies on.
-RUN for t in rg git jq curl node npm rsync sha256sum; do command -v "$t" >/dev/null || { echo "missing: $t" >&2; exit 1; }; done
+RUN for t in rg git jq curl node npm rsync sha256sum python3 uv; do command -v "$t" >/dev/null || { echo "missing: $t" >&2; exit 1; }; done
+
+# ruff, the linter the developer instructions ask for on every finished change
+# (keep the version in sync with templates/reviewer/Dockerfile). System Python
+# is externally managed (PEP 668), so install it as an isolated uv tool with
+# its binary on the system PATH. Pinned by version only: uv tool install
+# can't verify a checksum, like the reviewer image.
+ARG RUFF_VERSION=0.16.8
+USER root
+RUN UV_TOOL_DIR=/opt/uv-tools UV_TOOL_BIN_DIR=/usr/local/bin \
+      uv tool install "ruff==${RUFF_VERSION}" \
+ && ruff --version
 
 # yarn v1 (the project's scripts and git hooks call it; corepack can't install
 # it as the agent user) and factory-test, which runs tests in a sandbox-local

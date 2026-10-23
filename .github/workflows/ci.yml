@@ -60,6 +60,8 @@ jobs:
         run: python3 -m unittest discover -s scripts -p 'test_*.py' -v
       - name: factory-lane
         run: bash scripts/test_factory_lane.sh
+      - name: factory-test Python mode
+        run: bash scripts/test_factory_test.sh
       - name: factory update
         run: bash scripts/test_factory_update.sh
       - name: factory secret
