@@ -183,8 +183,10 @@ setup_done() {
   [ "$(sbx settings get mcp.forceLocalGateway 2>/dev/null)" = "true" ] || return 1
   local templates
   templates="$(sbx template ls -q 2>/dev/null)"
+  # The tag matters: after a TEMPLATE_TAG bump the old images are still listed,
+  # but the sandboxes are created from factory-<image>:$TEMPLATE_TAG.
   for image in developer reviewer broker; do
-    printf '%s' "$templates" | grep -q "factory-$image" || return 1
+    printf '%s\n' "$templates" | grep -Eq "factory-$image:$TEMPLATE_TAG([[:space:]]|\$)" || return 1
   done
 }
 
@@ -761,6 +763,20 @@ cmd_restart() {
   cmd_start "$project" --no-dashboard
 }
 
+# rm_failed_after_stop COMMAND SANDBOXES RETRY -> `sbx rm` failed after COMMAND
+# had already stopped the factory: say what is left stopped and how to recover,
+# then exit. The project stays bound, so `factory start` brings it back.
+rm_failed_after_stop() {
+  local command="$1" sandboxes="$2" retry="$3"
+  # shellcheck disable=SC2086 # one argument per sandbox
+  bad "factory $command: could not remove $(printf '%s ' $sandboxes)"
+  say "  Left stopped: the agent sandboxes, the broker and the dispatch bridge. Nothing was restarted."
+  say "  Some of those sandboxes may already be gone ('sbx ls' shows what is left)."
+  say "  To bring the factory back up: ${B}factory start${N} (in your project)."
+  say "  To retry the removal: ${B}$retry${N}."
+  exit 1
+}
+
 cmd_reset() {
   local sandboxes
   require_sbx
@@ -773,7 +789,8 @@ cmd_reset() {
   "$SCRIPTS/03-stop-factory.sh" >/dev/null
   if [ -n "$sandboxes" ]; then
     # shellcheck disable=SC2086 # one argument per sandbox
-    sbx rm --force $sandboxes >/dev/null
+    sbx rm --force $sandboxes >/dev/null \
+      || rm_failed_after_stop "reset" "$sandboxes" "factory reset"
     ok "removed $(printf '%s ' $sandboxes)"
   fi
   rm -f "$FACTORY_BROKER_STATE/project" "$FACTORY_DISPATCH_STATE/project"
@@ -1389,7 +1406,8 @@ cmd_update() {
   ok "stopped the agents, broker and dispatch bridge"
   if [ -n "$stale" ]; then
     # shellcheck disable=SC2086 # one argument per sandbox
-    sbx rm --force $stale >/dev/null
+    sbx rm --force $stale >/dev/null \
+      || rm_failed_after_stop "update" "$stale" "factory update"
     for sb in $stale; do forget_role_sessions "${sb#factory-}"; done
     ok "removed $stale"
   fi

@@ -60,6 +60,8 @@ jobs:
         run: python3 -m unittest discover -s scripts -p 'test_*.py' -v
       - name: factory-lane
         run: bash scripts/test_factory_lane.sh
+      - name: project_repos parity (common.sh, dispatch/server.py, factory-lane)
+        run: bash scripts/test_project_repos.sh
       - name: factory-test Python mode
         run: bash scripts/test_factory_test.sh
       - name: factory update
@@ -78,6 +80,8 @@ jobs:
         run: bash scripts/test_factory_chat.sh
       - name: factory restart
         run: bash scripts/test_factory_restart.sh
+      - name: factory state (token minting, failed rm, image tag)
+        run: bash scripts/test_factory_state.sh
       - name: factory GitLab checks
         run: bash scripts/test_factory_gitlab.sh
       - name: local role overrides
@@ -128,6 +132,8 @@ jobs:
         run: bash scripts/test_factory_chat.sh
       - name: factory restart
         run: bash scripts/test_factory_restart.sh
+      - name: factory state (token minting, failed rm, image tag)
+        run: bash scripts/test_factory_state.sh
       - name: factory GitLab checks
         run: bash scripts/test_factory_gitlab.sh
       - name: fresh-clone doctor and start checks

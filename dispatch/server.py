@@ -259,12 +259,18 @@ def lane_names(role: str, lanes: int) -> list:
     return [lane_name(role, k) for k in range(1, lanes + 1)]
 
 
+def _has_git(path: Path) -> bool:
+    """A .git directory, or a gitfile (worktrees, submodules)."""
+    return os.path.isdir(path / ".git") or os.path.isfile(path / ".git")
+
+
 def project_repos(project: Path) -> list:
     """Relative paths of the git repos rw roles clone: "." if the project is a
     repo, else its non-hidden, non-symlink immediate subfolders that are repos
     (byte order). Must match project_repos in scripts/lib/common.sh and
-    templates/agent/factory-lane."""
-    if os.path.exists(project / ".git"):
+    templates/agent/factory-lane; scripts/test_project_repos.sh runs all three
+    on one fixture and fails if they differ."""
+    if _has_git(project):
         return ["."]
     try:
         entries = os.listdir(project)
@@ -273,8 +279,8 @@ def project_repos(project: Path) -> list:
     repos = []
     for name in entries:
         path = project / name
-        if (name.startswith(".") or path.is_symlink() or not path.is_dir()
-                or not os.path.exists(path / ".git")):
+        if (name.startswith(".") or "\n" in name or path.is_symlink()
+                or not path.is_dir() or not _has_git(path)):
             continue
         repos.append(name)
     return sorted(repos, key=lambda n: n.encode("utf-8", "surrogateescape"))

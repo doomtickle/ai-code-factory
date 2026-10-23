@@ -62,7 +62,7 @@ socket, or host credentials. Full picture: README.md.
   project path any role mounts is `.factory/outgoing` (`02-launch-factory.sh` creates
   it, git-ignored, refuses symlinks). The project must be a git repo or folder of git
   repos (`project_repos` in `scripts/lib/common.sh`, `dispatch/server.py`,
-  `factory-lane` — kept identical) for rw roles to run.
+  `factory-lane` — kept identical, `scripts/test_project_repos.sh` checks it) for rw roles to run.
 - Developer/reviewer images carry a pinned headless Chrome (`chrome-headless-shell`,
   via `templates/agent/factory-shot`/DevTools) for rendering and screenshotting work —
   not a network capability: kits unchanged, the browser reaches only `file://` and
