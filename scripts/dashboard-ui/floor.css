@@ -1,0 +1,171 @@
+/* The factory floor (floor.js): the Lanes bay as a pixel-art shop floor. Every shape
+   is an SVG rect in scene units; state lives in classes (.s-running, .night, .holding…)
+   so this file decides what each state looks like. Colours come from theme.css where
+   the console already has one. */
+
+.lanes-bay.floor-on > .lanes, .lanes-bay.floor-on > .standby, .lanes-bay.floor-on > .lane-strip { display: none !important; }
+.floor { flex: 1; min-height: 0; display: flex; padding: 8px; }
+.floor .fl { display: block; width: 100%; height: 100%; shape-rendering: crispEdges; border-radius: 3px; background: #121315;
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,.6), 0 0 0 3px #101112, 0 0 0 4px #3c3e42; }
+.lanes-h .floor-key { margin-left: 4px; }
+
+.fl text { font-family: var(--f-crt); font-size: 7px; fill: var(--silk); shape-rendering: auto; }
+.fl .label { font-family: var(--f-silk); font-weight: 700; font-size: 5px; letter-spacing: .14em; fill: var(--silk-dim); }
+.fl .label.sm { font-size: 4px; }
+.fl .plate-t { font-family: var(--f-silk); font-weight: 700; font-size: 3.6px; letter-spacing: .1em; fill: #1b1c1f; }
+.fl .name { font-size: 6.5px; fill: var(--silk); }
+.fl .kc { fill: var(--key); }
+.fl .kc-t { font-family: var(--f-silk); font-weight: 700; font-size: 6px; fill: var(--key-ink); }
+
+/* Wall, windows and the sky by the local clock */
+.fl .wall { fill: #3a2a26; }
+.fl .mortar { stroke: #2a1d1a; stroke-width: 1; }
+.fl .sky { fill: #8fc5e8; }
+.fl.dusk .sky { fill: #e98a4f; }
+.fl.night .sky { fill: #0c1530; }
+.fl .star { fill: #fff6c8; opacity: 0; }
+.fl.night .star { opacity: .9; }
+.fl .mullion { fill: #24262a; }
+.fl .sill { fill: #6d6f73; }
+.fl .sign-bg { fill: #101112; }
+.fl .sign-face { fill: var(--lcd-bg); }
+.fl .sign-t { font-family: var(--f-silk); font-weight: 700; font-size: 6.5px; letter-spacing: .16em; fill: var(--lcd-ink); }
+.fl .sign-b { font-size: 8px; fill: var(--lcd-ink); }
+.fl .hazard { fill: var(--stripe-2); }
+
+/* Floor */
+.fl .concrete { fill: #4a4c4f; }
+.fl.night .concrete { fill: #3a3c3f; }
+.fl .joint { stroke: #3f4144; stroke-width: 1; }
+.fl .mat { fill: #3d3f42; }
+
+/* Furniture and people */
+.fl .desk-top { fill: #8a6a45; }
+.fl .desk-front { fill: #6b4f31; }
+.fl .drawer { fill: #4a361f; }
+.fl .chair { fill: #26272a; }
+.fl .overalls { fill: #3a5f9e; }
+.fl .shirt { fill: #e6dfcb; }
+.fl .skin, .fl .arm { fill: #d9a77c; }
+.fl .eye { fill: #1b1c1f; }
+.fl .stand, .fl .post, .fl .pole { fill: #24262a; }
+.fl .bezel { fill: #2a2c30; }
+.fl .scr { fill: #1a1c1e; }
+.fl .beacon { fill: var(--led-off); }
+/* Hard hats: the built-in roles fixed, other roles one of four hashed hues; foreman white, guard navy */
+.fl .hue-0 { fill: var(--amber); }
+.fl .hue-1 { fill: var(--green); }
+.fl .hue-2 { fill: #b77cff; }
+.fl .hue-3 { fill: var(--t-tool); }
+.fl .hue-4 { fill: var(--t-branch); }
+.fl .hue-5 { fill: var(--t-err); }
+.fl .hue-6 { fill: var(--t-user); }
+.fl .hue-f { fill: #f4f1e8; }
+.fl .hue-g { fill: #1d3b78; }
+.fl .brim { filter: brightness(.75); }
+
+/* Booths */
+.fl .booth-wall { fill: #2f3134; }
+.fl .booth-glass { fill: #182024; }
+.fl .booth.lit .booth-glass, .fl .guard-glass { fill: #2b4048; }
+.fl .booth .scr-coord { fill: #000500; }
+.fl .booth .foreman { opacity: 0; }
+.fl .booth.in .foreman { opacity: 1; }
+.fl .booth.in .scr-coord { fill: var(--matrix); }
+.fl .booth.in .plate-t, .fl .gatehouse .plate-t { fill: var(--led-green); }
+.fl .booth.lit:not(.in) .plate-t { fill: var(--led-amber); }
+.fl .booth:not(.lit) .plate-t { fill: var(--led-red); }
+
+/* Belts, the arch, the door, the bin, the dock */
+.fl .belt { fill: #1b1c1f; }
+.fl .roll { stroke: #6d6f73; stroke-width: 3; stroke-dasharray: 1 3; }
+.fl.working:not(.still) .roll-out { animation: belt-out .6s linear infinite; }
+.fl.working:not(.still) .roll-dock { animation: belt-dock .6s linear infinite; }
+@keyframes belt-out { to { stroke-dashoffset: -4; } }
+@keyframes belt-dock { to { stroke-dashoffset: 4; } }
+.fl .belt-t { font-family: var(--f-silk); font-weight: 700; font-size: 4px; letter-spacing: .12em; fill: var(--stripe-2); }
+.fl .arch-post, .fl .arch-top { fill: #8b8e93; }
+.fl .arch-beam { fill: rgba(99, 220, 236, .12); }
+.fl .arch-lamp { fill: var(--led-off); }
+.fl .arch.holding .arch-lamp { fill: var(--led-amber); animation: beacon 1s steps(1) infinite; }
+.fl .arch.ok .arch-beam { fill: rgba(77, 255, 106, .55); }
+.fl .arch.ok .arch-lamp { fill: var(--led-green); }
+.fl .arch.no .arch-beam { fill: rgba(255, 68, 51, .6); }
+.fl .arch.no .arch-lamp { fill: var(--led-red); }
+.fl .door { fill: #111214; }
+.fl .bin-body { fill: #8f1d14; }
+.fl .bin-lip { fill: #b3261e; }
+.fl .bin-t { font-family: var(--f-silk); font-weight: 700; font-size: 7px; fill: var(--paper); }
+.fl .bin.hit-bin { animation: bin-shake .3s steps(2) 2; }
+@keyframes bin-shake { 50% { transform: translateX(1px); } }
+.fl .dock-frame { fill: #2f3134; }
+.fl .dock-door { fill: #6d6f73; }
+.fl .slat { stroke: #55575b; stroke-width: 1; }
+.fl .dock.open .dock-door { fill: #f2c94c; }
+
+/* Crates and effects */
+.fl .crate-box { fill: #b0864f; stroke: #5a3f1e; stroke-width: .8; }
+.fl .crate-x { stroke: #5a3f1e; stroke-width: .6; }
+.fl .crate.ok .crate-box { fill: #8fd18a; }
+.fl .crate.bad .crate-box { fill: #e0654f; }
+.fl .crate.branch .crate-box { fill: var(--t-branch); }
+.fl .crate.held .crate-box { fill: var(--stripe-2); }
+.fl .stamp-box { fill: rgba(242, 239, 226, .92); stroke: var(--ink-red); stroke-width: 1.2; }
+.fl .stamp-t { font-family: var(--f-silk); font-weight: 700; font-size: 7px; letter-spacing: .12em; fill: var(--ink-red); }
+.fl .pop { font-size: 10px; fill: var(--led-green); }
+
+/* Stations: one prop per state, shown by the station's class */
+.fl .st { cursor: pointer; outline: none; }
+.fl .st .hit { fill: transparent; }
+.fl .st:hover .hit { fill: rgba(255, 255, 255, .04); }
+.fl .st:focus-visible .hit { stroke: var(--stripe-2); stroke-width: 1.5; stroke-dasharray: 3 2; }
+.fl .p { display: none; }
+.fl .s-held .p-held, .fl .s-done .p-done, .fl .s-revise .p-revise, .fl .s-fail .p-fail, .fl .s-idle .p-idle { display: inline; }
+.fl .bubble { fill: var(--paper); }
+.fl .bubble-t { font-family: var(--f-silk); font-weight: 700; font-size: 9px; fill: var(--ink-red); }
+.fl .flag { fill: var(--led-green); }
+.fl .flag-t { font-size: 6px; fill: #0c4a13; }
+.fl .fix { fill: var(--stripe-2); }
+.fl .fix-t { font-family: var(--f-silk); font-weight: 700; font-size: 5px; fill: #1b1c1f; }
+.fl .puff { fill: #8c8f94; opacity: 0; }
+.fl .zz { font-family: var(--f-dot); font-size: 6px; fill: var(--silk-dim); }
+
+.fl .s-running .scr { fill: var(--green); }
+.fl .s-running .beacon { fill: var(--led-green); }
+.fl .s-held .scr { fill: var(--amber); }
+.fl .s-held .beacon { fill: var(--led-amber); animation: beacon 1s steps(1) infinite; }
+.fl .s-held .arm-r { transform: translateY(-7px); }
+.fl .s-done .scr { fill: var(--green-dim); }
+.fl .s-revise .scr { fill: var(--amber-dim); }
+.fl .s-fail .scr { fill: var(--led-red); }
+.fl .s-fail .beacon { fill: var(--led-red); }
+.fl .s-idle { opacity: .6; }
+.fl .s-idle .hd { transform: translateY(5px); }
+@keyframes beacon { 50% { fill: var(--led-off); } }
+
+/* Motion, none of it with reduced motion (.still) */
+.fl:not(.still) .s-running .arm-l { animation: type .28s steps(1) infinite; }
+.fl:not(.still) .s-running .arm-r { animation: type .28s steps(1) infinite .14s; }
+.fl:not(.still) .s-running .scr { animation: flicker 2.4s steps(1) infinite; }
+.fl:not(.still) .s-fail .puff { animation: puff 2.4s ease-out infinite; }
+.fl:not(.still) .s-fail .puff.d1 { animation-delay: .8s; }
+.fl:not(.still) .s-fail .puff.d2 { animation-delay: 1.6s; }
+.fl:not(.still) .s-idle .zz { animation: snooze 3s ease-in-out infinite; }
+.fl:not(.still) .s-idle .zz.d1 { animation-delay: .5s; }
+.fl:not(.still) .s-idle .zz.d2 { animation-delay: 1s; }
+.fl.still .s-fail .puff { opacity: .7; }
+@keyframes type { 50% { transform: translateY(-1px); } }
+@keyframes flicker { 0%, 100% { opacity: 1; } 40% { opacity: .82; } 42% { opacity: 1; } 71% { opacity: .9; } }
+@keyframes puff { 0% { opacity: .8; transform: translate(0, 0) scale(.6); } 100% { opacity: 0; transform: translate(-3px, -12px) scale(1.5); } }
+@keyframes snooze { 0%, 100% { opacity: .2; transform: translateY(0); } 50% { opacity: 1; transform: translateY(-2px); } }
+.fl .hd, .fl .arm, .fl .puff { transform-box: fill-box; }
+
+@media (prefers-reduced-motion: reduce) {
+  .fl .arch.holding .arch-lamp, .fl .s-held .beacon, .fl .bin.hit-bin { animation: none !important; }
+}
+@media (max-width: 1280px) {
+  .floor { flex: none; height: 420px; }
+}
+@media (max-width: 860px) {
+  .floor { height: 300px; padding: 4px; }
+}

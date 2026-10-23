@@ -119,6 +119,8 @@ STATIC = {
     "/app.css": ("app.css", "text/css; charset=utf-8"),
     "/theme.css": ("theme.css", "text/css; charset=utf-8"),
     "/app.js": ("app.js", "text/javascript; charset=utf-8"),
+    "/floor.css": ("floor.css", "text/css; charset=utf-8"),
+    "/floor.js": ("floor.js", "text/javascript; charset=utf-8"),
     "/fonts/vt323.woff2": ("fonts/vt323.woff2", "font/woff2"),
     "/fonts/barlow-condensed-600.woff2": ("fonts/barlow-condensed-600.woff2", "font/woff2"),
     "/fonts/barlow-condensed-700.woff2": ("fonts/barlow-condensed-700.woff2", "font/woff2"),
