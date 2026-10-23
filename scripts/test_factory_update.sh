@@ -126,6 +126,18 @@ fi
   && ok "roles.sh left broker/tools.txt populated on disk" \
   || bad "roles.sh left broker/tools.txt populated on disk"
 
+# FACTORY_SRC: a copy of this repo's bin/ and scripts/ with a stub
+# broker/tools.txt, for the tests that source bin/factory. Sourcing it always
+# loads scripts/lib/roles.sh against its own root (it resets ROOT first), which
+# dies unless broker/ is initialised; a lane clone of this repo has no
+# submodules until it is initialised, and factory-test's copy has no .git. The
+# copy keeps those tests independent of the real broker/. They set ROOT to a
+# fixture afterwards, as before.
+FACTORY_SRC="$tmp/factory-src"
+mkdir -p "$FACTORY_SRC/broker"
+cp -R "$REPO_ROOT/bin" "$REPO_ROOT/scripts" "$FACTORY_SRC/"
+echo "git_fetch" > "$FACTORY_SRC/broker/tools.txt"
+
 # --- helpers for exercising the real code -----------------------------------
 
 # fresh_checkout NAME -> path to a fresh --recurse-submodules clone of
@@ -146,7 +158,7 @@ run_pull_factory() {
   set +e
   PF_OUT="$( (
     # shellcheck disable=SC1091
-    . "$REPO_ROOT/bin/factory"
+    . "$FACTORY_SRC/bin/factory"
     ROOT="$1"
     pull_factory
   ) 2>&1 )"
@@ -561,7 +573,7 @@ run_plan() {
   P_OUT="$( (
     export PATH="$plan_bin:$PATH" XDG_STATE_HOME="$tmp/plan-state" XDG_CONFIG_HOME="$tmp/plan-config"
     # shellcheck disable=SC1091
-    . "$REPO_ROOT/bin/factory"
+    . "$FACTORY_SRC/bin/factory"
     ROOT="$dir"
     cmd_update "${@:---plan}"
   ) 2>&1 )"
@@ -575,7 +587,7 @@ planco="$(fresh_checkout plan)"
 (
   export PATH="$plan_bin:$PATH" XDG_STATE_HOME="$tmp/plan-state" XDG_CONFIG_HOME="$tmp/plan-config"
   # shellcheck disable=SC1091
-  . "$REPO_ROOT/bin/factory"
+  . "$FACTORY_SRC/bin/factory"
   ROOT="$planco"
   record_sandbox_fingerprint "$COORDINATOR_SANDBOX"
 )
@@ -618,7 +630,7 @@ G_OUT="$( (
   cd "$tmp/globdir"
   export PATH="$plan_bin:$PATH" XDG_STATE_HOME="$tmp/plan-state" XDG_CONFIG_HOME="$tmp/plan-config"
   # shellcheck disable=SC1091
-  . "$REPO_ROOT/bin/factory"
+  . "$FACTORY_SRC/bin/factory"
   ROOT="$planco"
   plan_maybe_sandboxes "$(printf '%s\n' 'kits/coordinator/my spec *.yaml' '*')"
 ) 2>&1 )"

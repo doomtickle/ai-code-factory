@@ -24,6 +24,11 @@ set -euo pipefail
 #            gets a repo-local git identity (user.name, user.email): <name> and
 #            <email> if given and not empty, else factory-<lane> and
 #            <lane>@factory.invalid. "{lane}" in either is replaced by <lane>.
+#            Submodules (top level only) that the project's repo has itself
+#            initialised are initialised in the lane too, at the superproject's
+#            pin, from the project's own module store (read-only, no network);
+#            ones it has not are left empty, with a note on stderr. A lane
+#            sets submodule.recurse so its submodules follow branch switches.
 #   export   Write to stdout a git bundle of the lane repo's factory/* branches,
 #            without the commits the project's repo already has (its ref tips,
 #            read from the project itself, not from the lane's origin/* refs,
@@ -40,7 +45,8 @@ set -euo pipefail
 #            factory-developer/factory/x, or refs/remotes/factory-developer/factory/x)
 #            as branch "review", discarding local edits there, and print the
 #            checkout's path as the last line of stdout. origin is the project,
-#            so `git diff origin/main...HEAD` shows the change.
+#            so `git diff origin/main...HEAD` shows the change. Submodules are
+#            initialised as in prepare.
 #
 # <lane> must match ^[a-z][a-z0-9-]{1,40}$.
 #
@@ -130,6 +136,50 @@ source_of() { if [ "$2" = . ]; then printf '%s\n' "$1"; else printf '%s\n' "$1/$
 # target LANE_DIR REL: where repo REL lives in the lane.
 target() { if [ "$2" = . ]; then printf '%s\n' "$1"; else printf '%s\n' "$1/$2"; fi; }
 
+# init_submodules SRC REPO: initialise REPO's top-level submodules that the
+# project's repo SRC has initialised, from SRC's own module store (objects only;
+# nothing from a workspace is executed), at the pin REPO's HEAD records. Every
+# ref of the store is fetched into the lane's submodule and submodule.recurse is
+# set, so a checkout or switch to a branch with another pin moves the submodule
+# too (else "git add -A" would commit the old pin over the new one). The
+# name and path come from the lane's .gitmodules, which the role can edit, so
+# ones that could leave the module store or the clone are skipped. A submodule
+# SRC has not initialised is left empty with a note; git failing on one that
+# SRC has is fatal.
+init_submodules() {
+  local src="$1" repo="$2" key sname spath mdir lmod
+  [ -f "$repo/.gitmodules" ] || return 0
+  while IFS= read -r -d '' key; do
+    sname="${key%%$'\n'*}"
+    spath="${key#*$'\n'}"
+    sname="${sname#submodule.}"
+    sname="${sname%.path}"
+    case "/$sname/$spath/" in
+      *//*|*/../*|*/./*|*/.git/*|*[[:cntrl:]]*)
+        say "skipping submodule with an unsafe name or path: ${sname//[[:cntrl:]]/?}"
+        continue ;;
+    esac
+    mdir="$(g -C "$src" rev-parse --git-path "modules/$sname" 2>/dev/null)" || mdir=""
+    case "$mdir" in "") ;; /*) ;; *) mdir="$src/$mdir" ;; esac
+    if [ -z "$mdir" ] || [ ! -f "$mdir/HEAD" ]; then
+      say "submodule $spath is not initialised in $src; leaving it empty in $repo"
+      continue
+    fi
+    # An existing lane's submodule fetches from its own origin, not from submodule.<name>.url.
+    # git hands these "-c" settings on to the clone and checkout it spawns.
+    lmod="$(g -C "$repo" rev-parse --git-path "modules/$sname")"
+    case "$lmod" in /*) ;; *) lmod="$repo/$lmod" ;; esac
+    { g -C "$repo" config "submodule.$sname.url" "$mdir" \
+      && { [ ! -f "$lmod/config" ] || g config -f "$lmod/config" remote.origin.url "$mdir"; } \
+      && g -c core.hooksPath=/dev/null -c protocol.file.allow=always -C "$repo" \
+        submodule update --quiet --init --checkout -- "$spath" >&2 \
+      && g -c core.hooksPath=/dev/null -c protocol.file.allow=always --git-dir="$lmod" \
+        fetch --quiet --no-tags "$mdir" '+refs/*:refs/factory-host/*' '+HEAD:refs/factory-host/HEAD' >&2 \
+      && g -C "$repo" config submodule.recurse true; } \
+      || die "can't initialise submodule $spath in $repo from $mdir"
+  done < <(g config -f "$repo/.gitmodules" --null --get-regexp '^submodule\..*\.path$' 2>/dev/null || true)
+}
+
 cmd_repos() {
   [ $# -eq 1 ] || die "$USAGE"
   check_project "$1"
@@ -157,7 +207,7 @@ cmd_prepare() {
       say "fetching $s into $t"
       # The lane is the role's to change; point origin back at the project.
       set_origin "$t" "$s"
-      g -C "$t" fetch --quiet --prune origin >&2 || die "fetch failed in $t"
+      g -C "$t" fetch --quiet --prune --no-recurse-submodules origin >&2 || die "fetch failed in $t"
       # origin/HEAD follows the branch checked out in the project, so new work
       # starts from where the user is now. A detached project HEAD keeps the old one.
       g -C "$t" remote set-head origin --auto >/dev/null 2>&1 || true
@@ -167,6 +217,7 @@ cmd_prepare() {
       g clone --quiet --no-hardlinks -- "$s" "$t" >&2 || die "clone of $s failed"
     fi
     set_identity "$t" "$name" "$email"
+    init_submodules "$s" "$t"
   done < <(project_repos "$project")
   [ -n "$found" ] || die "no git repos in $project (it has no .git, nor subdirectories with one)"
   (cd "$lanedir" && pwd -P)
@@ -304,16 +355,17 @@ cmd_review() {
   if [ -e "$dir/.git" ]; then
     say "refreshing $dir from $src"
     set_origin "$dir" "$src"
-    g -C "$dir" fetch --quiet --prune origin >&2 || die "fetch failed in $dir"
+    g -C "$dir" fetch --quiet --prune --no-recurse-submodules origin >&2 || die "fetch failed in $dir"
   else
     say "cloning $src into $dir"
     g clone --quiet --no-hardlinks -- "$src" "$dir" >&2 || die "clone of $src failed"
   fi
-  g -C "$dir" fetch --quiet --no-tags origin "+$full:refs/factory-review/target" >&2 \
+  g -C "$dir" fetch --quiet --no-tags --no-recurse-submodules origin "+$full:refs/factory-review/target" >&2 \
     || die "fetch of $full failed"
-  g -C "$dir" checkout --quiet --force -B review refs/factory-review/target >&2 \
+  g -C "$dir" checkout --quiet --force --no-recurse-submodules -B review refs/factory-review/target >&2 \
     || die "checkout of $full failed in $dir"
   g -C "$dir" clean --quiet -fd >&2
+  init_submodules "$src" "$dir"
   say "checked out $full ($(g -C "$dir" rev-parse --short HEAD)) as branch review"
   (cd "$dir" && pwd -P)
 }

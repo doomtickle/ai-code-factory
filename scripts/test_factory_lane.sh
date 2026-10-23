@@ -26,6 +26,10 @@ set -euo pipefail
 #   bases, and a branch with nothing past its base.
 # - invalid lane, rel and ref arguments are rejected.
 # - review: checks out a factory ref given in short and in long form.
+# - submodules: prepare and review initialise the ones the project's repo has
+#   initialised (from its module store, at the pin; a second prepare follows a
+#   moved pin) and skip, with a note, the ones it has not; a pin missing from
+#   the module store fails.
 # - factory-test: with no mirror above the source dir, it looks in
 #   $FACTORY_PROJECT/.factory/npm-mirror (only the "no package mirror"
 #   message path: an actual install would need yarn/npm and packages).
@@ -281,6 +285,92 @@ run "$LANE" bundle "$tmp/multi" developer-lane2 a-repo factory/multi-topic
 assert_eq "bundle (folder of repos): the name carries the repo" "$RC:$OUT" "0:a-repo--multi-topic.bundle"
 run "$LANE" bundle "$tmp/multi" developer-lane2 nope factory/multi-topic
 assert_eq "bundle: an unknown repo -> exit 1" "$RC" "1"
+
+# --- submodules ----------------------------------------------------------------
+# A submodule the project's repo has initialised is initialised in the lane at
+# the superproject's pin, from the project's own module store; one it has not
+# is left empty with a note. The fixture's remotes are local paths, which git
+# refuses as submodule transports unless allowed.
+mkrepo "$tmp/subrepo"
+mkrepo "$tmp/subrepo2"
+mkrepo "$tmp/subproj"
+git -C "$tmp/subproj" -c protocol.file.allow=always submodule add -q "$tmp/subrepo" mod
+git -C "$tmp/subproj" -c protocol.file.allow=always submodule add -q "$tmp/subrepo2" other
+git -C "$tmp/subproj" commit -q -m "add submodules"
+# "other" was never initialised on this host: no module store (the broken
+# gitfile it leaves behind is why later commits here name their paths).
+rm -rf "$tmp/subproj/.git/modules/other"
+pin() { git -C "$tmp/subproj" rev-parse "HEAD:$1"; }
+
+run "$LANE" prepare "$tmp/subproj" subs
+assert_eq "submodules: prepare exits 0" "$RC" "0"
+sublane="$tmp/lanes/subs"
+assert_eq "submodules: an initialised submodule is checked out at the pin" \
+  "$(git -C "$sublane/mod" rev-parse HEAD)" "$(pin mod)"
+assert_eq "submodules: ...from the project's module store, not the .gitmodules url" \
+  "$(git -C "$sublane" config submodule.mod.url)" "$tmp/subproj/.git/modules/mod"
+assert_eq "submodules: one with no module store is left empty" "$(ls -A "$sublane/other")" ""
+assert_contains "submodules: ...and the skip is named" "$ERR" "submodule other is not initialised"
+assert_eq "submodules: the skip is the only note about it (the initialised one is quiet)" \
+  "$(printf '%s\n' "$ERR" | grep -c 'submodule mod')" "0"
+
+old_pin="$(pin mod)"
+git -C "$tmp/subrepo" commit -q --allow-empty -m "sub two"
+git -C "$tmp/subproj/mod" fetch -q origin
+git -C "$tmp/subproj/mod" checkout -q FETCH_HEAD
+git -C "$tmp/subproj" add mod
+git -C "$tmp/subproj" commit -q -m "bump mod"
+# prepare fetches; the lane's own branch (and so its pin) moves when the role merges.
+run "$LANE" prepare "$tmp/subproj" subs
+assert_eq "submodules: a second prepare exits 0 and keeps the lane's own pin" \
+  "$RC:$(git -C "$sublane/mod" rev-parse HEAD)" "0:$old_pin"
+git -C "$sublane" merge -q --ff-only origin/main
+run "$LANE" prepare "$tmp/subproj" subs
+assert_eq "submodules: prepare after the pin moved exits 0" "$RC" "0"
+assert_eq "submodules: ...and updates the submodule to the new pin" \
+  "$(git -C "$sublane/mod" rev-parse HEAD)" "$(pin mod)"
+assert_eq "submodules: ...which is not the old one" \
+  "$([ "$(pin mod)" != "$old_pin" ] && echo moved)" "moved"
+
+# A reused lane: its branch pins the old commit, the base has moved on. A new
+# branch off the base must bring the submodule with it, or "git add -A" would
+# commit the old pin over the bump.
+git -C "$sublane" checkout -q -b factory/old
+git -C "$tmp/subrepo" commit -q --allow-empty -m "sub three"
+git -C "$tmp/subproj/mod" fetch -q origin
+git -C "$tmp/subproj/mod" checkout -q FETCH_HEAD
+git -C "$tmp/subproj" add mod
+git -C "$tmp/subproj" commit -q -m "bump mod again"
+run "$LANE" prepare "$tmp/subproj" subs
+assert_eq "submodules: a reused lane's prepare exits 0" "$RC" "0"
+assert_eq "submodules: ...and leaves its branch's own pin" \
+  "$(git -C "$sublane/mod" rev-parse HEAD)" "$(git -C "$sublane" rev-parse HEAD:mod)"
+git -C "$sublane" checkout -q -b factory/new origin/main
+assert_eq "submodules: a new branch off the bumped base moves the submodule to its pin" \
+  "$(git -C "$sublane/mod" rev-parse HEAD)" "$(pin mod)"
+assert_eq "submodules: ...and git status is clean" "$(git -C "$sublane" status --porcelain)" ""
+git -C "$sublane" checkout -q factory/old
+assert_eq "submodules: switching back moves it back" \
+  "$(git -C "$sublane/mod" rev-parse HEAD)" "$(git -C "$sublane" rev-parse HEAD:mod)"
+git -C "$sublane" checkout -q factory/new
+run "$LANE" prepare "$tmp/subproj" subs
+assert_eq "submodules: prepare with submodule.recurse set exits 0" "$RC" "0"
+
+run "$LANE" review "$tmp/subproj" main
+assert_eq "submodules: review exits 0" "$RC" "0"
+sdir="$(printf '%s\n' "$OUT" | tail -n 1)"
+assert_eq "submodules: review initialises the submodule at the pin" \
+  "$(git -C "$sdir/mod" rev-parse HEAD)" "$(pin mod)"
+assert_contains "submodules: review names the one it skips" "$ERR" "submodule other is not initialised"
+run "$LANE" review "$tmp/subproj" main
+assert_eq "submodules: review again exits 0" "$RC" "0"
+
+# A pin the module store lacks is an error, not a skip.
+git -C "$tmp/subproj" update-index --cacheinfo "160000,$(printf '1%.0s' $(seq 40)),mod"
+git -C "$tmp/subproj" commit -q -m "pin nobody has"
+run "$LANE" prepare "$tmp/subproj" subs-bad
+assert_eq "submodules: a pin missing from the module store fails the prepare" "$RC" "1"
+assert_contains "submodules: ...and names the submodule" "$ERR" "can't initialise submodule mod"
 
 # --- invalid arguments -------------------------------------------------------
 for bad_lane in Developer d "-x" "dev/../x" "dev_1" "a$(printf 'b%.0s' $(seq 41))" "dev
