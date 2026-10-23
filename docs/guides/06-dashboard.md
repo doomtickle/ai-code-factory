@@ -144,6 +144,11 @@ stay in reach.
   - a denied call is stamped CONFISCATED and lands in the bin
   - a held write waits in front of the arch under an amber lamp until you
     decide it, then goes out or into the bin
+  - hover a crate waiting at the arch to read the write it holds (tool, role,
+    repo, branch); hover a crate in the bin to read the broker line that put
+    it there. The bin keeps the last five. Both kinds take the keyboard focus
+    (Tab) and are read out by a screen reader. The pile is only in this
+    browser tab: it empties when you reload the page.
 - **Dock** (your project). When a lane hands back a branch, a crate rides the
   lower belt to the dock.
 - **Sign.** The wall sign shows today's jobs, running lanes and spend. The
@@ -151,8 +156,8 @@ stay in reach.
 
 The floor reads the same state as the rest of the page and does nothing on its
 own. Crates are only drawn for what happens while the floor is on screen. With
-reduced motion set in your system, nothing moves and the stations still show
-their state.
+reduced motion set in your system, nothing moves: the stations still show
+their state and confiscated crates appear in the bin without travelling there.
 
 ## Write gate and the control unit
 

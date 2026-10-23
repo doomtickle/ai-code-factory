@@ -715,6 +715,15 @@ class PageTests(unittest.TestCase):
         self.assertIn('<script src="/floor.js" defer></script>', html)
         self.assertIn('<link rel="stylesheet" href="/floor.css">', html)
 
+    def test_floor_crates_are_inspectable_as_text(self):
+        # Parked and binned crates name their write by an SVG <title> and aria-label set
+        # as text (doomtickle/passdesk-ops#162); the bin pile is bounded and page-local.
+        js = (UI / "floor.js").read_text()
+        self.assertIn("title.textContent = label", js)
+        self.assertIn('setAttribute("aria-label", label)', js)
+        self.assertIn('setAttribute("tabindex", "0")', js)
+        self.assertIn("MAX_BINNED = 5", js)
+
     def test_page_obeys_its_csp(self):
         html = (UI / "index.html").read_text()
         self.assertIsNone(re.search(r"<script(?![^>]*\bsrc=)", html), "inline script")
