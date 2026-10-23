@@ -59,7 +59,7 @@ esac
 FAKE_SBX
 chmod +x "$bin/sbx"
 # fake ps: prints $FAKE_PS_OUT, so the host's real processes (say, the
-# owner's own Coordinator pane) never decide a test.
+# owner's own Coordinator terminal) never decide a test.
 cat > "$bin/ps" <<'FAKE_PS'
 #!/bin/sh
 cat "$FAKE_PS_OUT" 2>/dev/null || true

@@ -225,10 +225,10 @@ another.
 |---|---|
 | `factory doctor` | Check the machine is ready; prints the fix for each problem (setup runs it first; the dashboard's DIAG key runs it too). Once the broker exists, it also runs the gateway's own doctor inside it: policy, tokens and grants, audit log, credentials, a live probe, GitHub or GitLab access per repo, the policy's hosts against the broker kit, whether holds are on, and a warning for any approval that expired with no decision |
 | `factory setup` | One-time setup (safe to re-run) |
-| `factory update [--yes]` | After pulling changes or editing kits, images or policy: pulls the latest factory, rebuilds, recreates only the sandboxes the changes affect (it lists them and what each loses, then asks), and restarts. With the `web` layout it doesn't open the dashboard (so `factory update --yes` returns): run `factory dashboard` afterwards. The dashboard's UPDATE key runs `factory update --yes` after showing the plan |
+| `factory update [--yes]` | After pulling changes or editing kits, images or policy: pulls the latest factory, rebuilds, recreates only the sandboxes the changes affect (it lists them and what each loses, then asks), and restarts. It doesn't open the dashboard (so `factory update --yes` returns): run `factory dashboard` afterwards. The dashboard's UPDATE key runs `factory update --yes` after showing the plan |
 | `factory update --plan` | What `factory update` would do, changing nothing but a (hook-free) `git fetch`: the incoming commits, the sandboxes it would recreate and what each loses, the ones the incoming changes may make out of date (a guess from the changed files), and notes such as uncommitted changes that would skip the pull. Tab-separated lines (`commit`, `recreate`, `maybe`, `note`), for the dashboard |
 | `factory start [dir] [--no-ui]` | Start the factory for a project (default: current folder) and open the dashboard. `--no-ui` (or `FACTORY_NO_UI=1`) opens no dashboard: talk to the Coordinator with `factory chat` in any terminal and follow roles with `factory watch` or `factory logs <role>`. The old `--layout` flag is accepted only as `web` (see "Layouts") |
-| `factory restart` | Stop the factory and start it again for the project it is bound to, with the saved layout (the `web` layout doesn't open a second dashboard; one already open keeps running). The dashboard's RESTART key runs it |
+| `factory restart` | Stop the factory and start it again for the project it is bound to, (it doesn't open a second dashboard; one already open keeps running). The dashboard's RESTART key runs it |
 | `factory chat` | Talk to the Coordinator in this terminal (wraps `sbx run --name factory-coordinator`); `factory start` creates the sandbox first. Refuses while the Coordinator is open elsewhere (the dashboard) |
 | `factory status` | Project, broker, dispatch bridge, login, roles (with their lanes), sandbox status, and pending approvals and the oldest one's age |
 | `factory logs <role>` | Follow a role's transcripts, all its lanes (`factory logs developer-lane2` for one lane); `factory logs broker` / `dispatch` for audit logs |
@@ -646,7 +646,7 @@ all lanes share the role's one sandbox. The Coordinator gives independent
 chunks to separate lanes, each on its own branch, and sends a follow-up (a
 REVISE, say) back to the lane that did the work. `LANES` is read per task (1
 to 8; empty means 1), so changing it needs no new sandbox; `factory start`
-updates the role's tab (`tabs` layout) or `factory watch`'s lane list. Several lanes share the sandbox's CPU and memory and
+updates the lane view in the dashboard and in `factory watch`. Several lanes share the sandbox's CPU and memory and
 your Claude subscription's usage limits, so more lanes isn't always faster.
 
 Models, set per role in `role.conf` `MODEL` (aliases resolve to the newest
@@ -861,22 +861,22 @@ factory role new designer                # copies reviewer (read-only; network t
 factory role new docs-writer developer   # or copy any existing role
 ```
 Edit its `role.conf` and instructions, then run `factory start` again. It creates
-the sandbox and a tab, and the Coordinator sees the new role in `list_roles`.
+the sandbox, and the Coordinator sees the new role in `list_roles`.
 
 **Change a role:** edit instructions, `BROKER_TOOLS`, `LANES`, `MODEL`, `MODELS`, `EFFORT`, `MAX_SESSION_TOKENS` or `MAX_TURNS` and run `factory start`
 again. All of these take effect from the next task:
 `factory start` copies the instructions into the state folder and the bridge
 reads that copy, so a role editing this repo can't change prompts on its own. Kit, image, project access and
 whether the role has broker access at all are fixed when the sandbox is created,
-so for those run `factory update`, which recreates that role's sandbox. Each role's tab
-(`tabs` layout) shows the job session's main model once the job reports it
+so for those run `factory update`, which recreates that role's sandbox. The dashboard's lane view
+and `factory watch` show the job session's main model once the job reports it
 (subagents it spawns may use others).
 
 **Change the Coordinator's model:** unlike a role's `MODEL` (read fresh on every
 dispatch), the Coordinator's model is baked into its kit's managed settings
 (`kits/coordinator/spec.yaml`, `"model"` in the `/etc/claude-code/managed-settings.json`
 written at setup) and only applied when its sandbox is created. It defaults to
-`opus` (see the models table above); `/model` in the Coordinator pane can still
+`opus` (see the models table above); `/model` in the Coordinator's terminal can still
 switch models for that session. To change the default,
 edit that `"model"` value, then run `factory update` to recreate the Coordinator
 with the new setting; recreating it discards its conversation history.
@@ -890,8 +890,8 @@ The managed settings of the Coordinator and of every role also set
 load in a factory sandbox; sandboxes created before that change keep loading
 them until `factory update` recreates them.
 
-**Remove a role:** delete `roles/<role>/` and run `factory start`. It closes the role's
-tab (`tabs` layout; it drops out of `factory watch`'s lane list either way) and removes
+**Remove a role:** delete `roles/<role>/` and run `factory start`. It drops the role from
+the dashboard's lane view and `factory watch`, removes
 its broker access, and it prints the `sbx rm` command for the role's
 sandbox (sandboxes are never deleted automatically).
 
@@ -1367,24 +1367,3 @@ Change pins on purpose, in their own commit, and re-run the full setup to test.
   hash from the file itself:
   `curl -sL https://registry.npmjs.org/yarn/-/yarn-<version>.tgz | shasum -a 256`
   (and check it matches the registry's `dist.integrity`).
-
-## Decision log
-
-Dated, newest first. The factory kept no decision log of its own before this
-entry; business and process decisions live in `passdesk-ops/decisions.md`,
-technical ones about the gateway in `passdesk-broker/docs/decisions.md`.
-
-### 2026-10-23
-
-- **Herdr is removed from the factory** (doomtickle/passdesk-ops#TBD). The
-  owner no longer wants the terminal UI; the dashboard (`--layout web`) has
-  been the default since 20 Oct. Gone: the `--layout watch` and `tabs`
-  layouts, Herdr's install and version pin (`factory setup` no longer
-  downloads it; an existing `herdr` binary is left alone on the machine),
-  its `factory doctor` check, its session and `FACTORY_NO_ATTACH`. Kept:
-  `factory dashboard`, `factory chat`, the standalone `factory watch`
-  printer, `--no-ui`, and the one-attachment rule for the Coordinator's
-  terminal (`coordinator_attached`, `runs_sandbox`). A saved or passed
-  `watch` or `tabs` layout falls back to the dashboard with a one-line
-  warning rather than failing. What would change it: the owner asking for a
-  terminal UI again.

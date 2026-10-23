@@ -565,12 +565,9 @@ class StalePhrasesTest(unittest.TestCase):
     """Docs and user-facing messages must not drift back to wording the code outgrew."""
 
     def test_removed_terminal_ui_is_not_documented(self):
-        # The README's decision log may name it; nothing else may.
         bad = []
         for src in _doc_sources():
             text = src.read_text(encoding="utf-8")
-            if src.name == "README.md":
-                text = text.split("\n## Decision log", 1)[0]
             bad += [f"{src.name}:{n}" for n, line in enumerate(text.splitlines(), 1)
                     if re.search("her" + "dr", line, re.I)]
         self.assertEqual(bad, [])

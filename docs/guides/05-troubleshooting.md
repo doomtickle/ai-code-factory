@@ -348,7 +348,7 @@ small task expensive.
 - **Fresh sessions:** ask the Coordinator to start unrelated chunks with
   `fresh_session`, putting the facts each one needs in the task.
 - **The Coordinator's own context:** use `/compact` or `/clear` in the
-  Coordinator pane between unrelated pieces of work.
+  Coordinator's terminal between unrelated pieces of work.
 - **Models:** move the Coordinator to `sonnet` (`/model`) if you hit usage
   limits; the Coordinator already uses cheaper models for mechanical work.
 - **See where it goes:** `factory analytics` breaks cost down by role, model,

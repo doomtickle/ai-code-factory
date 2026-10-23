@@ -214,10 +214,9 @@ comments. You don't change program behavior.
 - Keep your report short: the branch, the files changed, and open questions.
 ```
 
-Then run `factory start`. It creates the `factory-docs-writer` sandbox (and a
-**docs-writer** tab under the `tabs` layout; on the dashboard (the default)
-and under the `watch` layout, no tab is created and the role's lanes show up
-with the others), and the Coordinator sees the role the next time it calls
+Then run `factory start`. It creates the `factory-docs-writer` sandbox (the role's
+lanes show up in the dashboard's lane view and `factory watch` with the
+others), and the Coordinator sees the role the next time it calls
 `list_roles`. If it's in the middle of a conversation, mention the new role,
 or ask it to check `list_roles`, so it plans with it.
 
@@ -234,8 +233,8 @@ exemption.
 > through managed settings; keep that unless the new role is a researcher-like
 > role that may search (see [Roles](../../README.md#roles)).
 
-To remove a role, delete `roles/<name>/` and run `factory start`. It closes the
-role's tab (`tabs` layout) or drops it from the Watch pane's lane list,
+To remove a role, delete `roles/<name>/` and run `factory start`. It drops the
+role from the dashboard's lane view and `factory watch`,
 removes its broker access, and prints the `sbx rm` command for its sandbox;
 sandboxes are never deleted automatically.
 
