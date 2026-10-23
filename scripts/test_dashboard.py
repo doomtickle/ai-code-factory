@@ -700,9 +700,20 @@ class PageTests(unittest.TestCase):
         self.assertEqual(licenses, {"OFL-VT323.txt", "OFL-BarlowCondensed.txt", "OFL-DotGothic16.txt"})
 
     def test_no_html_sinks(self):
-        js = (UI / "app.js").read_text()
-        for sink in ("innerHTML", "outerHTML", "insertAdjacentHTML", "document.write", "eval(", "new Function"):
-            self.assertNotIn(sink, js, f"app.js uses {sink}")
+        for name in ("app.js", "floor.js"):
+            js = (UI / name).read_text()
+            for sink in ("innerHTML", "outerHTML", "insertAdjacentHTML", "document.write", "eval(", "new Function"):
+                self.assertNotIn(sink, js, f"{name} uses {sink}")
+
+    def test_floor_only_displays(self):
+        # The factory floor draws from the state app.js hands it: it makes no request
+        # of its own, so it can reach nothing the main page can't (scripts/CLAUDE.md).
+        js = (UI / "floor.js").read_text()
+        for call in ("fetch(", "XMLHttpRequest", "WebSocket", "EventSource", "sendBeacon", "postMessage", ".src =", "href"):
+            self.assertNotIn(call, js, f"floor.js uses {call}")
+        html = (UI / "index.html").read_text()
+        self.assertIn('<script src="/floor.js" defer></script>', html)
+        self.assertIn('<link rel="stylesheet" href="/floor.css">', html)
 
     def test_page_obeys_its_csp(self):
         html = (UI / "index.html").read_text()
@@ -710,7 +721,7 @@ class PageTests(unittest.TestCase):
         self.assertIsNone(re.search(r"\sstyle=", html), "inline style attribute")
         self.assertIsNone(re.search(r"\son[a-z]+=", html), "inline event handler")
         self.assertNotIn("<style", html)
-        self.assertIsNone(re.search(r"https?://", html + (UI / "app.css").read_text()), "network URL")
+        self.assertIsNone(re.search(r"https?://", html + (UI / "app.css").read_text() + (UI / "floor.css").read_text()), "network URL")
 
     def test_help_links_resolve(self):
         # Every MANUAL and ? link opens the docs tab, and every ? names a heading of

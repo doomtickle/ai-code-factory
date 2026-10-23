@@ -516,6 +516,7 @@
       else if (e.key === "t") setTab("transcript");
       return;
     }
+    if (e.key === "f" || e.key === "F") { $("floor-key").click(); return; }
     const n = parseInt(e.key, 10);
     if (state && n >= 1 && n <= Math.min(9, state.lanes.length)) openMon(state.lanes[n - 1].name);
   });
@@ -727,11 +728,18 @@
       state = await r.json();
       polledAt = Date.now();
       renderCu(); renderHeader(); renderLanes(); renderGate(); renderSpend(); renderPaper(); renderTerm();
+      // The factory floor (floor.js) draws from the same state; it fetches nothing itself.
+      document.dispatchEvent(new CustomEvent("factory:state", { detail: state }));
       if (monLane) loadMon();
     } catch (e) {
       $("lamp-link").className = "led r blink";
     }
   }
+  // A floor station asks for its lane's monitor, as clicking a module does.
+  document.addEventListener("factory:open-lane", e => {
+    if (state && !monLane && state.lanes.some(l => l.name === e.detail)) openMon(e.detail);
+  });
+
   poll();
   setInterval(poll, POLL_MS);
   setInterval(() => { tickTimers(); tickGate(); }, 1000);

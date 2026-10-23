@@ -5,7 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>LOIS FC-1984</title>
 <link rel="stylesheet" href="/app.css">
+<link rel="stylesheet" href="/floor.css">
 <script src="/app.js" defer></script>
+<script src="/floor.js" defer></script>
 </head>
 <body>
 <div class="rack">
@@ -58,7 +60,7 @@
     </section>
 
     <section class="bay lanes-bay" aria-labelledby="lanes-h">
-      <div class="bay-h plate lanes-h"><span class="silk" id="lanes-h">Lanes</span><span class="rule"></span><span class="silk">Press 1–9 to open a lane · Esc closes</span><a class="help" href="/docs/#guide-dashboard:lanes" target="factory-docs" aria-label="Help: lanes">?</a></div>
+      <div class="bay-h plate lanes-h"><span class="silk" id="lanes-h">Lanes</span><span class="rule"></span><span class="silk">Press 1–9 to open a lane · F floor · Esc closes</span><a class="help" href="/docs/#guide-dashboard:lanes" target="factory-docs" aria-label="Help: lanes">?</a><button class="tabkey floor-key" type="button" id="floor-key" aria-pressed="false" aria-controls="floor">Floor</button><a class="help" href="/docs/#guide-dashboard:the-factory-floor" target="factory-docs" aria-label="Help: the factory floor">?</a></div>
       <div class="lanes" id="lanes"></div>
       <!-- Nothing running: one standby panel instead of a wall of empty modules. -->
       <div class="standby plate" id="standby" hidden>
@@ -66,6 +68,8 @@
       </div>
       <!-- Idle lanes: one chip each, numbered like the modules. -->
       <div class="lane-strip" id="lane-strip" role="group" aria-label="Idle lanes" hidden></div>
+      <!-- The factory floor (floor.js): the same lanes as a pixel-art shop floor, FLOOR or F toggles it. -->
+      <div class="floor" id="floor" hidden></div>
     </section>
 
     <aside class="rail" id="rail" aria-label="Spend, events and gate">

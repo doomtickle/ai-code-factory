@@ -118,6 +118,42 @@ calls it made, its cost and the role's report. **Esc** closes it.
 Stands in for: `factory watch`, `factory logs <role>` and `factory packet
 <lane>`.
 
+## The factory floor
+
+**FLOOR** in the Lanes header (or **F**) swaps the lane modules for the
+factory floor: the same lanes drawn as a pixel-art shop floor. Press it again
+to get the modules back. The dashboard remembers your choice in this browser.
+Terminal 0 and the rail don't move, so the write gate and the control unit
+stay in reach.
+
+- **Stations.** Each lane is a numbered workstation, and the worker's hard hat
+  has its role's colour. The station shows the lane's state:
+  - typing at a green screen: running
+  - arm up with a `!` and an amber beacon: held, a write is waiting for you
+  - green flag: done or approved
+  - FIX sign: a review asked for changes
+  - red screen and smoke: failed or cancelled
+  - asleep, with lights dimmed: idle
+
+  Click a station, or press its number, to open the lane monitor.
+- **Foreman's booth** (the Coordinator). ON DUTY while Terminal 0 is attached,
+  BACK SOON when it isn't, BRIDGE DOWN when the dispatch bridge is down.
+- **Broker gatehouse.** Every broker call is a crate that rides the outbound
+  belt through the X-ray arch:
+  - an allowed call passes, with the arch flashing green, and goes out the door
+  - a denied call is stamped CONFISCATED and lands in the bin
+  - a held write waits in front of the arch under an amber lamp until you
+    decide it, then goes out or into the bin
+- **Dock** (your project). When a lane hands back a branch, a crate rides the
+  lower belt to the dock.
+- **Sign.** The wall sign shows today's jobs, running lanes and spend. The
+  windows follow your clock: day, swing and night shift.
+
+The floor reads the same state as the rest of the page and does nothing on its
+own. Crates are only drawn for what happens while the floor is on screen. With
+reduced motion set in your system, nothing moves and the stations still show
+their state.
+
 ## Write gate and the control unit
 
 Bottom right. With approvals on, every push and pull request a role makes
@@ -261,6 +297,7 @@ Stands in for: part of `factory analytics` and of `factory logs broker` /
 | Where | Key | Does |
 |---|---|---|
 | Anywhere | `1`–`9` | Open that lane's monitor |
+| Anywhere | `f` | Factory floor on / off |
 | Lane monitor | `t` / `p` | Transcript / review packet |
 | Lane monitor, patch viewer | Esc | Close |
 | Patch viewer | `j` `k` ↓ ↑ | Next / previous file |
