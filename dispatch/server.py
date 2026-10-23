@@ -27,8 +27,8 @@ It also answers the Coordinator's questions about the factory itself
 start-dispatch.sh copies into <DISPATCH_STATE>/docs/.
 
 A role may run up to LANES jobs at once (one per lane, sharing its sandbox).
-Each lane's transcript streams to <DISPATCH_STATE>/logs/<lane>.log (shown in the
-role's Herdr tab) and the role's final report goes back to the Coordinator.
+Each lane's transcript streams to <DISPATCH_STATE>/logs/<lane>.log (followed with
+`factory logs`) and the role's final report goes back to the Coordinator.
 
 Standard library only; compatible with the macOS system Python (3.9).
 """
@@ -473,7 +473,7 @@ def save_session(job: Job) -> None:
 
 
 class Transcript:
-    """Human-readable, append-only log a lane's Herdr tab tails."""
+    """Human-readable, append-only log `factory logs` tails."""
 
     def __init__(self, lane: str):
         self.path = STATE / "logs" / f"{lane}.log"

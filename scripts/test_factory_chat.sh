@@ -12,7 +12,7 @@ set -euo pipefail
 #    factory-coordinator", forwarding any extra arguments.
 # 3. "factory coordinator" is accepted as an alias.
 # 4. When the Coordinator is already open elsewhere (another process runs
-#    `sbx run --name factory-coordinator`: a Herdr pane, the dashboard's
+#    `sbx run --name factory-coordinator`: the dashboard's
 #    Terminal 0, another `factory chat`), it refuses rather than start a
 #    second Coordinator in the same VM.
 #
@@ -59,7 +59,7 @@ esac
 FAKE_SBX
 chmod +x "$bin/sbx"
 # fake ps: prints $FAKE_PS_OUT, so the host's real processes (say, the
-# owner's own Coordinator pane) never decide a test.
+# owner's own Coordinator terminal) never decide a test.
 cat > "$bin/ps" <<'FAKE_PS'
 #!/bin/sh
 cat "$FAKE_PS_OUT" 2>/dev/null || true

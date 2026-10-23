@@ -7,8 +7,7 @@ they serve. Read this before changing any of those files.
 Other files in `scripts/` (e.g. `analytics.py`, `watch.py`, `start-broker.sh`,
 `lib/`) are not dashboard code and aren't covered here, except where the rules below
 name them directly: `approvals.py` (`write_decision`), `docs.py` (`build_served()`),
-and `02-launch-factory.sh`/`factory chat` (`coordinator_attached`) must match the
-forms those rules name.
+and `factory chat` (`coordinator_attached`) must match the forms those rules name.
 
 ## Dashboard rules
 
@@ -38,7 +37,7 @@ never a shell fallback, only when a page explicitly asks (`{"type":"power","on":
 attaching a page starts nothing), only after `sbx ls -q` lists the sandbox and
 `ps -axo pid=,ppid=,args=` shows no other `sbx run` naming it (`--name NAME`,
 `--name=NAME` or positional; one attachment: a second would start a second Coordinator
-in the same VM; `factory chat` and the Herdr pane in `02-launch-factory.sh` refuse
+in the same VM; `factory chat` refuses
 likewise via `coordinator_attached`, which must match the same forms as
 `runs_sandbox`), and never once shutdown has begun. It fans that one PTY out to every
 tab; a tab that attaches late gets the ring buffer as a `{"type":"replay"}` text frame

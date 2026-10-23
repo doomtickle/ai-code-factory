@@ -13,7 +13,7 @@ Keys: a digit focuses one lane full-screen, "a" the grid (again: every lane), "p
 the focused lane's latest review packet, j/k (or arrows) scroll, "q" quits.
 
 It only reads files in the dispatch state folder: dispatch/logs/<lane>.log,
-dispatch/audit.jsonl (job costs) and dispatch/packets/. No sbx, no herdr, no
+dispatch/audit.jsonl (job costs) and dispatch/packets/. No sbx, no
 network. Standard library only; runs on the macOS system Python (3.9).
 
   factory watch           the grid, live (curses)

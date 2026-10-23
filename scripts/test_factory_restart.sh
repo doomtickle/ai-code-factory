@@ -12,8 +12,8 @@ set -euo pipefail
 #    prints how to open it and returns.
 # 3. A bound project folder that no longer exists dies before stopping
 #    anything.
-# 4. A saved Herdr layout is kept, and FACTORY_NO_ATTACH=1 (what the
-#    dashboard sets) keeps it from attaching to Herdr.
+# 4. A stale saved layout ("watch", from an older version) falls back to the
+#    dashboard layout with a warning and doesn't stop the restart.
 # 5. The real 03-stop-factory.sh kills only the dispatch bridge's pid (a
 #    process running "$ROOT/dispatch/server.py") and stops the factory-*
 #    sandboxes; a running dashboard survives it, so the control unit that
@@ -22,9 +22,9 @@ set -euo pipefail
 #
 # Drives a fixture checkout (bin/factory + scripts/lib, stub
 # 02-launch-factory.sh and 03-stop-factory.sh that record their calls, a
-# stub broker/tools.txt) against a fake sbx, herdr and ps. Part 5 runs the
+# stub broker/tools.txt) against a fake sbx and ps. Part 5 runs the
 # real 03-stop-factory.sh against real (sleeping) processes and a fake sbx.
-# No real sbx, docker, Herdr or network access needed.
+# No real sbx, docker or network access needed.
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
@@ -55,7 +55,7 @@ mkdir -p "$fx/bin" "$fx/scripts/lib" "$fx/broker" "$fx/roles"
 cp "$REPO_ROOT/bin/factory" "$fx/bin/factory"
 cp "$REPO_ROOT"/scripts/lib/*.sh "$fx/scripts/lib/"
 echo "git_fetch" > "$fx/broker/tools.txt"
-# Stubs that record each call (and the layout they were given) in $CALLS.
+# Stubs that record each call in $CALLS.
 cat > "$fx/scripts/03-stop-factory.sh" <<'STUB'
 #!/bin/sh
 echo "stop" >> "$CALLS"
@@ -63,7 +63,7 @@ echo "Factory stopped."
 STUB
 cat > "$fx/scripts/02-launch-factory.sh" <<'STUB'
 #!/bin/sh
-echo "launch $1 layout=${FACTORY_LAYOUT:-} no_ui=${FACTORY_NO_UI:-}" >> "$CALLS"
+echo "launch $1 no_ui=${FACTORY_NO_UI:-}" >> "$CALLS"
 STUB
 cat > "$fx/scripts/dashboard.py" <<'STUB'
 import os
@@ -72,7 +72,7 @@ with open(os.environ["CALLS"], "a") as f:
 STUB
 chmod +x "$fx/scripts/03-stop-factory.sh" "$fx/scripts/02-launch-factory.sh"
 
-# --- fake sbx, herdr and ps --------------------------------------------------
+# --- fake sbx and ps --------------------------------------------------
 bin="$tmp/bin"
 mkdir -p "$bin"
 cat > "$bin/sbx" <<FAKE_SBX
@@ -89,19 +89,14 @@ case "\$1" in
   secret) echo "(global)  oauth  anthropic  configured" ;;
 esac
 FAKE_SBX
-cat > "$bin/herdr" <<FAKE_HERDR
-#!/bin/sh
-[ "\$1" != --version ] || echo "herdr $(sed -n 's/^readonly HERDR_VERSION="\(.*\)"$/\1/p' "$REPO_ROOT/scripts/lib/common.sh")"
-echo "herdr \$*" >> "\$CALLS"
-FAKE_HERDR
-chmod +x "$bin/sbx" "$bin/herdr"
+chmod +x "$bin/sbx"
 
 export PATH="$bin:$PATH"
 export FAKE_SBX_ARGS="$tmp/sbx-args.log"
 export CALLS="$tmp/calls.log"
 export XDG_STATE_HOME="$tmp/state"
 export XDG_CONFIG_HOME="$tmp/config"
-unset FACTORY_LAYOUT FACTORY_NO_UI HERDR_ENV FACTORY_NO_ATTACH
+unset FACTORY_LAYOUT FACTORY_NO_UI
 
 project="$tmp/project"
 mkdir -p "$project" "$tmp/state/ai-code-factory/broker"
@@ -133,9 +128,9 @@ reset_run
 printf '%s\n' "$project" > "$bound"
 run_fixture restart
 assert_eq "bound project: factory restart exits 0" "$F_RC" "0"
-assert_eq "bound project: stops, then launches the bound project with the web layout (the default)" \
+assert_eq "bound project: stops, then launches the bound project" \
   "$(cat "$CALLS")" "stop
-launch $project layout=web no_ui="
+launch $project no_ui="
 assert_contains "bound project: says how to open the dashboard instead of running it" \
   "$F_OUT" "factory dashboard"
 assert_not_contains "bound project: the dashboard isn't run in the foreground" "$(cat "$CALLS")" "dashboard"
@@ -155,20 +150,17 @@ assert_contains "missing project folder: names it" "$F_OUT" "$tmp/gone"
 assert_eq "missing project folder: nothing was stopped" "$(cat "$CALLS")" ""
 
 # ===========================================================================
-# Part 4: a saved Herdr layout is kept; FACTORY_NO_ATTACH=1 doesn't attach.
+# Part 4: a stale saved layout falls back to the dashboard, with a warning.
 # ===========================================================================
 reset_run
 printf '%s\n' "$project" > "$bound"
 mkdir -p "$tmp/config/ai-code-factory"
 printf 'watch\n' > "$tmp/config/ai-code-factory/layout"
-set +e
-F_OUT="$(FACTORY_NO_ATTACH=1 "$fx/bin/factory" restart 2>&1 </dev/null)"
-F_RC=$?
-set -e
+run_fixture restart
 assert_eq "saved watch layout: exits 0" "$F_RC" "0"
-assert_contains "saved watch layout: launched with it" "$(cat "$CALLS")" "launch $project layout=watch"
-assert_not_contains "FACTORY_NO_ATTACH=1: never attaches to Herdr" "$(cat "$CALLS")" "herdr session attach"
-assert_contains "FACTORY_NO_ATTACH=1: says how to attach" "$F_OUT" "herdr session attach"
+assert_contains "saved watch layout: warns" "$F_OUT" "your saved 'watch' layout is gone"
+assert_contains "saved watch layout: still stops, then launches" "$(cat "$CALLS")" "stop
+launch $project no_ui="
 rm -f "$tmp/config/ai-code-factory/layout"
 
 # ===========================================================================

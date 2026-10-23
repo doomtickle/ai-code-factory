@@ -81,8 +81,7 @@ For a prompt like the one above, the typical flow is:
    suite once, reviews correctness, tests, security and docs, and ends with
    **APPROVED** or **REVISE** and a list of required changes.
 
-The dashboard shows every lane's transcript live while it works (the Watch
-pane under the `watch` layout, each role's tab under `tabs`). See [Roles](../../README.md#roles) for what
+The dashboard shows every lane's transcript live while it works (the lane view; `factory watch` shows the same in a terminal). See [Roles](../../README.md#roles) for what
 each role may do.
 
 ## Read a job result
@@ -248,7 +247,7 @@ failed (with why, in red) or still running.
 
 Your conversation with the Coordinator is re-read on every turn. When a feature
 is merged and you move on to something unrelated, use `/clear` in the
-Coordinator pane (or `/compact` to continue with a summary). The Coordinator
+the Coordinator's terminal (or `/compact` to continue with a summary). The Coordinator
 reminds you at natural breakpoints and gives you a status to paste into the
 new session.
 

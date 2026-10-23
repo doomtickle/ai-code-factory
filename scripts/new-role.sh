@@ -6,7 +6,7 @@ set -euo pipefail
 # Scaffolds roles/<name>/ by copying an existing role (default: reviewer,
 # which is read-only and whose only network tool is npm_fetch: the safest
 # starting point). Edit the new role.conf and instructions.md, then
-# re-run 02-launch-factory.sh: it creates the sandbox and a Herdr tab, and the
+# re-run 02-launch-factory.sh: it creates the sandbox, and the
 # Coordinator sees the role in list_roles.
 
 # shellcheck source=lib/common.sh

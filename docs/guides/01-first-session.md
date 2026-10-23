@@ -31,12 +31,11 @@ indented underneath, grouped under `==>` headings: Platform, Tools, Gateway
 source (broker/ submodule), Docker, Factory tools, and Passdesk (the gateway).
 If `broker/` is empty, the doctor tries once to initialize that submodule; if
 it can't, it prints the exact `git submodule update --init` fix. Before setup,
-it's normal to see warnings that `sbx` and `herdr` aren't installed yet:
+it's normal to see a warning that `sbx` isn't installed yet:
 
 ```text
 ==> Factory tools
   ! sbx 0.45.1 not installed yet ('factory setup' installs it)
-  ! herdr 0.9.1 not installed yet ('factory setup' installs it)
 ```
 
 Fix every ✗ and run the doctor again until it ends with `No problems found.`
@@ -47,7 +46,7 @@ Fix every ✗ and run the doctor again until it ends with `No problems found.`
 ./bin/factory setup
 ```
 
-Setup runs the doctor again, installs the pinned `sbx` and `herdr`, signs you in
+Setup runs the doctor again, installs the pinned `sbx`, signs you in
 to Docker if `sbx` isn't signed in yet (a browser window opens), builds the sandbox images, applies the
 security baseline, and links `factory` into `~/.local/bin`. It is safe to run
 again. When it finishes you'll see:
@@ -113,12 +112,8 @@ The second start creates the role sandboxes, which pick up the stored login.
 You only do this once per machine: `sbx` keeps the login for every sandbox it
 creates afterwards.
 
-> **In Herdr instead?** With `factory start --layout watch` (or `tabs`;
-> remembered for next time), type `/login` in the **Coordinator (VM)** pane
-> and run `factory start` again in the **Host shell** pane below it.
->
-> **No UI at all?** `factory start --no-ui` starts everything but the
-> dashboard or Herdr. Then open the Coordinator with `factory chat` in any
+> **No dashboard?** `factory start --no-ui` starts everything but the
+> dashboard. Then open the Coordinator with `factory chat` in any
 > terminal, type `/login` there the first time, and run `factory start
 > --no-ui` again. Follow a role with `factory logs <role>`.
 
@@ -145,10 +140,8 @@ The dashboard is one screen, styled as a 1984 control unit:
 [Use the dashboard](06-dashboard.md) goes through every part and key, and
 which `factory` command each one stands in for.
 
-Prefer the terminal? `factory start --layout watch` (remembered for next
-time) opens Herdr instead, with the Coordinator (top-left), a host shell
-(bottom-left) and a live `factory watch` view of every lane (right);
-`--layout tabs` gives one Herdr tab per role instead of the Watch pane. See
+Prefer the terminal? `factory start --no-ui` skips the dashboard: talk to the
+Coordinator with `factory chat` and watch every lane with `factory watch`. See
 "Layouts" and "Dashboard" in the [README](../../README.md#layouts).
 
 ## 6. Give the Coordinator a small first task
@@ -168,8 +161,7 @@ model and effort it picked for each job, so you can overrule it.
 
 ## 7. Watch the roles work
 
-Look at the developer's lane on the dashboard to follow the job live (or the
-**Watch** pane in Herdr, or the **developer** tab with `--layout tabs`). Every transcript line
+Look at the developer's lane on the dashboard to follow the job live. Every transcript line
 starts with the time. Between the start and the end you'll see the role's
 messages, each tool call and a one-line summary of its result (left out here):
 
@@ -203,7 +195,7 @@ git merge factory-developer/factory/slug-tests
 
 - **Leave it running in the background:** press Ctrl-C where `factory start`
   (or `factory dashboard`) is running, or close that terminal: the dashboard
-  closes, the agents keep working. In Herdr, press **Ctrl+B**, then **Q**.
+  closes, the agents keep working.
 - **Reopen it:** `factory dashboard`, or run `factory start` again in the
   same project.
 - **Restart it:** RESTART on the control unit, or `factory restart`.

@@ -2,26 +2,25 @@
 set -euo pipefail
 
 # Regression tests for resolve_layout (scripts/lib/common.sh), the helper
-# behind `factory start --layout watch|tabs|web` / FACTORY_LAYOUT:
+# behind `factory start --layout web` / FACTORY_LAYOUT. The dashboard ("web")
+# is the only layout:
 #
-# 1. With nothing saved yet and neither a flag nor an environment value, it
-#    defaults to "web" (GUI first: the dashboard; Herdr is --layout
-#    watch|tabs). A saved explicit choice still wins over that default.
-# 2. A valid flag is accepted, returned, and saved to FACTORY_LAYOUT_FILE so a
-#    later call with neither flag nor env reads it back.
-# 3. The flag wins over the environment value when both are given, and the
-#    winner is what gets saved.
-# 4. The environment value is used (and saved) when no flag is given.
-# 5. An invalid flag or environment value dies with the command's usage,
-#    without touching FACTORY_LAYOUT_FILE.
-# 6. "web" (no Herdr; the dashboard holds the Coordinator's terminal) is
-#    accepted, saved and read back like the others.
-# 7. coordinator_attached, which keeps a second `sbx run` on
-#    factory-coordinator from starting (Herdr's pane, `factory chat`), finds
+# 1. With nothing saved and neither a flag nor an environment value it returns
+#    "web" quietly and writes nothing.
+# 2. "web" from the flag or the environment is accepted and nothing is saved.
+# 3. The removed "watch" and "tabs" layouts, from the flag, the environment or
+#    a saved layout file, fall back to "web" with a one-line warning and exit
+#    0; a stale saved file is removed so the warning shows once.
+# 4. Any other flag or environment value dies with the command's usage; any
+#    other saved value is ignored.
+# 5. bin/factory ends a start in the dashboard, which gets the Coordinator's name.
+# 6. coordinator_attached, which keeps a second `sbx run` on
+#    factory-coordinator from starting (`factory chat`, the dashboard), finds
 #    every form that names the sandbox (--name NAME, --name=NAME, a bare
 #    positional NAME, global flags before `run`) and nothing else.
-# 8. `factory update` never ends in the foreground dashboard: it passes
+# 7. `factory update` never ends in the foreground dashboard: it passes
 #    --no-dashboard to cmd_start, which then prints how to open it.
+# 8. local_settings_present ignores a lone layout file.
 #
 # Sources scripts/lib/common.sh directly (not bin/factory): bin/factory
 # itself sources scripts/lib/roles.sh for every command but "docs"/"help",
@@ -50,103 +49,88 @@ export XDG_STATE_HOME="$tmp/state"  # common.sh reads this too; keep it out of t
 
 layout_file="$FACTORY_CONFIG/layout"
 
-# run_resolve FLAG ENV -> stdout in $R_OUT, exit in $R_RC (never exits the
-# test itself: resolve_layout calls die(), which would otherwise kill it).
+# run_resolve FLAG ENV -> stdout in $R_OUT, stderr in $R_ERR, exit in $R_RC
+# (never exits the test itself: resolve_layout calls die() on bad input).
 run_resolve() {
   set +e
-  R_OUT="$(resolve_layout "$1" "$2" 2>&1)"
+  R_OUT="$(resolve_layout "$1" "$2" 2>"$tmp/err")"
   R_RC=$?
   set -e
+  R_ERR="$(cat "$tmp/err")"
 }
 
 # ===========================================================================
-# Part 1: nothing saved, no flag, no env -> "web"; a saved choice still wins.
+# Part 1: nothing saved, no flag, no env -> "web", quietly, nothing written.
 # ===========================================================================
-[ ! -e "$layout_file" ] || rm -f "$layout_file"
+rm -f "$layout_file"
 run_resolve "" ""
 assert_eq "no flag, no env, nothing saved: exits 0" "$R_RC" "0"
-assert_eq "no flag, no env, nothing saved: defaults to web (the dashboard)" "$R_OUT" "web"
+assert_eq "no flag, no env, nothing saved: web (the dashboard)" "$R_OUT" "web"
+assert_eq "no flag, no env, nothing saved: no warning" "$R_ERR" ""
 [ ! -e "$layout_file" ] && ok "no flag, no env, nothing saved: nothing written" \
   || bad "no flag, no env, nothing saved: nothing written (found $layout_file)"
-mkdir -p "$FACTORY_CONFIG"
-printf 'watch\n' > "$layout_file"
-run_resolve "" ""
-assert_eq "a saved 'watch' (an earlier explicit choice) still wins over the web default" "$R_OUT" "watch"
-printf 'bogus\n' > "$layout_file"
-run_resolve "" ""
-assert_eq "an unreadable saved value falls back to web" "$R_OUT" "web"
-rm -f "$layout_file"
-grep -q '\[ "$no_ui" = 1 \] || \[ "$layout" = web \] || require_herdr' "$REPO_ROOT/bin/factory" \
-  && ok "bin/factory: the default (web) layout doesn't need Herdr" \
-  || bad "bin/factory: the default (web) layout doesn't need Herdr"
 
 # ===========================================================================
-# Part 2: a valid flag is saved, and read back later with neither flag nor env.
+# Part 2: "web" from the flag or the environment; nothing is saved.
 # ===========================================================================
-rm -f "$layout_file"
-run_resolve "tabs" ""
-assert_eq "flag 'tabs': exits 0" "$R_RC" "0"
-assert_eq "flag 'tabs': returns tabs" "$R_OUT" "tabs"
-assert_eq "flag 'tabs': saved to the layout file" "$(cat "$layout_file" 2>/dev/null || true)" "tabs"
-
-run_resolve "" ""
-assert_eq "later call, no flag, no env: reads the saved 'tabs' back" "$R_OUT" "tabs"
+run_resolve "web" ""
+assert_eq "flag 'web': returns web" "$R_OUT" "web"
+assert_eq "flag 'web': no warning" "$R_ERR" ""
+run_resolve "" "web"
+assert_eq "env 'web': returns web" "$R_OUT" "web"
+[ ! -e "$layout_file" ] && ok "'web': nothing saved" || bad "'web': nothing saved (found $layout_file)"
 
 # ===========================================================================
-# Part 3: the flag wins over the environment, and the winner is saved.
+# Part 3: the removed layouts fall back to web with a one-line warning.
 # ===========================================================================
-rm -f "$layout_file"
-run_resolve "watch" "tabs"
-assert_eq "flag 'watch' with env 'tabs': the flag wins" "$R_OUT" "watch"
-assert_eq "flag 'watch' with env 'tabs': the flag's value is what gets saved" \
-  "$(cat "$layout_file" 2>/dev/null || true)" "watch"
+for old in watch tabs; do
+  run_resolve "$old" ""
+  assert_eq "flag '$old': exits 0" "$R_RC" "0"
+  assert_eq "flag '$old': falls back to web" "$R_OUT" "web"
+  assert_contains "flag '$old': warns" "$R_ERR" "warning: the '$old' layout is gone"
+  assert_eq "flag '$old': the warning is one line" "$(printf '%s\n' "$R_ERR" | wc -l | tr -d ' ')" "1"
+  run_resolve "" "$old"
+  assert_eq "env '$old': falls back to web" "$R_OUT" "web"
+  assert_contains "env '$old': warns" "$R_ERR" "warning: the '$old' layout is gone"
+  [ ! -e "$layout_file" ] && ok "flag/env '$old': nothing saved" || bad "flag/env '$old': nothing saved"
+  mkdir -p "$FACTORY_CONFIG"
+  printf '%s\n' "$old" > "$layout_file"
+  run_resolve "" ""
+  assert_eq "saved '$old': exits 0" "$R_RC" "0"
+  assert_eq "saved '$old': falls back to web" "$R_OUT" "web"
+  assert_contains "saved '$old': warns" "$R_ERR" "your saved '$old' layout is gone"
+  assert_eq "saved '$old': the warning is one line" "$(printf '%s\n' "$R_ERR" | wc -l | tr -d ' ')" "1"
+  [ ! -e "$layout_file" ] && ok "saved '$old': the stale file is removed" || bad "saved '$old': the stale file is removed"
+  run_resolve "" ""
+  assert_eq "saved '$old': the second run is quiet" "$R_ERR" ""
+done
 
 # ===========================================================================
-# Part 4: no flag, but an environment value -> used and saved.
+# Part 4: anything else in the flag or env dies with the usage; a junk saved
+# value is ignored.
 # ===========================================================================
-rm -f "$layout_file"
-run_resolve "" "tabs"
-assert_eq "no flag, env 'tabs': uses the environment value" "$R_OUT" "tabs"
-assert_eq "no flag, env 'tabs': saved" "$(cat "$layout_file" 2>/dev/null || true)" "tabs"
-
-# ===========================================================================
-# Part 5: an invalid flag or environment value dies with the usage, and
-# never touches the layout file.
-# ===========================================================================
-rm -f "$layout_file"
 run_resolve "bogus" ""
 [ "$R_RC" -ne 0 ] && ok "invalid flag: exits non-zero" || bad "invalid flag: exits non-zero (got 0)"
-assert_contains "invalid flag: error names the usage" "$R_OUT" "usage: factory start"
-assert_contains "invalid flag: usage lists --layout watch|tabs|web" "$R_OUT" "--layout watch|tabs|web"
-[ ! -e "$layout_file" ] && ok "invalid flag: nothing written" \
-  || bad "invalid flag: nothing written (found $layout_file)"
-
-printf 'watch\n' > "$layout_file"  # a prior valid save, to prove it's untouched below
+assert_contains "invalid flag: error names the usage" "$R_ERR" "usage: factory start"
+assert_contains "invalid flag: usage lists --layout web" "$R_ERR" "--layout web"
 run_resolve "" "bogus"
 [ "$R_RC" -ne 0 ] && ok "invalid env value: exits non-zero" || bad "invalid env value: exits non-zero (got 0)"
-assert_contains "invalid env value: error names the usage" "$R_OUT" "usage: factory start"
-assert_eq "invalid env value: the previously saved layout is untouched" \
-  "$(cat "$layout_file")" "watch"
-
-# ===========================================================================
-# Part 6: "web" is a layout like the others.
-# ===========================================================================
-rm -f "$layout_file"
-run_resolve "web" ""
-assert_eq "flag 'web': exits 0" "$R_RC" "0"
-assert_eq "flag 'web': returns web" "$R_OUT" "web"
-assert_eq "flag 'web': saved" "$(cat "$layout_file" 2>/dev/null || true)" "web"
+assert_contains "invalid env value: error names the usage" "$R_ERR" "usage: factory start"
+printf 'bogus\n' > "$layout_file"
 run_resolve "" ""
-assert_eq "later call: reads the saved 'web' back" "$R_OUT" "web"
-grep -q 'web) FACTORY_NO_UI=1' "$REPO_ROOT/scripts/02-launch-factory.sh" \
-  && ok "02-launch-factory.sh: 'web' runs without Herdr" \
-  || bad "02-launch-factory.sh: 'web' runs without Herdr"
-grep -q 'layout" = web ]' "$REPO_ROOT/bin/factory" && grep -q -- '--coordinator "$COORDINATOR_SANDBOX"' "$REPO_ROOT/bin/factory" \
-  && ok "bin/factory: 'web' ends in the dashboard, which gets the Coordinator's name" \
-  || bad "bin/factory: 'web' ends in the dashboard, which gets the Coordinator's name"
+assert_eq "a junk saved value: web" "$R_OUT" "web"
+assert_eq "a junk saved value: quiet" "$R_ERR" ""
+rm -f "$layout_file"
 
 # ===========================================================================
-# Part 7: coordinator_attached matches `sbx run --name factory-coordinator` only.
+# Part 5: bin/factory ends a start in the dashboard.
+# ===========================================================================
+grep -q -- '--coordinator "$COORDINATOR_SANDBOX"' "$REPO_ROOT/bin/factory" \
+  && ok "bin/factory: the dashboard gets the Coordinator's name" \
+  || bad "bin/factory: the dashboard gets the Coordinator's name"
+
+# ===========================================================================
+# Part 6: coordinator_attached matches `sbx run --name factory-coordinator` only.
 # ===========================================================================
 check_attached() { # check_attached LABEL EXPECTED(0|1) PS-LINES...
   local label="$1" want="$2" got
@@ -157,7 +141,7 @@ check_attached() { # check_attached LABEL EXPECTED(0|1) PS-LINES...
   unset -f ps
   assert_eq "coordinator_attached: $label" "$got" "$want"
 }
-check_attached "a Herdr pane's sbx run" 0 "/sbin/init" "sbx run --name factory-coordinator"
+check_attached "a plain sbx run" 0 "/sbin/init" "sbx run --name factory-coordinator"
 check_attached "a full path, extra args" 0 "/usr/local/bin/sbx run --name factory-coordinator --resume"
 check_attached "--name=" 0 "sbx run --name=factory-coordinator"
 check_attached "positional sandbox name" 0 "sbx run factory-coordinator"
@@ -173,7 +157,7 @@ check_attached "sbx exec" 1 "sbx exec factory-coordinator true"
 check_attached "nothing" 1 "/usr/bin/sbx daemon start"
 
 # ===========================================================================
-# Part 8: `factory update` doesn't end in the foreground dashboard.
+# Part 7: `factory update` doesn't end in the foreground dashboard.
 # ===========================================================================
 grep -q 'cmd_start "$project" --no-dashboard' "$REPO_ROOT/bin/factory" \
   && ok "bin/factory: cmd_update starts the factory with --no-dashboard" \
@@ -185,7 +169,7 @@ grep -q -- '--no-dashboard) no_dashboard=1' "$tmp/cmd_start" \
   || bad "bin/factory: cmd_start --no-dashboard prints how to open the dashboard instead"
 
 # ===========================================================================
-# Part 9: local_settings_present (what `factory status` reports as "Local settings").
+# Part 8: local_settings_present (what `factory status` reports as "Local settings").
 # ===========================================================================
 rm -rf "$FACTORY_CONFIG"
 mkdir -p "$FACTORY_CONFIG"

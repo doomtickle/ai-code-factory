@@ -128,8 +128,7 @@ cd ~/code/ai-code-factory
 ```
 
 Every line should be a ✓. Each ✗ comes with the exact command that fixes it.
-sbx and herdr show as "not installed yet", which is expected: setup installs
-them.
+sbx shows as "not installed yet", which is expected: setup installs it.
 
 ## 6. Run setup
 
@@ -141,7 +140,7 @@ It takes 5 to 15 minutes. It:
 
 - runs `factory doctor` again and stops if anything is wrong
 - installs the pinned `sbx` (Docker's `docker-sbx` package, checksum-verified;
-  apt asks for your password) and `herdr` (only the optional Herdr layouts use it)
+  apt asks for your password)
 - signs you in to Docker. A browser window opens. If none does, copy the URL
   it prints into a Windows browser.
 - builds the three sandbox images and loads them into sbx
@@ -173,8 +172,7 @@ paste the link it prints into one). Its left-hand screen is the Coordinator's te
 
 Then tell the Coordinator what you want done. Ctrl-C in the terminal that runs
 the dashboard closes it and leaves the factory running; `factory dashboard`
-reopens it. Herdr is the older, optional layout: `factory start --layout
-watch` (or `tabs`) opens it instead (README, *Layouts*).
+reopens it. `factory start --no-ui` skips the dashboard (README, *Layouts*).
 
 ## Optional extras
 

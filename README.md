@@ -7,7 +7,7 @@ A local multi-agent coding setup. You talk to a **Coordinator** agent; it breaks
 the work down and delegates it to **role agents** (Developer and Reviewer, an
 optional Researcher you can switch on, or any role you add). Every agent is
 Claude Code running in its own Docker Sandboxes (`sbx`) microVM, shown on a
-dashboard in your browser (or laid out in [Herdr](https://herdr.dev) tabs).
+dashboard in your browser.
 
 ```
  You ─▶ Coordinator VM ──MCP──▶ dispatch bridge (host) ──sbx exec──▶ role VMs
@@ -51,9 +51,8 @@ dashboard in your browser (or laid out in [Herdr](https://herdr.dev) tabs).
   works in git clones of it on its sandbox's own disk, one per lane, and hands
   back committed `factory/*` branches. Read-only roles (`WORKSPACE="ro"`)
   just read it. Roles remember earlier tasks (each lane keeps a Claude
-  session). You can watch every role work live, on the dashboard (default
-  layout), in the `factory watch` pane (`watch` layout) or its own Herdr tab
-  (`tabs` layout). Job results show the job's cost, the
+  session). You can watch every role work live, on the dashboard, or in a terminal
+  with `factory watch` and `factory logs <role>`. Job results show the job's cost, the
   session's running total and its context size. A session over the role's
   `MAX_SESSION_TOKENS` (100k by default) isn't resumed: the next task starts
   fresh, because every turn of a resumed session re-reads its whole history.
@@ -85,7 +84,7 @@ dashboard in your browser (or laid out in [Herdr](https://herdr.dev) tabs).
 
 > **Platform:** macOS 14 (Sonoma) or later on Apple silicon, or Ubuntu 24.04+
 > on x86_64, including **WSL2 on Windows 11** (step-by-step guide:
-> [docs/setup-wsl.md](docs/setup-wsl.md)). `sbx` and `herdr` don't ship for other
+> [docs/setup-wsl.md](docs/setup-wsl.md)). `sbx` doesn't ship for other
 > platforms (Linux arm64, native Windows) in a form the factory uses. The Linux
 > path now runs end to end on WSL2; native Ubuntu is tested in containers, not
 > yet confirmed end to end on a real Ubuntu machine. `factory doctor` checks a
@@ -125,7 +124,7 @@ Everything is pinned for repeatable setups:
 
 | Component | Pinned in |
 |---|---|
-| `sbx` 0.45.1, `herdr` 0.9.1 (+ SHA-256, per platform) | `scripts/lib/common.sh` |
+| `sbx` 0.45.1 (+ SHA-256, per platform) | `scripts/lib/common.sh` |
 | Sandbox base images (digests) | `templates/*/Dockerfile`, `broker/Dockerfile` |
 | ruff 0.16.8 | `templates/reviewer/Dockerfile` |
 | yarn 1.22.22 (+ SHA-256) and `factory-test` | `templates/developer/Dockerfile`, `templates/reviewer/Dockerfile` |
@@ -133,7 +132,7 @@ Everything is pinned for repeatable setups:
 | Broker code + policy | baked into `factory-broker:v3` at build time |
 | Dispatch bridge runtime | macOS system Python (`/usr/bin/python3`); `python3` on PATH on Linux |
 
-Every script checks the exact `sbx`/`herdr` versions and refuses to run on a mismatch.
+Every script checks the exact `sbx` version and refuses to run on a mismatch.
 The broker and the dispatch bridge are Python standard library only.
 
 ## Quick start
@@ -170,17 +169,17 @@ factory start
 
 `factory start` runs the whole factory for that folder and opens the
 dashboard in your browser (see "Dashboard"): the Coordinator's terminal,
-every lane, and the controls. `--layout watch` or `--layout tabs` opens it in
-Herdr instead (see "Layouts" below).
+every lane, and the controls (see "Layouts" below for the old `--layout`
+flag).
 
 The folder must be a git repository, or a folder whose subfolders are git
 repositories: the developer works in clones of them, from what is committed
 (see "Getting the developer's work").
 
-**The first time**, press POWER ON on the dashboard's Coordinator screen (or
-use the Coordinator pane in Herdr), type `/login` and sign in with your
+**The first time**, press POWER ON on the dashboard's Coordinator screen,
+type `/login` and sign in with your
 Claude subscription, then run `factory start` again (or press RESTART on the
-dashboard; in the Herdr layouts, the host shell below the Coordinator works). `sbx` stores the login, but it gives a sandbox the
+dashboard). `sbx` stores the login, but it gives a sandbox the
 login only when it creates it, so the first start creates just the Coordinator
 and the second creates the role sandboxes. To switch Claude accounts, run
 `factory reset` and `sbx secret rm anthropic`, then do the same.
@@ -188,51 +187,37 @@ Then tell the Coordinator what you want, for example *"Research how to add
 rate limiting to the API, implement it with tests, and get it reviewed."*
 
 Ctrl-C on the dashboard (or closing its terminal) closes the dashboard and
-leaves the factory running; `factory dashboard` reopens it. In Herdr, press
-**Ctrl+B** then **Q** to leave it running in the background; run `factory
-start` again to reopen it.
+leaves the factory running; `factory dashboard` reopens it.
 
-**Without a UI:** `factory start --no-ui` starts everything but the dashboard
-or Herdr. Talk to the Coordinator with `factory chat` in any terminal (type
+**Without a UI:** `factory start --no-ui` starts everything but the dashboard.
+Talk to the Coordinator with `factory chat` in any terminal (type
 `/login` there the first time, then `factory start --no-ui` again), and watch
 every lane with `factory watch` in another.
 
 ### Layouts
 
-`factory start --layout watch|tabs|web` picks how the factory opens
-(`FACTORY_LAYOUT` works the same way as an environment variable; the flag
-wins over it). Either way sticks for next time, without retyping it: it is
-saved to `~/.config/ai-code-factory/layout`, read by every later `factory
-start` that doesn't pass `--layout` or set `FACTORY_LAYOUT` itself. Omit both
-and nothing was ever saved, and you get `web`, the default: the dashboard
-first, Herdr if you ask for it. A layout you saved earlier (say `watch`) is
-kept.
+The dashboard is the only layout. `factory start` starts everything, then runs
+`factory dashboard` in the foreground: the browser page shows every lane, its
+left-hand screen is the Coordinator's terminal, and its control unit approves
+held writes and restarts or updates the factory (see "Dashboard"). Ctrl-C
+closes the dashboard and the Coordinator's terminal; the factory keeps
+running, and `factory dashboard` reopens it. `factory update` and `factory
+restart` in a terminal restart the factory but don't open the dashboard; run
+`factory dashboard` after them (one that is already open keeps running).
+`--no-ui` opens no dashboard.
 
-- **web** (default): no Herdr. `factory start` starts everything, then runs
-  `factory dashboard` in the foreground: the browser page shows every lane,
-  its left-hand screen is the Coordinator's terminal, and its control unit
-  approves held writes and restarts or updates the factory (see "Dashboard").
-  Ctrl-C closes the dashboard and the Coordinator's terminal; the factory
-  keeps running, and `factory dashboard` reopens it. `factory update` and
-  `factory restart` in a terminal restart the factory but don't open the
-  dashboard; run `factory dashboard` after them (one that is already open
-  keeps running).
-- **watch**: Herdr, with the Coordinator (top-left), a host shell
-  (bottom-left) and a `factory watch` pane (right) live for every role's
-  lanes. No per-role tabs.
-- **tabs**: Herdr, with the Coordinator (top) and a host shell (bottom), plus
-  one tab per role showing its live transcripts (all its lanes).
-
-Switching layouts and running `factory start` again cleans up what the other
-layout added (the `factory watch` pane, or the per-role tabs). `--no-ui`
-ignores the layout: there is no Herdr to lay out, and no dashboard.
+Earlier versions also had `--layout watch` and `--layout tabs` (a terminal UI
+with panes and tabs). They are gone: `--layout web` is accepted and ignored, and
+`watch` or `tabs`, from the flag, `FACTORY_LAYOUT` or the choice an earlier
+version saved in `~/.config/ai-code-factory/layout`, prints a one-line warning
+and starts the dashboard (the stale file is removed). The standalone `factory
+watch` printer stays.
 
 The Coordinator has one terminal at a time. A second `sbx run --name
 factory-coordinator` would start a second Coordinator in the same sandbox, so
-`factory chat` refuses while it is open elsewhere, `factory start` leaves the
-Herdr pane empty (with a note) while the dashboard holds it, and the dashboard
-shows "open elsewhere" while Herdr or `factory chat` does. Close it in one
-place to open it in another.
+`factory chat` refuses while the dashboard holds it, and the dashboard shows
+"open elsewhere" while `factory chat` does. Close it in one place to open it in
+another.
 
 ## Commands
 
@@ -240,11 +225,11 @@ place to open it in another.
 |---|---|
 | `factory doctor` | Check the machine is ready; prints the fix for each problem (setup runs it first; the dashboard's DIAG key runs it too). Once the broker exists, it also runs the gateway's own doctor inside it: policy, tokens and grants, audit log, credentials, a live probe, GitHub or GitLab access per repo, the policy's hosts against the broker kit, whether holds are on, and a warning for any approval that expired with no decision |
 | `factory setup` | One-time setup (safe to re-run) |
-| `factory update [--yes]` | After pulling changes or editing kits, images or policy: pulls the latest factory, rebuilds, recreates only the sandboxes the changes affect (it lists them and what each loses, then asks), and restarts. With the `web` layout it doesn't open the dashboard (so `factory update --yes` returns): run `factory dashboard` afterwards. The dashboard's UPDATE key runs `factory update --yes` after showing the plan |
+| `factory update [--yes]` | After pulling changes or editing kits, images or policy: pulls the latest factory, rebuilds, recreates only the sandboxes the changes affect (it lists them and what each loses, then asks), and restarts. It doesn't open the dashboard (so `factory update --yes` returns): run `factory dashboard` afterwards. The dashboard's UPDATE key runs `factory update --yes` after showing the plan |
 | `factory update --plan` | What `factory update` would do, changing nothing but a (hook-free) `git fetch`: the incoming commits, the sandboxes it would recreate and what each loses, the ones the incoming changes may make out of date (a guess from the changed files), and notes such as uncommitted changes that would skip the pull. Tab-separated lines (`commit`, `recreate`, `maybe`, `note`), for the dashboard |
-| `factory start [dir] [--no-ui] [--layout watch\|tabs\|web]` | Start the factory for a project (default: current folder) and open the dashboard (`web`, the default) or Herdr (`watch`, `tabs`). `--no-ui` (or `FACTORY_NO_UI=1`) opens neither: talk to the Coordinator with `factory chat` in any terminal and follow roles with `factory logs <role>`. `--layout` (or `FACTORY_LAYOUT`) picks the layout and is remembered for next time (see "Layouts") |
-| `factory restart` | Stop the factory and start it again for the project it is bound to, with the saved layout (the `web` layout doesn't open a second dashboard; one already open keeps running). The dashboard's RESTART key runs it |
-| `factory chat` | Talk to the Coordinator in this terminal (wraps `sbx run --name factory-coordinator`); `factory start` creates the sandbox first. Refuses while the Coordinator is open elsewhere (Herdr, the dashboard) |
+| `factory start [dir] [--no-ui]` | Start the factory for a project (default: current folder) and open the dashboard. `--no-ui` (or `FACTORY_NO_UI=1`) opens no dashboard: talk to the Coordinator with `factory chat` in any terminal and follow roles with `factory watch` or `factory logs <role>`. The old `--layout` flag is accepted only as `web` (see "Layouts") |
+| `factory restart` | Stop the factory and start it again for the project it is bound to, (it doesn't open a second dashboard; one already open keeps running). The dashboard's RESTART key runs it |
+| `factory chat` | Talk to the Coordinator in this terminal (wraps `sbx run --name factory-coordinator`); `factory start` creates the sandbox first. Refuses while the Coordinator is open elsewhere (the dashboard) |
 | `factory status` | Project, broker, dispatch bridge, login, roles (with their lanes), sandbox status, and pending approvals and the oldest one's age |
 | `factory logs <role>` | Follow a role's transcripts, all its lanes (`factory logs developer-lane2` for one lane); `factory logs broker` / `dispatch` for audit logs |
 | `factory watch` | Live terminal view of the lanes: one pane per active lane (a job running, or finished in the last ten minutes) with the job's status, elapsed time, model and cost in its title and the transcript rendered for reading (tool calls condensed, results dimmed, text wrapped); idle lanes take one status line each. A digit focuses one lane, `a` shows every lane, `p` shows a lane's latest review packet, `q` quits. `--once` prints one plain-text frame |
@@ -281,10 +266,6 @@ broker sandbox (`factory start`, or `factory update` itself) lists which to set 
 `factory secret rm <name>` only removes the broker sandbox's copy; if the host
 keychain still has an entry for `factory-<name>`, it warns that the next
 `factory start` will deliver that entry again, and how to clear it too.
-
-With `--layout watch` or `tabs`, `factory start` inside an existing Herdr pane
-uses that Herdr session; from a normal terminal it uses a dedicated Herdr
-session named `factory`. The default `web` layout uses no Herdr.
 
 > If you already have `sbx` from Homebrew at a different version, either run
 > `brew uninstall sbx` or put `~/.local/bin` ahead of `/opt/homebrew/bin` in `PATH`.
@@ -670,7 +651,7 @@ all lanes share the role's one sandbox. The Coordinator gives independent
 chunks to separate lanes, each on its own branch, and sends a follow-up (a
 REVISE, say) back to the lane that did the work. `LANES` is read per task (1
 to 8; empty means 1), so changing it needs no new sandbox; `factory start`
-updates the role's tab (`tabs` layout) or `factory watch`'s lane list. Several lanes share the sandbox's CPU and memory and
+updates the lane view in the dashboard and in `factory watch`. Several lanes share the sandbox's CPU and memory and
 your Claude subscription's usage limits, so more lanes isn't always faster.
 
 Models, set per role in `role.conf` `MODEL` (aliases resolve to the newest
@@ -911,22 +892,22 @@ factory role new designer                # copies reviewer (read-only; network t
 factory role new docs-writer developer   # or copy any existing role
 ```
 Edit its `role.conf` and instructions, then run `factory start` again. It creates
-the sandbox and a tab, and the Coordinator sees the new role in `list_roles`.
+the sandbox, and the Coordinator sees the new role in `list_roles`.
 
 **Change a role:** edit instructions, `BROKER_TOOLS`, `LANES`, `MODEL`, `MODELS`, `EFFORT`, `MAX_SESSION_TOKENS` or `MAX_TURNS` and run `factory start`
 again. All of these take effect from the next task:
 `factory start` copies the instructions into the state folder and the bridge
 reads that copy, so a role editing this repo can't change prompts on its own. Kit, image, project access and
 whether the role has broker access at all are fixed when the sandbox is created,
-so for those run `factory update`, which recreates that role's sandbox. Each role's tab
-(`tabs` layout) shows the job session's main model once the job reports it
+so for those run `factory update`, which recreates that role's sandbox. The dashboard's lane view
+and `factory watch` show the job session's main model once the job reports it
 (subagents it spawns may use others).
 
 **Change the Coordinator's model:** unlike a role's `MODEL` (read fresh on every
 dispatch), the Coordinator's model is baked into its kit's managed settings
 (`kits/coordinator/spec.yaml`, `"model"` in the `/etc/claude-code/managed-settings.json`
 written at setup) and only applied when its sandbox is created. It defaults to
-`opus` (see the models table above); `/model` in the Coordinator pane can still
+`opus` (see the models table above); `/model` in the Coordinator's terminal can still
 switch models for that session. To change the default,
 edit that `"model"` value, then run `factory update` to recreate the Coordinator
 with the new setting; recreating it discards its conversation history.
@@ -940,8 +921,8 @@ The managed settings of the Coordinator and of every role also set
 load in a factory sandbox; sandboxes created before that change keep loading
 them until `factory update` recreates them.
 
-**Remove a role:** delete `roles/<role>/` and run `factory start`. It closes the role's
-tab (`tabs` layout; it drops out of `factory watch`'s lane list either way) and removes
+**Remove a role:** delete `roles/<role>/` and run `factory start`. It drops the role from
+the dashboard's lane view and `factory watch`, removes
 its broker access, and it prints the `sbx rm` command for the role's
 sandbox (sandboxes are never deleted automatically).
 
@@ -1057,10 +1038,10 @@ factory, styled as a 1984 rack-mounted control unit, and tries to open it in
 your browser. It shows:
 
 - **Terminal 0:** the Coordinator itself, live, on the left-hand screen. Type
-  to it as you would in Herdr; every tab you open shows the same session (the
+  to it as you would in any terminal; every tab you open shows the same session (the
   last tab you resize or focus sets its size). Opening the page starts
   nothing: press POWER ON to attach. If the Coordinator is already open in
-  Herdr or `factory chat`, the screen says so instead: close it there, then
+  `factory chat`, the screen says so instead: close it there, then
   press POWER ON again. A tab opened later replays the recent output, with
   its keyboard muted while it does, so the terminal's answers to old
   queries in that output aren't typed into the Coordinator a second time.
@@ -1176,7 +1157,7 @@ cookie, and a terminal key that only the terminal's own page holds (the main
 page, which shows agent-written text, can't read it). At most 8 tabs attach
 at once; the dashboard pings each one every 30 seconds and drops one that
 stops answering for a minute. Anyone who
-can type into the terminal can do what the Coordinator can, as in Herdr: keep
+can type into the terminal can do what the Coordinator can: keep
 the link to yourself.
 
 At start-up it starts one thing, the browser opener, and always prints the
@@ -1376,7 +1357,7 @@ scripts/lib/common.sh        Pinned versions, checksums, names, shared checks
 scripts/lib/roles.sh         Role parsing and validation
 scripts/lib/secrets.sh       keychains (macOS, secret-tool, Windows Credential Manager), factory secret
 scripts/lib/preflight.sh     Platform checks shared by the installer and factory doctor
-scripts/install-prereqs.sh   Install pinned sbx + herdr
+scripts/install-prereqs.sh   Install the pinned sbx
 scripts/00-build-templates.sh
 scripts/01-init-security.sh
 scripts/02-launch-factory.sh <project-dir>
@@ -1402,15 +1383,13 @@ Change pins on purpose, in their own commit, and re-run the full setup to test.
 - **Broker base image:** same with `docker/sandbox-templates:shell-docker` →
   `broker/Dockerfile` (in the `passdesk-broker` submodule).
 - After changing any image, bump `TEMPLATE_TAG` (`v1` → `v2`) in `scripts/lib/common.sh`.
-- **sbx / herdr:** update the version, URL and SHA-256 in `scripts/lib/common.sh`,
+- **sbx:** update the version, URL and SHA-256 in `scripts/lib/common.sh`,
   for each platform you use:
   - **macOS:** use the `digest` of `DockerSandboxes-darwin.tar.gz` on the GitHub
-    release; for herdr, use the `sha256` for `macos-aarch64` in
-    https://herdr.dev/latest.json.
+    release.
   - **Linux (x86_64):** use the `digest` of `DockerSandboxes-linux-amd64-ubuntu2404.deb`
     and `-ubuntu2604.deb` on the GitHub release (`SBX_DEB_UBUNTU2404_*`,
-    `SBX_DEB_UBUNTU2604_*`), and of `herdr-linux-x86_64` on the herdr release
-    (`HERDR_LINUX_X86_64_*`). Check each against the file you download
+    `SBX_DEB_UBUNTU2604_*`). Check each against the file you download
     (`sha256sum <file>`); never guess a checksum.
 
   Kit keys, CLI flags and lifecycle behavior have changed between sbx releases, so

@@ -10,7 +10,7 @@ set -euo pipefail
 #    from /proc/version or WSL_DISTRO_NAME), else xdg-open. With no opener it
 #    prints the path and still succeeds.
 # 3. An unknown flag is a usage error, and docs.py never runs.
-# 4. It needs no sbx, docker or herdr (stubs that record any call stay
+# 4. It needs no sbx or docker (stubs that record any call stay
 #    silent) and no broker/ submodule: a fixture checkout with neither works,
 #    so it runs on a fresh clone before 'factory setup'.
 # 5. If the real scripts/docs.py exists, one real render through
@@ -55,7 +55,7 @@ real_uname="$(command -v uname)"
 # Forbidden tools record any call. Openers record theirs in $tmp/opened.
 stubs="$tmp/stubs"
 mkdir -p "$stubs"
-for t in sbx docker herdr; do
+for t in sbx docker; do
   printf '#!/bin/sh\necho "%s $*" >> "%s/forbidden"\nexit 1\n' "$t" "$tmp" > "$stubs/$t"
   chmod +x "$stubs/$t"
 done
@@ -142,13 +142,13 @@ assert_contains "docs --html prints the usage" "$(cat "$tmp/out")" "usage: facto
 [ ! -e "$tmp/docs-calls" ] && ok "docs --html never runs docs.py" || bad "docs --html never runs docs.py"
 
 # ===========================================================================
-# Part 4: no sbx/docker/herdr, no broker/ submodule
+# Part 4: no sbx/docker, no broker/ submodule
 # ===========================================================================
 [ ! -e "$fx/broker" ] && ok "fixture: the checkout has no broker/" || bad "fixture: the checkout has no broker/"
 reset_run
 run_fixture docs --print || true
-[ ! -e "$tmp/forbidden" ] && ok "docs never calls sbx, docker or herdr" \
-  || bad "docs never calls sbx, docker or herdr (called: $(cat "$tmp/forbidden"))"
+[ ! -e "$tmp/forbidden" ] && ok "docs never calls sbx or docker" \
+  || bad "docs never calls sbx or docker (called: $(cat "$tmp/forbidden"))"
 assert_contains "docs works with no broker/ submodule" "$(cat "$tmp/out")" "<title>stub docs</title>"
 reset_run
 run_fixture help || true

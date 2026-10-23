@@ -6,15 +6,12 @@
 # Exact tool versions the factory is tested against. Bump these deliberately,
 # in the same commit as any spec/script changes the new version requires.
 readonly SBX_VERSION="0.45.1"
-readonly HERDR_VERSION="0.9.1"
 
 # Release artifacts for scripts/install-prereqs.sh: macOS (Apple silicon) and
 # Linux (x86_64, including WSL2). SHA-256 values come from the GitHub release
-# digests / herdr.dev manifest.
+# digests.
 readonly SBX_URL="https://github.com/docker/sbx-releases/releases/download/v${SBX_VERSION}/DockerSandboxes-darwin.tar.gz"
 readonly SBX_SHA256="0a7207d1736ef9d109b722cf3d21e2b9ed5840d7667fcbcb7596075265b22023"
-readonly HERDR_URL="https://github.com/herdrdev/herdr/releases/download/v${HERDR_VERSION}/herdr-macos-aarch64"
-readonly HERDR_SHA256="5fc7a7e7adfaca56fa80aa89dcb025693357268dab8285b9ce2d08a2313c89de"
 
 # Linux x86_64 (Ubuntu, including WSL2): sbx ships as a .deb per Ubuntu
 # release. The .deb (not the tarball) is what installs the AppArmor profile
@@ -25,8 +22,6 @@ readonly SBX_DEB_UBUNTU2404_URL="https://github.com/docker/sbx-releases/releases
 readonly SBX_DEB_UBUNTU2404_SHA256="aaceda8ade7bdbb285a8e5b27e29d5af1aeef55c57bf4db892966ea47ecc11c1"
 readonly SBX_DEB_UBUNTU2604_URL="https://github.com/docker/sbx-releases/releases/download/v${SBX_VERSION}/DockerSandboxes-linux-amd64-ubuntu2604.deb"
 readonly SBX_DEB_UBUNTU2604_SHA256="db12d894a9d92da7c33afb5a4654bb341a92a90189b2095490ed3128d58f9c3a"
-readonly HERDR_LINUX_X86_64_URL="https://github.com/herdrdev/herdr/releases/download/v${HERDR_VERSION}/herdr-linux-x86_64"
-readonly HERDR_LINUX_X86_64_SHA256="2a02fed16beb651ef006e1d43f048f652ca4dc58ad053cd2d44450563d5c54b7"
 
 # Pinned ShellCheck for scripts/lint.sh (CI and local runs). Hashes checked against
 # the v0.10.0 release downloads on 2026-10-17.
@@ -95,35 +90,31 @@ case "${XDG_CONFIG_HOME:-}" in
 esac
 readonly FACTORY_CONFIG
 
-# This machine's remembered `factory start --layout` choice. Holds just
-# "watch", "tabs" or "web"; absent is the same as "web" (resolve_layout's
-# fallback), so nothing here needs it to exist.
+# Older versions remembered a `factory start --layout` choice here ("watch",
+# "tabs" or "web"). The dashboard ("web") is the only layout left;
+# resolve_layout still reads the file so a stale value can't break a start.
 readonly FACTORY_LAYOUT_FILE="$FACTORY_CONFIG/layout"
 
-# resolve_layout FLAG ENV -> "watch", "tabs" or "web": FLAG (factory start's --layout
-# value) if non-empty, else ENV (FACTORY_LAYOUT from the environment) if
-# non-empty, else the value saved in FACTORY_LAYOUT_FILE, else "web" (GUI
-# first: the dashboard; owner's decision of 20 Oct 2026). A
-# non-empty FLAG or ENV is validated (dies, with the command's usage, on
-# anything else) and saved as the new default, so later runs don't need it
-# repeated.
+# resolve_layout FLAG ENV -> "web", the only layout. A FLAG (factory start's
+# --layout value), ENV (FACTORY_LAYOUT) or saved FACTORY_LAYOUT_FILE naming a
+# layout that no longer exists ("watch", "tabs") gets a one-line warning on
+# stderr and "web"; the stale file is removed so the warning shows once. Any
+# other FLAG or ENV value dies with the command's usage; any other saved value
+# is ignored. Nothing is saved.
 resolve_layout() {
   local chosen="${1:-$2}" saved
-  if [ -n "$chosen" ]; then
-    case "$chosen" in
-      watch|tabs|web) ;;
-      *) die "usage: factory start [dir] [--no-ui] [--layout watch|tabs|web]" ;;
-    esac
-    mkdir -p "$FACTORY_CONFIG"
-    printf '%s\n' "$chosen" > "$FACTORY_LAYOUT_FILE"
-    printf '%s' "$chosen"
-    return
-  fi
+  case "$chosen" in
+    ""|web) ;;
+    watch|tabs) echo "warning: the '$chosen' layout is gone; using the dashboard (web)" >&2 ;;
+    *) die "usage: factory start [dir] [--no-ui] [--layout web]" ;;
+  esac
   saved="$(cat "$FACTORY_LAYOUT_FILE" 2>/dev/null || true)"
   case "$saved" in
-    watch|tabs|web) printf '%s' "$saved" ;;
-    *) printf '%s' "web" ;;
+    watch|tabs)
+      echo "warning: your saved '$saved' layout is gone; using the dashboard (web)" >&2
+      rm -f "$FACTORY_LAYOUT_FILE" 2>/dev/null || true ;;
   esac
+  printf '%s' "web"
 }
 
 # require_state_outside PROJECT -> die if the state dir is inside PROJECT
@@ -211,10 +202,6 @@ sbx_reference_problem() {
   return 1
 }
 
-herdr_installed_version() {
-  herdr --version 2>/dev/null | sed -n 's/^herdr \([^ ]*\).*/\1/p'
-}
-
 require_bin() {
   command -v "$1" >/dev/null 2>&1 || die "'$1' not found in PATH (see README.md)"
 }
@@ -245,21 +232,13 @@ require_sbx() {
   [ "$got" = "$SBX_VERSION" ] || die "sbx $SBX_VERSION required, found '${got:-unknown}' (see README.md)"
 }
 
-# `herdr --version` prints e.g. "herdr 0.9.1"
-require_herdr() {
-  require_bin herdr
-  local got
-  got="$(herdr_installed_version)"
-  [ "$got" = "$HERDR_VERSION" ] || die "herdr $HERDR_VERSION required, found '${got:-unknown}' (see README.md)"
-}
-
 sandbox_exists() {
   sbx ls -q 2>/dev/null | grep -qx "$1"
 }
 
 # coordinator_attached -> success if some process on this machine is already
-# running `sbx run` on $COORDINATOR_SANDBOX (a Herdr pane, `factory chat`, or
-# the dashboard's Terminal 0). A second one would start a second Coordinator
+# running `sbx run` on $COORDINATOR_SANDBOX (`factory chat` or the
+# dashboard's Terminal 0). A second one would start a second Coordinator
 # in the same VM. It matches `sbx [global flags] run ...` with the name as
 # `--name NAME`, `--name=NAME` or a bare argument before any `--` (`sbx run`
 # takes a sandbox name positionally too; there is no short form of --name),

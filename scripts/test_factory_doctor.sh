@@ -41,7 +41,7 @@ assert_not_contains() {
   case "$2" in *"$3"*) bad "$1 (did not expect '$3', got: $2)" ;; *) ok "$1" ;; esac
 }
 
-# --- PATH: system tools plus stubs; no sbx, docker, herdr or secret-tool --------
+# --- PATH: system tools plus stubs; no sbx, docker or secret-tool --------
 sys="$tmp/sys"
 mkdir -p "$sys"
 for t in bash sh env cat dirname basename readlink grep mkdir sed tr tail head ls rm mv cp chmod sleep id uname \
@@ -51,7 +51,7 @@ for t in bash sh env cat dirname basename readlink grep mkdir sed tr tail head l
 done
 stubs="$tmp/stubs"
 mkdir -p "$stubs"
-for t in sbx docker herdr; do
+for t in sbx docker; do
   printf '#!/bin/sh\necho "%s $*" >> "%s/forbidden"\nexit 1\n' "$t" "$tmp" > "$stubs/$t"
   chmod +x "$stubs/$t"
 done
