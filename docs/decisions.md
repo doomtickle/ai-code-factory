@@ -2,6 +2,35 @@
 
 Dated entries, for the user to review. Newest first.
 
+## 2026-10-23
+
+- **The factory's researcher role is off by default** (owner decision;
+  doomtickle/passdesk-ops#147, ai-code-factory branch
+  `factory/researcher-opt-in`). The researcher ran about 3% of 371 jobs and
+  was rarely useful, yet every machine paid for its sandbox, broker token
+  and grants. Choices:
+  - **Two switches, not one.** `roles/researcher/role.conf` carries
+    `OPTIONAL="1"` (committed, so what is optional is reviewed in the repo);
+    the user turns it on with a line `researcher` in the local
+    `enabled-roles` file in the factory config folder. `OPTIONAL` is not a
+    `roles/<role>.conf` override key, so local config can flip a role on
+    but cannot change `BROKER_TOOLS`, `WORKSPACE` or `TEMPLATE`, and cannot mark a
+    role optional or not. The file is parsed line by line (never sourced);
+    an unknown or malformed line fails `factory doctor`/`start` rather than
+    being ignored.
+  - **One enumeration.** `list_roles` hides a disabled optional role, so
+    start, update, broker tokens and grants, and the dispatch snapshot all
+    skip it; the bridge reads a snapshot of `enabled-roles` taken at
+    `factory start`, so a running bridge and the sandboxes agree. A missing
+    or unreadable file means off.
+  - **The bridge refuses, it does not hide.** `delegate` to a disabled role
+    says how to enable it; `list_roles` and the Coordinator's instructions
+    leave it out.
+  - **An existing sandbox is never removed automatically.** `factory
+    doctor` notes it and prints the `sbx rm` command. The broker token and
+    MCP registration of a role that drops out of the list are cleaned up by
+    the existing `start-broker.sh` logic.
+
 ## 2026-10-22
 
 - **Approve later: a held push, PR or MR is queued and the gateway makes it
