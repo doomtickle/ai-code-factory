@@ -126,7 +126,7 @@ Everything is pinned for repeatable setups:
 |---|---|
 | `sbx` 0.45.1 (+ SHA-256, per platform) | `scripts/lib/common.sh` |
 | Sandbox base images (digests) | `templates/*/Dockerfile`, `broker/Dockerfile` |
-| ruff 0.16.8 | `templates/reviewer/Dockerfile` |
+| ruff 0.16.8 | `templates/reviewer/Dockerfile`, `templates/developer/Dockerfile` |
 | yarn 1.22.22 (+ SHA-256) and `factory-test` | `templates/developer/Dockerfile`, `templates/reviewer/Dockerfile` |
 | Chrome for Testing headless shell 156.0.8078.47 (linux64 and linux-arm64, each + SHA-256; its Ubuntu libraries and fonts pinned only by the base image digest) | `templates/developer/Dockerfile`, `templates/reviewer/Dockerfile` |
 | Broker code + policy | baked into `factory-broker:v3` at build time |
@@ -867,6 +867,9 @@ project, so projects need no factory files, and roles can't change it. For examp
 - Tests: `factory-test -q -- npx vitest run` (`npm test` starts watch mode).
 - Type check: `factory-test -q -- npx tsc --noEmit`.
 ```
+`config.example/projects/ai-code-factory.md` holds the notes for working on this
+repo itself (the `sbx` reference rule, the docs-page example); `factory config init`
+copies it.
 Notes for one role only go in `projects/<project-folder-name>.<role>.md`
 (e.g. `my-api.developer.md` for the docs style, `my-api.reviewer.md` for what
 to be strict about); `factory start` appends them after the shared notes, to
@@ -876,7 +879,10 @@ characters, or the bridge refuses that role's tasks (`instructions for <role>
 exceed 20000 characters`).
 
 The images also include yarn 1.22.22, so `yarn` scripts and git hooks that
-call `yarn` work. Python projects still use `pip_download` and `uv` directly.
+call `yarn` work. The developer image also carries ruff 0.16.8. For a Python
+project, `factory-test` installs a hash-pinned `requirements.txt` (or
+`requirements-dev.txt`, or `-r <file>`) into a venv in its own copy, offline,
+from the wheels `pip_download` put in `.factory/wheels/` (see `factory-test -h`).
 
 Each role is `roles/<name>/role.conf` (description, image, `WORKSPACE=rw|ro`, `LANES`,
 `BROKER_TOOLS`, `MODEL`, `MODELS`, `EFFORT`, `MAX_SESSION_TOKENS`, `MAX_TURNS`), `roles/<name>/instructions.md` (passed to every task
@@ -1348,7 +1354,7 @@ docs/setup-wsl.md            Step-by-step setup on Windows 11 with WSL2
 docs/guides/*.md             Task-oriented guides (rendered by factory docs)
 docs/mac-quickstart.html     One-page Mac quickstart
 windows/enable-wsl.ps1       Windows side of that setup: WSL, Ubuntu, nested virtualization
-templates/<image>/           Pinned images: developer, reviewer (+ruff)
+templates/<image>/           Pinned images: developer (+ruff), reviewer (+ruff)
 templates/agent/factory-test Runs tests in a sandbox-local copy (baked into developer and reviewer)
 templates/agent/factory-lane Lane clones: prepare, export bundles, bundle a branch for git_push, check out a branch to review
 templates/agent/factory-shot Renders a page the role built to a PNG with the image's headless Chrome (file:// and loopback only)
@@ -1398,7 +1404,7 @@ Change pins on purpose, in their own commit, and re-run the full setup to test.
   `scripts/gen-sbx-reference.sh` (writes `docs/reference/sbx-cli.md`; agents have
   no `sbx`, so they check it before using a flag, and `factory doctor` warns while
   it is missing, not yet generated, or for a different version than `SBX_VERSION`).
-- **ruff:** change `RUFF_VERSION` in `templates/reviewer/Dockerfile`.
+- **ruff:** change `RUFF_VERSION` in both `templates/reviewer/Dockerfile` and `templates/developer/Dockerfile`.
 - **yarn:** change `YARN_VERSION` and `YARN_SHA256` in **both**
   `templates/developer/Dockerfile` and `templates/reviewer/Dockerfile`. Get the
   hash from the file itself:

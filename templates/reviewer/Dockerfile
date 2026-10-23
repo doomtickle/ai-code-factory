@@ -9,6 +9,7 @@
 # templates/developer/Dockerfile).
 FROM docker/sandbox-templates:claude-code@sha256:868e3f5ef10579e06903d42e86448851ed59319ab8b9fba6dea2772c449bb2a6
 
+# Keep in sync with templates/developer/Dockerfile.
 ARG RUFF_VERSION=0.16.8
 
 # System Python is externally managed (PEP 668), so install ruff as an
