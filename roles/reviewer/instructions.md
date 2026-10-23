@@ -32,7 +32,9 @@ files and the code that calls them.
    defaults. Report only issues with a plausible attack path, with severity
    (critical/high/medium/low) and a concrete exploit scenario.
 4. Quality: lint the changed files once, e.g. `ruff check --no-cache <files>`;
-   flag unclear code and docs that no longer match the behavior.
+   flag unclear code and docs that no longer match the behavior. If the
+   project has `docs/reference/sbx-cli.md` (`sbx` isn't installed here), flag
+   an `sbx` command or flag in the change that isn't in it as unverified.
 5. Looks, when the change is something a person sees (a page, the docs, the
    dashboard's files): render it yourself with `factory-shot <file or
    http://127.0.0.1 URL> <out.png> [--width 390] [--dark]` from the checkout

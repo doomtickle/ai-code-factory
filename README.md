@@ -867,9 +867,12 @@ project, so projects need no factory files, and roles can't change it. For examp
 - Tests: `factory-test -q -- npx vitest run` (`npm test` starts watch mode).
 - Type check: `factory-test -q -- npx tsc --noEmit`.
 ```
-`config.example/projects/ai-code-factory.md` holds the notes for working on this
-repo itself (the `sbx` reference rule, the docs-page example); `factory config init`
-copies it.
+`config.example/projects/ai-code-factory.md` holds extra notes for working on this
+repo itself (the `docs.py` page-build example, its test commands). Copy it by hand
+to `projects/<project-folder-name>.md`: the name that counts is the folder you
+start the factory in (for a workspace folder named `code`, that is `code.md`).
+`factory config init` also writes it, under its own name, but never over existing
+files, and it only loads for a folder named `ai-code-factory`.
 Notes for one role only go in `projects/<project-folder-name>.<role>.md`
 (e.g. `my-api.developer.md` for the docs style, `my-api.reviewer.md` for what
 to be strict about); `factory start` appends them after the shared notes, to

@@ -10,7 +10,7 @@ set -euo pipefail
 # - a hash-pinned requirements.txt: the venv is created in the copy, the wheel
 #   installs offline, the command imports it, and the "mode:" line says so.
 # - the install stamp: a second run doesn't reinstall; a changed requirements
-#   file does; the project folder gets no .venv.
+#   file does, even with the same size and mtime; the project folder gets no .venv.
 # - -r picks another file; requirements.txt wins over requirements-dev.txt.
 # - failure paths: no wheel folder, a wheel whose hash doesn't match, an
 #   unpinned requirements file, a missing -r file, -r outside the project.
@@ -103,7 +103,10 @@ assert_eq "python mode: VIRTUAL_ENV is set" "$(printf '%s\n' "$OUT" | tail -n 1)
 run "$FTEST" -C "$proj" -- python3 check.py
 assert_lacks "stamp: an unchanged requirements file isn't reinstalled" "$ERR" "installing"
 assert_eq "stamp: still works" "$OUT" "stub 1.0"
+# Same size and mtime as before: rsync's quick check would keep the old copy.
+cp -p "$proj/requirements.txt" "$tmp/requirements.ref"
 printf 'factorystub==2.0 \\\n    --hash=sha256:%s\n' "$sum2" > "$proj/requirements.txt"
+touch -r "$tmp/requirements.ref" "$proj/requirements.txt"
 run "$FTEST" -C "$proj" -- python3 check.py
 assert_contains "stamp: a changed requirements file reinstalls" "$ERR" "installing requirements.txt"
 assert_eq "stamp: the new version is installed" "$OUT" "stub 2.0"

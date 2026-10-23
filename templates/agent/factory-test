@@ -130,6 +130,9 @@ clean_install() {
   # own .venv is never copied: it holds the host's interpreter paths.
   rsync -a --delete --exclude=node_modules --exclude=/.venv --exclude=/.git --exclude=/.factory "$src/" "$base/"
   [ -n "$lock" ] || return 0
+  # rsync skips a file whose size and mtime match, and a pin edited within a
+  # second of the last run can keep both: copy the install inputs unconditionally.
+  cp "$src/package.json" "$src/$lock" "$base/"
   local want
   want="$lock $(cat "$base/package.json" "$base/$lock" | sha256sum | cut -d' ' -f1)"
   [ "$(cat "$base/node_modules/.factory-test-stamp" 2>/dev/null || true)" != "$want" ] || return 0
@@ -165,6 +168,8 @@ clean_install() {
 # requirements file if it changed since the last install. Fails if the install does.
 python_install() {
   clean_install
+  # Same as the lockfile in clean_install: never trust rsync's quick check here.
+  cp "$src/$req" "$base/$req"
   local venv="$base/.venv" want
   want="$req $(python3 --version 2>&1) $(sha256sum < "$base/$req" | cut -d' ' -f1)"
   if [ "$(cat "$venv/.factory-test-stamp" 2>/dev/null || true)" = "$want" ] && [ -x "$venv/bin/python" ]; then

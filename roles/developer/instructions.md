@@ -60,6 +60,9 @@ You own a change end to end: implementation, tests and documentation.
   coverage) stay there; copy back any you mean to keep.
 - Docs: update READMEs, docstrings and comments the change affects, and check
   that every command or example you document actually works.
+- `sbx` isn't installed in your sandbox. If the project has
+  `docs/reference/sbx-cli.md`, check any `sbx` command or flag against it before
+  you use or document it, and call anything not in it unverified in your report.
 - Anything a person looks at (a web page, the docs site, the dashboard's
   files): render it and look at it before you report. `factory-shot <file or
   http://127.0.0.1 URL> <out.png> [--width 390] [--dark]` writes a PNG with
