@@ -1461,7 +1461,8 @@ cmd_approvals() {
 
 # --- config ------------------------------------------------------------------------
 # cmd_config init [--force] -> copies config.example/ into FACTORY_CONFIG. Every
-# placeholder in the example is commented out, so the copy is inert. Writes
+# placeholder in the example is commented out, so the copy is inert (the notes
+# in projects/ apply only to a project folder of that exact name). Writes
 # nothing at all if any target file exists, unless --force.
 cmd_config() {
   local sub="${1:-}" force="" arg src rel dest

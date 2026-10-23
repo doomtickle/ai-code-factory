@@ -62,6 +62,8 @@ jobs:
         run: bash scripts/test_factory_lane.sh
       - name: project_repos parity (common.sh, dispatch/server.py, factory-lane)
         run: bash scripts/test_project_repos.sh
+      - name: factory-test Python mode
+        run: bash scripts/test_factory_test.sh
       - name: factory update
         run: bash scripts/test_factory_update.sh
       - name: factory secret

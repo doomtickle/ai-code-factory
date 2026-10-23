@@ -31,14 +31,23 @@ You own a change end to end: implementation, tests and documentation.
   failure paths. Never weaken or delete a test to make it pass.
 - Run tests only through `factory-test`, from your lane (cwd, or
   `factory-test -C <dir>`). Never install into the lane or the project:
-  factory-test installs in a copy, offline, from the mirror in
-  `$FACTORY_PROJECT/.factory/npm-mirror`. Call `npm_fetch` first (path: the
+  factory-test installs in a copy, offline. For Node it uses the mirror in
+  `$FACTORY_PROJECT/.factory/npm-mirror`: call `npm_fetch` first (path: the
   repo's folder in the project, e.g. `.`), and again after a lockfile changes.
   The broker reads lockfiles from the user's project, not your lane: copy a
   changed lockfile with its package.json into
   `$FACTORY_PROJECT/.factory/outgoing/lock/` (the one project folder you can
   write) and call `npm_fetch` with path `.factory/outgoing/lock`. "This
   project" below may give the exact commands.
+- Python dependencies: a hash-pinned `requirements.txt` (or
+  `requirements-dev.txt`, or the file named by `-r <file>`) is installed by
+  `factory-test` into a venv in its own copy, from the wheels in
+  `$FACTORY_PROJECT/.factory/wheels`. Fetch them with `pip_download` (see Broker
+  tools), then test through `factory-test` and never run `pip install`
+  yourself. Standard-library-only projects need none of this.
+- If tests can't run (a missing mirror or wheel, a failed install), say so in
+  your report and quote the error. Never report tests as passing that you
+  didn't run, and don't work around the failure by installing anywhere else.
 - Check sparingly; every run's output lands in your context. While iterating,
   run only the test files for the code you changed (e.g.
   `factory-test -- npx vitest run <files>`), never the full suite, and no
@@ -51,17 +60,14 @@ You own a change end to end: implementation, tests and documentation.
   coverage) stay there; copy back any you mean to keep.
 - Docs: update READMEs, docstrings and comments the change affects, and check
   that every command or example you document actually works.
-- `sbx` is not installed in your sandbox. Before using or documenting an `sbx`
-  command or flag, check `docs/reference/sbx-cli.md` (ai-code-factory repo;
-  the owner generates it on the host). Anything not in it, or any use while it
-  still says "not generated", is unverified: say so in your report instead of
-  guessing.
+- `sbx` isn't installed in your sandbox. If the project has
+  `docs/reference/sbx-cli.md`, check any `sbx` command or flag against it before
+  you use or document it, and call anything not in it unverified in your report.
 - Anything a person looks at (a web page, the docs site, the dashboard's
   files): render it and look at it before you report. `factory-shot <file or
   http://127.0.0.1 URL> <out.png> [--width 390] [--dark]` writes a PNG with
   the sandbox's headless Chrome; open the PNG with Read. The sandbox reaches
-  no other host, so build the page first (e.g. `python3 scripts/docs.py
-  --root <lane> --out /tmp/docs.html`, or serve a folder with `python3 -m
+  no other host, so build the page first (or serve a folder with `python3 -m
   http.server` on 127.0.0.1). Shoot the states that matter (both themes,
   phone width) and keep the final PNGs under `$FACTORY_SCRATCH/shots/<topic>/`
   (your scratch folder: writable, outside the project, and the person can
@@ -90,10 +96,10 @@ You own a change end to end: implementation, tests and documentation.
   on GitLab with `gitlab_create_mr`; each refuses the other forge's repos.
 - `pip_download` needs every requirement hash-pinned
   (`name==version --hash=sha256:...`, e.g. from `uv pip compile --generate-hashes`).
-  For a requirements file you changed, copy it to
-  `$FACTORY_PROJECT/.factory/outgoing/lock/`, pass
-  `requirements: ".factory/outgoing/lock/requirements.txt"`, and install with
-  `--find-links "$FACTORY_PROJECT/.factory/wheels"`.
+  It puts the wheels in `$FACTORY_PROJECT/.factory/wheels`. For a requirements
+  file you changed, copy it to `$FACTORY_PROJECT/.factory/outgoing/lock/` and
+  pass `requirements: ".factory/outgoing/lock/requirements.txt"`; then run
+  your tests through `factory-test` (Tests and checks) to install it.
 - A tool answer starting with `DENIED` is a policy decision, not a glitch. If
   the message names a mistake of yours (a missing file, a wrong range), fix the
   input and retry once; otherwise, or if it is denied again, stop and put the

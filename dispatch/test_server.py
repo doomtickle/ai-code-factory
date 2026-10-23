@@ -7,12 +7,14 @@ Run on the host with the system Python:
 import json
 import os
 import stat
+import sys
 import tempfile
 import textwrap
 import time
 import unittest
 import uuid
 from pathlib import Path
+from unittest import mock
 
 import server as d
 
@@ -101,6 +103,18 @@ FAKE_SBX = textwrap.dedent(r'''
                 "text": "factory-test: mode: clean install (yarn.lock, offline)\nfactory-test: running in /c\n"
                         "ok\nfactory-test: mode was: clean install (yarn.lock, offline) (exit 0)"}]}]}},
         ]
+        if task == "odd-events":  # valid JSON the bridge must skip, not choke on
+            events[1:1] = [
+                123, ["not", "an", "event"],
+                {"type": "assistant", "message": {"content": [7, "str", None,
+                    {"type": "text", "text": "after the odd blocks"}]}},
+                {"type": "assistant", "message": {"usage": {"input_tokens": "lots"}, "content": []}},
+                {"type": "user", "message": {"content": "just a string"}},
+            ]
+        if task == "no-usage":  # claude reported no token counts
+            for e in events:
+                if isinstance(e.get("message"), dict):
+                    e["message"].pop("usage", None)
         if task == "nan-cost":
             total = float("nan")  # json.dumps writes NaN, as a faulty claude might
         if task == "max-turns":
@@ -113,6 +127,8 @@ FAKE_SBX = textwrap.dedent(r'''
                            "session_id": sid, "total_cost_usd": total})
         for e in events:
             print(json.dumps(e), flush=True)
+        if task == "stall-after-report":
+            time.sleep(60)
         sys.exit(0)
     sys.exit(0)
 ''').lstrip()
@@ -535,6 +551,91 @@ class DelegateTests(Base):
         self.assertIn("MAX_TURNS cap of 7 turns", report["report"])
         self.assertIn("follow-up task on this lane can continue", report["report"])
 
+    def set_conf(self, role, line):
+        conf_path = d.ROOT / "roles" / role / "role.conf"
+        conf_path.write_text(conf_path.read_text() + line + "\n")
+
+    def test_max_job_seconds_parsing(self):
+        self.assertEqual(d.load_roles()["developer"]["max_job_seconds"], d.DEFAULT_MAX_JOB_SECONDS)
+        self.set_conf("developer", 'MAX_JOB_SECONDS="0"')
+        self.assertEqual(d.load_roles()["developer"]["max_job_seconds"], 0)
+        self.set_conf("developer", 'MAX_JOB_SECONDS="90"')
+        self.assertEqual(d.load_roles()["developer"]["max_job_seconds"], 90)
+        self.set_conf("developer", 'MAX_JOB_SECONDS="1h"')
+        self.assertEqual(d.load_roles()["developer"]["max_job_seconds"], d.DEFAULT_MAX_JOB_SECONDS)
+
+    def test_a_stuck_claude_is_killed_at_the_time_limit_and_the_lane_freed(self):
+        self.set_conf("developer", 'MAX_JOB_SECONDS="1"')
+        started = time.time()
+        report = json.loads(d.tool_wait_for_job({"job_id": self.delegate("developer", "hang"),
+                                                 "timeout_seconds": 30}))
+        self.assertLess(time.time() - started, 20)
+        self.assertEqual(report["status"], "failed")
+        self.assertIn("MAX_JOB_SECONDS limit of 1s", report["report"])
+        self.assertIn("killed", (d.STATE / "logs" / "developer.log").read_text())
+        call = self.claude_calls()[0]
+        sid = call[call.index("--session-id") + 1]
+        pkill = [c for c in self.sbx_calls() if c[2:3] == ["pkill"]]
+        pattern = f"^claude -p .*--(session-id|resume) {sid}( |$)"
+        self.assertEqual(pkill, [["exec", "factory-developer", "pkill", "-INT", "-f", pattern]])
+        out = json.loads(d.tool_delegate({"role": "developer", "task": "next", "wait_seconds": 30}))
+        self.assertEqual(out["status"], "done")  # the lane took a new job
+
+    def test_the_time_limit_keeps_the_partial_report(self):
+        self.set_conf("developer", 'MAX_JOB_SECONDS="2"')
+        report = json.loads(d.tool_wait_for_job({"job_id": self.delegate("developer", "stall-after-report"),
+                                                 "timeout_seconds": 30}))
+        self.assertEqual(report["status"], "failed")
+        self.assertTrue(report["report"].startswith("REPORT: did stall-after-report\n"))
+        self.assertIn("MAX_JOB_SECONDS limit of 2s", report["report"])
+
+    def test_zero_means_no_time_limit(self):
+        self.set_conf("developer", 'MAX_JOB_SECONDS="0"')
+        report = json.loads(d.tool_wait_for_job({"job_id": self.delegate("developer", "x"),
+                                                 "timeout_seconds": 30}))
+        self.assertEqual(report["status"], "done")
+
+    def test_odd_stream_events_are_skipped_not_fatal(self):
+        report = json.loads(d.tool_wait_for_job({"job_id": self.delegate("developer", "odd-events"),
+                                                 "timeout_seconds": 30}))
+        self.assertEqual(report["status"], "done")
+        self.assertEqual(report["report"], "REPORT: did odd-events")
+        log = (d.STATE / "logs" / "developer.log").read_text()
+        self.assertIn("after the odd blocks", log)  # a non-dict block doesn't hide its siblings
+        self.assertIn("skipped a malformed event: AttributeError", log)  # 123, the list
+        self.assertIn("skipped a malformed event: ValueError", log)  # non-numeric usage
+        self.assertEqual(report["context_tokens"], 85010)  # later events still counted
+
+    def test_non_utf8_output_does_not_fail_the_job(self):
+        job = d.Job("developer", "x", None)
+        log = d.Transcript("developer")
+        script = textwrap.dedent(r"""
+            import sys
+            sys.stdout.buffer.write(b'\xff\xfe not json\n')
+            sys.stdout.buffer.write(b'{"type": "result", "result": "ok"}\n')
+        """)
+        orig = d.claude_argv
+        d.claude_argv = lambda *a: [sys.executable, "-c", script]
+        try:
+            d.run_claude(job, log, str(d.PROJECT), None)
+        finally:
+            d.claude_argv = orig
+        self.assertEqual(job.result, "ok")
+
+    def test_a_failure_after_claude_keeps_the_report_and_still_imports(self):
+        with mock.patch.object(d, "save_session", side_effect=OSError("disk full")):
+            report = json.loads(d.tool_wait_for_job({"job_id": self.delegate("developer", "x"),
+                                                     "timeout_seconds": 30}))
+        self.assertEqual(report["status"], "failed")
+        self.assertEqual(report["report"], "REPORT: did x\n[dispatch error: OSError: disk full]")
+        self.assertTrue(self.lane_calls("export"))  # the finally block still imported the branches
+
+    def test_a_failure_before_any_report_is_the_whole_result(self):
+        with mock.patch.object(d, "prepare_lane", side_effect=OSError("no sbx")):
+            report = json.loads(d.tool_wait_for_job({"job_id": self.delegate("developer", "x"),
+                                                     "timeout_seconds": 30}))
+        self.assertEqual(report["report"], "dispatch error: OSError: no sbx")
+
     def test_effort_is_passed_and_reported(self):
         out = json.loads(d.tool_delegate({"role": "developer", "task": "x", "effort": "low",
                                           "wait_seconds": 30}))
@@ -578,6 +679,22 @@ class DelegateTests(Base):
         self.assertIn("~85k tokens, over the 50k cap", out["session"])
         self.assertEqual(out["cost_usd"], 0.25)  # a fresh session's cost is its own total
         self.assertNotIn("--resume", self.claude_calls()[1])
+
+    def test_unknown_context_size_is_saved_as_null_and_starts_fresh(self):
+        d.tool_wait_for_job({"job_id": self.delegate("developer", "no-usage"), "timeout_seconds": 30})
+        meta = json.loads((d.STATE / "sessions" / "developer.json").read_text())
+        self.assertIn("context_tokens", meta)
+        self.assertIsNone(meta["context_tokens"])
+        self.assertIn("unknown context size", d.tool_list_roles({}))
+        out = json.loads(d.tool_delegate({"role": "developer", "task": "two", "wait_seconds": 30}))
+        self.assertIn("context size is unknown", out["session"])
+        self.assertNotIn("--resume", self.claude_calls()[1])
+
+    def test_unknown_context_size_resumes_when_uncapped(self):
+        self.set_cap(0)
+        d.tool_wait_for_job({"job_id": self.delegate("developer", "no-usage"), "timeout_seconds": 30})
+        out = json.loads(d.tool_delegate({"role": "developer", "task": "two", "wait_seconds": 30}))
+        self.assertEqual(out["session"], "continuing its previous session")
 
     def test_session_under_the_default_cap_or_uncapped_resumes(self):
         self.assertEqual(d.load_roles()["developer"]["max_session_tokens"], d.DEFAULT_MAX_SESSION_TOKENS)
@@ -773,18 +890,17 @@ class CostTests(Base):
 
     def test_interrupted_job_leaves_cost_unknown(self):
         self.wait(self.delegate("developer", "one"))
-        real = d.render_event
+        real = d.save_session
 
-        def crash_on_result(event, log, job):
-            if event.get("type") == "result":
-                raise RuntimeError("bridge crashed")
-            real(event, log, job)
+        def crash_while_saving(job):
+            d.session_file(job.lane).write_text(job.session_id + "\n")
+            raise RuntimeError("bridge crashed")
 
-        d.render_event = crash_on_result
+        d.save_session = crash_while_saving
         try:
             self.assertEqual(self.wait(self.delegate("developer", "two"))["status"], "failed")
         finally:
-            d.render_event = real
+            d.save_session = real
         # The crashed run still added $0.25 to the session; don't blame it on the next job.
         report = self.wait(self.delegate("developer", "three"))
         self.assertNotIn("cost_usd", report)

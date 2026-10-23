@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Usage: factory-test [-C <project-dir>] [-m auto|clean|host] [-q] [--] [<command> [args...]]
+# Usage: factory-test [-C <project-dir>] [-m auto|clean|host] [-r <requirements-file>] [-q] [--] [<command> [args...]]
 #
-# Runs <command> (e.g. `npx vitest run`, `yarn test`) in a copy of the project
+# Runs <command> (e.g. `npx vitest run`, `yarn test`, `python3 -m unittest`) in a copy of the project
 # on this sandbox's own disk, never in the project itself. With no command it
 # only prepares the copy and prints its path. CI=true is set (unless already
 # set) so test runners don't start in watch mode.
@@ -13,7 +13,20 @@ set -euo pipefail
 #     If the command fails, it first lists the failure lines from above the tail.
 #     Use it for full-suite runs; drop it to see everything from a narrow run.
 #
-# Modes (-m, or FACTORY_TEST_MODE; default auto):
+# Python projects: with no yarn.lock or package-lock.json, a hash-pinned
+# requirements file (-r <file> relative to <project-dir>; else requirements.txt,
+# then requirements-dev.txt, whichever has --hash= pins) makes factory-test create
+# a venv in its own copy (.venv, never in the project) and install it offline:
+# `python3 -m pip install --no-index --find-links <wheels> --require-hashes
+# --only-binary=:all: -r <file>`, wheels from .factory/wheels/ (the broker's
+# pip_download tool fills it; looked up like the npm mirror below). It reinstalls
+# only when the requirements file (or the Python version) changes, and runs the
+# command with the venv's bin first on PATH. A Node lockfile wins when both
+# exist. Other projects (Go, Rust, ...) get their files copied, nothing installed.
+# -m only picks among the Node modes below; Python mode ignores it, except that
+# -m host needs node_modules.
+#
+# Node modes (-m, or FACTORY_TEST_MODE; default auto):
 #   clean  Install dependencies exactly as the lockfile pins them, offline,
 #          from .factory/npm-mirror/ (the broker's npm_fetch tool fills it): the
 #          nearest one at or above <project-dir>, else the one in
@@ -42,13 +55,15 @@ say() { echo "factory-test: $*" >&2; }
 src="$PWD"
 mode="${FACTORY_TEST_MODE:-auto}"
 quiet=""
-while getopts "C:m:qh" opt; do
+req=""
+while getopts "C:m:r:qh" opt; do
   case "$opt" in
     C) src="$OPTARG" ;;
     m) mode="$OPTARG" ;;
+    r) req="$OPTARG" ;;
     q) quiet=1 ;;
-    h) sed -n '4,33p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
-    *) die "usage: factory-test [-C <project-dir>] [-m auto|clean|host] [-q] [--] [<command> [args...]]" ;;
+    h) awk 'NR >= 4 { if ($0 !~ /^#/) exit; sub(/^# ?/, ""); print }' "$0"; exit 0 ;;
+    *) die "usage: factory-test [-C <project-dir>] [-m auto|clean|host] [-r <requirements-file>] [-q] [--] [<command> [args...]]" ;;
   esac
 done
 shift $((OPTIND - 1))
@@ -57,15 +72,20 @@ case "$mode" in auto|clean|host) ;; *) die "unknown mode '$mode' (auto, clean or
 src="$(cd "$src" && pwd -P)" || die "no such directory: $src"
 root="${FACTORY_TEST_ROOT:-$HOME/.cache/factory-test}"
 base="$root/$(basename "$src")-$(printf '%s' "$src" | sha256sum | cut -c1-12)"
-# npm_fetch writes the mirror at the workspace root, which is above <project-dir>
-# when the lockfile is in a subdirectory.
-mirror="$src/.factory/npm-mirror"
-dir="$src"
-while [ ! -d "$dir/.factory/npm-mirror" ] && [ "$dir" != / ]; do dir="$(dirname "$dir")"; done
-if [ -d "$dir/.factory/npm-mirror" ]; then mirror="$dir/.factory/npm-mirror"
-# A lane clone has no .factory/: npm_fetch fills the host project's mirror.
-elif [ -n "${FACTORY_PROJECT:-}" ]; then mirror="$FACTORY_PROJECT/.factory/npm-mirror"
-fi
+# find_factory_dir NAME: .factory/NAME at the nearest directory at or above
+# <project-dir> (npm_fetch writes the mirror at the workspace root, which is above
+# <project-dir> when the lockfile is in a subdirectory), else the host project's
+# (a lane clone has no .factory/: the broker fills the host project's).
+find_factory_dir() {
+  local d="$src"
+  while [ ! -d "$d/.factory/$1" ] && [ "$d" != / ]; do d="$(dirname "$d")"; done
+  if [ -d "$d/.factory/$1" ]; then echo "$d/.factory/$1"
+  elif [ -n "${FACTORY_PROJECT:-}" ]; then echo "$FACTORY_PROJECT/.factory/$1"
+  else echo "$src/.factory/$1"
+  fi
+}
+mirror="$(find_factory_dir npm-mirror)"
+wheels="$(find_factory_dir wheels)"
 
 # modsrc: where host mode takes node_modules from. The project dir itself, or,
 # for a lane clone without node_modules, the same path in the host project.
@@ -86,14 +106,33 @@ elif [ -f "$src/package-lock.json" ]; then lock=package-lock.json
 else lock=""
 fi
 
+# req: the hash-pinned requirements file Python mode installs (only when there is
+# no Node lockfile). -r names it; else the first of the usual two with --hash= pins.
+if [ -n "$lock" ]; then req=""
+elif [ -n "$req" ]; then
+  case "$req" in /*|..|../*|*/..|*/../*) die "-r must be a path inside $src: $req" ;; esac
+  [ -f "$src/$req" ] || die "no such requirements file: $src/$req"
+  grep -q -- '--hash=' "$src/$req" || die "$req has no --hash= pins; the offline install needs a hash-pinned file (e.g. from uv pip compile --generate-hashes)"
+else
+  for f in requirements.txt requirements-dev.txt; do
+    [ -f "$src/$f" ] || continue
+    if grep -q -- '--hash=' "$src/$f"; then req="$f"; break; fi
+    say "ignoring $f: no --hash= pins, so it can't be installed offline"
+  done
+fi
+
 # clean_install: sync into $base (keeping its own node_modules) and install from
 # the lockfile if it changed since the last install. Fails if the install does.
 clean_install() {
   mkdir -p "$base"
   # Excluded paths are also left alone on the copy's side (rsync --delete skips
-  # them), so dependencies installed there survive between runs.
-  rsync -a --delete --exclude=node_modules --exclude=/.git --exclude=/.factory "$src/" "$base/"
+  # them), so dependencies installed there survive between runs. The project's
+  # own .venv is never copied: it holds the host's interpreter paths.
+  rsync -a --delete --exclude=node_modules --exclude=/.venv --exclude=/.git --exclude=/.factory "$src/" "$base/"
   [ -n "$lock" ] || return 0
+  # rsync skips a file whose size and mtime match, and a pin edited within a
+  # second of the last run can keep both: copy the install inputs unconditionally.
+  cp "$src/package.json" "$src/$lock" "$base/"
   local want
   want="$lock $(cat "$base/package.json" "$base/$lock" | sha256sum | cut -d' ' -f1)"
   [ "$(cat "$base/node_modules/.factory-test-stamp" 2>/dev/null || true)" != "$want" ] || return 0
@@ -123,6 +162,48 @@ clean_install() {
     }
   fi
   printf '%s\n' "$want" > "$base/node_modules/.factory-test-stamp"
+}
+
+# python_install: sync into $base, then (re)create $base/.venv from the
+# requirements file if it changed since the last install. Fails if the install does.
+python_install() {
+  clean_install
+  # Same as the lockfile in clean_install: never trust rsync's quick check here.
+  cp "$src/$req" "$base/$req"
+  local venv="$base/.venv" want
+  want="$req $(python3 --version 2>&1) $(sha256sum < "$base/$req" | cut -d' ' -f1)"
+  if [ "$(cat "$venv/.factory-test-stamp" 2>/dev/null || true)" = "$want" ] && [ -x "$venv/bin/python" ]; then
+    return 0
+  fi
+  if [ ! -d "$wheels" ]; then
+    say "no wheel folder at $wheels: call the broker's pip_download tool first"
+    return 1
+  fi
+  say "installing $req offline from $wheels (binary wheels only; log: $root/install.log)..."
+  rm -rf "$venv"
+  # Some images' python3 lacks ensurepip: make the venv without pip then, and
+  # install into it with the interpreter's own pip (--python needs pip 22.3+).
+  if python3 -m venv "$venv" > "$root/install.log" 2>&1; then
+    pipcmd=("$venv/bin/python" -m pip)
+  else
+    rm -rf "$venv"
+    python3 -m venv --without-pip "$venv" >> "$root/install.log" 2>&1 || {
+      tail -n 20 "$root/install.log" >&2
+      say "could not create a venv with python3 (full log: $root/install.log)"
+      return 1
+    }
+    pipcmd=(python3 -m pip --python "$venv/bin/python")
+  fi
+  # No pip config or environment index: the wheel folder is the sole source.
+  PIP_CONFIG_FILE=/dev/null "${pipcmd[@]}" install --disable-pip-version-check --no-input \
+    --no-index --find-links "$wheels" --require-hashes --only-binary=:all: \
+    -r "$base/$req" >> "$root/install.log" 2>&1 || {
+    grep -E '^(ERROR|WARNING)' "$root/install.log" | head -n 20 >&2 || tail -n 20 "$root/install.log" >&2
+    say "pip install failed (full log: $root/install.log); if a wheel is missing, call pip_download again"
+    rm -rf "$venv"
+    return 1
+  }
+  printf '%s\n' "$want" > "$venv/.factory-test-stamp"
 }
 
 # host_modules: sync the project, node_modules included, into $base-host and add
@@ -248,10 +329,14 @@ if (!added) console.error("factory-test: no host-platform native packages needed
 NODE
 }
 
-if [ -z "$lock" ] && [ "$mode" != host ]; then
+if [ -z "$lock" ] && [ -n "$req" ] && [ "$mode" != host ]; then
+  python_install || die "the Python install failed (above)"
+  copy="$base"
+  label="Python venv ($req, offline from .factory/wheels)"
+elif [ -z "$lock" ] && [ "$mode" != host ]; then
   clean_install
   copy="$base"
-  label="project files only (no yarn.lock or package-lock.json)"
+  label="project files only (no yarn.lock, package-lock.json or hash-pinned requirements file)"
 elif [ "$mode" = host ]; then
   host_modules
   copy="$base-host"
@@ -278,6 +363,9 @@ say "mode: $label"
 say "running in $copy (a copy of $src)"
 export CI="${CI:-true}"
 cd "$copy"
+case "$label" in
+  Python*) export VIRTUAL_ENV="$copy/.venv" PATH="$copy/.venv/bin:$PATH" ;;
+esac
 set +e
 if [ -n "$quiet" ]; then
   log="$root/last-run.log"
