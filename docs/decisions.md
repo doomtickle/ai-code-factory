@@ -5,7 +5,7 @@ Dated entries, for the user to review. Newest first.
 ## 2026-10-23
 
 - **The factory's researcher role is off by default** (owner decision;
-  doomtickle/passdesk-ops#TBD, ai-code-factory branch
+  doomtickle/passdesk-ops#147, ai-code-factory branch
   `factory/researcher-opt-in`). The researcher ran about 3% of 371 jobs and
   was rarely useful, yet every machine paid for its sandbox, broker token
   and grants. Choices:
