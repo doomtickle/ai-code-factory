@@ -58,10 +58,12 @@ export GIT_TERMINAL_PROMPT=0
 # The read-only source may be owned by another uid (e.g. macOS uid 501).
 g() { git -c safe.directory='*' -c core.fsmonitor=false "$@"; }
 
-# project_repos PROJECT: see the header.
+# project_repos PROJECT: see the header. Keep identical to project_repos() in
+# scripts/lib/common.sh and dispatch/server.py; scripts/test_project_repos.sh
+# runs all three on one fixture and fails if they differ.
 project_repos() {
   local p="$1" d name
-  if [ -e "$p/.git" ]; then
+  if [ -d "$p/.git" ] || [ -f "$p/.git" ]; then
     echo .
     return 0
   fi

@@ -95,9 +95,15 @@ for role in $broker_roles; do
   if [ ! -s "$STATE/tokens/$role.sha256" ] || ! printf '%s' "$secrets" | grep -q " $secret "; then
     echo "Minting broker token for $role..."
     token="$(openssl rand -hex 32)"
-    printf '%s' "$token" | sha256_hash > "$STATE/tokens/$role.sha256"
-    printf '%s' "$token" | sbx secret set -f "$secret" >/dev/null 2>&1  # -f: without it an existing secret silently stays
+    token_hash="$(printf '%s' "$token" | sha256_hash)"
+    # The hash is written only once the secret is stored: a failed set must
+    # leave the old hash matching the old secret (-f: without it an existing
+    # secret silently stays).
+    if ! printf '%s' "$token" | sbx secret set -f "$secret" >/dev/null 2>&1; then
+      die "could not store the broker token secret '$secret' with sbx; the token hash was not changed. Check 'sbx secret ls' and that sbx is signed in, then run this again"
+    fi
     unset token
+    printf '%s\n' "$token_hash" > "$STATE/tokens/$role.sha256"
   fi
 done
 

@@ -36,9 +36,15 @@ chmod 700 "$STATE"
 if [ ! -s "$STATE/token.sha256" ] || ! sbx secret ls 2>/dev/null | grep -q " $SECRET "; then
   echo "Minting dispatch token..."
   token="$(openssl rand -hex 32)"
-  printf '%s' "$token" | sha256_hash > "$STATE/token.sha256"
-  printf '%s' "$token" | sbx secret set -f "$SECRET" >/dev/null 2>&1  # -f: without it an existing secret silently stays
+  token_hash="$(printf '%s' "$token" | sha256_hash)"
+  # The hash is written only once the secret is stored: a failed set must leave
+  # the old hash matching the old secret (-f: without it an existing secret
+  # silently stays).
+  if ! printf '%s' "$token" | sbx secret set -f "$SECRET" >/dev/null 2>&1; then
+    die "could not store the dispatch token secret '$SECRET' with sbx; the token hash was not changed. Check 'sbx secret ls' and that sbx is signed in, then run this again"
+  fi
   unset token
+  printf '%s\n' "$token_hash" > "$STATE/token.sha256"
 fi
 
 # Snapshot each role's instructions (dispatch passes them to every task). The
