@@ -155,9 +155,11 @@ stay in reach.
   windows follow your clock: day, swing and night shift.
 
 The floor reads the same state as the rest of the page and does nothing on its
-own. Crates are only drawn for what happens while the floor is on screen. With
-reduced motion set in your system, nothing moves: the stations still show
-their state and confiscated crates appear in the bin without travelling there.
+own. Moving crates are only animated while the floor is on screen; denials
+(DENY, NO, FAILED) that happen while it is hidden are added to the bin without
+animation. With reduced motion set in your system, nothing moves: the stations
+still show their state and confiscated crates appear in the bin without
+travelling there.
 
 ## Write gate and the control unit
 
