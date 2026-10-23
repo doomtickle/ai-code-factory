@@ -332,6 +332,30 @@ assert_eq "submodules: ...and updates the submodule to the new pin" \
 assert_eq "submodules: ...which is not the old one" \
   "$([ "$(pin mod)" != "$old_pin" ] && echo moved)" "moved"
 
+# A reused lane: its branch pins the old commit, the base has moved on. A new
+# branch off the base must bring the submodule with it, or "git add -A" would
+# commit the old pin over the bump.
+git -C "$sublane" checkout -q -b factory/old
+git -C "$tmp/subrepo" commit -q --allow-empty -m "sub three"
+git -C "$tmp/subproj/mod" fetch -q origin
+git -C "$tmp/subproj/mod" checkout -q FETCH_HEAD
+git -C "$tmp/subproj" add mod
+git -C "$tmp/subproj" commit -q -m "bump mod again"
+run "$LANE" prepare "$tmp/subproj" subs
+assert_eq "submodules: a reused lane's prepare exits 0" "$RC" "0"
+assert_eq "submodules: ...and leaves its branch's own pin" \
+  "$(git -C "$sublane/mod" rev-parse HEAD)" "$(git -C "$sublane" rev-parse HEAD:mod)"
+git -C "$sublane" checkout -q -b factory/new origin/main
+assert_eq "submodules: a new branch off the bumped base moves the submodule to its pin" \
+  "$(git -C "$sublane/mod" rev-parse HEAD)" "$(pin mod)"
+assert_eq "submodules: ...and git status is clean" "$(git -C "$sublane" status --porcelain)" ""
+git -C "$sublane" checkout -q factory/old
+assert_eq "submodules: switching back moves it back" \
+  "$(git -C "$sublane/mod" rev-parse HEAD)" "$(git -C "$sublane" rev-parse HEAD:mod)"
+git -C "$sublane" checkout -q factory/new
+run "$LANE" prepare "$tmp/subproj" subs
+assert_eq "submodules: prepare with submodule.recurse set exits 0" "$RC" "0"
+
 run "$LANE" review "$tmp/subproj" main
 assert_eq "submodules: review exits 0" "$RC" "0"
 sdir="$(printf '%s\n' "$OUT" | tail -n 1)"
