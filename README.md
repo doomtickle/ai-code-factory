@@ -768,6 +768,9 @@ before every task. It bases new work on your checked-out branch (or the base
 the task names) and commits to a `factory/<topic>` branch. It sees only what
 is committed: ask it to work on uncommitted changes and it will say they're
 missing, so commit first.
+Submodules your repo has initialised are cloned into the lane from your
+repo's own module store (no network), at the commit your branch pins; ones you
+haven't initialised are left empty in the lane.
 
 Each lane clone has a repo-local git identity, set by the factory before every
 task, so the developer never picks an author itself: `factory-<lane>

@@ -23,7 +23,9 @@ socket, or host credentials. Full picture: README.md.
   (`FACTORY_STATE/roles/<name>`) plus the project `:ro`. rw roles (`WORKSPACE="rw"`,
   the developer) work in private git clones ("lanes") on their sandbox's own disk and
   hand back only committed `factory/*` branches as bundles the bridge imports; the
-  user merges them. A role with `OPTIONAL="1"` in its committed `role.conf` (the
+  user merges them. `factory-lane`
+  initialises a lane's top-level submodules the host has initialised from the host's
+  own module store (objects only, no network); ones it hasn't stay empty. A role with `OPTIONAL="1"` in its committed `role.conf` (the
   researcher) is off unless `FACTORY_CONFIG/enabled-roles` names it: `list_roles`
   (`scripts/lib/roles.sh`) and the bridge's `load_roles` leave it out, so it
   gets no sandbox, broker token or grants. The only writable project path any
