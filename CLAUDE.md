@@ -2,7 +2,7 @@
 
 ## Architecture Overview
 
-Multi-agent coding system orchestrated by Herdr, isolated by Docker Sandboxes (`sbx`):
+Multi-agent coding system driven from a local dashboard, isolated by Docker Sandboxes (`sbx`):
 every agent runs in its own microVM with zero access to the host kernel, host Docker
 socket, or host credentials. Full picture: README.md.
 
@@ -69,10 +69,11 @@ socket, or host credentials. Full picture: README.md.
   `node_modules` holds host-native binaries). Tests run via `factory-test`
   (`templates/agent/factory-test`) in a sandbox-local copy of the project/lane/review
   checkout, so read-only roles can test too.
-- Never type into agent terminals (e.g. `herdr pane send-text/send-keys`): if the
-  sandbox session exits, the pane is a host shell. Agents are driven only through the
-  dispatch bridge.
-- The dispatch bridge stays minimal: no shell, no arbitrary sbx/herdr/git commands,
+- Never type into agent terminals from a host script (no terminal multiplexer,
+  `tmux send-keys` or similar): if the sandbox session exits, that terminal is a host
+  shell. Agents are driven only through the dispatch bridge; the Coordinator's own
+  terminal is only the dashboard's PTY or `factory chat`.
+- The dispatch bridge stays minimal: no shell, no arbitrary sbx/git commands,
   only allowlisted roles from `roles/`. Its only git commands: the fixed bundle fetch
   above, a `for-each-ref` listing of imported refs (same flags), and for the review
   packet a read-only `log` + `diff --stat` of each imported branch vs host `HEAD`

@@ -10,8 +10,7 @@ one is attached would start a second Claude process in the same VM, so:
   attaching a page starts nothing. It never falls back to a shell: when the
   child exits, the pages show the set powered off.
 - Before starting it, it refuses if another process on this machine is
-  already running `sbx run --name <coordinator>` (a Herdr pane or `factory
-  chat`), and if `sbx ls -q` doesn't list the sandbox.
+  already running `sbx run --name <coordinator>` (`factory chat`), and if `sbx ls -q` doesn't list the sandbox.
 - Output goes to every connected page, and the last RING bytes are replayed to
   a page that connects later, as a text frame {"type": "replay"} followed by
   exactly one binary frame (the page mutes its input while it writes that

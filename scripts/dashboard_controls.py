@@ -35,7 +35,7 @@ those requests reach:
 
 An action is one fixed argv, never a shell: [factory, "restart"],
 [factory, "update", "--yes"] or, for DIAG, [factory, "doctor"], with stdin from /dev/null (so a sudo or
-confirm prompt fails rather than hangs), FACTORY_NO_ATTACH=1, its output in
+confirm prompt fails rather than hangs), its output in
 FACTORY_STATE/dashboard/actions/<time>-<action>.log (folder 0700, file 0600)
 and its own session, so it survives the dashboard exiting. One at a time.
 RESTART and UPDATE stop the Coordinator's sandbox, so before starting, the
@@ -390,7 +390,7 @@ class Controls:
             # (a hanging `git fetch` included), not just the script.
             proc = subprocess.Popen([self.factory, "update", "--plan"], stdin=subprocess.DEVNULL,
                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True,
-                                    close_fds=True, env=dict(os.environ, FACTORY_NO_ATTACH="1"))
+                                    close_fds=True)
         except OSError as e:
             return empty, f"could not run 'factory update --plan': {e.strerror or e}"
         try:
@@ -486,8 +486,7 @@ class Controls:
                 term.hang_up("service")
             try:
                 proc = subprocess.Popen(self.argv(action), stdin=subprocess.DEVNULL, stdout=fd,
-                                        stderr=subprocess.STDOUT, start_new_session=True, close_fds=True,
-                                        env=dict(os.environ, FACTORY_NO_ATTACH="1"))
+                                        stderr=subprocess.STDOUT, start_new_session=True, close_fds=True)
             except OSError as e:
                 os.write(fd, f"could not start {self.argv(action)[0]}: {e.strerror or e}\n".encode())
                 raise

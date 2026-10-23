@@ -13,7 +13,7 @@ and the logs.
 factory doctor
 ```
 
-The doctor checks the platform, tools, Docker, `sbx` and `herdr` versions,
+The doctor checks the platform, tools, Docker, the `sbx` version,
 setup and your Claude login. Once the broker sandbox is running, it also runs
 the gateway's own checks inside it: policy, tokens and grants, the audit log,
 credentials, a live probe, GitHub or GitLab access per repo, and whether every host the
@@ -159,7 +159,7 @@ DENIED: the developer sandbox has not been created; ask the user to run 'factory
 **Cause:** `sbx` gives a sandbox the stored Claude login only when it creates
 it, so role sandboxes wait until you've signed in.
 **Fix:** type `/login` in the Coordinator's terminal (POWER ON on the
-dashboard, or the Coordinator pane in Herdr) and sign in, then run `factory
+dashboard, or `factory chat`) and sign in, then run `factory
 start` again (or RESTART on the dashboard's control unit).
 
 ### "port 18766 is already in use"
@@ -298,8 +298,8 @@ transcript.
 ### A job seems stuck
 
 A job can run for a long time; the Coordinator waits up to 600 seconds per
-call and then waits again. Watch its pane in `factory watch` (or its tab,
-`tabs` layout), or `factory logs <role>`, to see whether it's still making
+call and then waits again. Watch its lane on the dashboard, in
+`factory watch`, or with `factory logs <role>`, to see whether it's still making
 progress. If it isn't, ask the Coordinator to stop it:
 
 ```prompt

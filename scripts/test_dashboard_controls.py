@@ -53,7 +53,7 @@ if [ "$1 $2" = "update --plan" ]; then
   [ ! -f "$DIR/plan-fails" ] || { echo "plan went wrong" >&2; exit 3; }
   exit 0
 fi
-echo "no_attach=$FACTORY_NO_ATTACH"
+echo "started"
 if read -r line; then echo "stdin=$line"; else echo "stdin=eof"; fi
 while [ -f "$DIR/block" ]; do sleep 0.02; done
 if [ -f "$DIR/touch" ]; then
@@ -876,7 +876,7 @@ class ActionTests(unittest.TestCase):
         self.assertTrue(e.controls.wait())
         code, out, _ = e.post("log", {"offset": 0})
         self.assertEqual(code, 200)
-        self.assertEqual(out["text"], "no_attach=1\nstdin=eof\nstep one ✓\n")
+        self.assertEqual(out["text"], "started\nstdin=eof\nstep one ✓\n")
         self.assertEqual(out["offset"], len(out["text"].encode()))
         self.assertEqual((out["phase"], out["exit"], out["reload"]), ("failed", 4, "none"))
         self.assertEqual(e.argv(), ["update --plan", "update --yes"])
@@ -1028,7 +1028,7 @@ class ReviewFixTests(unittest.TestCase):
         # The page still holds the old log's offset, past the new log's end: from the top.
         self.assertGreater(first["offset"], e.controls.log_path.stat().st_size)
         again = e.post("log", {"offset": first["offset"]})[1]
-        self.assertTrue(again["text"].startswith("no_attach=1"), again)
+        self.assertTrue(again["text"].startswith("started"), again)
         self.assertEqual(again["offset"], len(again["text"].encode()))
         (e.dir / "block").unlink()
         self.assertTrue(e.controls.wait())
@@ -1041,7 +1041,7 @@ class ReviewFixTests(unittest.TestCase):
             self.assertEqual(e.post("log", {"offset": bad})[0], 400, bad)
         code, out, _ = e.post("log", {"offset": 2 ** 53})
         self.assertEqual(code, 200)
-        self.assertTrue(out["text"].startswith("no_attach=1"))  # past the end: from the top
+        self.assertTrue(out["text"].startswith("started"))  # past the end: from the top
         # A seek that fails anyway answers, rather than killing the handler.
         with mock.patch.object(dc, "MAX_OFFSET", 10 ** 30):
             code, out, _ = e.post("log", {"offset": 10 ** 30})

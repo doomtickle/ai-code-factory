@@ -8,7 +8,7 @@ This guide walks through each part, says what every key does, and lists the
 
 ## Open it
 
-`factory start` opens the dashboard (the `web` layout is the default). To open
+`factory start` opens the dashboard. To open
 it again later, while the factory is running:
 
 ```bash
@@ -69,7 +69,7 @@ The screen tells you when it can't attach:
 
 | The screen says | What to do |
 |---|---|
-| OPEN ELSEWHERE | The Coordinator is open in Herdr or `factory chat`. Close it there, then POWER ON. |
+| OPEN ELSEWHERE | The Coordinator is open in `factory chat`. Close it there, then POWER ON. |
 | NO COORDINATOR | Its sandbox doesn't exist yet: run `factory start`. |
 | NO SBX | `sbx` couldn't run: run `factory doctor`. |
 | SERVICE | A RESTART or UPDATE is running. The Coordinator comes back when it's done. |

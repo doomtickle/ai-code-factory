@@ -121,7 +121,6 @@
     <div class="pins">
       <span class="pin">macOS 14+</span>
       <span class="pin">sbx 0.45.1</span>
-      <span class="pin">herdr 0.9.1</span>
       <span class="pin">images v3</span>
       <span class="pin">/usr/bin/python3 ≥ 3.9</span>
     </div>
@@ -184,7 +183,7 @@ cd ai-code-factory</pre><button class="copy" type="button">Copy</button></div>
       <li class="step">
         <h3>Run setup once</h3>
         <div class="step-body">
-          <p>It installs <code>sbx</code> and <code>herdr</code> at their pinned versions into <code>~/.local</code> and checks their SHA-256 sums. It also builds the sandbox images, blocks outbound traffic by default, and links <code>factory</code> into <code>~/.local/bin</code>. A browser window opens once for the Docker sign-in.</p>
+          <p>It installs <code>sbx</code> at its pinned version into <code>~/.local</code> and checks its SHA-256 sum. It also builds the sandbox images, blocks outbound traffic by default, and links <code>factory</code> into <code>~/.local/bin</code>. A browser window opens once for the Docker sign-in.</p>
           <div class="cmd"><pre>./bin/factory setup</pre><button class="copy" type="button">Copy</button></div>
           <p>If setup says <code>~/.local/bin</code> isn't on your PATH, add it to your shell profile:</p>
           <div class="cmd"><pre>echo 'export PATH="$HOME/.local/bin:$PATH"' &gt;&gt; ~/.zshrc
@@ -204,7 +203,7 @@ factory start</pre><button class="copy" type="button">Copy</button></div>
             <div class="pane"><b>Lanes</b><span>Live, read-only view of every role's lanes: developer, reviewer, researcher</span></div>
             <div class="pane"><b>Control unit</b><span>Approve held writes, restart and update the factory, each after a confirm step</span></div>
           </div>
-          <p class="note"><strong>Prefer Herdr?</strong> It is the older, optional layout: <code>factory start --layout watch</code> opens it with a Watch pane beside the Coordinator, and <code>--layout tabs</code> gives one tab per role (remembered for next time).</p>
+          <p class="note"><strong>No dashboard?</strong> <code>factory start --no-ui</code> starts everything but the dashboard: talk to the Coordinator with <code>factory chat</code> and watch every lane with <code>factory watch</code>.</p>
         </div>
       </li>
 
@@ -270,7 +269,7 @@ EOF</pre><button class="copy" type="button">Copy</button></div>
     <h2 id="verified">What was checked for macOS</h2>
     <ul class="checks">
       <li><span class="y">✓</span><span>macOS on Apple silicon is a supported platform in <code>factory doctor</code> and the installer, which require macOS 14 or later.</span></li>
-      <li><span class="y">✓</span><span>The pinned macOS downloads for <code>sbx</code> 0.45.1 and <code>herdr</code> 0.9.1 still exist and match their SHA-256 pins.</span></li>
+      <li><span class="y">✓</span><span>The pinned macOS downloads for <code>sbx</code> 0.45.1 still exists and matches its SHA-256 pin.</span></li>
       <li><span class="y">✓</span><span>Every script parses, and the role configs validate, under bash 3.2.57, the version macOS ships.</span></li>
       <li><span class="y">✓</span><span>The dispatch bridge and analytics test suites pass on Python 3.9, matching the macOS system Python.</span></li>
       <li><span class="y">✓</span><span>The scripts handle macOS differences: Keychain via <code>security</code>, <code>shasum</code> instead of <code>sha256sum</code>, and BSD-safe <code>sed -i.bak</code>.</span></li>

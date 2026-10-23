@@ -123,10 +123,10 @@ class MarkdownTests(Fixture):
         self.assertIn('class="table-wrap"', out)
 
     def test_fenced_blocks(self):
-        out = self.md("```bash\n$ factory start   # opens Herdr\n# comment\necho '#not'\n```\n")
+        out = self.md("```bash\n$ factory start   # opens the dashboard\n# comment\necho '#not'\n```\n")
         self.assertIn('class="code cmd"', out)
         self.assertIn('<span class="prompt" aria-hidden="true">$ </span>', out)
-        self.assertIn('<span class="c"># opens Herdr</span>', out)
+        self.assertIn('<span class="c"># opens the dashboard</span>', out)
         self.assertIn('<span class="c"># comment</span>', out)
         self.assertIn("echo &#x27;#not&#x27;", out)
         self.assertIn('aria-label="Copy commands"', out)
@@ -181,11 +181,11 @@ class MarkdownTests(Fixture):
         self.assertIn("<code>factory approvals watch</code>", out)
 
     def test_headings_rules_and_autolinks(self):
-        out = self.md("## Title ##\n\n---\n\nSee <https://example.com/a> and https://herdr.dev/latest.json.\n")
+        out = self.md("## Title ##\n\n---\n\nSee <https://example.com/a> and https://example.com/latest.json.\n")
         self.assertIn('id="readme:title"', out)
         self.assertIn("<hr>", out)
         self.assertIn('<a href="https://example.com/a" target="_blank" rel="noopener noreferrer"', out)
-        self.assertIn('href="https://herdr.dev/latest.json"', out)
+        self.assertIn('href="https://example.com/latest.json"', out)
         self.assertIn("latest.json</a>.", out)
 
 
@@ -564,12 +564,15 @@ def _doc_lines():
 class StalePhrasesTest(unittest.TestCase):
     """Docs and user-facing messages must not drift back to wording the code outgrew."""
 
-    def test_herdr_is_not_called_the_default(self):
-        pat = re.compile(
-            r"herdr[^.\n]{0,40}\(default\)|herdr (is )?(now )?the default|herdr[^.\n]{0,40}\bby default"
-            r"|default (layout )?(is|opens|=)\s*herdr|\bit opens herdr\b|herdr opens with a", re.I)
-        bad = [f"{s.name}:{n}" for s, n, line in _doc_lines() if pat.search(line)
-               and not re.search(r"\b(no|not|without|isn't|optional)\b[^.\n]{0,40}herdr", line, re.I)]
+    def test_removed_terminal_ui_is_not_documented(self):
+        # The README's decision log may name it; nothing else may.
+        bad = []
+        for src in _doc_sources():
+            text = src.read_text(encoding="utf-8")
+            if src.name == "README.md":
+                text = text.split("\n## Decision log", 1)[0]
+            bad += [f"{src.name}:{n}" for n, line in enumerate(text.splitlines(), 1)
+                    if re.search("her" + "dr", line, re.I)]
         self.assertEqual(bad, [])
 
     def test_saved_token_is_not_lost_on_recreate(self):

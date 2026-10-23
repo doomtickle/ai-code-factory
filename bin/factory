@@ -38,7 +38,6 @@ esac
 # shellcheck source=../scripts/lib/secrets.sh
 . "$SCRIPTS/lib/secrets.sh"
 
-readonly HERDR_SESSION_NAME="factory"
 
 if [ -t 1 ]; then B=$'\033[1m' D=$'\033[2m' G=$'\033[32m' Y=$'\033[33m' R=$'\033[31m' N=$'\033[0m'
 else B="" D="" G="" Y="" R="" N=""; fi
@@ -72,17 +71,13 @@ ${B}Usage${N}
   factory update --plan      Say what 'factory update' would do, changing nothing
                              (but a git fetch): incoming commits, sandboxes it
                              recreates and what each loses
-  factory start [dir] [--no-ui] [--layout watch|tabs|web]
+  factory start [dir] [--no-ui]
                              Start the factory for a project (default: this folder)
                              and open the dashboard in your browser, with the
                              Coordinator's terminal in it; --no-ui opens nothing
                              and prints how to reach the Coordinator and follow
-                             the roles. --layout (or FACTORY_LAYOUT) picks the
-                             layout: "web" (default) is the dashboard; "watch"
-                             opens Herdr with a 'factory watch' pane beside the
-                             Coordinator; "tabs" opens Herdr with one tab per
-                             role, tailing its transcript. Remembered for next
-                             time in $FACTORY_CONFIG/layout
+                             the roles. (--layout web is accepted and ignored;
+                             the old "watch" and "tabs" layouts fall back to it.)
   factory chat               Talk to the Coordinator in this terminal
   factory status             What is running, and for which project
   factory stop               Stop the agents, broker and dispatch bridge
@@ -139,7 +134,7 @@ EOF
 cmd_setup() {
   cmd_doctor || die "fix the problems above, then run 'factory setup' again"
 
-  step "Installing pinned tools (sbx $SBX_VERSION, herdr $HERDR_VERSION)"
+  step "Installing pinned tools (sbx $SBX_VERSION)"
   "$SCRIPTS/install-prereqs.sh"
   export PATH="$HOME/.local/bin:$PATH"
 
@@ -323,8 +318,6 @@ cmd_doctor() {
   step "Factory tools"
   if command -v sbx >/dev/null 2>&1 && [ "$(sbx_installed_version)" = "$SBX_VERSION" ]; then ok "sbx $SBX_VERSION"
   else warn "sbx $SBX_VERSION not installed yet ('factory setup' installs it)"; fi
-  if command -v herdr >/dev/null 2>&1 && [ "$(herdr_installed_version)" = "$HERDR_VERSION" ]; then ok "herdr $HERDR_VERSION"
-  else warn "herdr $HERDR_VERSION not installed yet ('factory setup' installs it)"; fi
   if command -v sbx >/dev/null 2>&1 && [ "$(sbx_installed_version)" = "$SBX_VERSION" ]; then
     if setup_done; then ok "setup done (security baseline applied, images loaded)"
     else warn "setup not finished: run 'factory setup'"; fi
@@ -423,36 +416,35 @@ require_project_commits() {
 }
 
 cmd_start() {
-  # --no-ui (or FACTORY_NO_UI=1): everything but Herdr. Talk to the Coordinator
-  # with `sbx run` in any terminal and follow roles with `factory logs`.
-  # --layout (or FACTORY_LAYOUT): "web" (default; GUI first, owner's call of
-  # 20 Oct 2026) skips Herdr and ends by running `factory dashboard`, which
-  # holds the Coordinator's terminal; "watch" opens Herdr with a `factory
-  # watch` pane beside the Coordinator and no per-role transcript tabs;
-  # "tabs" opens Herdr with one tab per role. --no-ui ignores it.
-  # --no-dashboard (internal, from cmd_update and cmd_restart): with "web",
-  # finish instead of running the dashboard in the foreground, so `factory
-  # update --yes` and `factory restart` return.
-  local target="" project current no_ui="${FACTORY_NO_UI:-}" layout_flag="" layout no_dashboard=""
+  # --no-ui (or FACTORY_NO_UI=1): everything but the dashboard. Talk to the
+  # Coordinator with `factory chat` and follow roles with `factory watch` or
+  # `factory logs`. Otherwise the start ends by running `factory dashboard`,
+  # which holds the Coordinator's terminal.
+  # --layout (or FACTORY_LAYOUT) is kept only so old habits and saved choices
+  # don't break: "web" is the one layout, and resolve_layout warns about the
+  # removed "watch" and "tabs".
+  # --no-dashboard (internal, from cmd_update and cmd_restart): finish instead
+  # of running the dashboard in the foreground, so `factory update --yes` and
+  # `factory restart` return.
+  local target="" project current no_ui="${FACTORY_NO_UI:-}" layout_flag="" no_dashboard=""
   while [ $# -gt 0 ]; do
     case "$1" in
       --no-ui) no_ui=1 ;;
       --no-dashboard) no_dashboard=1 ;;
       --layout)
-        [ $# -ge 2 ] || die "usage: factory start [dir] [--no-ui] [--layout watch|tabs|web]"
+        [ $# -ge 2 ] || die "usage: factory start [dir] [--no-ui] [--layout web]"
         layout_flag="$2"
         shift ;;
-      -*) die "usage: factory start [dir] [--no-ui] [--layout watch|tabs|web]" ;;
-      *) [ -z "$target" ] || die "usage: factory start [dir] [--no-ui] [--layout watch|tabs|web]"; target="$1" ;;
+      -*) die "usage: factory start [dir] [--no-ui] [--layout web]" ;;
+      *) [ -z "$target" ] || die "usage: factory start [dir] [--no-ui] [--layout web]"; target="$1" ;;
     esac
     shift
   done
-  layout="$(resolve_layout "$layout_flag" "${FACTORY_LAYOUT:-}")"
+  resolve_layout "$layout_flag" "${FACTORY_LAYOUT:-}" >/dev/null
   target="${target:-.}"
   [ -d "$target" ] || die "no such directory: $target"
   project="$(cd "$target" && pwd -P)"
   require_sbx
-  [ "$no_ui" = 1 ] || [ "$layout" = web ] || require_herdr
   setup_done || die "the factory is not set up yet: run 'factory setup' first"
   require_project_commits "$project"
   case "$project" in
@@ -470,16 +462,16 @@ cmd_start() {
   fi
 
   if [ "$no_ui" = 1 ]; then
-    FACTORY_NO_UI=1 FACTORY_LAYOUT="$layout" "$SCRIPTS/02-launch-factory.sh" "$project"
+    FACTORY_NO_UI=1 "$SCRIPTS/02-launch-factory.sh" "$project"
     onboarding_hints
     say ""
-    say "Factory running, without Herdr."
+    say "Factory running, without the dashboard."
     say "  Talk to the Coordinator:  ${B}factory chat${N}"
     say "  Watch every lane:         ${B}factory watch${N}"
     say "  Follow one role's log:    ${B}factory logs <role>${N}  (roles: $(list_roles | tr '\n' ' '))"
     say "  Stop everything:          ${B}factory stop${N}"
-  elif [ "$layout" = web ]; then
-    FACTORY_LAYOUT=web "$SCRIPTS/02-launch-factory.sh" "$project"
+  else
+    "$SCRIPTS/02-launch-factory.sh" "$project"
     onboarding_hints
     say ""
     if [ -n "$no_dashboard" ]; then
@@ -490,21 +482,6 @@ cmd_start() {
     say "Ctrl-C closes the dashboard (and the Coordinator's terminal); the factory keeps"
     say "running. Reopen it with ${B}factory dashboard${N}; stop everything with ${B}factory stop${N}."
     cmd_dashboard
-  elif [ "${HERDR_ENV:-}" = "1" ]; then
-    FACTORY_LAYOUT="$layout" "$SCRIPTS/02-launch-factory.sh" "$project"
-    onboarding_hints
-    say ""
-    say "Open the ${B}code-factory${N} workspace in Herdr and talk to the Coordinator."
-  else
-    FACTORY_HERDR_SESSION="$HERDR_SESSION_NAME" FACTORY_LAYOUT="$layout" "$SCRIPTS/02-launch-factory.sh" "$project"
-    onboarding_hints
-    if [ "${FACTORY_NO_ATTACH:-}" = "1" ]; then
-      say "Factory running. Open it with: herdr session attach $HERDR_SESSION_NAME"
-      return
-    fi
-    say "Opening Herdr. To leave it running in the background press ${B}Ctrl+B${N} then ${B}Q${N}; reopen with ${B}factory start${N}."
-    sleep 2
-    exec herdr session attach "$HERDR_SESSION_NAME"
   fi
 }
 
@@ -682,7 +659,7 @@ cmd_chat() {
     || die "the coordinator sandbox doesn't exist yet; run 'factory start' first"
   # A second 'sbx run' would start a second Coordinator in the same VM.
   ! coordinator_attached \
-    || die "the Coordinator is already open elsewhere (the dashboard, a Herdr pane or another 'factory chat'); close it there first"
+    || die "the Coordinator is already open elsewhere (the dashboard or another 'factory chat'); close it there first"
   exec sbx run --name "$COORDINATOR_SANDBOX" "$@"
 }
 
@@ -750,7 +727,7 @@ cmd_stop() {
 
 # cmd_restart -> stop the factory (03-stop-factory.sh: the dispatch bridge and
 # every factory-* sandbox; never the dashboard), then start it again for the
-# project it is bound to. With the "web" layout it doesn't open a dashboard
+# project it is bound to. It doesn't open a dashboard
 # (one may be open already: the control unit's RESTART key runs this).
 cmd_restart() {
   local project
@@ -1395,7 +1372,7 @@ cmd_update() {
   fi
   project="$(bound_project)"
   if [ -n "$project" ] && [ -d "$project" ]; then
-    # Never end an update in the foreground dashboard (layout "web"): scripts
+    # Never end an update in the foreground dashboard: scripts
     # run `factory update --yes` and expect it to return.
     cmd_start "$project" --no-dashboard
   else

@@ -12,7 +12,7 @@ set -euo pipefail
 #    factory-coordinator", forwarding any extra arguments.
 # 3. "factory coordinator" is accepted as an alias.
 # 4. When the Coordinator is already open elsewhere (another process runs
-#    `sbx run --name factory-coordinator`: a Herdr pane, the dashboard's
+#    `sbx run --name factory-coordinator`: the dashboard's
 #    Terminal 0, another `factory chat`), it refuses rather than start a
 #    second Coordinator in the same VM.
 #

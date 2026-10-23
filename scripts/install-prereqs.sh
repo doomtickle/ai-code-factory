@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Installs the exact sbx and herdr versions pinned in lib/common.sh, verifying
-# SHA-256 checksums. Skips a tool that is already at the pinned version.
-#   macOS 14+ (Apple silicon): both under $PREFIX (default ~/.local).
+# Installs the exact sbx version pinned in lib/common.sh, verifying its SHA-256
+# checksum. Skips it if it is already at the pinned version.
+#   macOS 14+ (Apple silicon): under $PREFIX (default ~/.local).
 #   Ubuntu 24.04+ x86_64, including WSL2: sbx from Docker's .deb via apt (asks
-#   for sudo; it installs the AppArmor profile sbx needs), herdr under $PREFIX.
+#   for sudo; it installs the AppArmor profile sbx needs).
 
 # shellcheck source=lib/common.sh
 . "$(dirname "$0")/lib/common.sh"
@@ -23,14 +23,12 @@ esac
 if [ "$platform" = macos ]; then
   major="$(sw_vers -productVersion | cut -d. -f1)"
   [ "$major" -ge 14 ] || die "macOS 14 (Sonoma) or later required"
-  herdr_url="$HERDR_URL"; herdr_sha256="$HERDR_SHA256"
 else
   kvm_check || exit 1
   pin="$(sbx_deb_pin)" || exit 1
   sbx_url="${pin% *}"; sbx_sha256="${pin#* }"
   require_bin apt-get
   require_bin sudo
-  herdr_url="$HERDR_LINUX_X86_64_URL"; herdr_sha256="$HERDR_LINUX_X86_64_SHA256"
 fi
 
 require_bin curl
@@ -78,20 +76,11 @@ else
   hash -r
 fi
 
-if command -v herdr >/dev/null 2>&1 && [ "$(herdr_installed_version)" = "$HERDR_VERSION" ]; then
-  echo "herdr $HERDR_VERSION already installed: $(command -v herdr)"
-else
-  echo "Installing herdr $HERDR_VERSION..."
-  fetch "$herdr_url" "$herdr_sha256" "$tmp/herdr"
-  install -m 0755 "$tmp/herdr" "$PREFIX/bin/herdr"
-fi
-
 case ":$PATH:" in
   *":$PREFIX/bin:"*) ;;
-  *) echo "note: add $PREFIX/bin to your PATH, ahead of any other copies of these tools" ;;
+  *) echo "note: add $PREFIX/bin to your PATH, ahead of any other copy of sbx" ;;
 esac
 
 # Verify what will actually run from PATH.
 PATH="$PREFIX/bin:$PATH" require_sbx
-PATH="$PREFIX/bin:$PATH" require_herdr
-echo "Prerequisites OK: sbx $SBX_VERSION, herdr $HERDR_VERSION"
+echo "Prerequisites OK: sbx $SBX_VERSION"

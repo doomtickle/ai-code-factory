@@ -6,24 +6,13 @@ set -euo pipefail
 # Starts the factory for <project-dir>:
 #   - the broker VM (network tools for roles) and the dispatch bridge (host)
 #   - one sandbox per role in roles/, plus the Coordinator sandbox
-#   - unless the layout is "web", a Herdr workspace "code-factory", with a
-#     "coordinator" tab where you talk to the Coordinator (plus a host shell
-#     below it). The layout (FACTORY_LAYOUT; bin/factory resolves and passes
-#     it, "web" by default - see `factory start --layout`) is one of:
-#       watch: a "factory watch" pane beside the Coordinator, live for every
-#         role's lanes; no per-role tabs (any left over from "tabs" are closed).
-#       tabs: one tab per role, tailing the live transcripts of the tasks the
-#         Coordinator delegates to it (every lane's, for a role with LANES > 1);
-#         any "Watch" pane left over from "watch" is closed.
-#       web: no Herdr at all (as FACTORY_NO_UI=1); bin/factory then starts
-#         `factory dashboard`, which holds the Coordinator's only terminal.
-# Inside a Herdr pane it uses the current Herdr session. Otherwise it uses the
-# session named by FACTORY_HERDR_SESSION (bin/factory sets "factory"), starting
-# that session's server if needed; attach with `herdr session attach <name>`.
 #
-# Safe to re-run: existing sandboxes, tabs and panes are reused, missing ones
-# are created (e.g. after adding a role with new-role.sh), and a command is only
-# started in a pane that is sitting at a shell prompt.
+# The Coordinator's terminal is not opened here: bin/factory ends a normal
+# start by running `factory dashboard`, which holds it (or `factory chat`).
+# FACTORY_NO_UI=1 (factory start --no-ui) only changes the closing message.
+#
+# Safe to re-run: existing sandboxes are reused and missing ones are created
+# (e.g. after adding a role with new-role.sh).
 
 # shellcheck source=lib/common.sh
 . "$(dirname "$0")/lib/common.sh"
@@ -33,40 +22,12 @@ set -euo pipefail
 
 require_bin jq
 
-# FACTORY_LAYOUT: bin/factory resolves and passes this (--layout, FACTORY_LAYOUT,
-# or the saved default, "web" if none); a direct run without it defaults to
-# "watch" (the Herdr layout this script lays out). Ignored entirely
-# with FACTORY_NO_UI=1 (no Herdr layout to pick). "web" means no Herdr: the
-# dashboard bin/factory starts afterwards is the Coordinator's terminal.
-LAYOUT="${FACTORY_LAYOUT:-watch}"
-case "$LAYOUT" in
-  watch|tabs) ;;
-  web) FACTORY_NO_UI=1 ;;
-  *) die "FACTORY_LAYOUT must be 'watch', 'tabs' or 'web', got '$LAYOUT'" ;;
-esac
-
-# FACTORY_NO_UI=1 (factory start --no-ui): no Herdr at all; the user talks to the
-# Coordinator with `sbx run` and follows roles with `factory logs`.
-[ "${FACTORY_NO_UI:-}" = 1 ] || require_herdr
 require_sbx
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd -P)"
 # shellcheck source=lib/roles.sh
 . "$ROOT/scripts/lib/roles.sh"
 PROJECT="$(cd "$1" && pwd -P)"
-
-readonly WS_LABEL="code-factory"
-if [ "${HERDR_ENV:-}" = "1" ]; then
-  HERDR_SESSION=""
-else
-  HERDR_SESSION="${FACTORY_HERDR_SESSION:-factory}"
-fi
-
-# hd ARGS... -> herdr against the factory's session
-hd() {
-  if [ -n "$HERDR_SESSION" ]; then herdr --session "$HERDR_SESSION" "$@"; else herdr "$@"; fi
-}
-readonly COORDINATOR_TAB="coordinator"
 
 roles="$(list_roles)"
 [ -n "$roles" ] || die "no roles defined in roles/"
@@ -200,7 +161,7 @@ coordinator_mcp="$DISPATCH_MCP"
 [ -z "$(coordinator_broker_tools)" ] || coordinator_mcp="$coordinator_mcp $(role_broker_mcp coordinator)"
 create_sandbox "$COORDINATOR_SANDBOX" developer "$ROOT/kits/coordinator" "$coordinator_mcp" project
 # sbx gives a sandbox the stored Claude login only when it creates it: a role
-# sandbox created before the first /login stays logged out, and role panes take
+# sandbox created before the first /login stays logged out, and role sandboxes take
 # no input to /login there. So until a login is stored, create only the
 # Coordinator (where the user logs in); the next launch creates the roles.
 roles_waiting_for_login=""
@@ -216,170 +177,6 @@ else
     sandbox_exists "$(role_sandbox "$role")" || roles_waiting_for_login="$roles_waiting_for_login $role"
   done
 fi
-
-# --- Herdr ------------------------------------------------------------------------
-# Skipped entirely with FACTORY_NO_UI=1 (the block ends after the removed-role
-# tabs are closed; the final "ready" message is chosen at the bottom).
-if [ "${FACTORY_NO_UI:-}" != 1 ]; then
-if [ -n "$HERDR_SESSION" ] && ! herdr session list 2>/dev/null | grep -q "^$HERDR_SESSION .*running"; then
-  echo "Starting Herdr session '$HERDR_SESSION'..."
-  nohup herdr --session "$HERDR_SESSION" server >/dev/null 2>&1 </dev/null &
-  for _ in $(seq 1 20); do
-    herdr session list 2>/dev/null | grep -q "^$HERDR_SESSION .*running" && break
-    sleep 0.5
-  done
-  herdr session list 2>/dev/null | grep -q "^$HERDR_SESSION .*running" \
-    || die "could not start Herdr session '$HERDR_SESSION'"
-fi
-
-# pane_idle PANE -> success if the pane's shell is at its prompt (nothing in the foreground)
-pane_idle() {
-  hd pane process-info --pane "$1" \
-    | jq -e '.result.process_info | .foreground_process_group_id == .shell_pid' >/dev/null
-}
-
-# run_if_idle PANE COMMAND
-run_if_idle() {
-  if pane_idle "$1"; then
-    hd pane run "$1" "$2"
-  fi
-}
-
-# stop_stale_tail PANE LOG... -> stop a transcript tail that follows other
-# files than LOG... (e.g. the in-repo .dispatch/logs/ from before state moved
-# out, or a role's lanes before its LANES changed), so the pane is idle and
-# run_if_idle restarts it on LOG.... Only a plain `tail` is stopped, by pid;
-# nothing is typed into the pane.
-stop_stale_tail() {
-  local pane="$1" pid
-  shift
-  pid="$(hd pane process-info --pane "$pane" | jq -r --argjson logs "$(jq -n '$ARGS.positional' --args "$@")" \
-    '.result.process_info.foreground_processes[] | select(.name == "tail" and .argv[-($logs | length):] != $logs) | .pid' \
-    | head -n 1 || true)"
-  [ -n "$pid" ] || return 0
-  echo "Restarting transcript tail in pane $pane (it follows other log paths)..."
-  kill "$pid" 2>/dev/null || true
-  for _ in 1 2 3 4 5; do
-    pane_idle "$pane" && return 0
-    sleep 1
-  done
-}
-
-# Workspace: reuse, preferring the one this script runs in; close duplicates.
-existing="$(hd workspace list | jq -r --arg l "$WS_LABEL" '.result.workspaces[] | select(.label == $l) | .workspace_id')"
-ws=""
-for id in $existing; do
-  [ "$id" = "${HERDR_WORKSPACE_ID:-}" ] && ws="$id"
-done
-[ -n "$ws" ] || ws="$(printf '%s\n' "$existing" | sed -n 1p)"
-for id in $existing; do
-  if [ "$id" != "$ws" ] && [ "$id" != "${HERDR_WORKSPACE_ID:-}" ]; then
-    echo "Closing duplicate $WS_LABEL workspace $id..."
-    hd workspace close "$id" >/dev/null
-  fi
-done
-if [ -z "$ws" ]; then
-  echo "Creating $WS_LABEL workspace..."
-  ws_json="$(hd workspace create --cwd "$PROJECT" --label "$WS_LABEL" --focus)"
-  ws="$(printf '%s' "$ws_json" | jq -r '.result.workspace.workspace_id')"
-  hd tab rename "$(printf '%s' "$ws_json" | jq -r '.result.tab.tab_id')" "$COORDINATOR_TAB" >/dev/null
-fi
-
-# tab_pane LABEL -> first pane of the tab with that label, creating the tab if needed
-tab_pane() {
-  local tab pane
-  tab="$(hd tab list --workspace "$ws" | jq -r --arg l "$1" '[.result.tabs[] | select(.label == $l)][0].tab_id // empty')"
-  if [ -z "$tab" ]; then
-    hd tab create --workspace "$ws" --cwd "$PROJECT" --label "$1" --no-focus \
-      | jq -r '.result.root_pane.pane_id'
-    return
-  fi
-  pane="$(hd pane list --workspace "$ws" | jq -r --arg t "$tab" '[.result.panes[] | select(.tab_id == $t)][0].pane_id // empty')"
-  [ -n "$pane" ] || die "tab $1 has no panes; close it (hd tab close) and re-run"
-  printf '%s' "$pane"
-}
-
-# Coordinator tab: the Coordinator sandbox, with a host shell below it (and,
-# under "watch", a Watch pane beside it - added below).
-coordinator="$(tab_pane "$COORDINATOR_TAB")"
-hd pane rename "$coordinator" "Coordinator (VM)" >/dev/null
-coord_tab="$(hd pane get "$coordinator" | jq -r '.result.pane.tab_id')"
-host_shell="$(hd pane list --workspace "$ws" \
-  | jq -r --arg t "$coord_tab" '[.result.panes[] | select(.tab_id == $t and .label == "Host shell")][0].pane_id // empty')"
-if [ -z "$host_shell" ]; then
-  host_shell="$(hd pane split "$coordinator" --direction down --cwd "$PROJECT" --no-focus | jq -r '.result.pane.pane_id')"
-  hd pane rename "$host_shell" "Host shell" >/dev/null
-fi
-# A reused host shell may still be in another folder (e.g. after switching projects).
-host_cwd="$(hd pane get "$host_shell" | jq -r '.result.pane.cwd')"
-if [ "$host_cwd" != "$PROJECT" ] && pane_idle "$host_shell"; then
-  hd pane run "$host_shell" "cd $(printf '%q' "$PROJECT")"
-fi
-# One attachment only: a second `sbx run` would start a second Coordinator in
-# the same VM. If the dashboard (or `factory chat`) holds it, leave the pane be.
-if pane_idle "$coordinator"; then
-  if coordinator_attached; then
-    echo "note: the Coordinator is already open elsewhere (the dashboard or 'factory chat'); not opening it in Herdr too."
-  else
-    hd pane run "$coordinator" "sbx run --name $COORDINATOR_SANDBOX"
-  fi
-fi
-
-# "watch" layout: a "factory watch" pane to the right of the Coordinator,
-# full-width host shell below (splitting off the Coordinator pane itself, the
-# only one guaranteed to exist both on a fresh tab and on one already split
-# down for the host shell - so this lands the same way whichever happened
-# first; a true full-height right column isn't reachable once the coordinator
-# pane is already split into a top/bottom pair, since a pane split only
-# divides that one pane's own cell). Any Watch pane is closed under "tabs".
-watch_pane="$(hd pane list --workspace "$ws" \
-  | jq -r --arg t "$coord_tab" '[.result.panes[] | select(.tab_id == $t and .label == "Watch")][0].pane_id // empty')"
-if [ "$LAYOUT" = watch ]; then
-  if [ -z "$watch_pane" ]; then
-    watch_pane="$(hd pane split "$coordinator" --direction right --cwd "$PROJECT" --no-focus | jq -r '.result.pane.pane_id')"
-    hd pane rename "$watch_pane" "Watch" >/dev/null
-  fi
-  run_if_idle "$watch_pane" "$(printf '%q' "$ROOT/bin/factory") watch"
-elif [ -n "$watch_pane" ]; then
-  echo "Closing Watch pane (switched to the tabs layout)..."
-  hd pane close "$watch_pane" >/dev/null
-fi
-
-# "tabs" layout: one tab per role, tailing the transcripts of all its lanes
-# (read-only; nothing is typed into sandboxes). With several files, tail
-# heads each chunk with "==> <lane>.log <==". Not created under "watch".
-if [ "$LAYOUT" = tabs ]; then
-  for role in $roles; do
-    pane="$(tab_pane "$role")"
-    hd pane rename "$pane" "$role (transcript)" >/dev/null
-    logs=()
-    for lane in $(role_lane_names "$role"); do
-      logs+=("$FACTORY_DISPATCH_STATE/logs/$lane.log")
-    done
-    stop_stale_tail "$pane" "${logs[@]}"
-    run_if_idle "$pane" "clear; tail -n 200 -F$(printf ' %q' "${logs[@]}")"
-  done
-fi
-
-# Close transcript tabs: under "tabs", only those of roles that no longer
-# exist; under "watch", every one (the Watch pane replaces them, and a
-# re-run after switching layouts must clean them up).
-hd tab list --workspace "$ws" | jq -r '.result.tabs[] | .tab_id + " " + .label' | while read -r tab label; do
-  [ "$label" = "$COORDINATOR_TAB" ] && continue
-  if [ "$LAYOUT" = tabs ] && in_list "$label" "$(printf '%s ' $roles)"; then
-    continue
-  fi
-  if hd pane list --workspace "$ws" | jq -e --arg t "$tab" --arg l "$label (transcript)" \
-      'any(.result.panes[]; .tab_id == $t and .label == $l)' >/dev/null; then
-    if [ "$LAYOUT" = watch ]; then
-      echo "Closing tab of $label (switched to the watch layout)..."
-    else
-      echo "Closing tab of removed role $label..."
-    fi
-    hd tab close "$tab" >/dev/null
-  fi
-done
-fi  # FACTORY_NO_UI
 
 # A Coordinator sandbox created before its kit installed the briefing doesn't
 # know it is a factory Coordinator (not recreated automatically: it holds the
@@ -401,13 +198,9 @@ if [ -n "$roles_waiting_for_login" ]; then
   Type /login in the Coordinator (POWER ON on the dashboard), then run 'factory start' again (or press RESTART on the dashboard)."
 fi
 
-if [ "$LAYOUT" = web ]; then
-  echo "Factory ready (web): the dashboard is the Coordinator's terminal."
-elif [ "${FACTORY_NO_UI:-}" = 1 ]; then
+if [ "${FACTORY_NO_UI:-}" = 1 ]; then
   echo "Factory ready (no UI): talk to the Coordinator with 'factory chat'; watch every lane with 'factory watch'."
 else
-  hd workspace focus "$ws" >/dev/null
-  hd tab focus "$coord_tab" >/dev/null
-  echo "Factory ready (Herdr ${HERDR_SESSION:+session '$HERDR_SESSION', }workspace $WS_LABEL): talk to the Coordinator in the '$COORDINATOR_TAB' tab."
+  echo "Factory ready: the dashboard ('factory dashboard') is the Coordinator's terminal."
 fi
 echo "Roles: $(printf '%s ' $roles)"

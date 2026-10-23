@@ -18,7 +18,7 @@
   const CHUNK = 16 * 1024;  // the server refuses messages over 64 KiB: split big pastes
   const REASONS = {
     elsewhere: ["TERMINAL 0 · OPEN ELSEWHERE",
-      "The Coordinator is open elsewhere (Herdr or `factory chat`). Close it there, then power on here."],
+      "The Coordinator is open elsewhere (`factory chat`). Close it there, then power on here."],
     "no-sandbox": ["TERMINAL 0 · NO COORDINATOR", "The Coordinator sandbox doesn't exist yet: run `factory start` first, then power on."],
     "no-sbx": ["TERMINAL 0 · NO SBX", "`sbx` could not run on this machine. Run `factory doctor`, then power on."],
     error: ["TERMINAL 0 · FAULT", "The Coordinator could not be started. Power on to try again."],
@@ -137,7 +137,7 @@
       if (msg.reason === "service") autoTried = true;
       if (!autoTried) {
         // Opening the dashboard brings the Coordinator up, once per page load,
-        // and only if it is off and not open in Herdr or `factory chat`.
+        // and only if it is off and not open in `factory chat`.
         autoTried = true;
         if (!running && !elsewhere) {
           send(JSON.stringify({ type: "power", on: true }));
