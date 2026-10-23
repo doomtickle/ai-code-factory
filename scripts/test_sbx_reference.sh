@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Tests for the saved sbx CLI reference (doomtickle/passdesk-ops#TBD):
+# Tests for the saved sbx CLI reference (doomtickle/passdesk-ops#148):
 #
 # 1. scripts/gen-sbx-reference.sh runs only `sbx version` and `sbx ... --help`,
 #    stamps the version and date, fences each help text, and covers the
