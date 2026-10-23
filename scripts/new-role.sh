@@ -29,6 +29,8 @@ sed -i.bak -e "s/^name: .*/name: factory-$name-kit/" \
            -e "s/^displayName: .*/displayName: Factory $name/" "$spec"
 sed -i.bak -e "s/^DESCRIPTION=.*/DESCRIPTION=\"TODO: one line describing what the $name does\"/" \
   "$ROOT/roles/$name/role.conf"
+# A copy of an optional role (OPTIONAL="1", with its comment) is a normal role.
+sed -i.bak -e '/^# Off by default/,/^OPTIONAL=/d' "$ROOT/roles/$name/role.conf"
 rm -f "$spec.bak" "$ROOT/roles/$name/role.conf.bak"
 validate_role "$name"
 sbx kit validate "$ROOT/roles/$name/kit" >/dev/null

@@ -263,6 +263,12 @@ uncomment a line. The keys an override may set are exactly `MODEL`, `MODELS`,
 `EFFORT`, `LANES`, `MAX_SESSION_TOKENS` and `MAX_TURNS` (`ROLE_OVERRIDE_KEYS`
 in `scripts/lib/roles.sh`); any other key stops `factory start`.
 
+`enabled-roles` there switches on optional roles (today only the researcher,
+which is off by default): one role name per line, applied on `factory start`.
+It only turns a role on or off; tools and workspace stay in the committed
+`role.conf`, and a leftover sandbox of a role you turned off is noted by
+`factory doctor`, never removed. See [Roles](../../README.md#roles).
+
 `projects/<project-folder-name>.md` there holds notes for one project (its test
 command, say), added to every role's instructions on `factory start`.
 
@@ -278,8 +284,8 @@ that way. `factory status` counts the folder as local settings.
 key you set replaces the repo's value, and keys you leave out keep it. A list
 is replaced as a whole, so to add a host you repeat the ones you want to keep.
 
-For example, to let the researcher read the Fastify docs, set the full list in
-your local `policy.toml`:
+For example, to let the researcher (once enabled) read the Fastify docs, set the
+full list in your local `policy.toml`:
 
 ```toml
 [web]

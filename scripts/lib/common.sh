@@ -256,10 +256,12 @@ sandbox_running() {
 }
 
 # local_settings_present -> success if the config folder holds any local
-# settings: policy.toml, or a broker-kit/, roles/, projects/ or plugins/ folder.
+# settings: policy.toml or enabled-roles, or a broker-kit/, roles/, projects/ or
+# plugins/ folder.
 local_settings_present() {
   local d
   [ -f "$FACTORY_CONFIG/policy.toml" ] && return 0
+  [ -f "$FACTORY_CONFIG/enabled-roles" ] && return 0
   for d in broker-kit roles projects plugins; do
     [ -d "$FACTORY_CONFIG/$d" ] && return 0
   done

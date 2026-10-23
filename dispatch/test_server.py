@@ -24,7 +24,7 @@ FAKE_SBX = textwrap.dedent(r'''
     with open(log, "a") as f:
         f.write(json.dumps(args) + "\n")
     if args[:2] == ["ls", "-q"]:
-        print("factory-developer\nfactory-reviewer\nfactory-opuser\nfactory-tiered\nfactory-builder")
+        print("factory-developer\nfactory-reviewer\nfactory-opuser\nfactory-tiered\nfactory-builder\nfactory-researcher")
         sys.exit(0)
     if args[0] == "exec" and args[2:3] == ["pkill"]:
         sys.exit(1)  # nothing matched: the test's "claude" is this fake, killed via its process group
@@ -223,6 +223,78 @@ class RoleTests(Base):
         self.assertTrue(dev.endswith("; session: ~85k tokens, $0.50 so far"), dev)
         reviewer = next(l for l in lines if l.startswith("- reviewer"))
         self.assertNotIn("session:", reviewer)
+
+
+class OptionalRoleTests(Base):
+    """A role whose role.conf sets OPTIONAL="1" is off unless the enabled-roles
+    snapshot (STATE/enabled-roles, from start-dispatch.sh) names it."""
+
+    def setUp(self):
+        super().setUp()
+        role = d.ROOT / "roles" / "researcher"
+        role.mkdir()
+        (role / "role.conf").write_text(conf("Looks things up", "ro", "web_fetch") + 'OPTIONAL="1"\n')
+        (d.STATE / "instructions" / "researcher.md").write_text("# researcher\nResearch.\n")
+
+    def enable(self, text="researcher\n"):
+        (d.STATE / "enabled-roles").write_text(text)
+
+    def test_off_by_default(self):
+        self.assertNotIn("researcher", d.load_roles())
+        self.assertNotIn("researcher", d.tool_list_roles({}))
+        self.assertNotIn("researcher", d.server_instructions())
+        self.assertIn("developer", d.load_roles())
+
+    def test_delegate_refuses_with_how_to_enable(self):
+        with self.assertRaises(d.Denied) as cm:
+            d.tool_delegate({"role": "researcher", "task": "look up fastify"})
+        msg = str(cm.exception)
+        self.assertIn("researcher role is disabled", msg)
+        self.assertIn("enabled-roles", msg)
+        self.assertIn("factory start", msg)
+        self.assertFalse(self.sbx_log.exists())  # nothing reached a sandbox, not even a listing
+        with self.assertRaisesRegex(d.Denied, "unknown role 'nope'"):  # other names unchanged
+            d.tool_delegate({"role": "nope", "task": "x"})
+
+    def test_unreadable_or_irrelevant_snapshots_leave_it_off(self):
+        self.enable("")
+        self.assertNotIn("researcher", d.load_roles())
+        self.enable("# researcher\ndeveloper\nnot a name\nResearcher\n")
+        self.assertNotIn("researcher", d.load_roles())
+        self.assertIn("developer", d.load_roles())  # naming a non-optional role changes nothing
+        (d.STATE / "enabled-roles").unlink()
+        (d.STATE / "enabled-roles").mkdir()  # a directory: unreadable
+        self.assertNotIn("researcher", d.load_roles())
+
+    def test_enabled_role_behaves_as_before(self):
+        self.enable("\nresearcher\n")
+        roles = d.load_roles()
+        self.assertTrue(roles["researcher"]["enabled"])
+        self.assertEqual(roles["researcher"]["broker_tools"], ["web_fetch"])
+        self.assertIn("- researcher", d.tool_list_roles({}))
+        self.assertIn("flow: researcher (only if outside information is needed) -> developer -> reviewer",
+                      d.server_instructions())
+        out = json.loads(d.tool_delegate({"role": "researcher", "task": "look up", "wait_seconds": 30}))
+        self.assertEqual(out["status"], "done")
+
+    def test_flow_without_the_researcher(self):
+        flow = d.server_instructions()
+        self.assertIn("flow: developer -> reviewer", flow)
+        self.assertNotIn("researcher", flow)
+
+    def test_include_disabled_flags_the_role(self):
+        self.assertFalse(d.load_roles(include_disabled=True)["researcher"]["enabled"])
+
+    def test_a_local_override_cannot_enable_or_change_it(self):
+        path = d.STATE / "role-overrides" / "researcher.conf"
+        path.parent.mkdir()
+        path.write_text('OPTIONAL="0"\n')
+        self.assertNotIn("researcher", d.load_roles())  # an override can't switch it on
+        self.enable()
+        for line in ('OPTIONAL="0"', 'BROKER_TOOLS="git_push"'):
+            path.write_text(line + "\n")
+            with self.assertRaisesRegex(d.Denied, "can't be set in a local override"):
+                d.load_roles()
 
 
 class RoleOverrideTests(Base):

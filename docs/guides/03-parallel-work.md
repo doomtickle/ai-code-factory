@@ -7,7 +7,8 @@ also see what parallel work costs and how to change the number of lanes.
 
 ## How lanes work
 
-By default the developer has 3 lanes, the reviewer 2 and the researcher 1
+By default the developer has 3 lanes, the reviewer 2 and the researcher (when
+enabled) 1
 (`LANES` in each `roles/<name>/role.conf`). Lane 1 is named after the role;
 the others add a suffix:
 
@@ -15,7 +16,7 @@ the others add a suffix:
 |---|---|
 | developer | `developer`, `developer-lane2`, `developer-lane3` |
 | reviewer | `reviewer`, `reviewer-lane2` |
-| researcher | `researcher` |
+| researcher (if enabled) | `researcher` |
 
 Each lane has its own Claude session and transcript. Each developer lane also
 has its own git clones of your project, so lanes never edit the same files on
