@@ -110,6 +110,8 @@
 .fl .crate.bad .crate-box { fill: #e0654f; }
 .fl .crate.branch .crate-box { fill: var(--t-branch); }
 .fl .crate.held .crate-box { fill: var(--stripe-2); }
+.fl .crate:focus-visible { outline: none; }
+.fl .crate:focus-visible .crate-box { stroke: var(--paper); stroke-width: 1.5; stroke-dasharray: 2 1; }
 .fl .stamp-box { fill: rgba(242, 239, 226, .92); stroke: var(--ink-red); stroke-width: 1.2; }
 .fl .stamp-t { font-family: var(--f-silk); font-weight: 700; font-size: 7px; letter-spacing: .12em; fill: var(--ink-red); }
 .fl .pop { font-size: 10px; fill: var(--led-green); }

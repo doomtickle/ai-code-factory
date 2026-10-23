@@ -34,11 +34,13 @@
   const WALL = 46, ROW = 56, BASE = 40, ZONE_X = 66, DOCK_X = 18, MIN_W = 320, MIN_CELL = 46;
   let W = MIN_W, ZONE_W = 188, ARCH_X = 262, DOOR_X = 306, BIN_X = 284;
   const MAX_CRATES = 14, SPEED = 70;         // crates in flight at once; units per second
+  const MAX_PARKED = 4, MAX_BINNED = 5;      // crates drawn at the arch; confiscated crates kept in the bin
 
   let on = false, state = null, primed = false;
   let svg = null, layout = "", H = 0, stations = new Map(), parts = {};
   const seen = new Set(), branchSeen = new Map();
   let crates = 0;
+  const binned = [];   // the last MAX_BINNED confiscations' event lines; page memory only, gone on reload
 
   // ---------- on / off
   function setOn(v, save) {
@@ -140,6 +142,8 @@
     svg.append(arch);
     parts.queue = S("g", null, "queue");
     svg.append(parts.queue);
+    parts.pile = S("g", null, "pile");
+    svg.append(parts.pile);
 
     svg.append(R(DOOR_X, yOut - 22, 14, 30, "door"), T(DOOR_X + 7, yOut - 24, "OUT", "label sm", "middle"));
     const bin = S("g", null, "bin");
@@ -242,14 +246,19 @@
     parts.booth.setAttribute("class", `booth${state.bridge ? " lit" : ""}${attached ? " in" : ""}`);
     parts.boothNote.textContent = !state.bridge ? "BRIDGE DOWN" : attached ? "ON DUTY" : "BACK SOON";
 
-    // Crates waiting at the arch: one per undecided held write (at most four drawn).
+    // Crates waiting at the arch: one per undecided held write (at most MAX_PARKED drawn),
+    // each named by its write: tool · role · repo · branch.
     const gate = Array.isArray(state.gate) ? state.gate : [];
-    const waiting = gate.filter(c => c.decided !== "approve" && c.decided !== "decline").length;
+    const held = gate.filter(c => c && c.decided !== "approve" && c.decided !== "decline");
+    const waiting = held.length;
     parts.arch.setAttribute("class", `arch${waiting ? " holding" : ""}`);
-    if (parts.queue.childElementCount !== Math.min(waiting, 4)) {
-      parts.queue.replaceChildren();
-      for (let j = 0; j < Math.min(waiting, 4); j++) parts.queue.append(crateShape(ARCH_X - 11 - j * 9, H - 38, "crate held"));
+    const names = held.slice(0, MAX_PARKED).map(c => [c.tool, c.role, c.repo, c.branch].map(v => String(v || "")).filter(Boolean).join(" · ") || "held write");
+    const parked = JSON.stringify(names);
+    if (parts.parked !== parked) {
+      parts.parked = parked;
+      parts.queue.replaceChildren(...names.map((name, j) => crateShape(ARCH_X - 11 - j * 9, H - 38, "crate held", name)));
     }
+    drawPile();
 
     const summary = [];
     if (counts.running) summary.push(`${counts.running} working`);
@@ -260,15 +269,24 @@
   }
 
   // ---------- crates
-  function crateShape(x, y, cls) {
+  // With a label the crate can be hovered (an SVG <title>) and tabbed to, and says the same to a screen reader.
+  function crateShape(x, y, cls, label) {
     const g = S("g", null, cls || "crate");
+    if (label) {
+      g.setAttribute("tabindex", "0");
+      g.setAttribute("role", "img");
+      g.setAttribute("aria-label", label);
+      const title = S("title");
+      title.textContent = label;
+      g.append(title);
+    }
     g.append(R(x, y, 7, 6, "crate-box"), S("line", { x1: x, y1: y, x2: x + 7, y2: y + 6 }, "crate-x"), S("line", { x1: x + 7, y1: y, x2: x, y2: y + 6 }, "crate-x"));
     return g;
   }
   // Move a crate along points [[x, y], ...] at SPEED, then call done(). The crate is
   // drawn at 0,0 and moved with a transform, in SVG units.
   function travel(cls, pts, done) {
-    if (crates >= MAX_CRATES) return;
+    if (crates >= MAX_CRATES) return false;
     const c = crateShape(-3.5, -6, cls);
     parts.fx.append(c);
     crates++;
@@ -282,7 +300,26 @@
     const anim = c.animate(frames, { duration: Math.max(400, (total / SPEED) * 1000), easing: "linear", fill: "forwards" });
     anim.onfinish = () => { c.remove(); crates--; if (done) done(); };
     anim.oncancel = () => { crates--; };
+    return true;
   }
+  // The bin's pile: the last MAX_BINNED confiscated crates, two rows tucked behind the bin's lip.
+  function drawPile() {
+    if (!parts.pile) return;
+    const key = JSON.stringify(binned);
+    if (parts.piled === key) return;
+    parts.piled = key;
+    parts.pile.replaceChildren(...binned.map((label, i) => {
+      const row = i < 3 ? 0 : 1, col = row ? i - 3 : i;
+      return crateShape(BIN_X - 0.5 + (row ? 3 : 0) + col * 6.5, H - 17 - row * 5, "crate bad", label);
+    }));
+  }
+  function binCrate(label) {
+    binned.push(label);
+    if (binned.length > MAX_BINNED) binned.shift();
+    drawPile();
+  }
+  const BAD = new Set(["DENY", "NO", "FAILED"]);
+  const line = ev => `${ev.t} ${ev.kind} ${ev.text}`;   // the printer's line, as app.js titles it
   function flash(node, cls, ms) {
     node.classList.remove(cls);
     void node.getBoundingClientRect();
@@ -318,17 +355,18 @@
   const OUT_Y = () => H - 32, DOCK_Y = () => H - 16;
   function toArch(role, then) {
     const [x, y] = origin(role), oy = OUT_Y();
-    travel("crate", [[x, y], [x, oy], [ARCH_X - 4, oy]], then);
+    return travel("crate", [[x, y], [x, oy], [ARCH_X - 4, oy]], then);
   }
   function pass(fromX) {
     const oy = OUT_Y();
     flash(parts.arch, "ok", 500);
     travel("crate ok", [[fromX, oy], [DOOR_X + 10, oy]]);
   }
-  function confiscate(fromX) {
+  function confiscate(fromX, label) {
     const oy = OUT_Y();
     flash(parts.arch, "no", 700);
-    travel("crate bad", [[fromX, oy], [BIN_X - 2, oy - 10], [BIN_X + 9, H - 8]], stamp);
+    const landed = () => { stamp(); binCrate(label); };
+    if (!travel("crate bad", [[fromX, oy], [BIN_X - 2, oy - 10], [BIN_X + 9, H - 8]], landed)) binCrate(label);
   }
 
   function broker(ev) {
@@ -336,10 +374,10 @@
     const role = words[1] || "";
     switch (ev.kind) {
       case "ALLOW": toArch(role, () => pass(ARCH_X - 4)); break;
-      case "DENY": toArch(role, () => confiscate(ARCH_X - 4)); break;
+      case "DENY": if (!toArch(role, () => confiscate(ARCH_X - 4, line(ev)))) binCrate(line(ev)); break;   // too many crates moving: bin it unseen
       case "HELD": toArch(role); break;           // it waits in the queue (drawn from the gate cards)
       case "OK": case "WRITTEN": pass(ARCH_X - 12); break;
-      case "NO": case "FAILED": confiscate(ARCH_X - 12); break;
+      case "NO": case "FAILED": confiscate(ARCH_X - 12, line(ev)); break;
       case "JOB": {
         const st = stations.get(words[0]);
         if (st && words[1] === "done") pop(st, "+1");
@@ -362,6 +400,7 @@
       if (seen.has(k)) continue;
       seen.add(k);
       if (animate) broker(ev);
+      else if (primed && BAD.has(ev.kind)) binCrate(line(ev));   // floor hidden or motion reduced: drawn in place, not played
     }
     if (seen.size > 2000) { const keep = [...seen].slice(-500); seen.clear(); keep.forEach(k => seen.add(k)); }
     for (const lane of Array.isArray(state.lanes) ? state.lanes : []) {
