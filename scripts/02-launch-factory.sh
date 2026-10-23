@@ -160,6 +160,8 @@ create_sandbox() {
 coordinator_mcp="$DISPATCH_MCP"
 [ -z "$(coordinator_broker_tools)" ] || coordinator_mcp="$coordinator_mcp $(role_broker_mcp coordinator)"
 create_sandbox "$COORDINATOR_SANDBOX" developer "$ROOT/kits/coordinator" "$coordinator_mcp" project
+exclude_template_claude_md "$COORDINATOR_SANDBOX" "$PROJECT" \
+  || die "could not add the sbx template's CLAUDE.md to claudeMdExcludes in $COORDINATOR_SANDBOX's managed settings"
 # sbx gives a sandbox the stored Claude login only when it creates it: a role
 # sandbox created before the first /login stays logged out, and role sandboxes take
 # no input to /login there. So until a login is stored, create only the

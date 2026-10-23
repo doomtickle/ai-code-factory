@@ -204,6 +204,36 @@ sbx_reference_problem() {
   return 1
 }
 
+# template_claude_md WORKSPACE -> where the sbx base template writes its own
+# CLAUDE.md for a sandbox whose primary workspace is WORKSPACE: the workspace's
+# parent (sbx mounts it at its host path, so this is the path inside too).
+template_claude_md() { printf '%s/CLAUDE.md\n' "$(dirname "$1")"; }
+
+# with_claude_md_exclude PATH: managed-settings JSON on stdin -> the same with
+# PATH in claudeMdExcludes (added once, other keys and entries kept), compact.
+with_claude_md_exclude() {
+  jq -c --arg p "$1" '.claudeMdExcludes = (((.claudeMdExcludes // []) - [$p]) + [$p])'
+}
+
+# exclude_template_claude_md SANDBOX WORKSPACE: keep Claude Code in SANDBOX
+# from loading the base template's CLAUDE.md (shell persistence, network
+# troubleshooting, port publishing: ~2,750 words that don't apply to a factory
+# agent). Only the Coordinator needs it: its cwd is the project, under that
+# file's folder; roles' cwds (lanes, review checkouts, the :ro project) aren't.
+# Adds the path to the root-owned managed settings the kit wrote, and leaves
+# them 0444. Idempotent, so it runs on every launch and fixes an existing
+# sandbox without recreating it. The path only crosses as a jq argument and
+# the JSON over stdin, never inside a command line.
+exclude_template_claude_md() {
+  local name="$1" path current merged
+  path="$(template_claude_md "$2")"
+  current="$(sbx exec -u 0 "$name" cat /etc/claude-code/managed-settings.json)" || return 1
+  merged="$(printf '%s' "$current" | with_claude_md_exclude "$path")" || return 1
+  [ "$merged" != "$(printf '%s' "$current" | jq -c .)" ] || return 0
+  printf '%s\n' "$merged" | sbx exec -u 0 -i "$name" sh -c \
+    'f=/etc/claude-code/managed-settings.json; cat > "$f.tmp" && chmod 0444 "$f.tmp" && mv -f "$f.tmp" "$f"'
+}
+
 require_bin() {
   command -v "$1" >/dev/null 2>&1 || die "'$1' not found in PATH (see README.md)"
 }

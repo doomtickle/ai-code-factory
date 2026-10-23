@@ -1317,7 +1317,12 @@ hasn't dispatched any jobs yet just shows an empty report.
   sandbox is created (a mixin kit's `agentInstructions` aren't loaded reliably), and
   from the dispatch bridge's MCP instructions, built from `roles/` on every new
   Coordinator session. After editing the kit's briefing, or `dispatch/server.py`,
-  run `factory update`.
+  run `factory update`. It doesn't get the sbx base template's own `CLAUDE.md`
+  (shell persistence, network troubleshooting, port publishing), which sbx
+  writes in the project's parent folder, above the Coordinator's working
+  directory: every `factory start` adds that path to `claudeMdExcludes` in the
+  Coordinator's managed settings (`exclude_template_claude_md`). Roles never
+  load their copy, since no role works under the folder it lands in.
 - **After a reboot:** `factory start`.
 - **One checkout at a time:** every copy of this repo uses the same ports, sandbox
   names and sbx secrets. If `factory start` says port 18766 is already in use,

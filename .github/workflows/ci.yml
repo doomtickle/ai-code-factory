@@ -68,6 +68,8 @@ jobs:
         run: bash scripts/test_factory_update.sh
       - name: factory secret
         run: bash scripts/test_factory_secret.sh
+      - name: Coordinator claudeMdExcludes
+        run: bash scripts/test_claude_md_exclude.sh
       - name: sbx CLI reference
         run: bash scripts/test_sbx_reference.sh
       - name: factory layout
@@ -122,6 +124,8 @@ jobs:
         run: bash scripts/test_factory_update.sh
       - name: factory secret
         run: bash scripts/test_factory_secret.sh
+      - name: Coordinator claudeMdExcludes
+        run: bash scripts/test_claude_md_exclude.sh
       - name: factory layout
         run: bash scripts/test_factory_layout.sh
       - name: factory docs
