@@ -310,7 +310,7 @@ factory update
   (Roles, "Per-project notes"). These need no rebuild.
 - `roles/<role>.conf` tunes one role on this machine, layered over
   `roles/<role>/role.conf`: only `MODEL`, `MODELS`, `EFFORT`, `LANES`,
-  `MAX_SESSION_TOKENS` and `MAX_TURNS`, applied on `factory start` (Roles,
+  `MAX_SESSION_TOKENS`, `MAX_TURNS` and `MAX_JOB_SECONDS`, applied on `factory start` (Roles,
   "Tuning a role locally"). No rebuild.
 - `enabled-roles` names the optional roles (today: the researcher) to switch on
   on this machine, one per line (Roles, "Optional roles"). It only turns a role
@@ -699,11 +699,14 @@ starts a fresh session.
 editing your clone, put them in `~/.config/ai-code-factory/roles/<role>.conf`,
 the same `KEY="value"` lines layered over the role's `role.conf` (e.g.
 `MODELS="claude-haiku-5-5 opus claude-fable-5-1"` for the developer). Only the
-tuning keys `MODEL`, `MODELS`, `EFFORT`, `LANES`, `MAX_SESSION_TOKENS` and
-`MAX_TURNS` are allowed; `factory start` refuses any other key (`BROKER_TOOLS`,
+tuning keys `MODEL`, `MODELS`, `EFFORT`, `LANES`, `MAX_SESSION_TOKENS`,
+`MAX_TURNS` and `MAX_JOB_SECONDS` are allowed; `factory start` refuses any other key (`BROKER_TOOLS`,
 `WORKSPACE`, ...), a bad value or an unknown role, naming the file. Overrides
 apply on `factory start`, and the Coordinator's `list_roles` shows the merged
 result. See [Customize](docs/guides/04-customize.md#tune-a-role).
+`MAX_JOB_SECONDS` is the wall-clock limit for one job's `claude` (3600 by
+default, `0` for none): past it the bridge kills the job, marks it failed with
+a message naming the limit, keeps any partial report and frees the lane.
 
 The split follows the capabilities that matter:
 
@@ -888,7 +891,7 @@ project, `factory-test` installs a hash-pinned `requirements.txt` (or
 from the wheels `pip_download` put in `.factory/wheels/` (see `factory-test -h`).
 
 Each role is `roles/<name>/role.conf` (description, image, `WORKSPACE=rw|ro`, `LANES`,
-`BROKER_TOOLS`, `MODEL`, `MODELS`, `EFFORT`, `MAX_SESSION_TOKENS`, `MAX_TURNS`), `roles/<name>/instructions.md` (passed to every task
+`BROKER_TOOLS`, `MODEL`, `MODELS`, `EFFORT`, `MAX_SESSION_TOKENS`, `MAX_TURNS`, `MAX_JOB_SECONDS`), `roles/<name>/instructions.md` (passed to every task
 as part of the system prompt) and `roles/<name>/kit/spec.yaml` (its network policy). Every role
 gets a writable scratch directory in `~/.local/state/ai-code-factory/roles/<name>/` and the project mounted `:ro`.
 `rw` roles also get the project's `.factory/outgoing/` writable (bundles for `git_push`,
@@ -903,7 +906,7 @@ factory role new docs-writer developer   # or copy any existing role
 Edit its `role.conf` and instructions, then run `factory start` again. It creates
 the sandbox, and the Coordinator sees the new role in `list_roles`.
 
-**Change a role:** edit instructions, `BROKER_TOOLS`, `LANES`, `MODEL`, `MODELS`, `EFFORT`, `MAX_SESSION_TOKENS` or `MAX_TURNS` and run `factory start`
+**Change a role:** edit instructions, `BROKER_TOOLS`, `LANES`, `MODEL`, `MODELS`, `EFFORT`, `MAX_SESSION_TOKENS`, `MAX_TURNS` or `MAX_JOB_SECONDS` and run `factory start`
 again. All of these take effect from the next task:
 `factory start` copies the instructions into the state folder and the bridge
 reads that copy, so a role editing this repo can't change prompts on its own. Kit, image, project access and

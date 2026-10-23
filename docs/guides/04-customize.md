@@ -17,7 +17,7 @@ affected, after listing what each one loses and asking you.
 | You changed | Run |
 |---|---|
 | Per-project notes (`projects/<folder>.md`, `projects/<folder>.<role>.md`) | `factory start` |
-| A role's instructions, `MODEL`, `MODELS`, `EFFORT`, `LANES`, `MAX_SESSION_TOKENS`, `MAX_TURNS` | `factory start` |
+| A role's instructions, `MODEL`, `MODELS`, `EFFORT`, `LANES`, `MAX_SESSION_TOKENS`, `MAX_TURNS`, `MAX_JOB_SECONDS` | `factory start` |
 | A role's `BROKER_TOOLS` (it already had some) | `factory start` |
 | A new role, or a removed one | `factory start` |
 | A role's `TEMPLATE`, `WORKSPACE` or `kit/`, or whether it has any `BROKER_TOOLS` at all | `factory update` |
@@ -103,6 +103,7 @@ and the only ones an override may set:
 | `LANES` | Tasks the role runs at once, 1 to 8 | `3` |
 | `MAX_SESSION_TOKENS` | A lane whose saved session is larger starts the next task fresh; empty is 100000, `0` is no cap | empty |
 | `MAX_TURNS` | Turns (tool calls and replies) one job may take before it stops as failed, keeping its session; a safety net against a lost job; empty or `0` is no cap | `200` |
+| `MAX_JOB_SECONDS` | Wall-clock seconds one job's `claude` may run before the bridge kills it and marks the job failed (the lane is freed and any partial report is kept); empty is 3600, `0` is no limit | empty |
 
 The developer's `MODEL` and `MODELS` name sonnet and haiku by their full ids,
 `claude-sonnet-5-5` and `claude-haiku-5-5`, not the aliases `sonnet` and
@@ -259,7 +260,7 @@ Uncomment only the tables and hosts you use (the examples name an
 `roles/<role>.conf` there tunes a role (see [Tune a role](#tune-a-role)); the
 example `roles/developer.conf` is all comments, so it changes nothing until you
 uncomment a line. The keys an override may set are exactly `MODEL`, `MODELS`,
-`EFFORT`, `LANES`, `MAX_SESSION_TOKENS` and `MAX_TURNS` (`ROLE_OVERRIDE_KEYS`
+`EFFORT`, `LANES`, `MAX_SESSION_TOKENS`, `MAX_TURNS` and `MAX_JOB_SECONDS` (`ROLE_OVERRIDE_KEYS`
 in `scripts/lib/roles.sh`); any other key stops `factory start`.
 
 `enabled-roles` there switches on optional roles (today only the researcher,

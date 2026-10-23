@@ -115,7 +115,7 @@ validate_enabled_roles() {
 # validate_role checks the merged values exactly as it checks role.conf's.
 # start-dispatch.sh snapshots the overrides for the bridge
 # (DISPATCH_STATE/role-overrides), so changes apply on the next `factory start`.
-readonly ROLE_OVERRIDE_KEYS="MODEL MODELS EFFORT LANES MAX_SESSION_TOKENS MAX_TURNS"
+readonly ROLE_OVERRIDE_KEYS="MODEL MODELS EFFORT LANES MAX_SESSION_TOKENS MAX_TURNS MAX_JOB_SECONDS"
 
 role_override_file() { printf '%s/roles/%s.conf' "$FACTORY_CONFIG" "$1"; }
 
@@ -258,6 +258,9 @@ validate_role() {
   m="$(role_get "$r" MAX_TURNS)"
   [ -z "$m" ] || printf '%s' "$m" | grep -Eq '^[0-9]+$' \
     || die "role $r: MAX_TURNS must be a whole number of turns (or empty)$(override_note "$r" MAX_TURNS)"
+  m="$(role_get "$r" MAX_JOB_SECONDS)"
+  [ -z "$m" ] || printf '%s' "$m" | grep -Eq '^[0-9]+$' \
+    || die "role $r: MAX_JOB_SECONDS must be a whole number of seconds (or empty)$(override_note "$r" MAX_JOB_SECONDS)"
 }
 
 # --- Sandbox fingerprints ------------------------------------------------------------
