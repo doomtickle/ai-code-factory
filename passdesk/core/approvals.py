@@ -190,27 +190,52 @@ def as_outcome(value) -> dict | None:
     return _outcome(value)
 
 
+def _held_clause(outcome: dict) -> str:
+    """'held for approval (id X), approved by "NAME" at T after N s' (no
+    leading capital, no final full stop) plus '; written by the gateway at T'
+    for a write core's hold made itself."""
+    clause = f"held for approval (id {outcome['id']}), approved by \"{outcome['approver']}\""
+    if outcome.get("decided"):
+        clause += f" at {outcome['decided']}"
+    if outcome.get("waited_seconds") is not None:
+        clause += f" after {outcome['waited_seconds']} s"
+    if outcome.get("completed"):
+        clause += f"; written by the gateway at {outcome['completed']}"
+    return clause
+
+
 def held_note(outcome: dict | None) -> str:
-    """The line a tool adds to its result when its write was held:
-    'Held for approval (id X); approved by "NAME" at T after N s.' Empty for
-    a write that wasn't held (outcome None), so the result is unchanged."""
+    """The standalone sentence for a held write:
+    'Held for approval (id X), approved by "NAME" at T after N s.' Empty for
+    a write that wasn't held (outcome None). Tools use with_held_note."""
     if outcome is None:
         return ""
-    note = f"Held for approval (id {outcome['id']}); approved by \"{outcome['approver']}\""
-    if outcome.get("decided"):
-        note += f" at {outcome['decided']}"
-    if outcome.get("waited_seconds") is not None:
-        note += f" after {outcome['waited_seconds']} s"
-    if outcome.get("completed"):
-        note += f"; written by the gateway at {outcome['completed']}"
-    return note + "."
+    clause = _held_clause(outcome)
+    return f"{clause[0].upper()}{clause[1:]}."
 
 
 def with_held_note(text: str, outcome: dict | None) -> str:
-    """A tool's result with held_note appended on its own line (unchanged
-    when the write wasn't held)."""
-    note = held_note(outcome)
-    return f"{text}\n{note}" if note else text
+    """A tool's result with the hold folded into its first line, so the one
+    line says both what happened and that it was held:
+    'Pushed 2 commit(s) to o/r:b (sha); held for approval (id X), approved by
+    "NAME" at T after N s.' A first line that introduces the lines below it
+    ('Push rejected by GitHub:') keeps its colon at the end, after the
+    clause. The rest of the result is unchanged, and so is the whole result
+    when the write wasn't held. A result with no first line gets the
+    standalone sentence in front of it."""
+    if outcome is None:
+        return text
+    if not text.strip():
+        return held_note(outcome)
+    if text.startswith("\n"):
+        return held_note(outcome) + text
+    first, sep, rest = text.partition("\n")
+    end = "."
+    if first.endswith(":"):
+        first, end = first[:-1], ":"
+    elif first.endswith("."):
+        first = first[:-1]
+    return f"{first}; {_held_clause(outcome)}{end}{sep}{rest}"
 
 
 # --- the patch an approver can inspect (doomtickle/passdesk-ops#113) --------

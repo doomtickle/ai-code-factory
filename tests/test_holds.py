@@ -6,6 +6,7 @@ import calendar
 import io
 import json
 import os
+import re
 import threading
 import time
 import unittest
@@ -639,7 +640,7 @@ class HeldOutcomeTests(HoldBase):
         outcome = core_approvals.require(dict(CARD))
         self.assertEqual(core_approvals.HELD_ID.get(), cid)
         note = core_approvals.held_note(outcome)
-        self.assertRegex(note, rf"^Held for approval \(id {cid}\); approved by \"daron\" at "
+        self.assertRegex(note, rf"^Held for approval \(id {cid}\), approved by \"daron\" at "
                                r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ after \d+ s\.$")
 
     def test_a_write_the_policy_does_not_hold_gets_no_outcome(self):
@@ -932,10 +933,11 @@ class QueueTests(QueueBase):
             self.call()
         self.assertEqual(cm.exception.state, "completed")
         lines = cm.exception.text.splitlines()
-        self.assertEqual(lines[0], self.write_result)
-        self.assertRegex(lines[-1], rf'^Held for approval \(id {self.cid}\); approved by "daron" at '
-                                    r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ after \d+ s; written by the gateway at "
-                                    r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ\.$")
+        self.assertEqual(len(lines), len(self.write_result.splitlines()))
+        self.assertRegex(lines[0], rf'^{re.escape(self.write_result.splitlines()[0].rstrip("."))}; held for approval '
+                                   rf'\(id {self.cid}\), approved by "daron" at '
+                                   r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ after \d+ s; written by the gateway at "
+                                   r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ\.$")
         holds.sweep_idle()
         with self.assertRaises(Queued):
             self.call()
@@ -948,7 +950,8 @@ class QueueTests(QueueBase):
         for _ in range(2):
             with self.assertRaises(Queued) as cm:
                 self.call()
-            self.assertEqual((cm.exception.state, cm.exception.text.splitlines()[0]), ("completed", self.write_result))
+            self.assertEqual(cm.exception.state, "completed")
+            self.assertTrue(cm.exception.text.startswith(self.write_result.rstrip(".")), cm.exception.text)
             self.assertIn("written by the gateway", cm.exception.text)
         self.assertEqual(len(self.writes), 1)
         self.assertFalse(self.path("pending").exists())  # no new card
@@ -1270,7 +1273,7 @@ class QueuedPullRequestTests(QueueBase):
         self.assertEqual(self.read("done", cid)["result"], "Opened PR #7: https://github.com/acme/widgets/pull/7")
         with self.assertRaises(Queued) as cm:
             self.open_pr()  # a retry reports it, never opens a second
-        self.assertTrue(cm.exception.text.startswith("Opened PR #7: https://github.com/acme/widgets/pull/7\n"))
+        self.assertTrue(cm.exception.text.startswith("Opened PR #7: https://github.com/acme/widgets/pull/7; held for approval (id "))
         self.assertEqual(len(self.posts), 1)
 
     def queue_text(self, cid):
@@ -1472,7 +1475,7 @@ class QueuedPushTests(HoldBase, test_git.GitFlowTests):
             out = self.push()
             holds.sweep_idle()
         self.assertTrue(out.startswith("Pushed 1 commit(s)"), out)
-        self.assertIn("Held for approval", out)
+        self.assertIn("; held for approval (id", out.splitlines()[0])
         self.assertEqual(len(pushes), 1)
         self.assertEqual(self.on_origin(), head)
 
