@@ -182,6 +182,35 @@ sbx_installed_version() {
   sbx version 2>/dev/null | sed -n 's/^sbx version: v\{0,1\}\([^ ]*\).*/\1/p'
 }
 
+# sbx_reference_problem FILE -> prints why the saved sbx CLI reference
+# (docs/reference/sbx-cli.md, written by scripts/gen-sbx-reference.sh) is not
+# usable and returns 0; prints nothing and returns 1 when it is current. The
+# file carries a stamp line: <!-- sbx-reference: version=X generated=DATE -->,
+# or <!-- sbx-reference: not-generated --> while it is the committed placeholder.
+sbx_reference_problem() {
+  local file="$1" stamp version
+  if [ ! -f "$file" ]; then
+    echo "$file is missing; run scripts/gen-sbx-reference.sh on the host"
+    return 0
+  fi
+  stamp="$(grep -m1 '^<!-- sbx-reference: ' "$file" || true)"
+  case "$stamp" in
+    '<!-- sbx-reference: not-generated'*)
+      echo "the sbx CLI reference has not been generated yet; run scripts/gen-sbx-reference.sh on the host (agents otherwise guess sbx flags)"
+      return 0 ;;
+  esac
+  version="$(printf '%s\n' "$stamp" | sed -n 's/^<!-- sbx-reference: version=\([^ ]*\) .*/\1/p')"
+  if [ -z "$version" ]; then
+    echo "the sbx CLI reference has no version stamp; regenerate it with scripts/gen-sbx-reference.sh"
+    return 0
+  fi
+  if [ "$version" != "$SBX_VERSION" ]; then
+    echo "the sbx CLI reference is for sbx $version but the pinned sbx is $SBX_VERSION; regenerate it with scripts/gen-sbx-reference.sh"
+    return 0
+  fi
+  return 1
+}
+
 herdr_installed_version() {
   herdr --version 2>/dev/null | sed -n 's/^herdr \([^ ]*\).*/\1/p'
 }

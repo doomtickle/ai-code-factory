@@ -51,6 +51,11 @@ You own a change end to end: implementation, tests and documentation.
   coverage) stay there; copy back any you mean to keep.
 - Docs: update READMEs, docstrings and comments the change affects, and check
   that every command or example you document actually works.
+- `sbx` is not installed in your sandbox. Before using or documenting an `sbx`
+  command or flag, check `docs/reference/sbx-cli.md` (ai-code-factory repo;
+  the owner generates it on the host). Anything not in it, or any use while it
+  still says "not generated", is unverified: say so in your report instead of
+  guessing.
 - Anything a person looks at (a web page, the docs site, the dashboard's
   files): render it and look at it before you report. `factory-shot <file or
   http://127.0.0.1 URL> <out.png> [--width 390] [--dark]` writes a PNG with

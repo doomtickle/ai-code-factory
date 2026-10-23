@@ -399,6 +399,9 @@ $(sed -n 's/^[[:space:]]*-[[:space:]]*"\{0,1\}\([^"[:space:]#]*\).*/\1/p' "$kit"
   if [ -n "$roles_ready" ] && why="$(gitlab_mr_unheld)"; then
     warn "GitLab merge requests open without approval: $why (see README: Enabling approvals)"
   fi
+  step "sbx CLI reference (docs/reference/sbx-cli.md)"
+  if why="$(sbx_reference_problem "$ROOT/docs/reference/sbx-cli.md")"; then warn "$why"
+  else ok "matches sbx $SBX_VERSION"; fi
 
   say ""
   if [ "$problems" -eq 0 ]; then
