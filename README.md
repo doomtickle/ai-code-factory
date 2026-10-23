@@ -1356,6 +1356,8 @@ scripts/analytics.py, scripts/test_analytics.py      Cost/performance report (fa
 scripts/approvals.py         Approval cards (factory approvals)
 scripts/docs.py              Builds the docs site (factory docs)
 scripts/lint.sh              Pinned shellcheck over every shell script (CI)
+scripts/gen-sbx-reference.sh Saves the installed sbx's help to docs/reference/sbx-cli.md (host; see Upgrading a pin)
+docs/reference/sbx-cli.md    Saved sbx CLI reference agents check before using an sbx flag
 .github/workflows/            CI (ci.yml) and the docs site on GitHub Pages (docs.yml)
 ```
 
@@ -1382,6 +1384,10 @@ Change pins on purpose, in their own commit, and re-run the full setup to test.
 
   Kit keys, CLI flags and lifecycle behavior have changed between sbx releases, so
   re-run `sbx kit validate` on every kit and the broker/dispatch lifecycle checks.
+  Then regenerate the saved CLI reference on the host and commit it:
+  `scripts/gen-sbx-reference.sh` (writes `docs/reference/sbx-cli.md`; agents have
+  no `sbx`, so they check it before using a flag, and `factory doctor` warns while
+  it is missing, not yet generated, or for a different version than `SBX_VERSION`).
 - **ruff:** change `RUFF_VERSION` in `templates/reviewer/Dockerfile`.
 - **yarn:** change `YARN_VERSION` and `YARN_SHA256` in **both**
   `templates/developer/Dockerfile` and `templates/reviewer/Dockerfile`. Get the
