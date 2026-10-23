@@ -285,12 +285,13 @@ class Audit(Tail):
 
 def discover_lanes(roles_dir: Path, logs_dir: Path, overrides_dir: Path | None = None,
                    enabled_file: Path | None = None) -> list:
-    """Every lane of every role in roles/ (in LANES order), then any other
-    transcript in the logs folder (a removed role's, say). A role's LANES comes
+    """Every lane of every role in roles/ (in LANES order). A role's LANES comes
     from its local override as the bridge sees it (overrides_dir: the dispatch
     state's role-overrides snapshot, validated by start-dispatch.sh) if that
     sets it, else from role.conf. An optional role (OPTIONAL="1") has no lanes
-    unless enabled_file (the state's enabled-roles snapshot) names it."""
+    unless enabled_file (the state's enabled-roles snapshot) names it. Other
+    transcripts in logs_dir (a removed or switched-off role's) get no lane: the
+    bridge doesn't run that role, and nothing deletes its log."""
     lanes = []
     try:
         enabled = set(enabled_file.read_text(errors="replace").split()) if enabled_file else set()
@@ -309,10 +310,6 @@ def discover_lanes(roles_dir: Path, logs_dir: Path, overrides_dir: Path | None =
         for k in range(1, max(1, min(n, 8)) + 1):
             name = role if k == 1 else f"{role}-lane{k}"
             lanes.append(Lane(name, role, logs_dir / f"{name}.log"))
-    known = {lane.name for lane in lanes}
-    for path in sorted(logs_dir.glob("*.log")):
-        if path.stem not in known:
-            lanes.append(Lane(path.stem, path.stem.split("-lane")[0], path))
     return lanes
 
 

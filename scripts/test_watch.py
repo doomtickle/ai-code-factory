@@ -138,6 +138,21 @@ class DiscoverLanesTests(unittest.TestCase):
         enabled.write_text("researcher\n")
         self.assertEqual(self.names(self.overrides, enabled), ["developer", "developer-lane2", "researcher", "reviewer"])
 
+    def test_leftover_transcripts_get_no_lane(self):
+        # A switched-off optional role's log, and a removed role's, stay on disk;
+        # neither brings its lane back.
+        (self.roles / "researcher").mkdir()
+        (self.roles / "researcher" / "role.conf").write_text('OPTIONAL="1"\n')
+        for name in ("researcher", "old-role", "old-role-lane2", "developer"):
+            (self.logs / f"{name}.log").write_text("00:00:00  ▶ job 1 from the Coordinator\n")
+        self.assertEqual(self.names(self.overrides, self.logs.parent / "enabled-roles"),
+                         ["developer", "developer-lane2", "reviewer"])
+
+    def test_new_role_gets_lanes(self):
+        (self.roles / "documenter").mkdir()
+        (self.roles / "documenter" / "role.conf").write_text('LANES="2"\n')
+        self.assertEqual(self.names(), ["developer", "developer-lane2", "documenter", "documenter-lane2", "reviewer"])
+
 
 class AuditTests(unittest.TestCase):
     def test_skips_malformed_job_ids(self):
@@ -161,12 +176,12 @@ class RenderTests(unittest.TestCase):
         self.state, self.roles = root / "dispatch", root / "roles"
         (self.state / "logs").mkdir(parents=True)
         (self.state / "packets").mkdir()
-        for role, lanes in (("developer", "2"), ("reviewer", "")):
+        for role, lanes in (("developer", "2"), ("reviewer", ""), ("tester", "")):
             (self.roles / role).mkdir(parents=True)
             (self.roles / role / "role.conf").write_text(f'DESCRIPTION="x"\nLANES="{lanes}"\n')
         (self.state / "logs" / "developer.log").write_text(TRANSCRIPT)
         (self.state / "logs" / "developer-lane2.log").write_text("")
-        (self.state / "logs" / "old-role.log").write_text("00:00:00  ▶ job 1 from the Coordinator\n")
+        (self.state / "logs" / "tester.log").write_text("00:00:00  ▶ job 1 from the Coordinator\n")
         (self.state / "audit.jsonl").write_text(json.dumps({
             "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "event": "job-end",
             "job_id": "20261019-000907-67b08e", "cost_usd": 1.3089, "status": "done"}) + "\n")
@@ -177,8 +192,8 @@ class RenderTests(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def test_lanes_follow_roles_then_orphans(self):
-        self.assertEqual([l.name for l in self.watch.lanes], ["developer", "developer-lane2", "reviewer", "old-role"])
+    def test_lanes_follow_roles(self):
+        self.assertEqual([l.name for l in self.watch.lanes], ["developer", "developer-lane2", "reviewer", "tester"])
 
     def test_layout(self):
         self.assertEqual(len(w.layout(6, 160, 40)), 6)
@@ -190,7 +205,7 @@ class RenderTests(unittest.TestCase):
         return time.mktime(time.strptime("2026-10-19 " + clock, "%Y-%m-%d %H:%M:%S"))
 
     def test_grid_frame_shows_active_lanes_and_a_status_strip(self):
-        # 00:20: the developer's job ended 7 minutes ago (active); old-role is running.
+        # 00:20: the developer's job ended 7 minutes ago (active); tester is running.
         text = w.plain(w.render(self.watch, 130, 24, now=self.at("00:20:00")), 130)
         lines = text.splitlines()
         self.assertEqual(len(lines), 24)
@@ -199,7 +214,7 @@ class RenderTests(unittest.TestCase):
         self.assertIn("bridge down", lines[0])
         self.assertIn(" developer ─", text)
         self.assertIn("✓ done · 3:55 · sonnet-5 · $1.31", text)
-        self.assertIn(" old-role ─", text)
+        self.assertIn(" tester ─", text)
         self.assertIn("● running · 20:00", text)
         self.assertIn(" developer-lane2 · idle", lines[-3])
         self.assertIn(" reviewer · idle", lines[-2])
@@ -211,15 +226,15 @@ class RenderTests(unittest.TestCase):
         text = w.plain(w.render(self.watch, 100, 20, now=self.at("03:00:00")), 100)
         self.assertNotIn(" developer ─", text)
         self.assertIn(" developer ✓ done · 3:55 · sonnet-5 · $1.31 · at 00:13", text)
-        self.assertIn(" old-role ─", text)  # still running: the only pane
+        self.assertIn(" tester ─", text)  # still running: the only pane
         self.watch.all = True
         text = w.plain(w.render(self.watch, 130, 24, now=self.at("03:00:00")), 130)
-        for name in ("developer", "developer-lane2", "reviewer", "old-role"):
+        for name in ("developer", "developer-lane2", "reviewer", "tester"):
             self.assertIn(f" {name} ─", text)
         self.assertIn("a active lanes only", text.splitlines()[-1])
 
     def test_nothing_active_shows_the_most_recent_lane(self):
-        (self.state / "logs" / "old-role.log").write_text("")
+        (self.state / "logs" / "tester.log").write_text("")
         self.watch = w.Watch(self.state, self.roles, "myproj")
         self.watch.refresh()
         text = w.plain(w.render(self.watch, 100, 20, now=self.at("03:00:00")), 100)
