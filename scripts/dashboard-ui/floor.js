@@ -437,7 +437,7 @@
         set.add(k);
         const st = stations.get(lane.name);
         if (fresh || !primed) continue;
-        announce("factory-floor:docked", { lane: String(lane.name), role: String(lane.role || ""), branch: clip(String(e.text), 200), animated: !!(animate && st && docked(st)) });
+        announce("factory-floor:docked", { lane: String(lane.name), role: String(lane.role || ""), branch: clip(String(e.text || ""), 200), animated: !!(animate && st && docked(st)) });
       }
     }
     primed = true;

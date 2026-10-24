@@ -749,7 +749,7 @@ class PageTests(unittest.TestCase):
         self.assertIn("if (fresh || !primed) continue;", play)
         # The detail holds strings and booleans only.
         self.assertRegex(play, r'\{ kind: String\(ev\.kind\), role: [^\n]*, line: clip\(line\(ev\), 300\), animated: moved \}')
-        self.assertRegex(play, r'\{ lane: String\(lane\.name\), role: String\(lane\.role \|\| ""\), branch: clip\(String\(e\.text\), 200\), animated: ')
+        self.assertRegex(play, r'\{ lane: String\(lane\.name\), role: String\(lane\.role \|\| ""\), branch: clip\(String\(e\.text \|\| ""\), 200\), animated: ')
         # Every bin path reaches the confiscated event through play(): the animated crate,
         # the capped fallback (no free crate) and the not-animated path.
         self.assertIn('GOOD = new Set(["ALLOW", "OK", "WRITTEN"])', js)

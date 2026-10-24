@@ -172,15 +172,19 @@ throws doesn't disturb the floor.
 |---|---|---|
 | `factory-floor:passed` | a broker call is let through (ALLOW, OK, WRITTEN) | `kind`, `role`, `line`, `animated` |
 | `factory-floor:confiscated` | a broker call is refused (DENY, NO, FAILED) | `kind`, `role`, `line`, `animated` |
-| `factory-floor:docked` | a lane hands back a new branch | `lane`, `role`, `branch`, `animated` |
+| `factory-floor:docked` | a new branch line appears in a lane's log (any branch name, not only `factory/*`; it does not mean the work was delivered) | `lane`, `role`, `branch`, `animated` |
 
 Each broker event fires once per call and each branch once per branch, as the
 page learns of it. They fire whether or not a crate is drawn (`animated` says
-whether one was) and whether the floor is on or off, including with reduced
+whether one was; see below) and whether the floor is on or off, including with reduced
 motion. They don't fire for what the page loaded with (the first poll), nor for
 a lane's first appearance. A held write fires nothing until it is decided.
 Everything else in `detail` is a string, `animated` a boolean, and the object is
 frozen.
+
+`animated` reflects the first leg only. A denied call reports `animated: true`
+once its crate starts the trip to the arch, even if that crate is then binned
+without moving because too many crates are in flight.
 
 `kind` is the broker line's verdict, `role` the role it names, `line` the
 printer's line (clipped at 300 characters) and `branch` the branch name (clipped
