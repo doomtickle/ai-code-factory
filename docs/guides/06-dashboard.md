@@ -276,6 +276,15 @@ your first click or key press. If the browser has no Web Audio, the key is
 greyed out. `factory dashboard --demo` makes events every 20 seconds, enough to
 try it.
 
+There is also a hidden **factory radio**: type the Konami code on the main page
+(up up down down left right left right, then `b` and `a`) and a looping ambient
+track starts, chill sci-fi beats in D dorian at 72 BPM; type it again to stop.
+It is synthesised in your browser like the cues (no audio file, no request,
+nothing from the page or the events), quieter than they are, and a **RADIO**
+key appears next to SOUND while it plays: press it to turn the radio off. The
+choice is remembered in this browser, and, as with sound, a page that reloads
+with the radio on stays silent until your first click or key press.
+
 ## Write gate and the control unit
 
 Bottom right. With approvals on, every push and pull request a role makes
