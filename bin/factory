@@ -21,13 +21,13 @@ ROOT="$(dirname "$SCRIPTS")"
 
 # shellcheck source=../scripts/lib/common.sh
 . "$SCRIPTS/lib/common.sh"
-# roles.sh initializes the broker/ submodule if needed and dies without it.
+# roles.sh dies without broker/tools.txt.
 # 'factory docs', 'factory help' and 'factory config' need neither, so they skip it: they must
 # work on a fresh clone, before 'factory setup' (a test sourcing this file
 # always gets roles.sh). 'doctor' and 'setup' skip it too: cmd_doctor checks
-# the submodule itself, reports what it finds, and loads roles.sh only when
+# broker/ itself, reports what it finds, and loads roles.sh only when
 # broker/ is usable (see doctor_load_roles).
-# 'dashboard --demo' needs neither the broker/ submodule nor anything else of a set-up factory.
+# 'dashboard --demo' needs neither broker/ nor anything else of a set-up factory.
 skip_roles=""
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then
   case "${1:-}" in
@@ -200,9 +200,7 @@ setup_done() {
 
 # --- doctor ------------------------------------------------------------------------
 # cmd_doctor -> checks everything setup and start need, printing the fix for
-# each problem. Fails if anything blocks setup. Changes nothing itself, except
-# that it tries once to initialize the broker/ submodule, as every command that
-# loads roles.sh does.
+# each problem. Fails if anything blocks setup. Changes nothing itself.
 #
 # doctor_load_roles -> load scripts/lib/roles.sh (the role helpers) once broker/
 # is usable; roles.sh dies without broker/tools.txt, so doctor checks that first.
@@ -275,21 +273,14 @@ cmd_doctor() {
     fi
   fi
 
-  step "Gateway source (broker/ submodule)"
-  local roles_ready="" git_err=""
+  step "Gateway source (broker/)"
+  local roles_ready=""
   if [ -f "$ROOT/broker/tools.txt" ]; then
-    ok "broker/ is checked out"
+    ok "broker/ is present"
     roles_ready=1
-  elif ! command -v git >/dev/null 2>&1; then
-    warn "skipped: needs git"
   else
-    if ! broker_initialized "$ROOT"; then git_err="$(broker_submodule_init "$ROOT")" || true; fi
-    if [ -f "$ROOT/broker/tools.txt" ]; then
-      ok "broker/ was empty; initialized it"
-      roles_ready=1
-    else
-      fail "$(broker_missing_message "$ROOT" "$git_err" | head -n1)" "$(broker_missing_message "$ROOT" "$git_err" | sed -n '2,$p')"
-    fi
+    fail "$ROOT/broker/tools.txt is missing: broker/ is incomplete in this checkout" \
+      "restore it from the committed tree:" "  git -C '$ROOT' checkout HEAD -- broker"
   fi
   [ -z "$roles_ready" ] || doctor_load_roles
 
@@ -386,7 +377,7 @@ $(sed -n 's/^[[:space:]]*-[[:space:]]*"\{0,1\}\([^"[:space:]#]*\).*/\1/p' "$kit"
   # exactly as `factory start` checks them; no step at all without the folder.
   if [ -d "$FACTORY_CONFIG/roles" ] && [ -z "$roles_ready" ]; then
     step "Role overrides ($FACTORY_CONFIG/roles)"
-    warn "skipped: needs the broker/ submodule (see above)"
+    warn "skipped: needs broker/ (see above)"
   elif [ -d "$FACTORY_CONFIG/roles" ]; then
     step "Role overrides ($FACTORY_CONFIG/roles)"
     if out="$( (validate_role_overrides; for r in $(list_roles); do validate_role "$r"; done) 2>&1)"; then
@@ -1191,78 +1182,23 @@ docs_opener() {
 # new commits, re-runs `factory update` from the new code (the script on disk
 # may have changed under this process).
 pull_factory() {
-  local before broker_change broker_pin_commit broker_head_commit
+  local before
   step "Updating the factory code"
   if ! git -C "$ROOT" rev-parse --abbrev-ref '@{u}' >/dev/null 2>&1; then
     warn "this checkout has no upstream branch; skipping git pull"
     return 0
   fi
-  # --ignore-submodules=all: broker/ only ever moves because pull_factory's own
-  # "submodule update --init" below moves it to match the superproject's pin;
-  # that pin-only difference must never look like an uncommitted change and
-  # block every future pull (confirmed empirically: --ignore-submodules=dirty
-  # does NOT hide it, since git still reports a submodule commit mismatch as
-  # "modified" even with =dirty -- only "=all" does). A real uncommitted
-  # change to a tracked file or an untracked file in $ROOT still shows and
-  # still blocks.
-  if [ -n "$(git "${BROKER_GIT_SAFE[@]}" -C "$ROOT" status --porcelain --ignore-submodules=all)" ]; then
+  # broker/ is part of this checkout, so an edit or an untracked file there
+  # blocks the pull like anywhere else. Git-ignored files (e.g. a __pycache__/
+  # from running the broker's tests) don't show here and don't block: the
+  # image build never uses the working tree (it exports the committed broker/).
+  if [ -n "$(git "${BROKER_GIT_SAFE[@]}" -C "$ROOT" status --porcelain)" ]; then
     warn "$ROOT has uncommitted changes; skipping git pull (commit or stash them to pull)"
     return 0
   fi
-  # broker/ is ignored above, so an edit or an unreviewed local commit there
-  # (an agent working on this repo can write into broker/ like any other
-  # file) would otherwise go unseen: "git submodule update --init" below
-  # would silently detach a local commit. Being behind the pin is fine --
-  # that's exactly what "submodule update --init" below fixes -- so only
-  # refuse when broker/ is dirty, or has moved away from the pin's history
-  # rather than just lagging behind it. Every check goes through broker_git
-  # (lib/common.sh), which never trusts broker/.git and refuses a broker/.git
-  # that doesn't point at the real module directory -- checked before the
-  # pull and submodule update below, which do follow it. Git-ignored files
-  # (e.g. a __pycache__/ from running the broker's tests) don't block: the
-  # update leaves them alone, and the image build never uses the working
-  # tree (it exports the pinned commit). A submodule with no trace of
-  # initialization (a plain clone) has nothing to lose; the update below
-  # initializes it.
-  if broker_initialized "$ROOT"; then
-    if ! broker_change="$(broker_dirty "$ROOT" 2>&1)"; then
-      warn "skipping git pull: $broker_change"
-      return 0
-    fi
-    broker_change="$(broker_blocking_changes "$broker_change")"
-    if [ -n "$broker_change" ]; then
-      warn "$ROOT/broker has uncommitted changes (including untracked files); skipping git pull (commit or stash them, then run 'factory update' again)"
-      return 0
-    fi
-    broker_pin_commit="$(broker_pin "$ROOT")"
-    broker_head_commit="$(broker_head "$ROOT")"
-    if [ "$broker_head_commit" != "$broker_pin_commit" ] \
-      && ! broker_git "$ROOT" merge-base --is-ancestor "$broker_head_commit" "$broker_pin_commit" 2>/dev/null; then
-      warn "$ROOT/broker has a local commit ($broker_head_commit) that isn't part of the pinned history ($broker_pin_commit); skipping git pull (it would otherwise be silently detached - investigate it, then run 'factory update' again)"
-      return 0
-    fi
-  fi
   before="$(git -C "$ROOT" rev-parse HEAD)"
-  git "${BROKER_GIT_SAFE[@]}" -C "$ROOT" pull --ff-only --no-recurse-submodules --quiet \
+  git "${BROKER_GIT_SAFE[@]}" -C "$ROOT" pull --ff-only --quiet \
     || die "git pull failed; sort it out in $ROOT, then run 'factory update' again"
-  # Move broker/ to the (possibly new) pin. An initialized broker/ is moved
-  # with broker_git rather than "git submodule update", which would follow
-  # broker/.git -- and an agent could rewrite that between the check above
-  # and this step, pointing it at a repository whose config runs commands.
-  # Only a never-initialized submodule goes through "submodule update --init"
-  # (BROKER_GIT_SAFE also reaches the git processes it runs inside broker/).
-  if broker_initialized "$ROOT"; then
-    broker_pin_commit="$(broker_pin "$ROOT")"
-    if ! broker_git "$ROOT" cat-file -e "$broker_pin_commit^{commit}" 2>/dev/null; then
-      broker_git "$ROOT" fetch --quiet origin \
-        || die "fetching broker/ failed; sort it out in $ROOT, then run 'factory update' again"
-    fi
-    broker_git "$ROOT" checkout --quiet --detach "$broker_pin_commit" \
-      || die "checking out the broker pin $broker_pin_commit failed; sort it out in $ROOT/broker, then run 'factory update' again"
-  else
-    git "${BROKER_GIT_SAFE[@]}" -C "$ROOT" submodule update --init --quiet \
-      || die "git submodule update --init failed; sort it out in $ROOT, then run 'factory update' again"
-  fi
   if [ "$(git -C "$ROOT" rev-parse HEAD)" = "$before" ]; then
     ok "already up to date"
     return 0
@@ -1317,7 +1253,7 @@ plan_maybe_sandboxes() {
   printf '%s\n' "$changed" | while IFS= read -r f; do
     [ -n "$f" ] || continue
     case "$f" in
-      broker|broker/*|kits/broker/*) emit "$BROKER_SANDBOX" "the broker's code or kit changes ($f)" ;;
+      broker/*|kits/broker/*) emit "$BROKER_SANDBOX" "the broker's code or kit changes ($f)" ;;
       kits/coordinator/*) emit "$COORDINATOR_SANDBOX" "its kit changes ($f)" ;;
       templates/developer/*|templates/agent/*) emit "$COORDINATOR_SANDBOX" "its image changes ($f)" ;;
       scripts/lib/roles.sh) emit "$COORDINATOR_SANDBOX" "how sandboxes are fingerprinted changes ($f)"
@@ -1346,25 +1282,19 @@ plan_maybe_sandboxes() {
 #   note<TAB>TEXT                   anything that changes what update does, and
 #                                   what every update drops or keeps
 cmd_update_plan() {
-  local upstream changed="" sb stale broker_change
+  local upstream changed="" sb stale
   if ! upstream="$(git "${BROKER_GIT_SAFE[@]}" -C "$ROOT" rev-parse --abbrev-ref '@{u}' 2>/dev/null)"; then
     printf 'note\t%s\n' "this checkout has no upstream branch: update skips git pull and only rebuilds"
   else
-    git "${BROKER_GIT_SAFE[@]}" -C "$ROOT" fetch --quiet --no-recurse-submodules 2>/dev/null \
+    git "${BROKER_GIT_SAFE[@]}" -C "$ROOT" fetch --quiet 2>/dev/null \
       || printf 'note\t%s\n' "could not fetch $upstream: the commits below may be out of date"
     git "${BROKER_GIT_SAFE[@]}" -C "$ROOT" log --no-color --format='commit%x09%h%x09%s' 'HEAD..@{u}' 2>/dev/null || true
     if ! git "${BROKER_GIT_SAFE[@]}" -C "$ROOT" merge-base --is-ancestor HEAD '@{u}' 2>/dev/null; then
       printf 'note\t%s\n' "this checkout has commits that $upstream doesn't: git pull --ff-only will fail"
     fi
     changed="$(git "${BROKER_GIT_SAFE[@]}" -c core.quotePath=false -C "$ROOT" diff --no-ext-diff --no-textconv --name-only 'HEAD...@{u}' 2>/dev/null || true)"
-    if [ -n "$(git "${BROKER_GIT_SAFE[@]}" -C "$ROOT" status --porcelain --ignore-submodules=all)" ]; then
+    if [ -n "$(git "${BROKER_GIT_SAFE[@]}" -C "$ROOT" status --porcelain)" ]; then
       printf 'note\t%s\n' "$ROOT has uncommitted changes: update skips git pull (commit or stash them to pull)"
-    elif broker_initialized "$ROOT"; then
-      if ! broker_change="$(broker_dirty "$ROOT" 2>&1)"; then
-        printf 'note\t%s\n' "update skips git pull: $broker_change"
-      elif [ -n "$(broker_blocking_changes "$broker_change")" ]; then
-        printf 'note\t%s\n' "$ROOT/broker has uncommitted changes: update skips git pull"
-      fi
     fi
   fi
   # What every update drops, whichever sandboxes it recreates; the per-sandbox

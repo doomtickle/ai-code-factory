@@ -441,8 +441,8 @@ class ProcessTests(unittest.TestCase):
         self.assertEqual(list(Path(self.tmp.name).glob("factory-demo-*")), [])  # deleted on exit
         self.assertEqual(self.listing(self.real_state), self.before)
 
-    def test_works_without_the_broker_submodule(self):
-        # A fresh clone, before `factory setup`: bin/factory must not stop at roles.sh.
+    def test_works_without_the_broker_files(self):
+        # bin/factory must not stop at roles.sh when broker/ has no tools.txt.
         clone = Path(self.tmp.name) / "clone"
         shutil.copytree(REPO, clone, ignore=shutil.ignore_patterns(".git", "broker", "node_modules"))
         (clone / "broker").mkdir()

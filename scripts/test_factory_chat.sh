@@ -17,8 +17,7 @@ set -euo pipefail
 #    second Coordinator in the same VM.
 #
 # Drives a fixture checkout (bin/factory + scripts/lib, with a stub
-# broker/tools.txt so the roles.sh submodule check doesn't need the real
-# broker/ submodule) against a fake sbx that records every invocation's
+# broker/tools.txt so roles.sh doesn't need the real broker/) against a fake sbx that records every invocation's
 # argv. No real sbx, docker or network access needed.
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"

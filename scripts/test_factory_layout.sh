@@ -24,7 +24,7 @@ set -euo pipefail
 #
 # Sources scripts/lib/common.sh directly (not bin/factory): bin/factory
 # itself sources scripts/lib/roles.sh for every command but "docs"/"help",
-# which needs the broker/ submodule initialized - irrelevant to resolve_layout
+# which needs broker/tools.txt - irrelevant to resolve_layout
 # and not guaranteed in every checkout this test runs in.
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
