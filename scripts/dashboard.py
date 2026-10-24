@@ -166,7 +166,7 @@ EVENTS = 80        # event printer lines
 WRITES_TTL = 4     # seconds between reads of approvals/done/ for the deferred-write list
 VERDICT = re.compile(r"^- Verdict: (\S+)", re.M)
 DESK_MAX = 18      # characters of a lane's desk placard
-TOPIC = re.compile(r"(?<![\w./-])(?:factory-[A-Za-z0-9-]+/)?factory/([A-Za-z0-9][A-Za-z0-9._-]*)")
+TOPIC = re.compile(r"(?:(?<=\.\.)|(?<=\borigin/)|(?<![\w./-]))(?:factory-[A-Za-z0-9-]+/)?factory/([A-Za-z0-9][A-Za-z0-9._-]*)")
 DEV_REF = re.compile(r"(?<![\w-])factory-(developer(?:-lane[0-9]+)?)/factory/")
 TASK_LABEL = re.compile(r"^(?:(?:repo|repository|project)\s*:\s*[^\s;]*[^\s.;][.;]?\s*|(?:task|goal)\s*:\s*)", re.IGNORECASE)
 

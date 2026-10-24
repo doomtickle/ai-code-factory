@@ -192,6 +192,9 @@ class DeskLabelTests(unittest.TestCase):
             ("Put the bundle in .factory/outgoing/ then push factory/fix-x", "fix x"),
             ("See https://example.com/o/factory/pull/1 and push factory/fix-x", "fix x"),
             ("Edit a/factory/b then factory-developer/factory/fix-y", "fix y"),
+            ("Review origin/factory/fix-x", "fix x"),
+            ("Diff main...factory/fix-x", "fix x"),
+            ("git diff origin/main...factory-developer/factory/fix-y", "fix y"),
         ):
             self.assertEqual(d.desk_label(text), want)
 
