@@ -37,7 +37,7 @@ socket, or host credentials. Full picture: README.md.
   Broker microVM (`factory-broker`), reached only as MCP tools via the sbx MCP
   gateway. It grants only the calling role's `BROKER_TOOLS` (by token), applies
   `broker/policy.toml`, filters content both ways, and audit-logs. Its code is the
-  `passdesk-broker` repo, included here as a git submodule at `broker/`; sandbox name
+  the `broker/` directory of this repo (it was the separate `passdesk-broker` repo until 24 Oct 2026, history kept); sandbox name
   (`factory-broker`) and paths (`/opt/factory-broker`, `/etc/factory-broker`) are
   unchanged.
 
@@ -136,7 +136,7 @@ socket, or host credentials. Full picture: README.md.
   <name>` delivers the same way until the broker is recreated. That path is outside
   both the agent-visible workspace and `BROKER_STATE` (the broker state dir, a host
   bind mount), so no plaintext ever lands on host disk. The broker
-  (`broker/passdesk/`, the `passdesk-broker` submodule) reads the file fresh every
+  (`broker/passdesk/`) reads the file fresh every
   call, so rotating the keychain entry and re-running `start-broker.sh` rotates the
   credential. Do not widen this exception to other credentials or sandboxes without
   updating this rule.

@@ -1,5 +1,11 @@
 # Broker extraction roadmap
 
+> **24 Oct 2026:** the broker lives in this repository again, as the plain
+> directory `broker/` (the former `passdesk-broker` repository folded in with
+> its history). The factory no longer has a git submodule or a pin for it;
+> the text below is the plan as written when the broker was a separate
+> repository and is left as it was.
+
 Goal: make the broker a standalone gateway that any MCP-speaking coding agent
 can sit behind, on any sandbox or none, with the factory as one deployment of
 it. The broker's security model stays as it is: no agent egress except

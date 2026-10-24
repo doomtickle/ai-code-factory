@@ -46,7 +46,6 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          submodules: true
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ matrix.python }}
@@ -102,7 +101,6 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          submodules: true
       - name: Use the system bash and Python first on PATH
         run: |
           echo /usr/bin >> "$GITHUB_PATH"
@@ -153,7 +151,6 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          submodules: true
       - name: Build the developer, reviewer and broker images (as factory setup does, without sbx)
         run: scripts/00-build-templates.sh --build-only
       - name: Broker tests, inside the broker image, without network
@@ -167,3 +164,78 @@ jobs:
               'factory-lane -h >/dev/null && factory-test -h >/dev/null && git --version' \
               || { echo "::error::$image is missing factory-lane, factory-test or git"; exit 1; }
           done
+
+  broker:
+    # The broker's own tests, as passdesk-broker's workflow ran them before
+    # the broker moved into this repo: inside both images built from
+    # broker/Dockerfile (the sbx image the factory uses and the standalone
+    # image), without network, then the compose file and a smoke test of the
+    # standalone image. The image Pythons are the digest-pinned ones in the
+    # Dockerfile; the first step runs the same suite on this file's pinned
+    # Python (the broker needs 3.11+). No third-party actions beyond checkout
+    # and setup-python: the rest is the runner's docker CLI.
+    name: broker tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14.8"
+      - name: Git identity for test fixtures
+        run: |
+          git config --global user.name "CI"
+          git config --global user.email "ci@example.invalid"
+      - name: Run the tests on the runner's Python
+        working-directory: broker
+        run: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest -v
+
+      - name: Prepare empty build contexts
+        run: |
+          mkdir -p "$RUNNER_TEMP/factory-config" "$RUNNER_TEMP/plugins"
+          : > "$RUNNER_TEMP/factory-config/policy.toml"
+      - name: Build image
+        working-directory: broker
+        run: |
+          docker buildx build --load -t passdesk:ci \
+            --build-context "factory-config=$RUNNER_TEMP/factory-config" \
+            --build-context "plugins=$RUNNER_TEMP/plugins" \
+            .
+      - name: Run tests in the image
+        run: |
+          docker run --rm --network none -e PYTHONDONTWRITEBYTECODE=1 \
+            -v "$PWD/broker:/b:ro" -w /b passdesk:ci python3 -m unittest -v
+
+      # The standalone target (plain Docker, no sbx): built with no
+      # --build-context, so the Dockerfile's default empty overlay and
+      # plugins stages are what get exercised here, then the same test suite
+      # inside it, as its non-root user, on its Python and git.
+      - name: Build standalone image
+        working-directory: broker
+        run: docker buildx build --load --target standalone -t passdesk:ci-standalone .
+      - name: Run tests in the standalone image
+        # The image's own BROKER_* defaults are unset first: the tests
+        # expect the environment a bare checkout has (deployment "sbx").
+        run: |
+          docker run --rm --network none -v "$PWD/broker:/b:ro" -w /b passdesk:ci-standalone \
+            sh -c 'unset BROKER_DEPLOYMENT BROKER_STATE BROKER_WORKSPACE BROKER_SECRETS_DIR
+                   exec python3 -m unittest -v'
+      - name: Validate the compose quickstart
+        # The stack itself (and its isolation check) runs in CI as a
+        # separate change (doomtickle/passdesk-ops#59); this only checks the
+        # file parses with the secret and workspace it expects.
+        working-directory: broker
+        run: |
+          mkdir -p secrets workspace && : > secrets/github
+          docker compose config --quiet
+      - name: Standalone image smoke test
+        run: |
+          docker run --rm --network none passdesk:ci-standalone sh -c '
+            set -eu
+            [ "$(id -u)" != 0 ] || { echo "runs as root" >&2; exit 1; }
+            [ "$BROKER_DEPLOYMENT" = standalone ]
+            python3 -m passdesk principal add agent --tools git_fetch >/dev/null
+            python3 -m passdesk principal list
+            python3 -m passdesk.doctor || true
+            git --version'

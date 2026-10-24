@@ -129,7 +129,7 @@ Everything is pinned for repeatable setups:
 | ruff 0.16.8 | `templates/reviewer/Dockerfile`, `templates/developer/Dockerfile` |
 | yarn 1.22.22 (+ SHA-256) and `factory-test` | `templates/developer/Dockerfile`, `templates/reviewer/Dockerfile` |
 | Chrome for Testing headless shell 156.0.8078.47 (linux64 and linux-arm64, each + SHA-256; its Ubuntu libraries and fonts pinned only by the base image digest) | `templates/developer/Dockerfile`, `templates/reviewer/Dockerfile` |
-| Broker code + policy | baked into `factory-broker:v3` at build time |
+| Broker code + policy | `broker/` at this repo's commit, baked into `factory-broker:v3` at build time |
 | Dispatch bridge runtime | macOS system Python (`/usr/bin/python3`); `python3` on PATH on Linux |
 
 Every script checks the exact `sbx` version and refuses to run on a mismatch.
@@ -140,19 +140,12 @@ The broker and the dispatch bridge are Python standard library only.
 For a browsable version of these docs, with step-by-step guides, run
 `./bin/factory docs` (it works offline, before setup).
 
-`broker/` is the `passdesk-broker` repository as a git submodule; a plain
-`git clone` leaves it empty. `factory setup` (and any other `factory`
-command but `factory docs` and `factory help`) makes one quiet attempt to
-initialize it on first run, so you can often skip this step. That attempt
-needs `git` and access to the submodule's URL, and it only runs when `broker/`
-shows no sign of ever being initialized. If the command stops with `missing
-.../broker/tools.txt - run 'git submodule update --init'`, run `git submodule
-update --init` yourself (or clone with `--recurse-submodules` to avoid it).
-The broker image is always
-built from a `git archive` export of the commit this repo pins `broker/` to,
-never from the `broker/` working tree, and `factory setup`/`factory update`
-refuse to go on while `broker/` has uncommitted work, is off its pin, or its
-`broker/.git` doesn't point at `.git/modules/broker`.
+`broker/` is part of this repository (it was the separate `passdesk-broker`
+repository until 24 Oct 2026; its history is kept). A plain `git clone` has
+everything. The broker image is always built from a `git archive` export of
+the committed `broker/` (your checkout's `HEAD`), never from the `broker/`
+working tree, so uncommitted edits there are not in the image: commit them
+first. `factory setup` says so when it sees any.
 
 ```sh
 # Check the machine first; it says how to fix anything missing:
@@ -1292,9 +1285,7 @@ hasn't dispatched any jobs yet just shows an empty report.
   and `broker-kit/` (Local settings) for your own. Then run `factory update`. The
   policy is built into the image, so agents can't change it.
 - **Upgrading:** run `factory update`. It pulls this checkout (fast-forward only,
-  with its submodules, and only when it has no local changes - a `broker/` pin
-  bump by itself never counts as a local change, since `factory update` moves
-  `broker/` to the new pin as part of the same pull), runs `factory setup` to
+  and only when it has no local changes, `broker/` included), runs `factory setup` to
   rebuild the images, then recreates exactly the sandboxes whose inputs changed and restarts
   the factory, dispatch bridge included. A sandbox keeps the image, kit,
   project access and broker access it was created with, so `factory start`
@@ -1365,8 +1356,6 @@ hasn't dispatched any jobs yet just shows an empty report.
     `test_factory_secret.sh`, `test_factory_docs.sh` and `test_factory_lane.sh`
   - images, without sbx: `scripts/00-build-templates.sh --build-only`
   - broker: `docker run --rm --network none -v "$PWD/broker:/b:ro" -w /b factory-broker:v3 python3 -B -m unittest discover -s tests -t .`
-    (`broker/` is the `passdesk-broker` submodule; run `git submodule update --init`
-    first if it's empty)
 - **Docs site:** `.github/workflows/docs.yml` publishes the `factory docs` page
   to GitHub Pages whenever the docs change on main, with links to repo files
   pointing at that commit on GitHub (`scripts/docs.py --link-base`).
@@ -1394,7 +1383,7 @@ roles/<name>/kit/spec.yaml   Role kit: Anthropic-only egress
 kits/coordinator/spec.yaml   Coordinator kit
 kits/coordinator/broker.conf Coordinator's direct broker tool grants (none by default; Jira is the opt-in)
 kits/broker/spec.yaml        Broker kit: GitHub, registries, docs hosts
-broker/                      passdesk-broker, as a git submodule: MCP server (runs in the broker VM), policy, tests
+broker/                      the Broker: MCP server (runs in the broker VM), policy, tests
 broker/passdesk/core/        Gateway core: protocol, auth and grants, policy, filters, audit
 broker/passdesk/tools/       One module per broker tool (listed in broker/tools.txt)
 dispatch/                    Dispatch bridge (runs on the host), tests
@@ -1436,7 +1425,7 @@ Change pins on purpose, in their own commit, and re-run the full setup to test.
   then copy the top-level `Digest:` into `templates/developer/Dockerfile` **and**
   `templates/reviewer/Dockerfile`.
 - **Broker base image:** same with `docker/sandbox-templates:shell-docker` →
-  `broker/Dockerfile` (in the `passdesk-broker` submodule).
+  `broker/Dockerfile`.
 - After changing any image, bump `TEMPLATE_TAG` (`v1` → `v2`) in `scripts/lib/common.sh`.
 - **sbx:** update the version, URL and SHA-256 in `scripts/lib/common.sh`,
   for each platform you use:
