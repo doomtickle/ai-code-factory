@@ -77,6 +77,8 @@ check `Origin`: the terminal's WebSocket and the control unit's POSTs do both.
                                  ... with the Coordinator's terminal
   factory dashboard --factory PATH
                                  RESTART and UPDATE run PATH instead of bin/factory
+  factory dashboard --demo       made-up data from dashboard-demo/ in a temp folder, nothing acts
+                                 (no --state, --coordinator, --project or --factory; see dashboard_demo.py)
 
 Standard library only; runs on the macOS system Python (3.9).
 """
@@ -97,6 +99,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import webbrowser
@@ -106,6 +109,7 @@ from urllib.parse import parse_qs, urlsplit
 
 import approvals
 import dashboard_controls as dc
+import dashboard_demo as demo
 import dashboard_term as dt
 import docs
 import watch as w
@@ -259,8 +263,8 @@ def broker_event(rec: dict) -> dict | None:
 # State
 
 class Dashboard:
-    def __init__(self, state: Path, roles: Path, project: str):
-        self.state, self.project = state, project
+    def __init__(self, state: Path, roles: Path, project: str, demo: bool = False):
+        self.state, self.project, self.demo = state, project, demo
         self.watch = w.Watch(state / "dispatch", roles, project)
         self.broker = BrokerAudit(state / "broker" / "audit.jsonl")
         self.verdicts: dict = {}
@@ -418,7 +422,7 @@ class Dashboard:
 
         total = sum(num(rec.get("cost_usd")) or 0.0 for _, rec in jobs)
         return {
-            "now": now, "clock": clock(now), "project": self.project,
+            "now": now, "clock": clock(now), "project": self.project, "demo": self.demo,
             "bridge": self.watch.bridge_alive(),
             "totals": {"cost": round(total, 4), "jobs": len(jobs),
                        "running": sum(1 for lane in lanes if lane["state"] in ("running", "held"))},
@@ -640,16 +644,27 @@ def open_browser(url: str) -> str | None:
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="factory dashboard", description=__doc__.splitlines()[0])
-    ap.add_argument("--state", required=True, type=Path, help="the factory state folder (holds dispatch/ and broker/)")
-    ap.add_argument("--roles", required=True, type=Path, help="the factory's roles/ folder")
+    ap.add_argument("--state", type=Path, help="the factory state folder (holds dispatch/ and broker/)")
+    ap.add_argument("--roles", type=Path, help="the factory's roles/ folder")
     ap.add_argument("--project", default="", help="the project the factory runs on (for the header)")
     ap.add_argument("--port", type=int, default=0, help="port on 127.0.0.1 (default: any free port)")
     ap.add_argument("--no-open", action="store_true", help="print the URL without opening a browser")
     ap.add_argument("--coordinator", default="", metavar="NAME",
                     help="the Coordinator's sandbox: serve its live terminal (sbx run --name NAME)")
-    ap.add_argument("--factory", type=Path, default=dc.FACTORY, metavar="PATH",
+    ap.add_argument("--factory", type=Path, default=None, metavar="PATH",
                     help="the factory command the RESTART and UPDATE keys run (default: this repo's bin/factory)")
+    ap.add_argument("--demo", action="store_true",
+                    help="show made-up data from scripts/dashboard-demo/, with no factory running; nothing acts")
     args = ap.parse_args(argv)
+    if args.demo:
+        given = [f for f, v in (("--state", args.state), ("--project", args.project),
+                                ("--coordinator", args.coordinator), ("--factory", args.factory)) if v]
+        if given:
+            ap.error(f"--demo shows built-in sample data and has no state folder, project, Coordinator terminal "
+                     f"or commands: drop {', '.join(given)}")
+        args.roles = args.roles or DOCS_ROOT / "roles"
+    elif args.state is None or args.roles is None:
+        ap.error("--state and --roles are required (or --demo)")
     term = None
     if args.coordinator:
         try:
@@ -657,7 +672,25 @@ def main(argv=None) -> int:
         except ValueError as e:
             print(str(e), file=sys.stderr)
             return 2
-    board = Dashboard(args.state, args.roles, args.project or "(no project)")
+    scratch = None
+    if args.demo:
+        scratch = tempfile.mkdtemp(prefix="factory-demo-")  # 0700, outside the checkout and the real state
+        args.state, args.project = Path(scratch), demo.PROJECT
+        try:
+            demo.build(args.state)
+        except (OSError, UnicodeDecodeError) as e:
+            shutil.rmtree(scratch, ignore_errors=True)
+            print(f"could not build the demo data: {e}", file=sys.stderr)
+            return 1
+    try:
+        return _serve(args, term)
+    finally:
+        if scratch is not None:
+            shutil.rmtree(scratch, ignore_errors=True)
+
+
+def _serve(args, term) -> int:
+    board = Dashboard(args.state, args.roles, args.project or "(no project)", demo=args.demo)
     if not board.watch.lanes:
         print("no roles or transcripts found", file=sys.stderr)
         return 1
@@ -666,12 +699,17 @@ def main(argv=None) -> int:
     # listens or the browser opener starts.
     for sig in (signal.SIGTERM, signal.SIGHUP):
         signal.signal(sig, _interrupt)
-    controls = dc.Controls(board, args.state, term, args.factory)
+    if args.demo:
+        controls = demo.DemoControls(board, args.state, None)
+    else:
+        controls = dc.Controls(board, args.state, term, args.factory or dc.FACTORY)
     manual = load_docs()
     if isinstance(manual, str):
         print(f"warning: MANUAL is off: {manual}", file=sys.stderr)
-    server = None
+    server, ticker = None, None
     try:
+        if args.demo:
+            ticker = demo.start_ticker(args.state)
         server, url = serve(board, args.port, term=term, controls=controls, manual=manual)
         return _run(args, server, url, term)
     except OSError as e:
@@ -682,6 +720,8 @@ def main(argv=None) -> int:
     except KeyboardInterrupt:
         return 0
     finally:
+        if ticker is not None:
+            ticker.set()
         if server is not None:
             try:
                 stop(server, term)
@@ -699,11 +739,17 @@ def _run(args, server, url: str, term) -> int:
         print("Trying to open it in your browser. If nothing opens, open the link above in a browser on this machine.")
     else:
         print("Could not start a browser: open the link above in a browser on this machine.")
+    if args.demo:
+        print("DEMO MODE: made-up data from scripts/dashboard-demo/, no factory needed. The keys that act are "
+              "switched off and there is no Coordinator terminal.")
     if term is not None:
         print(f"Terminal 0 attaches to {args.coordinator} when you press POWER ON on the page "
               "(unless it is open elsewhere).")
-    print("Ctrl-C stops the dashboard" + (" and hangs up on the Coordinator." if term else ".")
-          + " A RESTART or UPDATE started from it keeps running.", flush=True)
+    if args.demo:
+        print("Ctrl-C stops the dashboard and deletes the demo data.", flush=True)
+    else:
+        print("Ctrl-C stops the dashboard" + (" and hangs up on the Coordinator." if term else ".")
+              + " A RESTART or UPDATE started from it keeps running.", flush=True)
     while True:
         time.sleep(3600)
 

@@ -1,0 +1,50 @@
+commit 6e976e05638e33145de86416f988ebea086e5d0d
+Author: Demo Dev <dev@example.com>
+Date:   2026-10-23T09:00:00Z
+
+    Make greet() reject empty names
+    
+    Adds an optional punctuation argument and trims the name.
+    
+
+---
+ src/greet.py | 7 +++++--
+ 1 file changed, 5 insertions(+), 2 deletions(-)
+
+diff --git a/src/greet.py b/src/greet.py
+index 748e188..7efeea0 100644
+--- a/src/greet.py
++++ b/src/greet.py
+@@ -1,2 +1,5 @@
+-def greet(name):
+-    return "hello " + name
++def greet(name, punct="!"):
++    name = name.strip()
++    if not name:
++        raise ValueError("name is empty")
++    return "hello " + name + punct
+commit 86f5ff234cdfcfba53f649e81601d469edb57d5a
+Author: Demo Dev <dev@example.com>
+Date:   2026-10-23T09:00:00Z
+
+    Test greet() with an empty name
+    
+
+---
+ tests/test_greet.py | 6 +++++-
+ 1 file changed, 5 insertions(+), 1 deletion(-)
+
+diff --git a/tests/test_greet.py b/tests/test_greet.py
+index 70f8942..9ef00f1 100644
+--- a/tests/test_greet.py
++++ b/tests/test_greet.py
+@@ -4,4 +4,8 @@ from src.greet import greet
+ 
+ class GreetTests(unittest.TestCase):
+     def test_greet(self):
+-        self.assertEqual(greet("ada"), "hello ada")
++        self.assertEqual(greet("ada"), "hello ada!")
++
++    def test_empty_name_is_refused(self):
++        with self.assertRaises(ValueError):
++            greet("  ")

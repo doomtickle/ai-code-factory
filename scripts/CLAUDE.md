@@ -136,3 +136,16 @@ Anything new that lets a page act must meet the same bar: one fixed argv with no
 shell, a key in a request header (not just the cookie) on a POST or WebSocket with its
 `Origin` checked, kept out of reach of the page that shows agent-written content, and a
 confirm step before any host command.
+
+Demo mode (`factory dashboard --demo`, `scripts/dashboard_demo.py`) is the same server
+on a throwaway copy of the committed fixture `scripts/dashboard-demo/` and meets every
+rule above. It reads no `FACTORY_STATE` or broker state and refuses `--state`,
+`--project`, `--coordinator` and `--factory` (`bin/factory` passes none of them and
+`exec`s Python so a signal reaches it). The copy is a fresh 0700 `mkdtemp` folder, never
+inside the checkout, removed when the dashboard exits; the ticker appends audit records
+only there. There is no Terminal 0. Its control unit is `DemoControls`: `decide`,
+`prepare` and `run` raise `Refused(403)` before any decision file, token or host command,
+and `argv()` raises. `state`, `log` and `patch` are inherited unchanged, so INSPECT reads
+the fixture's patch through the same `read_patch` path (digest-named, `O_NOFOLLOW`,
+SHA-256 checked) inside the temp folder. Keep it that way: demo code must never add a
+write outside that folder or a way to start a command.

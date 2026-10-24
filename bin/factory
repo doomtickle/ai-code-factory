@@ -27,8 +27,15 @@ ROOT="$(dirname "$SCRIPTS")"
 # always gets roles.sh). 'doctor' and 'setup' skip it too: cmd_doctor checks
 # the submodule itself, reports what it finds, and loads roles.sh only when
 # broker/ is usable (see doctor_load_roles).
-case "${BASH_SOURCE[0]}:${1:-help}" in
-  "$0":docs|"$0":config|"$0":help|"$0":-h|"$0":--help|"$0":doctor|"$0":setup) ;;
+# 'dashboard --demo' needs neither the broker/ submodule nor anything else of a set-up factory.
+skip_roles=""
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+  case "${1:-}" in
+    dashboard|gui) for demo_arg in "$@"; do [ "$demo_arg" != "--demo" ] || skip_roles=1; done ;;
+  esac
+fi
+case "${BASH_SOURCE[0]}:${1:-help}:$skip_roles" in
+  "$0":docs:*|"$0":config:*|"$0":help:*|"$0":-h:*|"$0":--help:*|"$0":doctor:*|"$0":setup:*|"$0":dashboard:1|"$0":gui:1) ;;
   *)
     # shellcheck source=../scripts/lib/roles.sh
     . "$SCRIPTS/lib/roles.sh" ;;
@@ -87,13 +94,14 @@ ${B}Usage${N}
                              or one lane: developer-lane2), or broker / dispatch
   factory watch              Live view of the lanes: a pane per active lane, idle lanes as
                              one line each, tool calls condensed, status and cost in titles
-  factory dashboard [--no-open] [--port N]
+  factory dashboard [--no-open] [--port N] [--demo]
                              The whole factory on one screen in your browser: the
                              Coordinator's terminal, lanes, spend, broker calls,
                              held writes (local). Its control unit approves and
                              declines held writes and runs restart and update
                              (each after a confirm step). Prints a link with this
-                             run's token; 'gui' also works
+                             run's token; 'gui' also works. --demo shows made-up
+                             data with no factory running (display only)
   factory packet [id|lane]   A job's review packet: task, branch commits and diffstat,
                              tests, broker calls, cost, report (default: the latest;
                              --list for recent jobs)
@@ -1443,9 +1451,18 @@ cmd_watch() {
 # what an update would do). Otherwise it starts only the browser opener, once
 # (none with --no-open). Runs in the foreground; Ctrl-C stops it and hangs up
 # (a restart or update it started keeps running).
+# With --demo it serves made-up data from scripts/dashboard-demo/ instead: no
+# state folder, no sbx, no Coordinator terminal, and its keys refuse to act.
+# It passes none of the bound project, FACTORY_STATE or the Coordinator's name,
+# and execs, so a signal reaches Python itself and the demo folder is removed.
 cmd_dashboard() {
-  local python
+  local python demo_arg
   python="$(resolve_python)"
+  for demo_arg in "$@"; do
+    if [ "$demo_arg" = "--demo" ]; then
+      exec "$python" "$SCRIPTS/dashboard.py" --roles "$ROOT/roles" "$@"
+    fi
+  done
   "$python" "$SCRIPTS/dashboard.py" --state "$FACTORY_STATE" --roles "$ROOT/roles" \
     --project "$(basename "$(bound_project)")" --coordinator "$COORDINATOR_SANDBOX" "$@"
 }
