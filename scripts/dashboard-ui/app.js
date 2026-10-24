@@ -567,6 +567,7 @@
     const t = v / KNOBS.crt[1];
     const f = n => n.toFixed(2);
     tube.classList.toggle("flat", t <= 0);
+    document.documentElement.style.setProperty("--crt", f(t));   // the floor's tube (floor.css) follows the same dial
     tube.style.setProperty("--scan", f(0.36 * t));
     tube.style.setProperty("--scan-w", `${f(1 + 0.3 * t)}px`);
     tube.style.setProperty("--mask", f(0.08 * t));

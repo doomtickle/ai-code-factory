@@ -1083,15 +1083,16 @@ your browser. It shows:
   bay and down into the strip (no motion with the system's reduced-motion
   setting), and keeps its number in both forms: a digit key (or a click)
   opens the lane's full transcript and its latest review packet.
-- **Factory floor:** FLOOR (or `f`) redraws the Lanes bay as a pixel-art
-  shop floor: a workstation per lane showing its state, in a bay per role
-  (developers, then reviewers) beside the Coordinator's console. Work visibly
-  flows Coordinator, developer, reviewer, out: work orders and branch crates
-  ride rails between the bays, approved work leaves by the OUT door, and
-  broker calls ride the outbound belt as crates through an X-ray arch (allowed
-  ones out the door, denied ones stamped CONFISCATED, held writes queued at
-  the arch). It only displays, from the same
-  state as the rest of the page.
+- **Factory floor:** FLOOR (or `f`) redraws the Lanes bay as one more module
+  of the rack: a brushed panel with an amber tube, and inside it one loop
+  track with a program seated at a console per lane, its identity disc showing
+  the lane's state. Work visibly flows round the loop: work orders ride from
+  the Coordinator's dispatch console to a developer, branch crates ride on to
+  a reviewer (a light bridge joins the pair), approved work rides through the
+  gate and out of the OUT portal, and broker calls are crates at the gate
+  (allowed ones out, denied ones stamped CONFISCATED into the derez field,
+  held writes waiting in front of it). The tube follows Terminal 0's CRT knob.
+  It only displays, from the same state as the rest of the page.
 - **Write gate:** the pushes and pull requests the gateway is holding for you.
   A held write names the role, not the lane, so when two lanes of one role
   are running both show as held. Under its display is the **control unit**:

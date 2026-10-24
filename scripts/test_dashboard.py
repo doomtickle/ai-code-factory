@@ -803,16 +803,34 @@ class PageTests(unittest.TestCase):
         self.assertIn('if (toArch(role, () => confiscate(ARCH_X - 4, line(ev)))) return true;\n        binCrate(line(ev));', js)
 
     def test_floor_is_a_line_from_coordinator_to_out(self):
-        # The redesigned floor: no foreman's booth, broker gatehouse or dock; a Coordinator
-        # console, a bay per role and rails between them, all drawn from lane state.
+        # The floor (doomtickle/passdesk-ops#163): a panel with an amber tube, one loop track
+        # inside it from the Coordinator's dispatch console past the developers and reviewers
+        # to the gate and the OUT portal; no foreman's booth, gatehouse, dock, bays or rails.
         js = (UI / "floor.js").read_text()
         css = (UI / "floor.css").read_text()
-        for gone in ("hue-f", "hue-g", "DOCK_X", "DOCK_Y", "POLICY · AUDIT", "TO DOCK", "OUTBOUND ▸ BROKER", "docked(", "boothNote", '"FOREMAN"'):
+        for gone in ("hue-f", "hue-g", "DOCK_X", "DOCK_Y", "POLICY · AUDIT", "TO DOCK", "OUTBOUND ▸ BROKER", "docked(", "boothNote", '"FOREMAN"',
+                     '"HAND-OFF"', '"OUTBOUND ▸ OUT"', "function belt(", "RAIL_A", "RAIL_B", "RAIL_C"):
             self.assertNotIn(gone, js, gone)
-        for gone in (".booth", ".gatehouse", ".dock", ".foreman", "hue-f", "hue-g", "roll-dock"):
+        for gone in (".booth", ".gatehouse", ".dock", ".foreman", "hue-f", "hue-g", "roll-dock", ".belt", ".roll", ".concrete", ".wall {", ".hat"):
             self.assertNotIn(gone, css, gone)
-        for label in ('"COORDINATOR"', '"DEVELOPERS"', '"REVIEWERS"', '"OUTBOUND ▸ OUT"', '"DISPATCH"', '"HAND-OFF"'):
+        for label in ('"COORDINATOR"', '"DEVELOPERS ▲"', '"REVIEWERS ▼"', '"DISPATCH"', '"GATE"', '"OUT"', '"DEREZ"', '"LOIS WORKS"'):
             self.assertIn(label, js, label)
+        # One track, drawn once, carries every trip; the glass clips crates leaving by the portal.
+        self.assertEqual(js.count("trackPath()"), 1)
+        self.assertIn('parts.fx = S("g", { "clip-path": "url(#fl-glass)" }, "fx");', js)
+        for path in ("const dispatchPath = st => [CHUTE, [LX + RAD, CHUTE[1]], [LX + RAD, TY], [st.x, TY], st.inTray];", "const handoffPath = (dev, rev) => [dev.outTray, [dev.x, TY], [RX - RAD, TY]",
+                     "const dropPath = rev => [rev.inTray, rev.outTray, [rev.x, BY], [OUT_X, BY], [OUT_X, GLASS_B + 12]];"):
+            self.assertIn(path, js, path)
+        # The people stay: a program per station (and the User at dispatch while Terminal 0 is attached), its disc carrying the state.
+        self.assertIn('con.append(...program(CON_X, CON_Y, "hue-user", "user"));', js)
+        self.assertIn("g.append(...program(cx, feet, hueCls));", js)
+        self.assertIn(".fl .console .user { display: none; }", css)
+        self.assertIn(".fl .console.in .user { display: inline; }", css)
+        for rule in (".fl .s-running .disc", ".fl .s-held .disc", ".fl .s-done .disc", ".fl .s-fail .disc", ".fl .s-idle .disc"):
+            self.assertIn(rule, css, rule)
+        # Every colour is a theme token (plus the plate's screws and a few fixed darks), and the tube follows Terminal 0's CRT dial.
+        self.assertIn("var(--crt, .3)", css)
+        self.assertIn('document.documentElement.style.setProperty("--crt", f(t));', (UI / "app.js").read_text())
         # The console plate keeps the old booth's three states.
         self.assertIn('!state.bridge ? "BRIDGE DOWN" : attached ? "ON DUTY" : "BACK SOON"', js)
         self.assertIn("const attached = !!(state.term && state.term.running);", js)
