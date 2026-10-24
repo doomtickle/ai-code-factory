@@ -1,0 +1,124 @@
+# Passdesk standalone quickstart: the gateway, its egress guard and one
+# Claude Code agent on plain Docker, no Docker Sandboxes. docs/standalone.md
+# walks through it; scripts/isolation-check.py proves the agent's isolation.
+#
+# Needs Docker Engine 28.0.0 or newer (Docker Desktop 4.39 or newer). The
+# `agents` network is `internal: true` AND `gateway_mode_ipv4: isolated`:
+# the first alone still lets the agent reach services on the Docker host
+# through the bridge's own address (docs/research in passdesk-ops, Q2); the
+# second removes that address. An older engine rejects the option, so the
+# stack fails to start rather than starting open.
+name: passdesk
+
+networks:
+  agents:
+    internal: true
+    enable_ipv6: false
+    driver_opts:
+      com.docker.network.bridge.gateway_mode_ipv4: isolated
+  egress: {}
+
+volumes:
+  passdesk-state: {}   # tokens, grants, audit log, git mirrors
+  agent-home: {}       # the agent's own sign-in state
+
+secrets:
+  # The fine-grained GitHub token (docs/standalone.md, "The GitHub token"),
+  # delivered to the gateway as /run/secrets/github and never to the agent.
+  github:
+    file: ${PASSDESK_GITHUB_TOKEN_FILE:-./secrets/github}
+
+services:
+  passdesk:
+    # Built from this checkout until the image is published by digest
+    # (doomtickle/passdesk-ops#59); egress-guard runs the same image. To
+    # bake in your policy overlay, uncomment additional_contexts and put
+    # your policy.toml in ./config/.
+    build:
+      context: .
+      target: standalone
+      # additional_contexts:
+      #   factory-config: ./config
+    image: passdesk:standalone
+    environment:
+      # Plain HTTP on 0.0.0.0 is acceptable here and only here: the port is
+      # not published, and the only network that reaches it is `agents`
+      # (internal). Anywhere else, set BROKER_TLS_CERT/BROKER_TLS_KEY instead
+      # (README, "TLS").
+      BROKER_INSECURE_BIND: "1"
+    networks: [agents, egress]
+    volumes:
+      - ${PASSDESK_WORKSPACE:-./workspace}:/workspace
+      - passdesk-state:/var/lib/passdesk
+    secrets: [github]
+    restart: unless-stopped
+    healthcheck:
+      # The MCP endpoint answers 401 to an unauthenticated call.
+      test:
+        - CMD
+        - python3
+        - -c
+        - |
+          import urllib.request, urllib.error
+          try:
+              urllib.request.urlopen(urllib.request.Request("http://127.0.0.1:8765/mcp", data=b"{}"), timeout=3)
+          except urllib.error.HTTPError as e:
+              raise SystemExit(0 if e.code == 401 else 1)
+          raise SystemExit(1)
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 5s
+
+  egress-guard:
+    image: passdesk:standalone   # built by the passdesk service above
+    pull_policy: never
+    command: ["python3", "-m", "passdesk", "egress-guard"]
+    networks: [agents, egress]
+    restart: unless-stopped
+
+  agent:
+    # Claude Code, from Docker's sandbox template image, pinned by its
+    # multi-arch index digest. Attach with: docker compose exec agent claude
+    image: docker/sandbox-templates:claude-code@sha256:868e3f5ef10579e06903d42e86448851ed59319ab8b9fba6dea2772c449bb2a6
+    command: ["sleep", "infinity"]
+    networks: [agents]   # and nothing else: no ports, no extra_hosts, no docker socket
+    environment:
+      # Model traffic goes through the egress guard; the gateway is reached directly.
+      HTTPS_PROXY: http://egress-guard:3128
+      https_proxy: http://egress-guard:3128
+      NO_PROXY: passdesk,localhost,127.0.0.1
+      no_proxy: passdesk,localhost,127.0.0.1
+      # The agent's own MCP token (docs/standalone.md, step 4). It grants
+      # exactly the tools the principal was given, nothing more.
+      PASSDESK_TOKEN: ${PASSDESK_TOKEN:-}
+    volumes:
+      - ${PASSDESK_WORKSPACE:-./workspace}:/home/agent/workspace
+      - agent-home:/home/agent/.claude
+    working_dir: /home/agent/workspace
+    stdin_open: true
+    tty: true
+    depends_on:
+      passdesk:
+        condition: service_healthy
+      egress-guard:
+        condition: service_started
+    restart: unless-stopped
+
+  isolation-check:
+    # Runs scripts/isolation-check.py inside the agent's own network
+    # namespace: docker compose --profile check run --rm isolation-check
+    profiles: [check]
+    image: passdesk:standalone
+    pull_policy: never
+    network_mode: "service:agent"
+    environment:
+      HTTPS_PROXY: http://egress-guard:3128
+      NO_PROXY: passdesk,localhost,127.0.0.1
+      PASSDESK_TOKEN: ${PASSDESK_TOKEN:-}
+    volumes:
+      - ./scripts/isolation-check.py:/isolation-check.py:ro
+    command: ["python3", "/isolation-check.py"]
+    depends_on:
+      agent:
+        condition: service_started
