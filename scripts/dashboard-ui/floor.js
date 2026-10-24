@@ -554,6 +554,9 @@
   // lane's first appearance, anything while the floor is hidden or motion is reduced) is
   // recorded but not played.
   function flow(animate) {
+    // A revised branch goes back on its developer's tray unless the developer has already started on it.
+    const repark = home => () => { const now = laneSeen.get(home); if (!now || now.state !== "running") park(home); };
+    const later = [];   // un-animated re-parks wait until every lane's new state is recorded
     for (const lane of Array.isArray(state.lanes) ? state.lanes : []) {
       const was = laneSeen.get(lane.name), task = String(lane.task || "");
       const running = lane.state === "running";
@@ -566,15 +569,19 @@
         flash(parts.console, "blink", 500);
         travel("ticket", dispatchPath(st));
       }
-      if (animate && st && dev && pair && pair !== was.pair && travel("crate branch", handoffPath(dev, st))) unpark(dev.lane);
+      if (st && dev && pair && pair !== was.pair) {      // the reviewer took the work: the developer's crate is gone, played or not
+        if (animate) travel("crate branch", handoffPath(dev, st));
+        unpark(dev.lane);
+      }
       if (animate && st && lane.state === "approved" && was.state !== "approved") {
         travel("crate ok", dropPath(st), () => flash(parts.door, "open", 700));
       }
-      if (animate && st && dev && lane.state === "revise" && was.state !== "revise") {
+      if (st && dev && lane.state === "revise" && was.state !== "revise") {
         const home = dev.lane;
-        travel("crate fix", handoffPath(dev, st).reverse(), () => { const now = laneSeen.get(home); if (!now || now.state !== "running") park(home); });
+        if (!animate || !travel("crate fix", handoffPath(dev, st).reverse(), repark(home))) later.push(repark(home));
       }
     }
+    later.forEach(f => f());
   }
 
   // New events and branches since the last poll become crates. The first poll (and
@@ -595,6 +602,8 @@
     }
     if (seen.size > 2000) { const keep = [...seen].slice(-500); seen.clear(); keep.forEach(k => seen.add(k)); }
     flow(animate);
+    // A reviewer already naming this lane means the hand-off is history: nothing is waiting on its tray.
+    const beingReviewed = name => (Array.isArray(state.lanes) ? state.lanes : []).some(l => l && l.role === "reviewer" && l.reviews === name);
     for (const lane of Array.isArray(state.lanes) ? state.lanes : []) {
       let set = branchSeen.get(lane.name);
       const fresh = !set;
@@ -604,7 +613,7 @@
         const k = `${e.ts}\u0000${e.text}`;
         if (set.has(k)) continue;
         set.add(k);
-        if (!primed && lane.state === "done") park(lane.name);   // already waiting when the page loaded
+        if (!primed && lane.state === "done" && !beingReviewed(lane.name)) park(lane.name);   // already waiting when the page loaded
         if (fresh || !primed) continue;
         const drawn = park(lane.name);
         announce("factory-floor:docked", { lane: String(lane.name), role: String(lane.role || ""), branch: clip(String(e.text || ""), 200), animated: drawn });

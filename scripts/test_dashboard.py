@@ -826,10 +826,18 @@ class PageTests(unittest.TestCase):
         flow = js[js.index("function flow(animate)"):js.index("// New events and branches")]
         self.assertIn("if (!primed || !was) continue;", flow)
         self.assertIn('travel("ticket", dispatchPath(st))', flow)
-        self.assertIn('travel("crate branch", handoffPath(dev, st))', flow)
+        self.assertIn('if (animate) travel("crate branch", handoffPath(dev, st));', flow)
         self.assertIn('travel("crate ok", dropPath(st)', flow)
-        self.assertIn('travel("crate fix", handoffPath(dev, st).reverse()', flow)
-        self.assertEqual(flow.count("animate &&"), 4)
+        self.assertIn('travel("crate fix", handoffPath(dev, st).reverse(), repark(home))', flow)
+        # Only the trips need animation: clearing and re-parking a crate happens whatever `animate` says.
+        self.assertEqual(flow.count("animate &&"), 2)
+        self.assertIn("if (st && dev && pair && pair !== was.pair) {", flow)
+        self.assertIn("if (st && dev && lane.state === \"revise\" && was.state !== \"revise\") {", flow)
+        self.assertIn("if (!animate || !travel(", flow)
+        self.assertIn("later.forEach(f => f());", flow)
+        # A lane a reviewer already names at page load is not parked: that hand-off is history.
+        self.assertIn('if (!primed && lane.state === "done" && !beingReviewed(lane.name)) park(lane.name);', js)
+        self.assertIn('l.role === "reviewer" && l.reviews === name', js)
         self.assertNotIn("announce(", flow)
         self.assertIn("const animate = primed && on && svg && !motionOff.matches;", js)
         # Parked branch crates draw whether or not motion is allowed; docked says whether one was drawn.
