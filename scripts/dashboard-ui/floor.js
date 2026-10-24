@@ -4,6 +4,14 @@
 // nothing that acts. Clicking a station asks app.js to open that lane's monitor
 // ("factory:open-lane"), as clicking a module does. Agent-written text goes in
 // with textContent only.
+//
+// Floor events (doomtickle/passdesk-ops#162): for a future sound layer or shift
+// ticket, the floor announces each crate's fate on document as a CustomEvent
+// ("factory-floor:passed", "factory-floor:confiscated", "factory-floor:docked").
+// They are fired from play() below, once per event, whether or not a crate is
+// drawn, and never for the first poll's history. detail is a frozen object of
+// strings and booleans; its text is agent-written, so a listener must insert it
+// with textContent only. Not bubbling, not cancelable: nothing can veto the floor.
 "use strict";
 
 (() => {
@@ -318,7 +326,10 @@
     if (binned.length > MAX_BINNED) binned.shift();
     drawPile();
   }
-  const BAD = new Set(["DENY", "NO", "FAILED"]);
+  const BAD = new Set(["DENY", "NO", "FAILED"]), GOOD = new Set(["ALLOW", "OK", "WRITTEN"]);
+  function announce(name, detail) {
+    document.dispatchEvent(new CustomEvent(name, { bubbles: false, cancelable: false, detail: Object.freeze(detail) }));
+  }
   const line = ev => `${ev.t} ${ev.kind} ${ev.text}`;   // the printer's line, as app.js titles it
   function flash(node, cls, ms) {
     node.classList.remove(cls);
@@ -360,35 +371,42 @@
   function pass(fromX) {
     const oy = OUT_Y();
     flash(parts.arch, "ok", 500);
-    travel("crate ok", [[fromX, oy], [DOOR_X + 10, oy]]);
+    return travel("crate ok", [[fromX, oy], [DOOR_X + 10, oy]]);
   }
   function confiscate(fromX, label) {
     const oy = OUT_Y();
     flash(parts.arch, "no", 700);
     const landed = () => { stamp(); binCrate(label); };
-    if (!travel("crate bad", [[fromX, oy], [BIN_X - 2, oy - 10], [BIN_X + 9, H - 8]], landed)) binCrate(label);
+    const moved = travel("crate bad", [[fromX, oy], [BIN_X - 2, oy - 10], [BIN_X + 9, H - 8]], landed);
+    if (!moved) binCrate(label);
+    return moved;
   }
 
+  // Draws the event's crate; true when one was launched (false: none free, or nothing to draw).
   function broker(ev) {
     const words = String(ev.text || "").split(" ");
     const role = words[1] || "";
     switch (ev.kind) {
-      case "ALLOW": toArch(role, () => pass(ARCH_X - 4)); break;
-      case "DENY": if (!toArch(role, () => confiscate(ARCH_X - 4, line(ev)))) binCrate(line(ev)); break;   // too many crates moving: bin it unseen
-      case "HELD": toArch(role); break;           // it waits in the queue (drawn from the gate cards)
-      case "OK": case "WRITTEN": pass(ARCH_X - 12); break;
-      case "NO": case "FAILED": confiscate(ARCH_X - 12, line(ev)); break;
+      case "ALLOW": return toArch(role, () => pass(ARCH_X - 4));
+      case "DENY": {
+        if (toArch(role, () => confiscate(ARCH_X - 4, line(ev)))) return true;
+        binCrate(line(ev));   // too many crates moving: bin it unseen
+        return false;
+      }
+      case "HELD": toArch(role); return false;    // it waits in the queue (drawn from the gate cards)
+      case "OK": case "WRITTEN": return pass(ARCH_X - 12);
+      case "NO": case "FAILED": return confiscate(ARCH_X - 12, line(ev));
       case "JOB": {
         const st = stations.get(words[0]);
         if (st && words[1] === "done") pop(st, "+1");
-        break;
+        return false;
       }
-      default: break;
+      default: return false;
     }
   }
   function docked(st) {
     const dy = DOCK_Y();
-    travel("crate branch", [[st.x, st.y], [st.x, dy], [DOCK_X + 8, dy]], () => flash(parts.dock, "open", 900));
+    return travel("crate branch", [[st.x, st.y], [st.x, dy], [DOCK_X + 8, dy]], () => flash(parts.dock, "open", 900));
   }
 
   // New events and branches since the last poll become crates. The first poll (and
@@ -399,8 +417,13 @@
       const k = `${ev.t}\u0000${ev.kind}\u0000${ev.text}`;
       if (seen.has(k)) continue;
       seen.add(k);
-      if (animate) broker(ev);
+      let moved = false;
+      if (animate) moved = broker(ev);
       else if (primed && BAD.has(ev.kind)) binCrate(line(ev));   // floor hidden or motion reduced: drawn in place, not played
+      if (!primed) continue;                                     // first poll: history, no event either
+      const detail = { kind: String(ev.kind), role: String(ev.text || "").split(" ")[1] || "", line: clip(line(ev), 300), animated: moved };
+      if (GOOD.has(ev.kind)) announce("factory-floor:passed", detail);
+      else if (BAD.has(ev.kind)) announce("factory-floor:confiscated", detail);
     }
     if (seen.size > 2000) { const keep = [...seen].slice(-500); seen.clear(); keep.forEach(k => seen.add(k)); }
     for (const lane of Array.isArray(state.lanes) ? state.lanes : []) {
@@ -413,7 +436,8 @@
         if (set.has(k)) continue;
         set.add(k);
         const st = stations.get(lane.name);
-        if (animate && !fresh && st) docked(st);
+        if (fresh || !primed) continue;
+        announce("factory-floor:docked", { lane: String(lane.name), role: String(lane.role || ""), branch: clip(String(e.text), 200), animated: !!(animate && st && docked(st)) });
       }
     }
     primed = true;

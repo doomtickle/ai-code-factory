@@ -161,6 +161,38 @@ animation. With reduced motion set in your system, nothing moves: the stations
 still show their state and confiscated crates appear in the bin without
 travelling there.
 
+### Floor events
+
+For add-ons that react to the floor (a sound layer, a shift ticket), the page
+announces what the floor sees as three events on `document`. The floor ships no
+listener of its own. They don't bubble and can't be cancelled; a listener that
+throws doesn't disturb the floor.
+
+| Event | Fires when | `detail` |
+|---|---|---|
+| `factory-floor:passed` | a broker call is let through (ALLOW, OK, WRITTEN) | `kind`, `role`, `line`, `animated` |
+| `factory-floor:confiscated` | a broker call is refused (DENY, NO, FAILED) | `kind`, `role`, `line`, `animated` |
+| `factory-floor:docked` | a lane hands back a new branch | `lane`, `role`, `branch`, `animated` |
+
+Each broker event fires once per call and each branch once per branch, as the
+page learns of it. They fire whether or not a crate is drawn (`animated` says
+whether one was) and whether the floor is on or off, including with reduced
+motion. They don't fire for what the page loaded with (the first poll), nor for
+a lane's first appearance. A held write fires nothing until it is decided.
+Everything else in `detail` is a string, `animated` a boolean, and the object is
+frozen.
+
+`kind` is the broker line's verdict, `role` the role it names, `line` the
+printer's line (clipped at 300 characters) and `branch` the branch name (clipped
+at 200). All of it is written by agents: **insert it with `textContent` only,
+never as HTML.**
+
+```js
+document.addEventListener("factory-floor:confiscated", e => {
+  document.getElementById("ticker").textContent = e.detail.line;   // never innerHTML
+});
+```
+
 ## Write gate and the control unit
 
 Bottom right. With approvals on, every push and pull request a role makes
