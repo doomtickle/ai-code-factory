@@ -163,9 +163,9 @@ travelling there.
 
 ### Floor events
 
-For add-ons that react to the floor (a sound layer, a shift ticket), the page
-announces what the floor sees as three events on `document`. The floor ships no
-listener of its own. They don't bubble and can't be cancelled; a listener that
+For add-ons that react to the floor (the sound layer below, a shift ticket), the
+page announces what the floor sees as three events on `document`. The floor ships
+no listener of its own. They don't bubble and can't be cancelled; a listener that
 throws doesn't disturb the floor.
 
 | Event | Fires when | `detail` |
@@ -196,6 +196,28 @@ document.addEventListener("factory-floor:confiscated", e => {
   document.getElementById("ticker").textContent = e.detail.line;   // never innerHTML
 });
 ```
+
+### Sound
+
+Off by default. The **SOUND** key next to FLOOR in the Lanes header (or `s`)
+turns on a short cue for each floor event, so you can hear the factory from
+another window:
+
+| Event | Cue |
+|---|---|
+| a call is let through | a soft blip |
+| a call is confiscated | a low buzz and thud |
+| a branch is docked | a rising two-note chime |
+
+The tones are synthesised in your browser: no audio file, no request, nothing
+from the event's text. They are quiet, and at most four play a second: a burst
+of calls gives one cue, the most serious of the burst (confiscated, then
+docked, then passed). They play whether or not the floor is shown. The key
+remembers your choice in this browser. Browsers only start audio after you
+click or press a key, so a page that reloads with sound on stays silent until
+your first click or key press. If the browser has no Web Audio, the key is
+greyed out. `factory dashboard --demo` makes events every 20 seconds, enough to
+try it.
 
 ## Write gate and the control unit
 
@@ -341,6 +363,7 @@ Stands in for: part of `factory analytics` and of `factory logs broker` /
 |---|---|---|
 | Anywhere | `1`–`9` | Open that lane's monitor |
 | Anywhere | `f` | Factory floor on / off |
+| Anywhere | `s` | Sound on / off |
 | Lane monitor | `t` / `p` | Transcript / review packet |
 | Lane monitor, patch viewer | Esc | Close |
 | Patch viewer | `j` `k` ↓ ↑ | Next / previous file |

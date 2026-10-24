@@ -700,7 +700,7 @@ class PageTests(unittest.TestCase):
         self.assertEqual(licenses, {"OFL-VT323.txt", "OFL-BarlowCondensed.txt", "OFL-DotGothic16.txt"})
 
     def test_no_html_sinks(self):
-        for name in ("app.js", "floor.js"):
+        for name in ("app.js", "floor.js", "sound.js"):
             js = (UI / name).read_text()
             for sink in ("innerHTML", "outerHTML", "insertAdjacentHTML", "document.write", "eval(", "new Function"):
                 self.assertNotIn(sink, js, f"{name} uses {sink}")
@@ -760,6 +760,36 @@ class PageTests(unittest.TestCase):
         self.assertIn("binCrate(line(ev));   // too many crates moving", js)          # DENY's capped fallback
         # The event fires whatever the floor's state: play() has no `on` gate of its own.
         self.assertNotRegex(play, r"if \(on\b")
+
+    def test_sound_layer_only_listens(self):
+        # The sound layer (doomtickle/passdesk-ops#162) synthesises tones from the three
+        # floor events: no request, no audio file, nothing read from an event, off by default.
+        js = (UI / "sound.js").read_text()
+        for call in ("fetch(", "XMLHttpRequest", "WebSocket", "EventSource", "sendBeacon", "postMessage", ".src", "href",
+                     "new Audio", "<audio", "decodeAudioData", "createMediaElementSource", "textContent", "e.detail", "dispatchEvent"):
+            self.assertNotIn(call, js, f"sound.js uses {call}")
+        for name in ("passed", "confiscated", "docked"):
+            self.assertIn(name, js)
+        self.assertIn("document.addEventListener(`factory-floor:${name}`, () => cue(name));", js)
+        self.assertIn("let on = false,", js)                                  # off until the key is pressed
+        self.assertIn('if (localStorage.getItem(STORE) === "1") setOn(true, false);', js)
+        self.assertRegex(js, r"try \{ if \(localStorage\.getItem\(STORE\)")      # storage may be blocked
+        self.assertIn("if (!AC) { key.disabled = true; return; }", js)       # no Web Audio: harmless
+        # The context is only created in wake(), which runs from a click or a key/pointer press.
+        self.assertEqual(js.count("new AC()"), 1)
+        self.assertEqual(js.count("wake()"), 3)   # its definition, the key's click, the first-gesture hook
+        self.assertIn("GAP = 0.25", js)
+
+    def test_sound_key_is_wired(self):
+        html = (UI / "index.html").read_text()
+        self.assertIn('<script src="/sound.js" defer></script>', html)
+        self.assertRegex(html, r'<button class="tabkey sound-key" type="button" id="sound-key" aria-pressed="false">Sound</button>')
+        self.assertEqual(d.STATIC["/sound.js"], ("sound.js", "text/javascript; charset=utf-8"))
+        self.assertTrue((UI / "sound.js").is_file())
+        app = (UI / "app.js").read_text()
+        self.assertIn('if (e.key === "s" || e.key === "S") { $("sound-key").click(); return; }', app)
+        # S sits after the monitor's own keys, so it never fires inside the modal.
+        self.assertLess(app.index('e.key === "p") setTab'), app.index('$("sound-key").click()'))
 
     def test_page_obeys_its_csp(self):
         html = (UI / "index.html").read_text()

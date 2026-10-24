@@ -5,8 +5,8 @@
 // ("factory:open-lane"), as clicking a module does. Agent-written text goes in
 // with textContent only.
 //
-// Floor events (doomtickle/passdesk-ops#162): for a future sound layer or shift
-// ticket, the floor announces each crate's fate on document as a CustomEvent
+// Floor events (doomtickle/passdesk-ops#162): for the sound layer (sound.js) or a
+// future shift ticket, the floor announces each crate's fate on document as a CustomEvent
 // ("factory-floor:passed", "factory-floor:confiscated", "factory-floor:docked").
 // They are fired from play() below, once per event, whether or not a crate is
 // drawn, and never for the first poll's history. detail is a frozen object of
