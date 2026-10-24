@@ -39,6 +39,9 @@
 .fl.night .concrete { fill: #3a3c3f; }
 .fl .joint { stroke: #3f4144; stroke-width: 1; }
 .fl .mat { fill: #3d3f42; }
+/* Bays: a faint dashed outline and a painted label */
+.fl .bay-line { fill: none; stroke: var(--stripe-2); stroke-width: .7; stroke-dasharray: 3 2; opacity: .45; shape-rendering: auto; }
+.fl .bay-t { font-family: var(--f-silk); font-weight: 700; font-size: 4px; letter-spacing: .14em; fill: var(--stripe-2); opacity: .8; }
 
 /* Furniture and people */
 .fl .desk-top { fill: #8a6a45; }
@@ -57,11 +60,12 @@
 .fl .shirt { fill: #e6dfcb; }
 .fl .skin, .fl .arm { fill: #d9a77c; }
 .fl .eye { fill: #1b1c1f; }
+.fl .tray { fill: #6d6f73; }
 .fl .stand, .fl .post, .fl .pole { fill: #24262a; }
 .fl .bezel { fill: #2a2c30; }
 .fl .scr { fill: #1a1c1e; }
 .fl .beacon { fill: var(--led-off); }
-/* Hard hats: the built-in roles fixed, other roles one of four hashed hues; foreman white, guard navy */
+/* Hard hats: the built-in roles fixed, other roles one of four hashed hues */
 .fl .hue-0 { fill: var(--amber); }
 .fl .hue-1 { fill: var(--green); }
 .fl .hue-2 { fill: #b77cff; }
@@ -69,29 +73,31 @@
 .fl .hue-4 { fill: var(--t-branch); }
 .fl .hue-5 { fill: var(--t-err); }
 .fl .hue-6 { fill: var(--t-user); }
-.fl .hue-f { fill: #f4f1e8; }
-.fl .hue-g { fill: #1d3b78; }
 .fl .brim { filter: brightness(.75); }
 
-/* Booths */
-.fl .booth-wall { fill: #2f3134; }
-.fl .booth-glass { fill: #182024; }
-.fl .booth.lit .booth-glass, .fl .guard-glass { fill: #2b4048; }
-.fl .booth .scr-coord { fill: #000500; }
-.fl .booth .foreman { opacity: 0; }
-.fl .booth.in .foreman { opacity: 1; }
-.fl .booth.in .scr-coord { fill: var(--matrix); }
-.fl .booth.in .plate-t, .fl .gatehouse .plate-t { fill: var(--led-green); }
-.fl .booth.lit:not(.in) .plate-t { fill: var(--led-amber); }
-.fl .booth:not(.lit) .plate-t { fill: var(--led-red); }
+/* The Coordinator's console: no worker; the screen is lit while Terminal 0 is attached */
+.fl .console-body { fill: #2f3134; }
+.fl .console-scr { fill: #0b0c0d; }
+.fl .term-l { fill: var(--matrix); opacity: 0; }
+.fl .console.in .console-scr { fill: var(--matrix-dim); }
+.fl .console.in .term-l { opacity: .85; fill: var(--matrix-pale); }
+.fl .console.lit:not(.in) .console-scr { fill: #182024; }
+.fl .chute { fill: #0b0c0d; }
+.fl .lamp { fill: var(--led-off); }
+.fl .console.lit .lamp { fill: var(--led-amber); }
+.fl .console.in .lamp { fill: var(--led-green); }
+.fl .console.blink .lamp { fill: var(--paper); }
+.fl .tickets { fill: var(--paper); }
+.fl .tick-l { fill: #9d9a90; }
+.fl .console.in .plate-t { fill: var(--led-green); }
+.fl .console.lit:not(.in) .plate-t { fill: var(--led-amber); }
+.fl .console:not(.lit) .plate-t { fill: var(--led-red); }
 
-/* Belts, the arch, the door, the bin, the dock */
+/* Belts and rails, the arch, the door, the bin */
 .fl .belt { fill: #1b1c1f; }
 .fl .roll { stroke: #6d6f73; stroke-width: 3; stroke-dasharray: 1 3; }
-.fl.working:not(.still) .roll-out { animation: belt-out .6s linear infinite; }
-.fl.working:not(.still) .roll-dock { animation: belt-dock .6s linear infinite; }
-@keyframes belt-out { to { stroke-dashoffset: -4; } }
-@keyframes belt-dock { to { stroke-dashoffset: 4; } }
+.fl.working:not(.still) .roll { animation: belt-roll .6s linear infinite; }
+@keyframes belt-roll { to { stroke-dashoffset: -4; } }
 .fl .belt-t { font-family: var(--f-silk); font-weight: 700; font-size: 4px; letter-spacing: .12em; fill: var(--stripe-2); }
 .fl .arch-post, .fl .arch-top { fill: #8b8e93; }
 .fl .arch-beam { fill: rgba(99, 220, 236, .12); }
@@ -102,22 +108,23 @@
 .fl .arch.no .arch-beam { fill: rgba(255, 68, 51, .6); }
 .fl .arch.no .arch-lamp { fill: var(--led-red); }
 .fl .door { fill: #111214; }
+.fl .door.open { fill: var(--stripe-2); }
 .fl .bin-body { fill: #8f1d14; }
 .fl .bin-lip { fill: #b3261e; }
 .fl .bin-t { font-family: var(--f-silk); font-weight: 700; font-size: 7px; fill: var(--paper); }
 .fl .bin.hit-bin { animation: bin-shake .3s steps(2) 2; }
 @keyframes bin-shake { 50% { transform: translateX(1px); } }
-.fl .dock-frame { fill: #2f3134; }
-.fl .dock-door { fill: #6d6f73; }
-.fl .slat { stroke: #55575b; stroke-width: 1; }
-.fl .dock.open .dock-door { fill: #f2c94c; }
 
 /* Crates and effects */
 .fl .crate-box { fill: #b0864f; stroke: #5a3f1e; stroke-width: .8; }
 .fl .crate-x { stroke: #5a3f1e; stroke-width: .6; }
 .fl .crate.ok .crate-box { fill: #8fd18a; }
 .fl .crate.bad .crate-box { fill: #e0654f; }
-.fl .crate.branch .crate-box { fill: var(--t-branch); }
+.fl .crate.branch .crate-box { fill: #5aa9ff; }
+.fl .crate.fix .crate-box { fill: var(--stripe-2); }
+.fl .park.off { display: none; }
+.fl .ticket-bg { fill: var(--paper); stroke: #8a856f; stroke-width: .5; }
+.fl .ticket-l { fill: #8a856f; }
 .fl .crate.held .crate-box { fill: var(--stripe-2); }
 .fl .crate:focus-visible { outline: none; }
 .fl .crate:focus-visible .crate-box { stroke: var(--paper); stroke-width: 1.5; stroke-dasharray: 2 1; }

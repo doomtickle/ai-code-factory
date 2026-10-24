@@ -802,6 +802,50 @@ class PageTests(unittest.TestCase):
         self.assertIn('return travel("crate", [[x, y], [x, oy], [ARCH_X - 4, oy]], then);', js)
         self.assertIn('if (toArch(role, () => confiscate(ARCH_X - 4, line(ev)))) return true;\n        binCrate(line(ev));', js)
 
+    def test_floor_is_a_line_from_coordinator_to_out(self):
+        # The redesigned floor: no foreman's booth, broker gatehouse or dock; a Coordinator
+        # console, a bay per role and rails between them, all drawn from lane state.
+        js = (UI / "floor.js").read_text()
+        css = (UI / "floor.css").read_text()
+        for gone in ("hue-f", "hue-g", "DOCK_X", "DOCK_Y", "POLICY · AUDIT", "TO DOCK", "OUTBOUND ▸ BROKER", "docked(", "boothNote", '"FOREMAN"'):
+            self.assertNotIn(gone, js, gone)
+        for gone in (".booth", ".gatehouse", ".dock", ".foreman", "hue-f", "hue-g", "roll-dock"):
+            self.assertNotIn(gone, css, gone)
+        for label in ('"COORDINATOR"', '"DEVELOPERS"', '"REVIEWERS"', '"OUTBOUND ▸ OUT"', '"DISPATCH"', '"HAND-OFF"'):
+            self.assertIn(label, js, label)
+        # The console plate keeps the old booth's three states.
+        self.assertIn('!state.bridge ? "BRIDGE DOWN" : attached ? "ON DUTY" : "BACK SOON"', js)
+        self.assertIn("const attached = !!(state.term && state.term.running);", js)
+        self.assertIn(".fl .console.in .plate-t { fill: var(--led-green); }", css)
+        self.assertIn(".fl .console.lit:not(.in) .plate-t { fill: var(--led-amber); }", css)
+        self.assertIn(".fl .console:not(.lit) .plate-t { fill: var(--led-red); }", css)
+        # Keycaps and lane order stay the index in state.lanes, whatever bay a lane is in.
+        self.assertIn("lanes.forEach((lane, i) => groups[bayOf(lane)].push([lane, i]));", js)
+        self.assertIn("if (i < 9) g.append(R(2, 2, 9, 9, \"kc\")", js)
+        # Each trip is decided from the previous poll's lane, and nothing is played from history.
+        flow = js[js.index("function flow(animate)"):js.index("// New events and branches")]
+        self.assertIn("if (!primed || !was) continue;", flow)
+        self.assertIn('travel("ticket", dispatchPath(st))', flow)
+        self.assertIn('if (animate) travel("crate branch", handoffPath(dev, st));', flow)
+        self.assertIn('travel("crate ok", dropPath(st)', flow)
+        self.assertIn('travel("crate fix", handoffPath(dev, st).reverse(), repark(home))', flow)
+        # Only the trips need animation: clearing and re-parking a crate happens whatever `animate` says.
+        self.assertEqual(flow.count("animate &&"), 2)
+        self.assertIn("if (st && dev && pair && pair !== was.pair) {", flow)
+        self.assertIn("if (st && dev && lane.state === \"revise\" && was.state !== \"revise\") {", flow)
+        self.assertIn("if (!animate || !travel(", flow)
+        self.assertIn("later.forEach(f => f());", flow)
+        # A lane a reviewer already names at page load is not parked: that hand-off is history.
+        self.assertIn('if (!primed && lane.state === "done" && !beingReviewed(lane.name)) park(lane.name);', js)
+        self.assertIn('l.role === "reviewer" && l.reviews === name', js)
+        self.assertNotIn("announce(", flow)
+        self.assertIn("const animate = primed && on && svg && !motionOff.matches;", js)
+        # Parked branch crates draw whether or not motion is allowed; docked says whether one was drawn.
+        self.assertIn("const drawn = park(lane.name);", js)
+        self.assertIn("animated: drawn }", js)
+        self.assertIn("if (running && (was.state !== \"running\" || was.task !== task)) unpark(lane.name);", flow)
+        self.assertIn("if (crates >= MAX_CRATES) return false;", js)
+
     def test_floor_events_are_display_only_hooks(self):
         # Floor events (doomtickle/passdesk-ops#162): three CustomEvents on document for
         # a future sound layer or shift ticket. Fired from play(), not from the animation,
