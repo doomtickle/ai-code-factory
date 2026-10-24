@@ -7,7 +7,8 @@
 .floor { flex: 1; min-height: 0; display: flex; padding: 8px; }
 .floor .fl { display: block; width: 100%; height: 100%; shape-rendering: crispEdges; border-radius: 3px; background: #121315;
   box-shadow: inset 0 0 0 1px rgba(0,0,0,.6), 0 0 0 3px #101112, 0 0 0 4px #3c3e42; }
-.lanes-h .floor-key { margin-left: 4px; }
+.lanes-h .floor-key, .lanes-h .sound-key { margin-left: 4px; }
+.sound-key:disabled { opacity: .5; cursor: not-allowed; }
 
 .fl text { font-family: var(--f-crt); font-size: 7px; fill: var(--silk); shape-rendering: auto; }
 .fl .label { font-family: var(--f-silk); font-weight: 700; font-size: 5px; letter-spacing: .14em; fill: var(--silk-dim); }

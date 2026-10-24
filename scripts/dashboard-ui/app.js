@@ -517,6 +517,7 @@
       return;
     }
     if (e.key === "f" || e.key === "F") { $("floor-key").click(); return; }
+    if (e.key === "s" || e.key === "S") { $("sound-key").click(); return; }
     const n = parseInt(e.key, 10);
     if (state && n >= 1 && n <= Math.min(9, state.lanes.length)) openMon(state.lanes[n - 1].name);
   });
