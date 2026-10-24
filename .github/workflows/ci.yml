@@ -191,22 +191,6 @@ jobs:
         working-directory: broker
         run: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest -v
 
-      - name: Prepare empty build contexts
-        run: |
-          mkdir -p "$RUNNER_TEMP/factory-config" "$RUNNER_TEMP/plugins"
-          : > "$RUNNER_TEMP/factory-config/policy.toml"
-      - name: Build image
-        working-directory: broker
-        run: |
-          docker buildx build --load -t passdesk:ci \
-            --build-context "factory-config=$RUNNER_TEMP/factory-config" \
-            --build-context "plugins=$RUNNER_TEMP/plugins" \
-            .
-      - name: Run tests in the image
-        run: |
-          docker run --rm --network none -e PYTHONDONTWRITEBYTECODE=1 \
-            -v "$PWD/broker:/b:ro" -w /b passdesk:ci python3 -m unittest -v
-
       # The standalone target (plain Docker, no sbx): built with no
       # --build-context, so the Dockerfile's default empty overlay and
       # plugins stages are what get exercised here, then the same test suite

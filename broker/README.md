@@ -512,11 +512,12 @@ token, starting agents, and reading the audit record. The `--kit
 
 ## Used by AI Code Factory
 
-ai-code-factory consumes this repository as a git submodule: its agents
-reach the outside world only through a Passdesk instance, which it builds
-from this repo's `Dockerfile` (the sbx deployment above) and configures with
-its own set of callers, tool grants and policy overlay. See that repo's
-README and CLAUDE.md for how it wires Passdesk in (roles, `BROKER_TOOLS`,
-credential delivery, egress kits). This repository has no knowledge of that
-wiring — it only implements the gateway, and keeps every factory-specific
-default overridable rather than required.
+`broker/` lives in the ai-code-factory repository, and the Passdesk image is
+built from its committed tree (`git archive HEAD broker/`) using this
+directory's `Dockerfile` (the sbx deployment above). Its agents reach the
+outside world only through that Passdesk instance, which the factory
+configures with its own set of callers, tool grants and policy overlay. See
+the repository's README and CLAUDE.md for how it wires Passdesk in (roles,
+`BROKER_TOOLS`, credential delivery, egress kits). The gateway code here has
+no knowledge of that wiring: it only implements the gateway, and keeps every
+factory-specific default overridable rather than required.

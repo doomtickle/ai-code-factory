@@ -37,7 +37,7 @@ socket, or host credentials. Full picture: README.md.
   Broker microVM (`factory-broker`), reached only as MCP tools via the sbx MCP
   gateway. It grants only the calling role's `BROKER_TOOLS` (by token), applies
   `broker/policy.toml`, filters content both ways, and audit-logs. Its code is the
-  the `broker/` directory of this repo (it was the separate `passdesk-broker` repo until 24 Oct 2026, history kept); sandbox name
+  `broker/` directory of this repo (it was the separate `passdesk-broker` repo until 24 Oct 2026, history kept); sandbox name
   (`factory-broker`) and paths (`/opt/factory-broker`, `/etc/factory-broker`) are
   unchanged.
 

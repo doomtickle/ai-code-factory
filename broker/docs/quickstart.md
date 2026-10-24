@@ -43,7 +43,7 @@ The short version:
 
 ```sh
 mkdir -p ~/code && cd ~/code
-git clone --recurse-submodules git@github.com:doomtickle/ai-code-factory.git
+git clone git@github.com:doomtickle/ai-code-factory.git
 cd ai-code-factory
 ./bin/factory doctor
 ```
