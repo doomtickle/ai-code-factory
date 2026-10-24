@@ -729,7 +729,37 @@ class PageTests(unittest.TestCase):
         self.assertIn("[c.tool, c.role, c.repo, c.branch]", js)
         # A capped DENY (no free crate for the trip to the arch) is binned directly.
         self.assertIn('return travel("crate", [[x, y], [x, oy], [ARCH_X - 4, oy]], then);', js)
-        self.assertIn('case "DENY": if (!toArch(role, () => confiscate(ARCH_X - 4, line(ev)))) binCrate(line(ev));', js)
+        self.assertIn('if (toArch(role, () => confiscate(ARCH_X - 4, line(ev)))) return true;\n        binCrate(line(ev));', js)
+
+    def test_floor_events_are_display_only_hooks(self):
+        # Floor events (doomtickle/passdesk-ops#162): three CustomEvents on document for
+        # a future sound layer or shift ticket. Fired from play(), not from the animation,
+        # once per event, never for first-poll history; nothing can veto the floor.
+        js = (UI / "floor.js").read_text()
+        for name in ("passed", "confiscated", "docked"):
+            self.assertEqual(js.count(f'announce("factory-floor:{name}"'), 1, name)
+        self.assertIn(
+            "document.dispatchEvent(new CustomEvent(name, { bubbles: false, cancelable: false, detail: Object.freeze(detail) }));", js)
+        self.assertEqual(js.count("dispatchEvent(new CustomEvent(name"), 1)
+        # Fired from play() (after the not-animated bin path), never inside an animation callback.
+        play = js[js.index("function play()"):js.index("// A new bay shape")]
+        self.assertEqual(play.count("announce("), 3)
+        self.assertEqual(js.count("announce("), 4)   # its definition and the three calls in play()
+        self.assertIn("if (!primed) continue;", play)
+        self.assertIn("if (fresh || !primed) continue;", play)
+        # The detail holds strings and booleans only.
+        self.assertRegex(play, r'\{ kind: String\(ev\.kind\), role: [^\n]*, line: clip\(line\(ev\), 300\), animated: moved \}')
+        self.assertRegex(play, r'\{ lane: String\(lane\.name\), role: String\(lane\.role \|\| ""\), branch: clip\(String\(e\.text \|\| ""\), 200\), animated: ')
+        # Every bin path reaches the confiscated event through play(): the animated crate,
+        # the capped fallback (no free crate) and the not-animated path.
+        self.assertIn('GOOD = new Set(["ALLOW", "OK", "WRITTEN"])', js)
+        self.assertIn('else if (BAD.has(ev.kind)) announce("factory-floor:confiscated", detail);', play)
+        self.assertIn("if (animate) moved = broker(ev);", play)                       # animated, and the capped fallback inside broker()
+        self.assertIn("else if (primed && BAD.has(ev.kind)) binCrate(line(ev));", play)  # not animated
+        self.assertIn("if (!moved) binCrate(label);", js)                              # confiscate()'s capped fallback
+        self.assertIn("binCrate(line(ev));   // too many crates moving", js)          # DENY's capped fallback
+        # The event fires whatever the floor's state: play() has no `on` gate of its own.
+        self.assertNotRegex(play, r"if \(on\b")
 
     def test_page_obeys_its_csp(self):
         html = (UI / "index.html").read_text()
