@@ -25,7 +25,7 @@ set -euo pipefail
 # 8. new-role.sh copying an optional role makes an ordinary (enabled) one.
 #
 # Uses a fixture repo (roles/, broker/tools.txt) rather than this checkout, so
-# it needs neither the broker/ submodule nor this repo's role.conf values.
+# it needs neither the real broker/ nor this repo's role.conf values.
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 

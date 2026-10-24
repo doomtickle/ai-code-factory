@@ -28,9 +28,9 @@ cd ~/code/ai-code-factory
 
 Each check prints a ✓, a `!` (a warning) or a ✗ (a problem) with the fix
 indented underneath, grouped under `==>` headings: Platform, Tools, Gateway
-source (broker/ submodule), Docker, Factory tools, and Passdesk (the gateway).
-If `broker/` is empty, the doctor tries once to initialize that submodule; if
-it can't, it prints the exact `git submodule update --init` fix. Before setup,
+source (broker/), Docker, Factory tools, and Passdesk (the gateway).
+If `broker/tools.txt` is missing, the doctor prints the exact `git checkout`
+fix that restores it from the committed tree. Before setup,
 it's normal to see a warning that `sbx` isn't installed yet:
 
 ```text

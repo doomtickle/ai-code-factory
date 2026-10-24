@@ -26,18 +26,10 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
-# broker/ is a git submodule (passdesk-broker); a plain "git clone" (without
-# --recurse-submodules) leaves it uninitialized, so try once to initialize it
-# before giving up (bin/factory's roles.sh does the same, but this script can
-# also run standalone). Only a submodule with no trace of initialization at
-# all: anything else goes through the checks below.
-if ! broker_initialized "$ROOT"; then
-  git "${BROKER_GIT_SAFE[@]}" -C "$ROOT" submodule update --init --quiet -- broker >/dev/null 2>&1 || true
-fi
-# The broker image is built from a "git archive" export of the pinned commit,
-# never from the broker/ working tree, which an agent working on this repo
-# can write into (see "broker/ submodule safety" in lib/common.sh). Building
-# is also refused while broker/ has uncommitted work or is off the pin.
+# The broker image is built from a "git archive" export of the committed
+# broker/ (HEAD), never from the broker/ working tree, which an agent working
+# on this repo can write into (see "the broker image's build context" in
+# lib/common.sh). Uncommitted changes in broker/ are not in the image.
 mkdir "$tmp/broker"
 prepare_broker_context "$ROOT" "$tmp/broker"
 
@@ -61,7 +53,7 @@ build() {
 # .dockerignore limits it to what they COPY.
 build developer "$ROOT/templates/developer/Dockerfile" "$ROOT"
 build reviewer "$ROOT/templates/reviewer/Dockerfile" "$ROOT"
-# The broker builds from the export of its pinned commit made above, with
+# The broker builds from the export of the committed broker/ made above, with
 # that directory as the build context.
 # This machine's policy overlay (an empty one if there is none) goes in as its
 # own build context, so it never has to sit in the repo.

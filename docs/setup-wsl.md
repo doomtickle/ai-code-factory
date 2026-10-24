@@ -104,11 +104,8 @@ Downloads folder, then:
 mkdir -p ~/code
 git clone /mnt/c/Users/<you>/Downloads/ai-code-factory-transfer/ai-code-factory.bundle ~/code/ai-code-factory
 cd ~/code/ai-code-factory
-# Point origin at the real repo, not the bundle file: .gitmodules names the
-# broker submodule with a relative URL, which git resolves against origin, so
-# removing origin (or leaving it on the bundle path) leaves that unresolvable.
+# Point origin at the real repo, not the bundle file, so 'factory update' can pull.
 git remote set-url origin https://github.com/doomtickle/ai-code-factory.git
-git submodule update --init
 git config user.name "Your Name"
 git config user.email "you@example.com"
 ```
@@ -117,7 +114,7 @@ git config user.email "you@example.com"
 [Keeping it on GitHub](#keeping-it-on-github)):
 
 ```sh
-git clone --recurse-submodules git@github.com:<you>/ai-code-factory.git ~/code/ai-code-factory
+git clone git@github.com:<you>/ai-code-factory.git ~/code/ai-code-factory
 ```
 
 ## 5. Check the machine

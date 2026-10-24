@@ -1,0 +1,167 @@
+# Broker policy: what agents may do through the broker's tools.
+#
+# This file is baked into the broker image at build time, so agents cannot
+# change it from their workspace. After editing, rebuild and restart the
+# image (with sbx + the AI Code Factory: ./scripts/00-build-templates.sh &&
+# sbx rm --force factory-broker).
+#
+# Keep it generic: it's shared by everyone who uses this repo, on any project.
+# Settings for your organization or machine (a private npm registry, your
+# Jira site) go in a policy.toml overlay (policy.local.toml), baked in next
+# to this one at build time and merged table by table (see README,
+# Configuring credentials; the AI Code Factory keeps its own copy under
+# ~/.config/ai-code-factory/, see config.example/).
+#
+# Every host the broker contacts must ALSO be allowed at the network level by
+# the deployment's egress policy (with sbx: kits/broker/spec.yaml). This file
+# decides per request; the egress policy is the network-level backstop.
+
+[web]
+# Hosts web_fetch may GET. "*.example.com" matches subdomains only.
+# A hard-coded denylist in passdesk/tools/web.py (github.com, api.github.com,
+# *.githubusercontent.com, api.atlassian.com, *.atlassian.net,
+# generativelanguage.googleapis.com, and [packages].npm_private_registry's
+# host) always wins over this list: web_fetch is an unauthenticated GET, so
+# it must never be able to read a host that the egress proxy or another
+# tool attaches a credential to - that would skip that tool's own allowlist
+# (e.g. [git].repos). Adding one of those hosts here has no effect.
+allow_hosts = [
+  "docs.python.org",
+  "developer.mozilla.org",
+  "nodejs.org",
+  "pypi.org",
+  "www.npmjs.com",
+]
+max_bytes = 500_000
+
+[git]
+# Repos agents may fetch from, push to and open PRs or merge requests on:
+# GitHub repos as owner/name, and projects on the GitLab named by
+# [gitlab].url host first, e.g. "gitlab.example.com/group/sub/project".
+# Empty means git tools are disabled.
+# Keep this on a single line: some deployments' onboarding tooling parses it
+# (e.g. the AI Code Factory's bin/factory).
+repos = []
+# Branches agents may never push to (glob patterns).
+protected_branches = ["main", "master", "release/*"]
+# Agents may only push branches with this prefix ("" to allow any unprotected branch).
+push_branch_prefix = "factory/"
+# Base branch used when a tool call does not name one.
+default_base = "main"
+
+[gitlab]
+# A GitLab instance (self-hosted, or https://gitlab.com/) for git_fetch,
+# git_push and gitlab_create_mr: https://<host>[:port]/, ending in "/" (a
+# sub-path such as https://example.com/gitlab/ works). "" disables GitLab.
+# Set it in your local policy.toml, with its host in your deployment's egress
+# allowlist, and deliver a `gitlab` credential (a project access token; see
+# README, Configuring credentials). web_fetch never reaches this host. Its
+# TLS certificate must be one the system trust store accepts.
+url = ""
+
+[github]
+# Repos (owner/name) github_create_issue may file issues in. Empty disables
+# it. Its own list, never [git].repos: an issue in a public repo publishes
+# whatever an agent writes, so list private trackers only. The GitHub token
+# needs Issues read/write on these repos.
+issue_repos = []
+
+[packages]
+# Lowercase package names. An empty *_allow list means "anything not denied".
+npm_deny = []
+npm_allow = []
+pypi_deny = []
+pypi_allow = []
+# npm_fetch downloads tarballs from registry.npmjs.org (registry.yarnpkg.com
+# URLs in yarn lockfiles are fetched from there) and from this private
+# registry, a URL prefix ending in "/". Only requests under this prefix carry
+# the credential delivered to BROKER_NPM_REGISTRY_SECRET's path (README,
+# Configuring credentials). Set it in your local policy.toml, with its host
+# in your deployment's egress allowlist. "" = public registry only.
+npm_private_registry = ""
+# Hosts a registry download may be redirected to (exact, or "*.example.com"
+# for subdomains), e.g. the cloud storage JFrog Cloud serves tarballs from.
+# Redirects are https only and never carry the registry credential; each host
+# must also be in the deployment's egress allowlist. npm_fetch's error for a
+# refused redirect names the host to add. Set in your local policy.toml.
+npm_redirect_hosts = []
+
+[filters]
+# git_push limits. Every commit in a push is secret-scanned on its own (its
+# patch, message, and author/committer names and emails), so a secret added
+# in one commit and deleted in a later one is still refused; binary files are
+# scanned and counted as text.
+max_commits = 200
+# Total size of every pushed commit's patch (not just the net diff), binary
+# files included. The commit messages are capped at the same size.
+max_diff_bytes = 2_000_000
+# Largest bundle file git_push accepts from the exchange directory's
+# outgoing/ (BROKER_EXCHANGE_DIR, default ".factory"), checked while the
+# broker copies it into private space, before git reads it.
+max_bundle_bytes = 100_000_000
+
+# [approvals]
+# The hold (docs/approvals.md): each tool named in `tools` waits for a
+# person's decision before its write leaves the machine. Off until `tools`
+# names something. A call waits hold_seconds for the decision; still
+# undecided, git_push, github_create_pr and gitlab_create_mr are queued (the
+# gateway makes the write itself once approved) and any other tool asks the
+# agent to retry. A pending card can be decided for expire_seconds (60 to
+# 604_800, a week; default a day).
+# tools = ["git_push", "github_create_pr", "gitlab_create_mr"]
+# hold_seconds = 45
+# expire_seconds = 86_400
+# With holds on, git_push also stores the
+# pushed commits' patch (oldest first, with --stat, binary files as one line)
+# in the gateway's state directory, approvals/patches/<sha256>.patch, for the
+# person approving to inspect; the card carries only its digest and size,
+# never the content. A longer patch is cut at the last line that fits, with a
+# trailer line saying so. From 4_096 to 2_000_000.
+# patch_max_bytes = 262_144
+
+[gemini]
+# gemini_flash_query. The API key comes from the file at
+# BROKER_GEMINI_SECRET's path (default /etc/factory-broker/secrets/gemini),
+# delivered there by the deployment, never from this file or the workspace.
+# See README, Configuring credentials.
+model = "gemini-2.5-flash"
+max_prompt_chars = 50_000
+
+[egress_guard]
+# `python3 -m passdesk egress-guard` (a standalone deployment's CONNECT
+# proxy for the agent container's own model traffic; see README, "Egress
+# guard") forwards `CONNECT host:443` to exactly these hosts and nothing
+# else. Exact DNS names, no wildcards, ports or IP literals; the guard also
+# refuses a name that resolves to any non-public address. The defaults are
+# what Claude Code (api.anthropic.com, plus the claude.ai sign-in hosts for a
+# subscription) and Codex CLI (chatgpt.com and auth.openai.com for a ChatGPT
+# login, api.openai.com for an API key) need; drop what you don't use, and
+# add nothing an agent could fetch code or packages from.
+allow_hosts = [
+  "api.anthropic.com",
+  "platform.claude.com",
+  "claude.ai",
+  "claude.com",
+  "chatgpt.com",
+  "auth.openai.com",
+  "api.openai.com",
+]
+
+[jira]
+# jira_my_issues / jira_get_issue: Jira Cloud REST API v3, reached through the
+# scoped-token gateway at api.atlassian.com/ex/jira/<cloudId>/... . The
+# credential (email:token) comes from the file at BROKER_JIRA_SECRET's path
+# (default /etc/factory-broker/secrets/jira), delivered there by the
+# deployment, never from this file or the workspace. See README, Configuring
+# credentials.
+# Your Jira Cloud site (e.g. "example.atlassian.net") and its cloudId, from
+# https://<site>/_edge/tenant_info (public tenant info, not a secret). Set
+# both in your local policy.toml. Empty or not a UUID means both Jira tools
+# return DENIED with that hint.
+site = ""
+cloud_id = ""
+# Optional allowlist of project keys (e.g. ["PROJ", "OPS"]). Empty means any
+# project, since results are already limited to the caller's own issues.
+projects = []
+max_results = 25
+max_comments = 5

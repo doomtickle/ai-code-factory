@@ -1,42 +1,34 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Regression tests for "factory update"'s handling of broker/ (the
-# passdesk-broker submodule):
+# Regression tests for "factory update" and the broker image's build context.
+# broker/ is a plain directory of this repository:
 #
-# 1. scripts/lib/roles.sh auto-initializes an empty submodule checkout
-#    instead of dying (a plain "git clone", without --recurse-submodules,
-#    leaves broker/ empty).
-# 2. bin/factory's pull_factory fast-forwards the superproject and moves
-#    broker/ to its new pin, but refuses - rather than silently pulling
-#    forward, detaching a commit, or leaving something for
-#    scripts/00-build-templates.sh to bake into the broker image unreviewed -
-#    when broker/ has uncommitted changes (tracked or untracked) or a local
-#    commit that is not part of the pinned history. Being behind the pin is
-#    fine: that is exactly what "git submodule update --init" fixes.
-# 3. scripts/lib/common.sh's require_broker_at_pin, used by
-#    scripts/00-build-templates.sh before it builds the broker image, refuses
-#    the same dirty states and anything off the pin (no "behind is fine"
-#    leniency here).
-# 4. Nothing trusts broker/.git: a redirected gitfile, or one pointing at a
-#    fake repository whose config sets core.fsmonitor, is refused by
-#    pull_factory, require_broker_at_pin and broker_export, and the fsmonitor
-#    payload never runs. An uninitialized submodule is refused by the build.
-# 5. The broker image's build context is a "git archive" export of the
-#    pinned commit (broker_export), byte-for-byte, never the broker/ working
-#    tree: a git-ignored __pycache__/*.pyc planted in broker/ doesn't reach
-#    it. scripts/00-build-templates.sh is run for real against a fixture,
-#    with stub docker and sbx commands, to show it builds from that export.
-# 6. An exported ROOT doesn't redirect a direct run of bin/factory.
-# 7. `factory update --plan` (what the dashboard's UPDATE key shows before
+# 1. scripts/lib/roles.sh reads broker/tools.txt and dies, naming the file,
+#    when it is missing.
+# 2. bin/factory's pull_factory fast-forwards the checkout (broker/ included)
+#    and refuses - rather than pulling over it - when the checkout has
+#    uncommitted changes, tracked or untracked, in broker/ or anywhere else.
+#    Git-ignored files (e.g. a __pycache__/ from running the broker's tests)
+#    don't block it.
+# 3. The broker image's build context (scripts/lib/common.sh's broker_export
+#    and prepare_broker_context) is a "git archive" export of the committed
+#    broker/ (HEAD), byte-for-byte, never the working tree: an edited,
+#    untracked or git-ignored file planted in broker/ doesn't reach it, and a
+#    checkout without a committed broker/ is refused. Uncommitted work in
+#    broker/ is noted, not refused.
+# 4. scripts/00-build-templates.sh is run for real against a fixture, with
+#    stub docker and sbx commands, to show it builds from that export.
+# 5. An exported ROOT doesn't redirect a direct run of bin/factory.
+# 6. `factory update --plan` (what the dashboard's UPDATE key shows before
 #    asking to confirm) changes nothing but the remote-tracking refs: it
 #    lists incoming commits, the sandboxes update would recreate (and what
-#    each loses), the ones the incoming files may make stale, and notes for
-#    a dirty checkout or a missing upstream; --plan with --yes is refused.
+#    each loses), the ones the incoming files (including anything under
+#    broker/) may make stale, and notes for a dirty checkout or a missing
+#    upstream; --plan with --yes is refused.
 #
 # broker/ is writable by an agent working on this repo's own code like any
-# other file, so all of the above matters for real, not just for a
-# mis-synced checkout.
+# other file, so the build-context rules matter for real.
 #
 # This test sources the real bin/factory (for pull_factory) and
 # scripts/lib/common.sh (for the broker_* helpers) and calls them directly,
@@ -46,10 +38,6 @@ set -euo pipefail
 # no network access, no sbx, no docker.
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-# Local-path submodule remotes are disabled by git by default (CVE-2022-39253
-# hardening); this test's fixtures are local-only, so allow the "file"
-# transport for this process alone (no global git config is touched).
-export GIT_ALLOW_PROTOCOL=file
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
@@ -60,32 +48,25 @@ fail=0
 ok() { pass=$((pass + 1)); printf 'ok - %s\n' "$1"; }
 bad() { fail=$((fail + 1)); printf 'FAIL - %s\n' "$1"; }
 assert_empty() { [ -z "$2" ] && ok "$1" || bad "$1 (expected empty, got: $2)"; }
-assert_nonempty() { [ -n "$2" ] && ok "$1" || bad "$1 (expected non-empty, got empty)"; }
 assert_eq() { [ "$2" = "$3" ] && ok "$1" || bad "$1 (expected '$3', got '$2')"; }
 assert_contains() { # assert_contains LABEL HAYSTACK NEEDLE
   case "$2" in *"$3"*) ok "$1" ;; *) bad "$1 (expected to contain '$3', got: $2)" ;; esac
 }
+assert_not_contains() {
+  case "$2" in *"$3"*) bad "$1 (did not expect '$3', got: $2)" ;; *) ok "$1" ;; esac
+}
 
-# --- fixtures: a "sub" repo standing in for passdesk-broker, and an "origin"
-# superproject with it added as submodule "broker" -------------------------
-git init -q "$tmp/sub"
-# tools.txt is how roles.sh notices an uninitialized submodule; it must be
-# committed in the submodule itself, not added through the superproject.
-# Dockerfile, passdesk/app.py and the *.pyc ignore rule mirror the real
-# broker's layout for the build-context tests.
-echo "git_fetch" > "$tmp/sub/tools.txt"
-echo "FROM scratch" > "$tmp/sub/Dockerfile"
-printf '__pycache__/\n*.pyc\n' > "$tmp/sub/.gitignore"
-mkdir -p "$tmp/sub/passdesk"
-echo "print('reviewed')" > "$tmp/sub/passdesk/app.py"
-git -C "$tmp/sub" add tools.txt Dockerfile .gitignore passdesk/app.py
-git -C "$tmp/sub" commit -q -m "sub v1"
-SUB_V1="$(git -C "$tmp/sub" rev-parse HEAD)"
-
+# --- fixtures: an "origin" holding the factory with a broker/ directory ----
+# tools.txt is what roles.sh reads. Dockerfile, passdesk/app.py and the *.pyc
+# ignore rule mirror the real broker's layout for the build-context tests.
 git init -q --bare -b main "$tmp/origin.git"
 git clone -q "$tmp/origin.git" "$tmp/seed"
 git -C "$tmp/seed" checkout -q -b main 2>/dev/null || true
-git -C "$tmp/seed" -c protocol.file.allow=always submodule add -q "$tmp/sub" broker
+mkdir -p "$tmp/seed/broker/passdesk"
+echo "git_fetch" > "$tmp/seed/broker/tools.txt"
+echo "FROM scratch" > "$tmp/seed/broker/Dockerfile"
+printf '__pycache__/\n*.pyc\n' > "$tmp/seed/broker/.gitignore"
+echo "print('reviewed')" > "$tmp/seed/broker/passdesk/app.py"
 # pull_factory's last step, on a pull that actually moves HEAD, re-execs
 # "$ROOT/bin/factory update --pulled". A tracked stub here lets that happen
 # for real in this fixture, without needing the real factory's sbx/docker
@@ -96,43 +77,16 @@ cat > "$tmp/seed/bin/factory" <<'STUB'
 echo "stub factory: $*"
 STUB
 chmod +x "$tmp/seed/bin/factory"
-git -C "$tmp/seed" add bin/factory
-git -C "$tmp/seed" commit -q -m "add broker submodule at v1, with a stub bin/factory"
+git -C "$tmp/seed" add -A
+git -C "$tmp/seed" commit -q -m "broker v1, with a stub bin/factory"
 git -C "$tmp/seed" push -q origin HEAD:main
-
-# ===========================================================================
-# Part 1: scripts/lib/roles.sh auto-initializes an empty submodule checkout
-# (a plain "git clone", without --recurse-submodules, instead of dying).
-# ===========================================================================
-git clone -q "$tmp/origin.git" "$tmp/plain-clone"
-if [ ! -e "$tmp/plain-clone/broker/tools.txt" ]; then
-  ok "fixture: a plain clone leaves broker/ uninitialized"
-else
-  bad "fixture: a plain clone leaves broker/ uninitialized"
-fi
-
-(
-  # shellcheck disable=SC1091
-  . "$REPO_ROOT/scripts/lib/common.sh"
-  ROOT="$tmp/plain-clone"
-  # shellcheck disable=SC1091
-  . "$REPO_ROOT/scripts/lib/roles.sh"
-  [ -f "$ROOT/broker/tools.txt" ] || { echo "tools.txt still missing after sourcing roles.sh" >&2; exit 1; }
-  [ -n "$KNOWN_BROKER_TOOLS" ] || { echo "KNOWN_BROKER_TOOLS is empty" >&2; exit 1; }
-) && ok "sourcing roles.sh against an uninitialized clone auto-runs submodule update --init" \
-  || bad "sourcing roles.sh against an uninitialized clone auto-runs submodule update --init"
-
-[ -f "$tmp/plain-clone/broker/tools.txt" ] \
-  && ok "roles.sh left broker/tools.txt populated on disk" \
-  || bad "roles.sh left broker/tools.txt populated on disk"
 
 # FACTORY_SRC: a copy of this repo's bin/ and scripts/ with a stub
 # broker/tools.txt, for the tests that source bin/factory. Sourcing it always
-# loads scripts/lib/roles.sh against its own root (it resets ROOT first), which
-# dies unless broker/ is initialised; a lane clone of this repo has no
-# submodules until it is initialised, and factory-test's copy has no .git. The
-# copy keeps those tests independent of the real broker/. They set ROOT to a
-# fixture afterwards, as before.
+# loads scripts/lib/roles.sh against its own root (it resets ROOT first),
+# which dies without broker/tools.txt; the copy keeps those tests independent
+# of the real broker/ (factory-test's copy has no .git). They set ROOT to a
+# fixture afterwards.
 FACTORY_SRC="$tmp/factory-src"
 mkdir -p "$FACTORY_SRC/broker"
 cp -R "$REPO_ROOT/bin" "$REPO_ROOT/scripts" "$FACTORY_SRC/"
@@ -140,10 +94,10 @@ echo "git_fetch" > "$FACTORY_SRC/broker/tools.txt"
 
 # --- helpers for exercising the real code -----------------------------------
 
-# fresh_checkout NAME -> path to a fresh --recurse-submodules clone of
-# origin.git, tracking main, under $tmp/NAME.
+# fresh_checkout NAME -> path to a fresh clone of origin.git, tracking main,
+# under $tmp/NAME.
 fresh_checkout() {
-  git clone -q --recurse-submodules "$tmp/origin.git" "$tmp/$1" >/dev/null 2>&1
+  git clone -q "$tmp/origin.git" "$tmp/$1" >/dev/null 2>&1
   git -C "$tmp/$1" branch -q --set-upstream-to=origin/main main 2>/dev/null || true
   echo "$tmp/$1"
 }
@@ -166,150 +120,6 @@ run_pull_factory() {
   set -e
 }
 
-# run_require_broker_at_pin DIR -> require_broker_at_pin's (scripts/lib/common.sh)
-# combined output in $RBAP_OUT, its exit status in $RBAP_RC.
-run_require_broker_at_pin() {
-  set +e
-  RBAP_OUT="$( (
-    # shellcheck disable=SC1091
-    . "$REPO_ROOT/scripts/lib/common.sh"
-    require_broker_at_pin "$1"
-  ) 2>&1 )"
-  RBAP_RC=$?
-  set -e
-}
-
-# ===========================================================================
-# Part 2: pull_factory's git sequence (bin/factory) actually moves broker/ to
-# a new pin, and the post-pull dirty check does not then block the next
-# update.
-# ===========================================================================
-checkout="$(fresh_checkout checkout)"
-
-assert_empty "clean checkout: dirty-check is empty before any pull" \
-  "$(git -C "$checkout" status --porcelain --ignore-submodules=all)"
-
-run_pull_factory "$checkout"
-assert_eq "pull_factory on an already-current checkout exits 0" "$PF_RC" "0"
-assert_contains "pull_factory on an already-current checkout reports up to date" \
-  "$PF_OUT" "already up to date"
-
-# Bump the broker pin upstream, the way a real pin bump commit does (reusing
-# "seed", whose broker/ checkout is already initialized).
-git -C "$tmp/sub" commit -q --allow-empty -m "sub v2"
-SUB_V2="$(git -C "$tmp/sub" rev-parse HEAD)"
-git -C "$tmp/seed/broker" fetch -q origin
-git -C "$tmp/seed/broker" checkout -q "$SUB_V2"
-git -C "$tmp/seed" add broker
-git -C "$tmp/seed" commit -q -m "bump broker pin to v2"
-git -C "$tmp/seed" push -q origin HEAD:main
-
-run_pull_factory "$checkout"
-assert_eq "pull_factory exits 0 pulling a real pin bump" "$PF_RC" "0"
-assert_eq "pull_factory's real run moves broker/ to the new pin" \
-  "$(git -C "$checkout/broker" rev-parse HEAD)" "$SUB_V2"
-assert_empty "the pin bump does not leave the checkout looking dirty" \
-  "$(git -C "$checkout" status --porcelain --ignore-submodules=all)"
-assert_contains "pull_factory re-execs 'factory update --pulled' after a real pull" \
-  "$PF_OUT" "stub factory: update --pulled"
-
-# Document why --ignore-submodules=dirty (the task's suggested first option)
-# does not work here: unlike "=all", it still reports a submodule whose
-# checked-out commit doesn't match the superproject's recorded pin -- exactly
-# the (harmless) state right after a plain "git pull --ff-only" with no
-# submodule update.
-rationale="$(fresh_checkout rationale)"
-git -C "$rationale/broker" checkout -q "$SUB_V1"
-assert_nonempty "--ignore-submodules=dirty still flags a pin-only mismatch (why =all is used instead)" \
-  "$(git -C "$rationale" status --porcelain --ignore-submodules=dirty)"
-assert_empty "--ignore-submodules=all correctly ignores that same pin-only mismatch" \
-  "$(git -C "$rationale" status --porcelain --ignore-submodules=all)"
-
-# ===========================================================================
-# Part 2b: pull_factory refuses when broker/ has a real edit or an
-# unreviewed local commit, instead of silently pulling forward over it.
-# ===========================================================================
-
-# --- a dirty tracked file in broker/ ----------------------------------------
-dirty_tracked="$(fresh_checkout dirty-tracked)"
-echo "more" >> "$dirty_tracked/broker/tools.txt"
-run_pull_factory "$dirty_tracked"
-assert_eq "dirty tracked file in broker/: pull_factory exits 0 (refuses, does not die)" "$PF_RC" "0"
-assert_contains "dirty tracked file in broker/ is refused with a clear message" \
-  "$PF_OUT" "broker has uncommitted changes"
-assert_eq "dirty tracked file in broker/: broker/ HEAD is left untouched" \
-  "$(git -C "$dirty_tracked/broker" rev-parse HEAD)" "$SUB_V2"
-
-# --- an untracked file in broker/ -------------------------------------------
-untracked="$(fresh_checkout untracked)"
-echo "x" > "$untracked/broker/stray.txt"
-run_pull_factory "$untracked"
-assert_eq "untracked file in broker/: pull_factory exits 0 (refuses, does not die)" "$PF_RC" "0"
-assert_contains "untracked file in broker/ is refused with a clear message" \
-  "$PF_OUT" "broker has uncommitted changes"
-assert_eq "untracked file in broker/: broker/ HEAD is left untouched" \
-  "$(git -C "$untracked/broker" rev-parse HEAD)" "$SUB_V2"
-
-# --- a local commit in broker/ not on the pin -------------------------------
-local_commit="$(fresh_checkout local-commit)"
-echo "local change" > "$local_commit/broker/local.txt"
-git -C "$local_commit/broker" add local.txt
-git -C "$local_commit/broker" commit -q -m "local, unreviewed commit"
-LOCAL_COMMIT="$(git -C "$local_commit/broker" rev-parse HEAD)"
-run_pull_factory "$local_commit"
-assert_eq "local commit in broker/ not on the pin: pull_factory exits 0 (refuses, does not die)" "$PF_RC" "0"
-assert_contains "a local commit in broker/ not on the pin is refused with a clear message" \
-  "$PF_OUT" "isn't part of the pinned history"
-assert_eq "local commit in broker/ not on the pin: broker/ HEAD is left untouched" \
-  "$(git -C "$local_commit/broker" rev-parse HEAD)" "$LOCAL_COMMIT"
-
-# --- broker/ behind the pin: allowed, and updated to the pin ----------------
-behind="$(fresh_checkout behind-pin)"
-git -C "$behind/broker" checkout -q "$SUB_V1"
-run_pull_factory "$behind"
-assert_eq "broker/ behind the pin: pull_factory exits 0" "$PF_RC" "0"
-assert_eq "broker/ behind the pin: pull_factory updates it to the pin" \
-  "$(git -C "$behind/broker" rev-parse HEAD)" "$SUB_V2"
-
-# ===========================================================================
-# Part 3: require_broker_at_pin (scripts/lib/common.sh), used by
-# scripts/00-build-templates.sh before it bakes broker/ into the broker
-# image, refuses the same dirty states, refuses anything off the pin (even a
-# commit that pull_factory would tolerate as "behind"), and accepts a clean
-# checkout exactly at the pin.
-# ===========================================================================
-run_require_broker_at_pin "$dirty_tracked"
-assert_eq "require_broker_at_pin refuses a dirty tracked file in broker/" "$RBAP_RC" "1"
-assert_contains "require_broker_at_pin's dirty refusal names the problem" \
-  "$RBAP_OUT" "uncommitted changes"
-
-run_require_broker_at_pin "$untracked"
-assert_eq "require_broker_at_pin refuses an untracked file in broker/" "$RBAP_RC" "1"
-assert_contains "require_broker_at_pin's untracked-file refusal names the problem" \
-  "$RBAP_OUT" "uncommitted changes"
-
-run_require_broker_at_pin "$local_commit"
-assert_eq "require_broker_at_pin refuses a local commit in broker/ off the pin" "$RBAP_RC" "1"
-assert_contains "require_broker_at_pin's off-pin refusal names the problem" \
-  "$RBAP_OUT" "not the pinned commit"
-
-behind_for_build="$(fresh_checkout behind-pin-for-build)"
-git -C "$behind_for_build/broker" checkout -q "$SUB_V1"
-run_require_broker_at_pin "$behind_for_build"
-assert_eq "require_broker_at_pin refuses broker/ behind the pin too (exact match required for a build)" \
-  "$RBAP_RC" "1"
-assert_contains "require_broker_at_pin's behind-pin refusal names the problem" \
-  "$RBAP_OUT" "not the pinned commit"
-
-clean_at_pin="$(fresh_checkout clean-at-pin)"
-run_require_broker_at_pin "$clean_at_pin"
-assert_eq "require_broker_at_pin accepts a clean checkout exactly at the pin" "$RBAP_RC" "0"
-assert_empty "require_broker_at_pin prints nothing when it accepts" "$RBAP_OUT"
-
-# ===========================================================================
-# Part 4: nothing trusts broker/.git.
-# ===========================================================================
-
 # run_common FN ARGS... -> run a scripts/lib/common.sh function in a
 # subshell; combined output in $C_OUT, exit status in $C_RC.
 run_common() {
@@ -323,149 +133,162 @@ run_common() {
   set -e
 }
 
-# fake_broker_repo CHECKOUT NAME [FSMONITOR-PAYLOAD] -> point CHECKOUT's
-# broker/.git at a fake repository $tmp/NAME (a clone of the broker at the
-# pin) in which an edit to passdesk/app.py is hidden with skip-worktree, so
-# plain "git -C broker" sees a clean checkout exactly at the pin. With a
-# payload script, the fake repository's config also runs it as its
-# core.fsmonitor hook.
-fake_broker_repo() {
-  local co="$1" fake="$tmp/$2"
-  git clone -q --no-checkout "$tmp/sub" "$fake"
-  echo "print('planted')" > "$co/broker/passdesk/app.py"
-  git --git-dir="$fake/.git" --work-tree="$co/broker" read-tree HEAD
-  git --git-dir="$fake/.git" --work-tree="$co/broker" update-index -q --refresh >/dev/null 2>&1 || true
-  git --git-dir="$fake/.git" --work-tree="$co/broker" update-index --skip-worktree passdesk/app.py
-  [ -z "${3:-}" ] || git --git-dir="$fake/.git" config core.fsmonitor "$3"
-  printf 'gitdir: %s\n' "$fake/.git" > "$co/broker/.git"
-}
+# ===========================================================================
+# Part 1: scripts/lib/roles.sh reads broker/tools.txt, and dies without it.
+# ===========================================================================
+roles_co="$(fresh_checkout roles-co)"
+(
+  # shellcheck disable=SC1091
+  . "$REPO_ROOT/scripts/lib/common.sh"
+  ROOT="$roles_co"
+  # shellcheck disable=SC1091
+  . "$REPO_ROOT/scripts/lib/roles.sh"
+  [ "$KNOWN_BROKER_TOOLS" = "git_fetch" ] || { echo "KNOWN_BROKER_TOOLS is '$KNOWN_BROKER_TOOLS'" >&2; exit 1; }
+) && ok "sourcing roles.sh reads the tool names from broker/tools.txt" \
+  || bad "sourcing roles.sh reads the tool names from broker/tools.txt"
 
-# --- a redirected broker/.git ------------------------------------------------
-redirected="$(fresh_checkout redirected)"
-fake_broker_repo "$redirected" fake-redirect
-# Control: plain git in broker/ is fooled, which is what 496e013's checks did.
-assert_empty "control: plain 'git -C broker status' is fooled by the fake repository" \
-  "$(git -C "$redirected/broker" status --porcelain --untracked-files=all)"
-assert_eq "control: plain 'git -C broker rev-parse HEAD' reports the pin" \
-  "$(git -C "$redirected/broker" rev-parse HEAD)" "$SUB_V2"
-
-run_require_broker_at_pin "$redirected"
-assert_eq "require_broker_at_pin refuses a redirected broker/.git" "$RBAP_RC" "1"
-assert_contains "require_broker_at_pin's redirect refusal names the problem" \
-  "$RBAP_OUT" "does not point at"
-mkdir "$tmp/ctx-redirected"
-run_common broker_export "$redirected" "$tmp/ctx-redirected"
-assert_eq "broker_export refuses a redirected broker/.git" "$C_RC" "1"
-assert_empty "broker_export wrote nothing for a redirected broker/.git" \
-  "$(ls -A "$tmp/ctx-redirected")"
-run_pull_factory "$redirected"
-assert_eq "redirected broker/.git: pull_factory exits 0 (refuses, does not die)" "$PF_RC" "0"
-assert_contains "pull_factory refuses a redirected broker/.git" "$PF_OUT" "does not point at"
-assert_eq "redirected broker/.git: pull_factory left it untouched" \
-  "$(cat "$redirected/broker/.git")" "gitdir: $tmp/fake-redirect/.git"
-
-# --- broker/.git replaced by a directory or a symlink -------------------------
-gitfile_dir="$(fresh_checkout gitfile-dir)"
-rm "$gitfile_dir/broker/.git"
-mkdir "$gitfile_dir/broker/.git"
-run_require_broker_at_pin "$gitfile_dir"
-assert_eq "require_broker_at_pin refuses a broker/.git directory" "$RBAP_RC" "1"
-assert_contains "the broker/.git directory refusal names the problem" "$RBAP_OUT" "not a regular gitfile"
-
-gitfile_link="$(fresh_checkout gitfile-link)"
-cp "$gitfile_link/broker/.git" "$tmp/gitfile-copy"
-rm "$gitfile_link/broker/.git"
-ln -s "$tmp/gitfile-copy" "$gitfile_link/broker/.git"
-run_require_broker_at_pin "$gitfile_link"
-assert_eq "require_broker_at_pin refuses a symlinked broker/.git, even to the right content" "$RBAP_RC" "1"
-
-# --- an fsmonitor payload in a fake gitdir -----------------------------------
-marker="$tmp/fsmonitor-ran"
-cat > "$tmp/payload.sh" <<PAYLOAD
-#!/bin/sh
-touch "$marker"
-PAYLOAD
-chmod +x "$tmp/payload.sh"
-fsmon="$(fresh_checkout fsmonitor)"
-fake_broker_repo "$fsmon" fake-fsmonitor "$tmp/payload.sh"
-# Control: the payload is live -- plain "git -C broker status" runs it.
-git -C "$fsmon/broker" status --porcelain >/dev/null 2>&1 || true
-[ -e "$marker" ] && ok "control: plain 'git -C broker status' runs the fsmonitor payload" \
-  || bad "control: plain 'git -C broker status' runs the fsmonitor payload"
-rm -f "$marker"
-
-run_require_broker_at_pin "$fsmon"
-assert_eq "require_broker_at_pin refuses a broker/.git pointing at an fsmonitor payload" "$RBAP_RC" "1"
-mkdir "$tmp/ctx-fsmon"
-run_common broker_export "$fsmon" "$tmp/ctx-fsmon"
-assert_eq "broker_export refuses a broker/.git pointing at an fsmonitor payload" "$C_RC" "1"
-run_pull_factory "$fsmon"
-assert_contains "pull_factory refuses a broker/.git pointing at an fsmonitor payload" \
-  "$PF_OUT" "does not point at"
-[ ! -e "$marker" ] && ok "the fsmonitor payload was never run by the checks or pull_factory" \
-  || bad "the fsmonitor payload was never run by the checks or pull_factory"
-
-# An fsmonitor (or hook) in broker/'s real module config -- which lives under
-# the main repo's .git and is trusted -- is still forced off by broker_git.
-fsmon_real="$(fresh_checkout fsmonitor-real)"
-git --git-dir="$fsmon_real/.git/modules/broker" config core.fsmonitor "$tmp/payload.sh"
-run_require_broker_at_pin "$fsmon_real"
-assert_eq "require_broker_at_pin accepts a clean broker/ whose module config sets core.fsmonitor" "$RBAP_RC" "0"
-run_pull_factory "$fsmon_real"
-assert_eq "pull_factory runs normally with core.fsmonitor in the module config" "$PF_RC" "0"
-[ ! -e "$marker" ] && ok "broker_git forces core.fsmonitor off even from the real module config" \
-  || bad "broker_git forces core.fsmonitor off even from the real module config"
-
-# --- an uninitialized submodule ----------------------------------------------
-git clone -q "$tmp/origin.git" "$tmp/uninit"
-run_require_broker_at_pin "$tmp/uninit"
-assert_eq "require_broker_at_pin refuses an uninitialized submodule" "$RBAP_RC" "1"
-assert_contains "the uninitialized refusal names the problem" "$RBAP_OUT" "not initialized"
-mkdir "$tmp/ctx-uninit"
-run_common broker_export "$tmp/uninit" "$tmp/ctx-uninit"
-assert_eq "broker_export refuses an uninitialized submodule" "$C_RC" "1"
-assert_contains "broker_export's uninitialized refusal names the problem" "$C_OUT" "not initialized"
-
-# ...but a module directory without the pinned commit is refused too.
-missing_pin="$(fresh_checkout missing-pin)"
-git -C "$tmp/sub" commit -q --allow-empty -m "sub v3, never fetched by missing-pin"
-SUB_V3="$(git -C "$tmp/sub" rev-parse HEAD)"
-git -C "$missing_pin" update-index --cacheinfo "160000,$SUB_V3,broker"
-git -C "$missing_pin" commit -q -m "pin broker to a commit missing-pin's module dir lacks"
-mkdir "$tmp/ctx-missing-pin"
-run_common broker_export "$missing_pin" "$tmp/ctx-missing-pin"
-assert_eq "broker_export refuses a pin missing from broker/'s repository" "$C_RC" "1"
-assert_contains "broker_export's missing-pin refusal names the commit" "$C_OUT" "$SUB_V3"
+rm "$roles_co/broker/tools.txt"
+set +e
+roles_out="$( (
+  # shellcheck disable=SC1091
+  . "$REPO_ROOT/scripts/lib/common.sh"
+  ROOT="$roles_co"
+  # shellcheck disable=SC1091
+  . "$REPO_ROOT/scripts/lib/roles.sh"
+) 2>&1 )"
+roles_rc=$?
+set -e
+assert_eq "sourcing roles.sh without broker/tools.txt fails" "$roles_rc" "1"
+assert_contains "roles.sh names the missing file" "$roles_out" "$roles_co/broker/tools.txt is missing"
+assert_not_contains "roles.sh does not mention a submodule" "$roles_out" "submodule"
 
 # ===========================================================================
-# Part 5: the broker build context is an export of the pin, and
-# 00-build-templates.sh builds from it.
+# Part 2: pull_factory pulls broker/ with the rest, and refuses over
+# uncommitted work.
 # ===========================================================================
-pinned_tree="$tmp/pinned-tree"
-mkdir "$pinned_tree"
-git -C "$tmp/sub" archive "$SUB_V2" | tar -x -f - -C "$pinned_tree"
+checkout="$(fresh_checkout checkout)"
+assert_empty "clean checkout: status is empty before any pull" "$(git -C "$checkout" status --porcelain)"
 
+run_pull_factory "$checkout"
+assert_eq "pull_factory on an already-current checkout exits 0" "$PF_RC" "0"
+assert_contains "pull_factory on an already-current checkout reports up to date" "$PF_OUT" "already up to date"
+
+# An upstream commit that changes the broker.
+echo "print('v2')" > "$tmp/seed/broker/passdesk/app.py"
+git -C "$tmp/seed" commit -q -am "broker v2"
+git -C "$tmp/seed" push -q origin HEAD:main
+run_pull_factory "$checkout"
+assert_eq "pull_factory exits 0 pulling a commit that changes broker/" "$PF_RC" "0"
+assert_eq "pull_factory brings broker/ to the new content" "$(cat "$checkout/broker/passdesk/app.py")" "print('v2')"
+assert_eq "the pull leaves the checkout clean" "$(git -C "$checkout" status --porcelain)" ""
+assert_contains "pull_factory re-execs 'factory update --pulled' after a real pull" "$PF_OUT" "stub factory: update --pulled"
+
+# --- a dirty tracked file in broker/ ----------------------------------------
+echo "print('v3')" > "$tmp/seed/broker/passdesk/app.py"
+git -C "$tmp/seed" commit -q -am "broker v3"
+git -C "$tmp/seed" push -q origin HEAD:main
+V3="$(git -C "$tmp/seed" rev-parse HEAD)"
+
+dirty_tracked="$(fresh_checkout dirty-tracked)"
+git -C "$dirty_tracked" reset -q --hard "HEAD~1"
+echo "more" >> "$dirty_tracked/broker/tools.txt"
+before="$(git -C "$dirty_tracked" rev-parse HEAD)"
+run_pull_factory "$dirty_tracked"
+assert_eq "dirty tracked file in broker/: pull_factory exits 0 (refuses, does not die)" "$PF_RC" "0"
+assert_contains "dirty tracked file in broker/ is refused with a clear message" "$PF_OUT" "uncommitted changes"
+assert_eq "dirty tracked file in broker/: HEAD is left untouched" "$(git -C "$dirty_tracked" rev-parse HEAD)" "$before"
+
+# --- an untracked file in broker/ -------------------------------------------
+untracked="$(fresh_checkout untracked)"
+git -C "$untracked" reset -q --hard "HEAD~1"
+echo "x" > "$untracked/broker/stray.txt"
+before="$(git -C "$untracked" rev-parse HEAD)"
+run_pull_factory "$untracked"
+assert_eq "untracked file in broker/: pull_factory exits 0 (refuses, does not die)" "$PF_RC" "0"
+assert_contains "untracked file in broker/ is refused with a clear message" "$PF_OUT" "uncommitted changes"
+assert_eq "untracked file in broker/: HEAD is left untouched" "$(git -C "$untracked" rev-parse HEAD)" "$before"
+
+# --- a git-ignored file in broker/ does not block ---------------------------
 ignored="$(fresh_checkout ignored-pyc)"
+git -C "$ignored" reset -q --hard "HEAD~1"
 mkdir -p "$ignored/broker/passdesk/__pycache__"
 echo "planted bytecode" > "$ignored/broker/passdesk/__pycache__/app.cpython-312.pyc"
-run_common broker_dirty "$ignored"
-assert_contains "broker_dirty reports a git-ignored .pyc (--ignored)" "$C_OUT" "!! passdesk/__pycache__/"
-run_require_broker_at_pin "$ignored"
-assert_eq "require_broker_at_pin does not block on git-ignored files" "$RBAP_RC" "0"
-mkdir "$tmp/ctx-ignored"
-run_common broker_export "$ignored" "$tmp/ctx-ignored"
-assert_eq "broker_export succeeds with a git-ignored .pyc in broker/" "$C_RC" "0"
-[ ! -e "$tmp/ctx-ignored/passdesk/__pycache__" ] \
-  && ok "a git-ignored .pyc in broker/ is not in the exported build context" \
-  || bad "a git-ignored .pyc in broker/ is not in the exported build context"
-diff -r "$pinned_tree" "$tmp/ctx-ignored" >/dev/null \
-  && ok "the exported build context matches 'git archive' of the pin exactly" \
-  || bad "the exported build context matches 'git archive' of the pin exactly"
 run_pull_factory "$ignored"
-assert_eq "pull_factory does not block on git-ignored files in broker/" "$PF_RC" "0"
-assert_contains "pull_factory with only git-ignored files in broker/ proceeds" "$PF_OUT" "already up to date"
+assert_eq "git-ignored files in broker/: pull_factory exits 0" "$PF_RC" "0"
+assert_eq "git-ignored files in broker/ don't block the pull" "$(git -C "$ignored" rev-parse HEAD)" "$V3"
 
-# --- 00-build-templates.sh, run for real with stub docker and sbx ------------
+# ===========================================================================
+# Part 3: the broker build context is an export of the committed broker/.
+# ===========================================================================
+committed_tree="$tmp/committed-tree"
+mkdir "$committed_tree"
+git -C "$tmp/seed" archive "$V3:broker" | tar -x -f - -C "$committed_tree"
+
+export_co="$(fresh_checkout export-co)"
+mkdir "$tmp/ctx-clean"
+run_common broker_export "$export_co" "$tmp/ctx-clean"
+assert_eq "broker_export succeeds on a clean checkout" "$C_RC" "0"
+diff -r "$committed_tree" "$tmp/ctx-clean" >/dev/null \
+  && ok "the exported build context is broker/'s committed tree exactly (Dockerfile at its top)" \
+  || bad "the exported build context is broker/'s committed tree exactly"
+
+# A planted ignored .pyc, an edit to a tracked file and an untracked file
+# are all in the working tree and none of them in the export.
+mkdir -p "$export_co/broker/passdesk/__pycache__"
+echo "planted bytecode" > "$export_co/broker/passdesk/__pycache__/app.cpython-312.pyc"
+echo "print('planted')" > "$export_co/broker/passdesk/app.py"
+echo "planted" > "$export_co/broker/planted.txt"
+mkdir "$tmp/ctx-planted"
+run_common broker_export "$export_co" "$tmp/ctx-planted"
+assert_eq "broker_export succeeds with planted files in the broker/ working tree" "$C_RC" "0"
+diff -r "$committed_tree" "$tmp/ctx-planted" >/dev/null \
+  && ok "an ignored .pyc, an edited file and an untracked file in broker/ don't reach the build context" \
+  || bad "an ignored .pyc, an edited file and an untracked file in broker/ don't reach the build context"
+
+mkdir "$tmp/ctx-prepared"
+run_common prepare_broker_context "$export_co" "$tmp/ctx-prepared"
+assert_eq "prepare_broker_context accepts uncommitted work in broker/" "$C_RC" "0"
+assert_contains "prepare_broker_context notes that uncommitted work is not included" "$C_OUT" "uncommitted changes in $export_co/broker are not included"
+diff -r "$committed_tree" "$tmp/ctx-prepared" >/dev/null \
+  && ok "prepare_broker_context exports the committed tree" \
+  || bad "prepare_broker_context exports the committed tree"
+
+# A deleted tracked file is still in the export.
+rm "$export_co/broker/Dockerfile"
+mkdir "$tmp/ctx-deleted"
+run_common broker_export "$export_co" "$tmp/ctx-deleted"
+[ -f "$tmp/ctx-deleted/Dockerfile" ] && ok "a Dockerfile deleted from the working tree is still in the export" \
+  || bad "a Dockerfile deleted from the working tree is still in the export"
+
+# A clean checkout prints no note.
+clean_co="$(fresh_checkout clean-co)"
+mkdir "$tmp/ctx-clean2"
+run_common prepare_broker_context "$clean_co" "$tmp/ctx-clean2"
+assert_eq "prepare_broker_context on a clean checkout: exits 0" "$C_RC" "0"
+assert_empty "prepare_broker_context on a clean checkout: prints nothing" "$C_OUT"
+
+# Work added to the index but not committed is not committed either.
+staged_co="$(fresh_checkout staged-co)"
+echo "print('staged')" > "$staged_co/broker/passdesk/app.py"
+git -C "$staged_co" add broker/passdesk/app.py
+mkdir "$tmp/ctx-staged"
+run_common broker_export "$staged_co" "$tmp/ctx-staged"
+assert_eq "a staged, uncommitted edit to broker/ is not exported" "$(cat "$tmp/ctx-staged/passdesk/app.py")" "print('v3')"
+
+# A checkout without a committed broker/ is refused, and nothing is written.
+nobroker="$tmp/nobroker"
+git init -q "$nobroker"
+git -C "$nobroker" commit -q --allow-empty -m "no broker"
+mkdir -p "$nobroker/broker" && echo "git_fetch" > "$nobroker/broker/tools.txt"
+mkdir "$tmp/ctx-nobroker"
+run_common broker_export "$nobroker" "$tmp/ctx-nobroker"
+assert_eq "broker_export refuses a checkout whose broker/ is not committed" "$C_RC" "1"
+assert_contains "broker_export's refusal names the problem" "$C_OUT" "broker/tools.txt is not in the committed tree"
+assert_empty "broker_export wrote nothing for an uncommitted broker/" "$(ls -A "$tmp/ctx-nobroker")"
+
+# ===========================================================================
+# Part 4: 00-build-templates.sh, run for real with stub docker and sbx.
+# ===========================================================================
 stubs="$tmp/stubs"
 mkdir -p "$stubs"
 cat > "$stubs/docker" <<'STUB'
@@ -491,8 +314,8 @@ STUB
 chmod +x "$stubs/docker" "$stubs/sbx"
 
 # run_build DIR -> run a copy of the real scripts/00-build-templates.sh (and
-# scripts/lib) from inside fixture checkout DIR, so its ROOT is DIR. Output in
-# $B_OUT, status in $B_RC, the broker's build context copied to $DIR.ctx.
+# scripts/lib) from inside fixture checkout DIR, so its ROOT is DIR. Output
+# in $B_OUT, status in $B_RC, the broker's build context copied to $DIR.ctx.
 run_build() {
   rm -rf "$1/scripts"
   mkdir -p "$1/scripts"
@@ -505,35 +328,40 @@ run_build() {
   set -e
 }
 
-run_build "$ignored"
-assert_eq "00-build-templates.sh succeeds on a clean broker/ at the pin (stub docker)" "$B_RC" "0"
-diff -r "$pinned_tree" "$ignored.ctx" >/dev/null \
-  && ok "00-build-templates.sh builds the broker from exactly the pinned commit's tree" \
-  || bad "00-build-templates.sh builds the broker from exactly the pinned commit's tree"
-case "$(cat "$ignored.ctx.context")" in
-  "$ignored"/*|"$ignored") bad "00-build-templates.sh's broker context is not inside the checkout" ;;
+build_co="$(fresh_checkout build-co)"
+mkdir -p "$build_co/broker/passdesk/__pycache__"
+echo "planted bytecode" > "$build_co/broker/passdesk/__pycache__/app.cpython-312.pyc"
+run_build "$build_co"
+assert_eq "00-build-templates.sh succeeds on a checkout with a committed broker/ (stub docker)" "$B_RC" "0"
+diff -r "$committed_tree" "$build_co.ctx" >/dev/null \
+  && ok "00-build-templates.sh builds the broker from exactly the committed broker/ tree" \
+  || bad "00-build-templates.sh builds the broker from exactly the committed broker/ tree"
+case "$(cat "$build_co.ctx.context")" in
+  "$build_co"/*|"$build_co") bad "00-build-templates.sh's broker context is not inside the checkout" ;;
   *) ok "00-build-templates.sh's broker context is not inside the checkout" ;;
 esac
 assert_eq "00-build-templates.sh takes the broker Dockerfile from the exported context" \
-  "$(cat "$ignored.ctx.dockerfile")" "$(cat "$ignored.ctx.context")/Dockerfile"
+  "$(cat "$build_co.ctx.dockerfile")" "$(cat "$build_co.ctx.context")/Dockerfile"
+assert_not_contains "00-build-templates.sh doesn't mention a submodule or pin" "$B_OUT" "submodule"
 
-run_build "$redirected"
-assert_eq "00-build-templates.sh refuses a redirected broker/.git" "$B_RC" "1"
-assert_contains "00-build-templates.sh's redirect refusal names the problem" "$B_OUT" "does not point at"
-[ ! -e "$redirected.ctx" ] && ok "00-build-templates.sh built nothing for a redirected broker/.git" \
-  || bad "00-build-templates.sh built nothing for a redirected broker/.git"
+echo "print('edited')" > "$build_co/broker/passdesk/app.py"
+echo "planted" > "$build_co/broker/planted.txt"
+run_build "$build_co"
+assert_eq "00-build-templates.sh still builds with uncommitted work in broker/" "$B_RC" "0"
+assert_contains "00-build-templates.sh notes that it is not in the image" "$B_OUT" "uncommitted changes in $build_co/broker are not included"
+diff -r "$committed_tree" "$build_co.ctx" >/dev/null \
+  && ok "uncommitted work in broker/ doesn't reach the broker image's build context" \
+  || bad "uncommitted work in broker/ doesn't reach the broker image's build context"
 
-run_build "$fsmon"
-assert_eq "00-build-templates.sh refuses a broker/.git pointing at an fsmonitor payload" "$B_RC" "1"
-[ ! -e "$marker" ] && ok "00-build-templates.sh never ran the fsmonitor payload" \
-  || bad "00-build-templates.sh never ran the fsmonitor payload"
-
-run_build "$dirty_tracked"
-assert_eq "00-build-templates.sh refuses a dirty broker/" "$B_RC" "1"
-assert_contains "00-build-templates.sh's dirty refusal names the problem" "$B_OUT" "uncommitted changes"
+rm -rf "$build_co.ctx"
+run_build "$nobroker"
+assert_eq "00-build-templates.sh refuses a checkout whose broker/ is not committed" "$B_RC" "1"
+assert_contains "00-build-templates.sh's refusal names the problem" "$B_OUT" "not in the committed tree"
+[ ! -e "$nobroker.ctx" ] && ok "00-build-templates.sh built nothing without a committed broker/" \
+  || bad "00-build-templates.sh built nothing without a committed broker/"
 
 # ===========================================================================
-# Part 6: an exported ROOT doesn't redirect a direct run of bin/factory.
+# Part 5: an exported ROOT doesn't redirect a direct run of bin/factory.
 # Before, bin/factory kept an inherited ROOT, so sourcing roles.sh against
 # this empty directory died on its missing broker/tools.txt.
 # ===========================================================================
@@ -550,7 +378,7 @@ esac
 assert_empty "an exported ROOT: nothing was written into it" "$(ls -A "$tmp/evil-root")"
 
 # ===========================================================================
-# Part 7: factory update --plan.
+# Part 6: factory update --plan.
 # ===========================================================================
 plan_bin="$tmp/plan-bin"
 mkdir -p "$plan_bin"
@@ -641,6 +469,19 @@ G_OUT="$( (
 set -e
 assert_eq "plan_maybe_sandboxes reads a name with spaces and '*' whole (one line, the full name)" \
   "$G_OUT" "$(printf 'factory-coordinator\tits kit changes (kits/coordinator/my spec *.yaml)')"
+
+# A change under broker/ makes the broker sandbox a candidate for recreation.
+set +e
+B_PLAN="$( (
+  export PATH="$plan_bin:$PATH" XDG_STATE_HOME="$tmp/plan-state" XDG_CONFIG_HOME="$tmp/plan-config"
+  # shellcheck disable=SC1091
+  . "$FACTORY_SRC/bin/factory"
+  ROOT="$planco"
+  plan_maybe_sandboxes "$(printf '%s\n' 'broker/passdesk/app.py')"
+) 2>&1 )"
+set -e
+assert_eq "plan_maybe_sandboxes: a changed file under broker/ may recreate the broker" \
+  "$B_PLAN" "$(printf "factory-broker\tthe broker's code or kit changes (broker/passdesk/app.py)")"
 
 echo "dirty" > "$planco/untracked.txt"
 run_plan "$planco"

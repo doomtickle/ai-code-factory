@@ -11,7 +11,7 @@ set -euo pipefail
 #    prints the path and still succeeds.
 # 3. An unknown flag is a usage error, and docs.py never runs.
 # 4. It needs no sbx or docker (stubs that record any call stay
-#    silent) and no broker/ submodule: a fixture checkout with neither works,
+#    silent) and no broker/: a fixture checkout with neither works,
 #    so it runs on a fresh clone before 'factory setup'.
 # 5. If the real scripts/docs.py exists, one real render through
 #    'factory docs --print' produces HTML.
@@ -142,14 +142,14 @@ assert_contains "docs --html prints the usage" "$(cat "$tmp/out")" "usage: facto
 [ ! -e "$tmp/docs-calls" ] && ok "docs --html never runs docs.py" || bad "docs --html never runs docs.py"
 
 # ===========================================================================
-# Part 4: no sbx/docker, no broker/ submodule
+# Part 4: no sbx/docker, no broker/
 # ===========================================================================
 [ ! -e "$fx/broker" ] && ok "fixture: the checkout has no broker/" || bad "fixture: the checkout has no broker/"
 reset_run
 run_fixture docs --print || true
 [ ! -e "$tmp/forbidden" ] && ok "docs never calls sbx or docker" \
   || bad "docs never calls sbx or docker (called: $(cat "$tmp/forbidden"))"
-assert_contains "docs works with no broker/ submodule" "$(cat "$tmp/out")" "<title>stub docs</title>"
+assert_contains "docs works with no broker/" "$(cat "$tmp/out")" "<title>stub docs</title>"
 reset_run
 run_fixture help || true
 assert_contains "factory help lists docs" "$(cat "$tmp/out")" "factory docs [--print]"
