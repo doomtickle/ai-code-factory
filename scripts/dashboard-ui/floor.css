@@ -52,7 +52,9 @@
 .fl .grid-l { stroke: var(--amber); stroke-opacity: .07; stroke-width: .6; }
 .fl.day .grid-l { stroke-opacity: .11; }
 /* Glass over the picture: scanlines and grille from Terminal 0's CRT knob (--crt, 0..1,
-   set on the document by app.js), a vignette, a faint band rolling down */
+   set on the document by app.js), a vignette, a faint band rolling down. Pure decoration:
+   it lies over the stations and must never take their clicks. */
+.fl .over, .fl .fx { pointer-events: none; }
 .fl .scan-l { fill: #000; }
 .fl .scan { opacity: calc(var(--crt, .3) * .5); }
 .fl .grille { opacity: calc(var(--crt, .3) * .12); }
@@ -85,7 +87,9 @@
 .fl .helmet { fill: #0b0802; }
 .fl .circuit { fill: var(--hue); }
 .fl .circuit.faint { opacity: .6; }
-.fl .visor { filter: drop-shadow(0 0 1.5px var(--glow)); }
+.fl .shade-frame { fill: #050301; }
+.fl .shade { fill: var(--hue); filter: drop-shadow(0 0 1.2px var(--glow)); }
+.fl .glint { fill: var(--paper); opacity: .85; }
 .fl .disc { fill: none; stroke: var(--hue); stroke-width: 1; filter: drop-shadow(0 0 1.5px var(--glow)); }
 .fl .name { fill: var(--hue); opacity: .9; }
 

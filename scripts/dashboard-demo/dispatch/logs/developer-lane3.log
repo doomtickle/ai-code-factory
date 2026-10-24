@@ -1,0 +1,5 @@
+{{clock:-95}}  ▶ job 20261023-demo05-dev3 from the Coordinator
+{{clock:-95}}     > Tidy the packaging metadata, changelog and release notes for the next tag
+{{clock:-95}}     model: claude-sonnet-5-5
+{{clock:-80}}  🔧 Read: {"file_path": "/work/example-app/CHANGELOG.md"}
+{{clock:-40}}  🔧 Read: {"file_path": "/work/example-app/pyproject.toml"}

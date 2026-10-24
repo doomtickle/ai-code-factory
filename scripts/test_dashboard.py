@@ -187,7 +187,7 @@ class DeskLabelTests(unittest.TestCase):
         for text, want in (
             ("Repo: ai-code-factory. Branch from main; commit to `factory/desk-placards`.", "desk placards"),
             ("Review factory-developer-lane2/factory/rate_limit.v2 now", "rate limit v2"),
-            ("push factory/a-very-long-branch-name-indeed", "a very long branch"),
+            ("push factory/a-very-long-branch-name-indeed", "a very long branch name indeed"),
             ("Fix x, then factory/first and factory/second", "first"),
             ("Put the bundle in .factory/outgoing/ then push factory/fix-x", "fix x"),
             ("See https://example.com/o/factory/pull/1 and push factory/fix-x", "fix x"),
@@ -199,19 +199,21 @@ class DeskLabelTests(unittest.TestCase):
             self.assertEqual(d.desk_label(text), want)
 
     def test_branch_pattern_ignores_lookalikes(self):
-        self.assertEqual(d.desk_label("Edit ai-code-factory/scripts today"), "Edit")
-        self.assertEqual(d.desk_label("use factory/<topic> branches"), "use factory/ topic")  # a placeholder is no branch
+        self.assertEqual(d.desk_label("Edit ai-code-factory/scripts today"), "Edit ai-code-factory/scripts today")
+        self.assertEqual(d.desk_label("use factory/<topic> branches"), "use factory/ topic branches")  # a placeholder is no branch
 
     def test_fallback_first_words(self):
         for text, want in (
-            ("Reject empty names in greet(), test it, and push", "Reject empty names"),
-            ("Repo: passdesk-ops. Fix the **dashboard** crash", "Fix the dashboard"),
-            ("Task: Fix the login crash", "Fix the login"),
+            ("Reject empty names in greet(), test it, and push", "Reject empty names in greet(), test it,"),
+            ("Repo: passdesk-ops. Fix the **dashboard** crash", "Fix the dashboard crash"),
+            ("Task: Fix the login crash", "Fix the login crash"),
             ("goal:make tests pass", "make tests pass"),
             ("Repo: ai-code-factory.git Fix x", "Fix x"), ("Repository: a.b. Do it", "Do it"),
             ("Repo: x;Fix y", "Fix y"), ("Project: demo; Tidy up", "Tidy up"),
             ("\n\n  Tidy the `docs`  \nsecond line", "Tidy the docs"),
-            ("Supercalifragilisticexpialidocious", "Supercalifragilis…"),
+            ("Supercalifragilisticexpialidocious", "Supercalifragilisticexpialidocious"),
+            ("Pneumonoultramicroscopicsilicovolcanoconiosis-dust", "Pneumonoultramicroscopicsilicovolcanoco…"),
+            ("Tidy the packaging metadata, changelog and release notes", "Tidy the packaging metadata, changelog"),
             ("", ""), ("   \n ", ""), ("Repo: x.", ""),
         ):
             self.assertEqual(d.desk_label(text), want)
@@ -785,6 +787,15 @@ class PageTests(unittest.TestCase):
         html = (UI / "index.html").read_text()
         self.assertIn('<script src="/floor.js" defer></script>', html)
         self.assertIn('<link rel="stylesheet" href="/floor.css">', html)
+
+    def test_floor_overlays_never_take_clicks(self):
+        # The glass drawn over the stations (and the crates in flight) once swallowed every
+        # click on a station; test_floor_browser.py clicks them in a real browser.
+        css = (UI / "floor.css").read_text()
+        self.assertIn(".fl .over, .fl .fx { pointer-events: none; }", css)
+        js = (UI / "floor.js").read_text()
+        self.assertNotIn("style=", js)
+        self.assertIn("motionOff.matches", js.split("function placard")[1].split("document.fonts")[0])
 
     def test_floor_crates_are_inspectable_as_text(self):
         # Parked and binned crates name their write by an SVG <title> and aria-label set
