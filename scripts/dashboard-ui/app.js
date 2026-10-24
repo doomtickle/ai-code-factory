@@ -660,7 +660,9 @@
     $("lamp-term").className = !t ? "led" : t.running ? "led g" : t.reason === "elsewhere" ? "led a" : "led";
     if (!t) {
       $("crt-banner").textContent = "TERMINAL 0 · NO COORDINATOR LINK";
-      $("crt-note").textContent = "This dashboard was started without --coordinator. Talk to the Coordinator with: factory chat";
+      $("crt-note").textContent = state.demo
+        ? "Demo mode: this is made-up data, so there is no Coordinator to talk to. Run factory start for the real thing."
+        : "This dashboard was started without --coordinator. Talk to the Coordinator with: factory chat";
       return;
     }
     if (termFrame) return;

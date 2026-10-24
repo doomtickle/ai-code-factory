@@ -1,0 +1,1 @@
+{"id": "demo0001push", "tool": "git_push", "principal": "developer", "repo": "example/app", "branch": "factory/greet-empty-name", "base": "main", "commits": 2, "file_count": 2, "files": ["src/greet.py", "tests/test_greet.py"], "created": {{epoch:-225}}, "expires": {{epoch:+14400}}, "nonce": "demo-nonce", "patch_sha256": "{{patch_sha256:demo.patch}}"}

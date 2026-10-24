@@ -1,0 +1,5 @@
+{"ts": "{{iso:-2400}}", "role": "developer", "tool": "github_create_pr", "event": "approval-granted", "id": "demo0000pr", "repo": "example/app", "branch": "factory/greet-readme", "approver": "you"}
+{"ts": "{{iso:-1500}}", "role": "developer", "tool": "npm_fetch", "decision": "allow", "args": {"path": "."}}
+{"ts": "{{iso:-700}}", "role": "reviewer", "tool": "git_fetch", "decision": "allow", "args": {"repo": "example/app"}}
+{"ts": "{{iso:-330}}", "role": "developer", "tool": "web_fetch", "decision": "deny", "args": {"url": "https://paste.example.net/raw/x1"}, "reason": "host not on the allow list"}
+{"ts": "{{iso:-225}}", "tool": "git_push", "event": "approval-requested", "id": "demo0001push", "principal": "developer", "repo": "example/app", "branch": "factory/greet-empty-name"}

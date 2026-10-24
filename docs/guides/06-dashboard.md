@@ -322,6 +322,30 @@ diagnosing, restarting or updating. Run these in a terminal:
 | `factory reset`, `factory setup` | They remove sandboxes or install tools, and may ask for a password. |
 | `factory analytics`, `factory packet --list` | The full cost report and older review packets. |
 
+## Demo mode
+
+To look at the dashboard before you set anything up, or to take a screenshot
+without running agents:
+
+```bash
+factory dashboard --demo
+```
+
+It needs no `sbx`, broker, Coordinator or `factory setup`. It shows made-up
+data (`example/app`, a few lanes, one held push, a denied broker call and a
+branch) taken from `scripts/dashboard-demo/`, with times counted from the
+moment you start it, and adds a broker call every few seconds so the factory
+floor has crates to move. Open the link it prints, press the floor key and
+you can see a parked crate at the arch and a denied one going to the bin.
+
+Demo mode is display only. It never reads your real state folder: it copies
+the fixture into a fresh temporary folder and deletes it when you press
+Ctrl-C. Terminal 0 is off, APPROVE, DECLINE, RESTART, UPDATE and DIAG answer
+that nothing here acts, and INSPECT shows the fixture's patch. The same
+token, cookie and content rules apply as for a real run. `--demo` can't be
+combined with `--coordinator`, `--state`, `--project` or `--factory`;
+`--no-open` and `--port N` work as usual.
+
 ## Is it safe to leave open?
 
 It is local: it listens only on `127.0.0.1`, refuses any request without
