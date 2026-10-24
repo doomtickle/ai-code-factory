@@ -1,23 +1,27 @@
-// The factory floor (doomtickle/passdesk-ops#161): the Lanes bay as a pixel-art
-// shop floor, drawn from the /api/state app.js already polls (it hands each one
-// over as a "factory:state" event). Display only: no request of its own, no key,
-// nothing that acts. Clicking a station asks app.js to open that lane's monitor
-// ("factory:open-lane"), as clicking a module does. Agent-written text goes in
-// with textContent only.
+// The factory floor (doomtickle/passdesk-ops#161, redrawn for #163): the Lanes bay as one
+// module of the rack, a brushed panel with an amber tube in it, drawn from the /api/state
+// app.js already polls (it hands each one over as a "factory:state" event). Display only:
+// no request of its own, no key, nothing that acts. Clicking a station asks app.js to open
+// that lane's monitor ("factory:open-lane"), as clicking a module does. Agent-written text
+// goes in with textContent only.
 //
-// Work flows left to right: the Coordinator's console dispatches a work order down
-// the dispatch rail to a developer's in-tray; the developer's branch is parked on
-// its out-tray; the hand-off rail carries it to a reviewer's in-tray; approved work
-// drops from the reviewer onto the outbound belt and leaves by the OUT door. Every
-// hop is read from lane state the page already has (a lane's state, task, reviews
-// and tail), never from the server.
+// Inside the tube one loop track carries every trip, clockwise. The Coordinator's dispatch
+// console feeds the track on the left; developers are docked along the top side, reviewers
+// along the bottom, any other role on the right side. The gate (the broker) stands on the
+// bottom side after the reviewers, and the OUT portal drops off the track just past it. A
+// work order rides from dispatch to a developer; the developer's branch is parked on its
+// console; the hand-off rides round the right end to a reviewer; approved work rides on
+// through the gate and out of the portal; a revise rides back the way it came. Every hop is
+// read from lane state the page already has (a lane's state, task, reviews and tail), never
+// from the server. The people are programs: a seated figure in a dark suit with circuit
+// lines in the role's colour and an identity disc behind the head that carries the state.
 //
 // Floor events (doomtickle/passdesk-ops#162): for the sound layer (sound.js) or a
 // future shift ticket, the floor announces each crate's fate on document as a CustomEvent
 // ("factory-floor:passed", "factory-floor:confiscated", "factory-floor:docked").
 // They are fired from play() below, once per event, whether or not a crate is
 // drawn, and never for the first poll's history. "docked" fires on a new branch line
-// in a lane's log (the branch crate parked on its out-tray). detail is a frozen object of
+// in a lane's log (the branch crate parked on its console). detail is a frozen object of
 // strings and booleans; its text is agent-written, so a listener must insert it
 // with textContent only. Not bubbling, not cancelable: nothing can veto the floor.
 "use strict";
@@ -37,6 +41,7 @@
     return n;
   };
   const R = (x, y, w, h, cls) => S("rect", { x, y, width: w, height: h }, cls);
+  const L = (x1, y1, x2, y2, cls) => S("line", { x1, y1, x2, y2 }, cls);
   const clip = (s, n) => (s.length > n ? s.slice(0, Math.max(1, n - 1)) + "…" : s);
 
   const host = $("floor"), key = $("floor-key"), bay = document.querySelector(".lanes-bay");
@@ -44,25 +49,30 @@
   const STORE = "fc1984-floor";
   const motionOff = matchMedia("(prefers-reduced-motion: reduce)");
 
-  // Scene geometry, in SVG units (one unit is one "pixel" of the art).
-  // Left to right: the console column (console, then any other roles' bay), the dispatch
-  // rail, the developers' bay, the hand-off rail, the reviewers' bay, the drop rail, then
-  // the arch, bin and door. The scene is as wide as the bay's shape asks (never under
-  // 320): the extra width goes to the stations.
-  const WALL = 46, ROW = 56, TOP = 10, BASE = 40, MIN_W = 320, MIN_CELL = 50;
-  const RAIL_A = 57.5, BAYS_X = 62, CHUTE = [46, WALL + 48];   // the dispatch rail's centre; where the bays start; where work orders leave the console
-  const CON_Y = WALL + 14, OTHER_Y = WALL + 82, OTHER_W = 48;   // the console's label line; the other-roles bay's top; its station width
-  const RIGHT = 140;                                            // from the last bay's right edge to the scene's
-  let W = MIN_W, RAIL_B = 0, RAIL_C = 0, ARCH_X = 262, DOOR_X = 306, BIN_X = 284, RAIL_END = 0;
-  const MAX_CRATES = 14, SPEED = 70;         // crates in flight at once; units per second
-  const MAX_PARKED = 4, MAX_BINNED = 5;      // crates drawn at the arch; confiscated crates kept in the bin
+  // Scene geometry, in SVG units (one unit is one "pixel" of the art). The panel is H
+  // tall and as wide as the bay's shape asks (never under MIN_W, never too narrow for its
+  // stations); the extra width spreads the stations along the track.
+  const H = 228, MIN_W = 320, MIN_CELL = 50, MAX_CELL = 80, MAX_ASPECT = 2.2;   // a station's cell: at least MIN_CELL wide, never wider than MAX_CELL
+  const GLASS_X = 13, GLASS_Y = 33, GLASS_B = 190;         // the tube's glass: GLASS_X..W - GLASS_X, GLASS_Y..GLASS_B
+  const DEV_H = 52, REV_H = 41, OTHER_W = 50;             // station cell heights above and below the track; other roles' cell width
+  const RAD = 24, HALF = 4.5;                             // the track's corner radius and half width
+  const TY = 90, BY = TY + 2 * RAD + 4;                   // the track's top and bottom centre lines: a shallow loop, its ends near-semicircles
+  const MID = (TY + BY) / 2;                              // where a light bridge crosses the loop
+  const LX = 70;                                          // the track's left side; the right side (RX) follows W
+  const CON_X = 40, CON_Y = TY - 12, CHUTE = [CON_X + 20, CON_Y + 6];   // the dispatch console, above the track's left end: centre, top, where work orders leave it
+  const ARCH_X = LX + 54, OUT_X = LX + 30;                // the gate on the bottom side; the OUT portal's drop
+  const BIN_X = ARCH_X - 12, PILE_Y = BY + 38;            // the derez field under the gate: binned crates pile here
+  const QUEUE_X = ARCH_X + 12;                            // held crates wait here, before the gate (the bottom side flows leftward)
+  let W = MIN_W, RX = 0;
+  const MAX_CRATES = 14, SPEED = 110;        // crates in flight at once; units per second
+  const MAX_PARKED = 4, MAX_BINNED = 5;      // crates drawn at the gate; confiscated crates kept in the derez field
 
   let on = false, state = null, primed = false;
-  let svg = null, layout = "", H = 0, stations = new Map(), parts = {};
+  let svg = null, layout = "", stations = new Map(), parts = {};
   const seen = new Set(), branchSeen = new Map();
   const laneSeen = new Map();   // lane name -> { state, task, pair } as of the previous poll
-  const parked = new Set();     // lanes with a branch crate on the out-tray
-  let crates = 0;
+  const parked = new Set();     // lanes with a branch crate on the console
+  let crates = 0, denied = 0;   // crates in flight; confiscations seen since the page loaded (the panel's counter)
   const binned = [];   // the last MAX_BINNED confiscations' event lines; page memory only, gone on reload
 
   // ---------- on / off
@@ -77,7 +87,7 @@
   key.addEventListener("click", () => setOn(!on, true));
   try { if (localStorage.getItem(STORE) === "1") setOn(true, false); } catch (e) { /* no storage: off */ }
 
-  // ---------- roles: a hard-hat colour each (the built-in roles fixed, others hashed)
+  // ---------- roles: a circuit colour each (the built-in roles fixed, others hashed)
   const HUE = { developer: 0, reviewer: 1, researcher: 2 };
   function hue(role) {
     if (role in HUE) return HUE[role];
@@ -85,199 +95,249 @@
     for (const ch of role) h = (h * 31 + ch.codePointAt(0)) >>> 0;
     return 3 + (h % 4);
   }
-  // Developers and reviewers each get a bay; any other role shares the small one beside the console.
+  // Developers dock on the top side, reviewers on the bottom; any other role docks on the right side.
   const bayOf = lane => (lane.role === "developer" ? "dev" : lane.role === "reviewer" ? "rev" : "oth");
 
   // ---------- the scene
-  // The widest grids (fewest rows) whose stations still fit, for the bay's aspect ratio.
+  // The panel's width: what the bay's shape asks for, never narrower than the stations need.
   function plan(nd, nr, no) {
     const box = host.getBoundingClientRect(), aspect = box.width > 0 && box.height > 0 ? box.width / box.height : 1.6;
-    const most = Math.max(nd, nr, 1), main = nd || nr;
-    for (let rows = 1; rows <= most; rows++) {
-      // Same rows, fewest columns: seven lanes are 4 + 3, not 6 + 1.
-      const dcols = nd ? Math.ceil(nd / rows) : 0, rcols = nr ? Math.ceil(nr / rows) : 0;
-      const mrows = Math.max(dcols ? Math.ceil(nd / dcols) : 0, rcols ? Math.ceil(nr / rcols) : 0);
-      const h = WALL + Math.max(main ? TOP + mrows * ROW : 0, no ? OTHER_Y - WALL + 6 + no * ROW : 80) + BASE;
-      const fixed = BAYS_X + (nd ? 6 : 0) + (nr ? 6 : 0) + (nd && nr ? 8 : 0) + RIGHT, cells = dcols + rcols;
-      const w = Math.max(MIN_W, Math.round(h * aspect / 8) * 8);
-      const cw = cells ? Math.floor((w - fixed) / cells) : 0;
-      if (!cells) return { dcols, rcols, cw, mrows, w, h };
-      if (cw >= MIN_CELL || rows === most) {
-        const c = Math.max(cw, MIN_CELL);
-        return { dcols, rcols, cw: c, mrows, w: fixed + cells * c, h };
-      }
-    }
-    return { dcols: 0, rcols: 0, cw: 0, mrows: 0, w: MIN_W, h: WALL + 80 + BASE };
+    const right = no ? 8 + no * OTHER_W + 10 : 40;                     // from the track's right side to the panel's edge
+    const devSpan = LX + RAD, revSpan = QUEUE_X + MAX_PARKED * 9 + 6;   // where each row's stations may start
+    const need = Math.max(devSpan + nd * MIN_CELL, revSpan + nr * MIN_CELL, LX + 2 * RAD + 60) + RAD + right;
+    const w = Math.max(MIN_W, need, Math.round(H * Math.min(aspect, MAX_ASPECT) / 8) * 8);
+    return { nd, nr, no, w, right, devSpan, revSpan };
   }
 
-  // A belt: a dark strip with rollers that turn while the factory works.
-  function belt(x, y, w, h, vertical) {
-    const g = S("g");
-    g.append(R(x, y, w, h, "belt"));
-    g.append(vertical ? S("line", { x1: x + w / 2, y1: y, x2: x + w / 2, y2: y + h }, "roll roll-v")
-      : S("line", { x1: x, y1: y + h / 2, x2: x + w, y2: y + h / 2 }, "roll roll-h"));
-    return g;
-  }
+  // Points along the track's corner arcs, so a crate turns a corner in a few straight hops.
+  const arc = (cx, cy, a0, a1) => [1, 2].map(k => { const a = (a0 + (a1 - a0) * k / 3) * Math.PI / 180; return [cx + RAD * Math.cos(a), cy + RAD * Math.sin(a)]; });
+  const trackPath = () => `M${LX + RAD},${TY} H${RX - RAD} A${RAD},${RAD} 0 0 1 ${RX},${TY + RAD} V${BY - RAD} A${RAD},${RAD} 0 0 1 ${RX - RAD},${BY} H${LX + RAD} A${RAD},${RAD} 0 0 1 ${LX},${BY - RAD} V${TY + RAD} A${RAD},${RAD} 0 0 1 ${LX + RAD},${TY} Z`;
 
   function build(lanes, p) {
-    W = p.w; H = p.h;
+    W = p.w; RX = W - p.right;
     svg = S("svg", { viewBox: `0 0 ${W} ${H}`, preserveAspectRatio: "xMidYMid meet", role: "group" }, "fl");
     stations = new Map();
     parts = {};
     const groups = { dev: [], rev: [], oth: [] };
     lanes.forEach((lane, i) => groups[bayOf(lane)].push([lane, i]));   // i is the lane's number: its key
-    const cw = p.cw, devW = p.dcols * cw, revW = p.rcols * cw;
-    const devX = BAYS_X, revX = devX + (p.dcols ? devW + 6 + 8 : 0);
-    const endX = p.rcols ? revX + revW + 6 : p.dcols ? devX + devW + 6 : BAYS_X;
-    RAIL_B = devX + devW + 6 + 3.5; RAIL_C = endX + 3.5;
-    ARCH_X = RAIL_C + 50; BIN_X = ARCH_X + 28; DOOR_X = W - 18;
-    const yOut = H - 32;
-    RAIL_END = WALL + TOP + p.mrows * ROW;
+    const glassW = W - 2 * GLASS_X, glassH = GLASS_B - GLASS_Y;
 
-    // Back wall: brick, three windows on the sky, the shift sign, hazard stripes.
-    svg.append(R(0, 0, W, WALL, "wall"));
-    for (let y = 4; y < WALL - 6; y += 6) svg.append(S("line", { x1: 0, y1: y, x2: W, y2: y }, "mortar"));
-    parts.windows = [];
-    for (const x of [14, W - 92, W - 50]) {
-      const g = S("g", null, "win");
-      g.append(R(x, 8, 34, 20, "sky"));
-      for (const [sx, sy] of [[4, 4], [15, 9], [27, 3], [22, 14], [9, 13]]) g.append(R(x + sx, 8 + sy, 1, 1, "star"));
-      g.append(R(x + 16, 8, 2, 20, "mullion"), R(x, 17, 34, 2, "mullion"), R(x - 1, 27, 36, 2, "sill"));
-      parts.windows.push(g);
-      svg.append(g);
+    // Paint and glass: gradients, the hazard stripe, the tube's phosphor, the glass clip.
+    const defs = S("defs");
+    const grad = (id, stops, attrs) => {
+      const g = S("linearGradient", Object.assign({ id }, attrs));
+      stops.forEach(([o, cls]) => g.append(S("stop", { offset: o }, cls)));
+      return g;
+    };
+    defs.append(grad("fl-plate", [[0, "plate-a"], [0.4, "plate-b"], [1, "plate-c"]], { x1: 0, y1: 0, x2: 0, y2: 1 }));
+    defs.append(grad("fl-beam", [[0, "beam-a"], [1, "beam-b"]], { x1: 0, y1: 0, x2: 0, y2: 1 }));
+    defs.append(grad("fl-lcd", [[0, "lcd-a"], [1, "lcd-b"]], { x1: 0, y1: 0, x2: 1, y2: 1 }));
+    const tube = S("radialGradient", { id: "fl-tube", cx: 0.5, cy: 0.42, r: 0.8 });
+    tube.append(S("stop", { offset: 0 }, "tube-a"), S("stop", { offset: 0.72 }, "tube-b"));
+    defs.append(tube);
+    const vig = S("radialGradient", { id: "fl-vig", cx: 0.5, cy: 0.5, r: 0.72 });
+    vig.append(S("stop", { offset: 0.6 }, "vig-a"), S("stop", { offset: 1 }, "vig-b"));
+    defs.append(vig);
+    const hazard = S("pattern", { id: "fl-hazard", width: 8, height: 8, patternUnits: "userSpaceOnUse", patternTransform: "rotate(45)" });
+    hazard.append(R(0, 0, 4, 8, "hz-1"), R(4, 0, 4, 8, "hz-2"));
+    defs.append(hazard);
+    const brush = S("pattern", { id: "fl-brush", width: 3, height: 1, patternUnits: "userSpaceOnUse" });
+    brush.append(R(0, 0, 1, 1, "brush"));
+    defs.append(brush);
+    const scan = S("pattern", { id: "fl-scan", width: 1, height: 3, patternUnits: "userSpaceOnUse" });
+    scan.append(R(0, 0, 1, 1, "scan-l"));
+    defs.append(scan);
+    const grille = S("pattern", { id: "fl-grille", width: 3, height: 1, patternUnits: "userSpaceOnUse" });
+    grille.append(R(0, 0, 1, 1, "scan-l"));
+    defs.append(grille);
+    const clipP = S("clipPath", { id: "fl-glass" });
+    clipP.append(S("rect", { x: GLASS_X, y: GLASS_Y, width: glassW, height: glassH, rx: 6 }));
+    defs.append(clipP);
+    svg.append(defs);
+
+    // The panel: brushed plate, four screws, silk title, the LCD readout, the hazard stripe.
+    svg.append(S("rect", { width: W, height: H, fill: "url(#fl-plate)" }), S("rect", { width: W, height: H, fill: "url(#fl-brush)" }));
+    for (const [x, y] of [[9, 9], [W - 9, 9], [9, H - 9], [W - 9, H - 9]]) {
+      svg.append(S("circle", { cx: x, cy: y, r: 3.5 }, "screw-rim"), S("circle", { cx: x, cy: y, r: 2.2 }, "screw"), L(x - 1.5, y, x + 1.5, y, "screw-slot"));
     }
-    const sign = S("g", null, "sign");
-    sign.append(R(W / 2 - 75, 6, 150, 26, "sign-bg"), R(W / 2 - 73, 8, 146, 22, "sign-face"));
-    parts.signTop = T(W / 2, 17, "LOIS WORKS", "sign-t", "middle");
-    parts.signBot = T(W / 2, 26, "", "sign-b", "middle");
-    sign.append(parts.signTop, parts.signBot);
-    svg.append(sign);
-    for (let x = 0; x < W; x += 8) svg.append(S("polygon", { points: `${x},${WALL - 4} ${x + 4},${WALL - 4} ${x + 8},${WALL} ${x + 4},${WALL}` }, "hazard"));
+    svg.append(T(16, 17, "LOIS WORKS", "silk big"));
+    parts.signTop = T(16, 26, "", "silk dim");
+    svg.append(parts.signTop);
+    svg.append(S("rect", { x: W - 128, y: 7, width: 112, height: 19, rx: 1.5 }, "lcd-bezel"), S("rect", { x: W - 127, y: 8, width: 110, height: 17, rx: 1, fill: "url(#fl-lcd)" }, "lcd-glass"));
+    parts.signBot = T(W - 72, 20.5, "", "lcd-t", "middle");
+    svg.append(parts.signBot);
+    svg.append(S("rect", { x: 0, y: H - 4, width: W, height: 4, fill: "url(#fl-hazard)" }));
 
-    // Floor: concrete with expansion joints.
-    svg.append(R(0, WALL, W, H - WALL, "concrete"));
-    for (let x = 0; x <= W; x += 32) svg.append(S("line", { x1: x, y1: WALL, x2: x, y2: H }, "joint"));
-    for (let y = WALL + 28; y < H; y += 28) svg.append(S("line", { x1: 0, y1: y, x2: W, y2: y }, "joint"));
+    // The tube: bezel, glass, phosphor, a faint grid.
+    svg.append(S("rect", { x: GLASS_X - 3, y: GLASS_Y - 3, width: glassW + 6, height: glassH + 6, rx: 8 }, "bezel"));
+    svg.append(S("rect", { x: GLASS_X, y: GLASS_Y, width: glassW, height: glassH, rx: 6, fill: "url(#fl-tube)" }, "glass"));
+    const grid = S("g", { "clip-path": "url(#fl-glass)" }, "grid");
+    for (let x = GLASS_X + 7; x < W - GLASS_X; x += 20) grid.append(L(x, GLASS_Y, x, GLASS_B, "grid-l"));
+    for (let y = GLASS_Y + 9; y < GLASS_B; y += 20) grid.append(L(GLASS_X, y, W - GLASS_X, y, "grid-l"));
+    svg.append(grid);
 
-    // Bays: a faint dashed outline and a painted label each. A shorter bay sits centred beside a taller one.
-    const place = (list, name, x0, cols, cellW, top) => {
+    // The track: a light wall with a dark bed and chevrons that run while the factory works.
+    const d = trackPath();
+    const track = S("g", null, "track");
+    track.append(S("path", { d }, "lightwall"), S("path", { d }, "bed"), S("path", { d }, "chevrons"));
+    svg.append(track);
+    svg.append(T(GLASS_X + 4, BY - 17, "DEVELOPERS ▲", "silk amber dim"), T(GLASS_X + 4, BY - 9, "REVIEWERS ▼", "silk green dim"));
+
+    // Dispatch: the Coordinator's console on the left, the I/O beam above it, the User in the seat
+    // while Terminal 0 is attached; the spur feeds the track.
+    const con = S("g", null, "console");
+    con.append(R(CON_X - 1, GLASS_Y, 2, CON_Y - 25 - GLASS_Y, "io-beam"));
+    con.append(T(CON_X + 4, GLASS_Y + 11, "I/O", "silk dim"));
+    con.append(...program(CON_X, CON_Y, "hue-user", "user"));
+    con.append(R(CON_X - 20, CON_Y, 40, 12, "console-body"), R(CON_X - 18, CON_Y + 1.5, 36, 9, "console-scr"));
+    con.append(T(CON_X, CON_Y + 7.6, "DISPATCH", "card-t console-t", "middle"));
+    con.append(R(CHUTE[0], CHUTE[1] - 0.6, LX + RAD - CHUTE[0], 1.2, "spur"), R(LX + RAD - 0.6, CHUTE[1], 1.2, TY - HALF - CHUTE[1], "spur"), R(CHUTE[0] - 2, CHUTE[1] - 2, 4, 4, "lamp"));
+    parts.note = T(CON_X, CON_Y + 21, "", "plate-t", "middle");
+    con.append(parts.note, T(CON_X, CON_Y + 29, "COORDINATOR", "silk dim", "middle"));
+    parts.console = con;
+    svg.append(con);
+
+    // Stations: developers in a row above the top side, reviewers below the bottom side, other
+    // roles to the right of the right side. Each is centred in an equal cell along its span.
+    parts.stations = [];
+    const place = (list, x0, x1, cellH, originY, kind) => {
       if (!list.length) return;
-      const rows = Math.ceil(list.length / cols), y0 = top;
-      svg.append(R(x0 - 3, y0 - 6, cols * cellW + 6, rows * ROW + 5, "bay-line"), T(x0, y0 - 1, name, "bay-t"));
+      // Stations share the span equally; a cell is centred in its slot so the keycap stays by its figure.
+      const slot = Math.max(MIN_CELL, (x1 - x0) / list.length), cw = Math.min(MAX_CELL, slot);
       list.forEach(([lane, i], k) => {
-        const x = x0 + (k % cols) * cellW, y = y0 + Math.floor(k / cols) * ROW;
-        const st = station(lane, i, cellW);
-        st.g.setAttribute("transform", `translate(${x} ${y})`);
-        st.x = x + cellW / 2; st.y = y + 40;
-        st.inTray = [x + cellW / 2 - 18.5, y + 28]; st.outTray = [x + cellW / 2 + 18.5, y + 28];
+        const x = x0 + k * slot + (slot - cw) / 2, st = station(lane, i, cw, kind);
+        st.g.setAttribute("transform", `translate(${x} ${originY})`);
+        st.x = x + cw / 2;
+        st.y = kind === "dev" ? TY - HALF : kind === "rev" ? BY + HALF : originY + 44;
+        st.inTray = kind === "dev" ? [st.x, TY - HALF] : kind === "rev" ? [st.x, BY + HALF] : [x - 4, originY + 44];
+        st.outTray = st.inTray;
         stations.set(lane.name, st);
         parts.stations.push(st.g);
       });
     };
-    parts.stations = [];
-    const center = rows => WALL + TOP + Math.round((p.mrows - rows) * ROW / 2);
-    place(groups.dev, "DEVELOPERS", devX + 3, p.dcols, cw, center(p.dcols ? Math.ceil(groups.dev.length / p.dcols) : 0));
-    place(groups.rev, "REVIEWERS", revX + 3, p.rcols, cw, center(p.rcols ? Math.ceil(groups.rev.length / p.rcols) : 0));
-    const roles = [...new Set(groups.oth.map(([l]) => String(l.role || "")))];
-    place(groups.oth, roles.length === 1 && roles[0] ? clip(roles[0].toUpperCase(), 12) : "OTHER", 4, 1, OTHER_W, OTHER_Y + 6);
-    // Stations go on after the bays so no outline is drawn over a desk.
-    const stationLayer = S("g", null, "stations");
-    stationLayer.append(...parts.stations);
+    place(groups.dev, p.devSpan, RX - RAD, DEV_H, TY - HALF - DEV_H, "dev");
+    place(groups.rev, p.revSpan, RX - RAD, REV_H, BY + HALF, "rev");
+    place(groups.oth, RX + HALF + 4, RX + HALF + 4 + groups.oth.length * OTHER_W, DEV_H, MID - 26, "oth");
 
-    // Rails, drawn as belts: dispatch (console to developers), hand-off (developers to
-    // reviewers) and the drop from the reviewers to the outbound belt.
-    const rails = S("g", null, "rails"), top = WALL + 14, label = (x, text) => T(x, RAIL_END + 5, text, "belt-t", "middle");
-    if (p.dcols) {
-      rails.append(belt(CHUTE[0] - 2, CHUTE[1] - 2, RAIL_A + 2.5 - (CHUTE[0] - 2), 4, false), belt(RAIL_A - 2.5, top, 5, RAIL_END - top, true), label(RAIL_A, "DISPATCH"));
-    }
-    if (p.dcols && p.rcols) rails.append(belt(RAIL_B - 2.5, top, 5, RAIL_END - top, true), label(RAIL_B, "HAND-OFF"));
-    if (p.rcols) rails.append(belt(RAIL_C - 2.5, top, 5, yOut - top, true));
-    rails.append(belt(50, yOut, DOOR_X - 50, 5, false), T(64, yOut + 12, "OUTBOUND ▸ OUT", "belt-t"));
-    svg.append(rails);
+    // Light bridges (a reviewer to the developer it reviews) are redrawn by draw().
+    parts.bridges = S("g", null, "bridges");
+    svg.append(parts.bridges);
 
-    // The Coordinator's console: no worker, a screen that lights while Terminal 0 is attached,
-    // a lamp, and the chute work orders leave by.
-    const con = S("g", null, "console");
-    con.append(T(26, CON_Y, "COORDINATOR", "label sm", "middle"));
-    con.append(R(6, CON_Y + 4, 40, 60, "console-body"), R(10, CON_Y + 8, 32, 20, "console-scr"));
-    for (const [y, w] of [[11, 18], [14, 24], [17, 14], [20, 21]]) con.append(R(12, CON_Y + y, w, 1, "term-l"));
-    con.append(R(12, CON_Y + 24, 3, 2, "term-l"), R(42, CHUTE[1] - 4, 4, 8, "chute"), R(36, CHUTE[1] - 2, 4, 4, "lamp"));
-    con.append(R(12, CON_Y + 38, 18, 7, "tickets"), R(14, CON_Y + 40, 12, .8, "tick-l"), R(14, CON_Y + 42.5, 9, .8, "tick-l"));
-    con.append(R(10, CON_Y + 48, 32, 4, "desk-top"), R(11, CON_Y + 52, 30, 6, "desk-front"));
-    parts.note = T(26, CON_Y + 62, "", "plate-t", "middle");
-    con.append(parts.note);
-    parts.console = con;
-    svg.append(con);
-
-    // The outbound belt runs under the X-ray arch to the OUT door; the bin is below it.
+    // The gate on the bottom side: two posts, a beam with a lamp, a scanner line. Its lamp
+    // and the panel's three LEDs below the glass follow the same classes (holding, ok, no).
     const arch = S("g", null, "arch");
-    arch.append(R(ARCH_X - 2, yOut - 18, 3, 24, "arch-post"), R(ARCH_X + 13, yOut - 18, 3, 24, "arch-post"), R(ARCH_X - 3, yOut - 21, 20, 5, "arch-top"));
-    arch.append(R(ARCH_X + 1, yOut - 15, 12, 18, "arch-beam"), R(ARCH_X + 5, yOut - 20, 6, 2, "arch-lamp"));
-    arch.append(T(ARCH_X + 7, yOut - 23, "X-RAY", "label sm", "middle"));
+    arch.append(R(ARCH_X - 9, BY - 13, 2.5, 26, "arch-post"), R(ARCH_X + 6.5, BY - 13, 2.5, 26, "arch-post"), R(ARCH_X - 10, BY - 15, 20, 2.5, "arch-top"));
+    arch.append(R(ARCH_X - 6.5, BY - 12.5, 13, 25, "arch-beam"), R(ARCH_X - 2, BY - 17.5, 4, 2, "arch-lamp"));
+    arch.append(L(ARCH_X - 6, BY - 10, ARCH_X + 6, BY - 10, "scanner"));
+    arch.append(T(ARCH_X, BY - 20, "GATE", "silk amber", "middle"));
+    const ledY = H - 20;
+    for (const [k, [cls, text]] of [["led-allow", "ALLOW"], ["led-hold", "HOLD"], ["led-deny", "DENY"]].entries()) {
+      const x = 24 + k * 26;
+      arch.append(S("circle", { cx: x, cy: ledY, r: 3.6 }, "led-rim"), S("circle", { cx: x, cy: ledY, r: 2.6 }, `led ${cls}`), T(x, ledY + 10, text, "silk dim", "middle"));
+    }
+    arch.append(R(W / 2 - 28, ledY - 6, 56, 11, "lamp-held"));
+    parts.heldText = T(W / 2, ledY + 1.8, "", "lamp-t", "middle");
+    arch.append(parts.heldText);
     parts.arch = arch;
     svg.append(arch);
+    // The denied counter: red digits in a dark window, counting confiscations since the page loaded.
+    svg.append(T(W - 62, ledY + 2, "DENIED", "silk dim", "end"), S("rect", { x: W - 58, y: ledY - 8.5, width: 42, height: 17, rx: 1.5 }, "counter-bezel"), S("rect", { x: W - 57, y: ledY - 7.5, width: 40, height: 15, rx: 1 }, "counter-glass"));
+    parts.denied = T(W - 37, ledY + 4, "00", "counter-t", "middle");
+    svg.append(parts.denied);
+
+    // The OUT portal: a wall of light where approved work drops off the track, and the
+    // derez field under the gate where confiscated crates land.
+    parts.door = R(OUT_X - 4, BY + HALF, 8, GLASS_B - BY - HALF, "door");
+    parts.door.setAttribute("fill", "url(#fl-beam)");
+    svg.append(parts.door, T(OUT_X - 6, BY + 26, "OUT", "silk amber", "end"));
     parts.queue = S("g", null, "queue");
     svg.append(parts.queue);
+    const bin = S("g", null, "bin");
+    bin.append(R(BIN_X - 2, PILE_Y + 1, 30, 1, "bin-line"), T(BIN_X + 13, PILE_Y + 8, "DEREZ", "silk red", "middle"));
+    parts.bin = bin;
+    svg.append(bin);
     parts.pile = S("g", null, "pile");
     svg.append(parts.pile);
 
-    parts.door = R(DOOR_X, yOut - 22, 14, 30, "door");
-    svg.append(parts.door, T(DOOR_X + 7, yOut - 24, "OUT", "label sm", "middle"));
-    const binBox = S("g", null, "bin");
-    binBox.append(R(BIN_X, H - 12, 18, 10, "bin-body"), R(BIN_X - 1, H - 13, 20, 2, "bin-lip"), T(BIN_X + 9, H - 5, "!", "bin-t", "middle"));
-    parts.bin = binBox;
-    svg.append(binBox);
-
+    const stationLayer = S("g", null, "stations");
+    stationLayer.append(...parts.stations);
     svg.append(stationLayer);
-    parts.fx = S("g", null, "fx");
+    // Crates in flight are clipped by the glass, so they leave the picture at its edge.
+    parts.fx = S("g", { "clip-path": "url(#fl-glass)" }, "fx");
     svg.append(parts.fx);
+    // Glass over everything inside the bezel: scanlines, grille, vignette, a rolling band.
+    const over = S("g", { "clip-path": "url(#fl-glass)" }, "over");
+    over.append(S("rect", { x: GLASS_X, y: GLASS_Y, width: glassW, height: glassH, fill: "url(#fl-scan)" }, "scan"),
+      S("rect", { x: GLASS_X, y: GLASS_Y, width: glassW, height: glassH, fill: "url(#fl-grille)" }, "grille"),
+      S("rect", { x: GLASS_X, y: GLASS_Y - glassH, width: glassW, height: glassH * 0.22 }, "band"),
+      S("rect", { x: GLASS_X, y: GLASS_Y, width: glassW, height: glassH, fill: "url(#fl-vig)" }, "vig"));
+    svg.append(over);
     host.replaceChildren(svg);
   }
 
-  // A seated worker in a hard hat, centred on cx with the desk line at y.
-  function worker(cx, y, hueCls) {
+  // A seated program, front view, its feet on y and centred on cx: a dark suit with circuit
+  // lines, a helmet with a visor, and the identity disc behind the head. The hue class sets
+  // --hue for the lines and the disc. cls marks the figure (e.g. "user") for CSS.
+  function program(cx, y, hueCls, cls) {
+    const g = S("g", null, `fig ${hueCls}${cls ? " " + cls : ""}`);
+    g.append(S("circle", { cx, cy: y - 16, r: 7.5 }, "disc"));
+    g.append(R(cx - 6, y - 11, 12, 11, "chair"), R(cx - 5, y - 10, 10, 9, "suit"),
+      R(cx - 5, y - 10, 10, 1, "circuit"), R(cx - 0.5, y - 10, 1, 8, "circuit"), R(cx - 4, y - 4, 8, 0.8, "circuit faint"));
+    const armL = S("g", null, "arm arm-l"), armR = S("g", null, "arm arm-r");
+    armL.append(R(cx - 7.5, y - 8, 2, 7, "suit"), R(cx - 7.5, y - 2, 2, 1, "circuit"));
+    armR.append(R(cx + 5.5, y - 8, 2, 7, "suit"), R(cx + 5.5, y - 2, 2, 1, "circuit"));
     const head = S("g", null, "hd");
-    head.append(R(cx - 3, y - 16, 6, 6, "skin"), R(cx - 2, y - 14, 1, 1, "eye"), R(cx + 1, y - 14, 1, 1, "eye"),
-      R(cx - 4, y - 19, 8, 3, `hat ${hueCls}`), R(cx - 5, y - 17, 10, 1, `brim ${hueCls}`));
-    return [R(cx - 6, y - 10, 12, 12, "chair"), R(cx - 5, y - 9, 10, 9, "overalls"), R(cx - 2, y - 9, 4, 2, "shirt"),
-      head, R(cx - 7, y - 7, 2, 7, "arm arm-l"), R(cx + 5, y - 7, 2, 7, "arm arm-r")];
+    head.append(R(cx - 3, y - 17, 6, 6, "skin"), R(cx - 4, y - 20, 8, 3.2, "helmet"), R(cx - 4, y - 17.6, 8, 1, "circuit visor"));
+    g.append(armL, armR, head);
+    return [g];
   }
 
-  function station(lane, i, cw) {
+  function station(lane, i, cw, kind) {
     const cx = cw / 2, g = S("g", { tabindex: "0", role: "button" }, "st");
     const st = { g, lane: lane.name, cx, cw, sig: "" };
     st.title = S("title");
-    g.append(st.title, R(1, 1, cw - 2, ROW - 2, "hit"), R(cx - 21, 42, 42, 8, "mat"));
-    g.append(...worker(cx, 30, `hue-${hue(lane.role)}`));
-    g.append(R(cx - 16, 30, 32, 4, "desk-top"), R(cx - 15, 34, 30, 9, "desk-front"), R(cx - 13, 37, 8, 1, "drawer"), R(cx + 5, 37, 8, 1, "drawer"));
-    // An in-tray left of the desk and an out-tray right of it; a finished branch is parked on the out-tray.
-    g.append(R(cx - 22, 28, 7, 2, "tray"), R(cx + 15, 28, 7, 2, "tray"));
-    st.park = crateShape(cx + 15, 22, "crate branch park off");
-    g.append(st.park);
-    // The placard: a paper note on the desk with the job in a few words, and under it, on a
+    const hueCls = `hue-${hue(lane.role)}`;
+    g.classList.add(hueCls);
+    const below = kind === "rev";                       // the figure sits below its console, under the track
+    const conY = below ? 0 : DEV_H - 14;                // the console's top, in the cell
+    const feet = below ? conY + 12 + 27 : conY;         // the figure's feet line
+    const cellH = below ? REV_H : DEV_H;
+    g.append(st.title, R(1, 1, cw - 2, cellH - 2, "hit"));
+    g.append(...program(cx, feet, hueCls));
+    // The console: a slab with a lit edge where it meets the track, and the job on its glass.
+    g.append(R(cx - 20, conY, 40, 12, "console-body"), R(cx - 18, conY + 1.5, 36, 9, "console-scr"));
+    if (kind === "oth") g.append(R(-12, conY + 5.4, cx - 20 + 12, 1.2, "lip"));
+    else g.append(R(cx - 20, below ? conY - 2 : conY + 12, 40, 2, "lip"));
+    // The placard: the job in a few words on the console's glass, and under it, on a
     // reviewer's, the developer it is reviewing. Hidden until draw() has text for it.
     st.card = S("g", null, "card off");
-    st.cardBg = R(cx - 17, 35, 34, 6, "card-bg");
-    st.cardJob = T(cx, 39.5, "", "card-t", "middle");
-    st.cardTag = T(cx, 44.5, "", "card-tag", "middle");
+    st.cardBg = R(cx - 18, conY + 1.5, 36, 9, "card-bg");
+    st.cardJob = T(cx, conY + 6, "", "card-t", "middle");
+    st.cardTag = T(cx, conY + 10.6, "", "card-tag", "middle");
     st.card.append(st.cardBg, st.cardJob, st.cardTag);
     g.append(st.card);
-    g.append(R(cx - 13, 27, 2, 3, "stand"), R(cx - 18, 17, 12, 10, "bezel"), R(cx - 17, 18, 10, 8, "scr"));
-    g.append(R(cx + 12, 22, 2, 8, "post"), R(cx + 10, 19, 6, 3, "beacon"));
-    // Props: CSS shows the one that matches the lane's state.
-    const bubble = S("g", null, "p p-held");
-    bubble.append(R(cx + 3, 0, 10, 10, "bubble"), R(cx + 4, 10, 2, 2, "bubble"), T(cx + 8, 8, "!", "bubble-t", "middle"));
-    const flag = S("g", null, "p p-done");
-    flag.append(R(cx + 24, 13, 1, 15, "pole"), R(cx + 25, 13, 7, 6, "flag"), T(cx + 28.5, 18, "✓", "flag-t", "middle"));
+    // A finished branch is parked on the console as a data crate.
+    st.park = crateShape(cx + 12, below ? conY + 13 : conY - 7, "crate branch park off");
+    g.append(st.park);
+    // Props: CSS shows the one that matches the lane's state. Held: a Recognizer hovers over
+    // the figure. Done: a lit check. Revise: a FIX tag. Failed: derez fragments. Idle: z's.
+    const recog = S("g", null, "p p-held");
+    const ry = below ? feet - 22 : 1, rx = below ? cx + 10 : cx - 12, rw = below ? 20 : 24, rh = below ? 7 : 8;
+    recog.append(S("polygon", { points: `${rx},${ry} ${rx + rw},${ry} ${rx + rw},${ry + rh} ${rx + rw - 4},${ry + rh} ${rx + rw - 4},${ry + rh / 2} ${rx + 4},${ry + rh / 2} ${rx + 4},${ry + rh} ${rx},${ry + rh}` }, "recog"));
+    recog.append(T(rx + rw + 2, ry + rh - 1, "HOLD", "silk red"));
+    const done = S("g", null, "p p-done");
+    done.append(R(cx + 10, conY + (below ? 14 : -8), 10, 7, "flag"), T(cx + 15, conY + (below ? 19.6 : -2.4), "✓", "flag-t", "middle"));
     const fix = S("g", null, "p p-revise");
-    fix.append(R(cx + 20, 8, 15, 8, "fix"), T(cx + 27.5, 14.5, "FIX", "fix-t", "middle"), R(cx + 27, 16, 1, 12, "pole"));
-    const smoke = S("g", null, "p p-fail");
-    for (const [dx, d] of [[-14, 0], [-11, 1], [-15, 2]]) smoke.append(S("circle", { cx: cx + dx, cy: 15, r: 2.5 }, `puff d${d}`));
+    fix.append(R(cx + 9, conY + (below ? 14 : -8), 12, 7, "fix"), T(cx + 15, conY + (below ? 19.4 : -2.6), "FIX", "fix-t", "middle"));
+    const frag = S("g", null, "p p-fail");
+    for (const [dx, dy, w] of [[-9, -24, 2], [8, -22, 1.5], [-11, -19, 1.5], [10, -17, 2], [-7, -27, 1], [6, -27, 1.5]]) frag.append(R(cx + dx, feet + dy, w, w, "frag"));
     const zz = S("g", null, "p p-idle");
-    zz.append(T(cx + 6, 12, "z", "zz d0"), T(cx + 10, 7, "z", "zz d1"), T(cx + 14, 3, "Z", "zz d2"));
-    g.append(bubble, flag, fix, smoke, zz);
+    zz.append(T(cx + 7, feet - 20, "z", "zz d0"), T(cx + 10.5, feet - 24.5, "z", "zz d1"), T(cx + 14, feet - 29, "Z", "zz d2"));
+    g.append(recog, done, fix, frag, zz);
     if (i < 9) g.append(R(2, 2, 9, 9, "kc"), T(6.5, 9, i + 1, "kc-t", "middle"));
-    st.name = T(cx, 54, clip(lane.name, Math.floor(cw / 4)), "name", "middle");
+    // The lane's name sits inside the loop, by its side of the track (other roles: under the cell).
+    const nameY = kind === "dev" ? cellH + HALF + 12 : kind === "rev" ? -HALF - 8 : cellH + 8;
+    st.name = T(cx, nameY, clip(lane.name, Math.floor(cw / 4)), "name", "middle");
     g.append(st.name);
     const open = () => document.dispatchEvent(new CustomEvent("factory:open-lane", { detail: lane.name }));
     g.addEventListener("click", open);
@@ -315,23 +375,20 @@
     const sig = JSON.stringify([desk, reviews, lane.task, lane.state]);
     if (st.sig === sig) return;
     st.sig = sig;
-    const maxW = Math.max(20, Math.min(36, st.cw - 4));
-    const job = fit(st.cardJob, desk, maxW - 4), tag = reviews ? fit(st.cardTag, `▸ ${devTag(reviews)}`, maxW - 4) : fit(st.cardTag, "", 0);
-    const w = Math.min(maxW, Math.ceil(Math.max(width(st.cardJob, job), width(st.cardTag, tag))) + 4);
-    st.cardBg.setAttribute("x", st.cx - w / 2);
-    st.cardBg.setAttribute("width", w);
-    st.cardBg.setAttribute("height", tag ? (job ? 11 : 6) : 6);
-    st.cardJob.setAttribute("y", job ? 39.5 : 0);
-    st.cardTag.setAttribute("y", job ? 44.5 : 39.5);
+    const maxW = 36;
+    const job = fit(st.cardJob, desk, maxW - 2), tag = reviews ? fit(st.cardTag, `▸ ${devTag(reviews)}`, maxW - 2) : fit(st.cardTag, "", 0);
+    // One line sits in the middle of the glass; two share it.
+    const top = Number(st.cardBg.getAttribute("y"));
+    st.cardJob.setAttribute("y", tag ? top + 4.6 : top + 6.6);
+    st.cardTag.setAttribute("y", job ? top + 9 : top + 6.6);
     st.card.setAttribute("class", `card${job || tag ? "" : " off"}${tag ? " rev" : ""}`);
     const first = String(lane.task || "").split("\n")[0];
     st.title.textContent = job || tag ? clip(first, 300) : "";
   }
-
   // Placards are measured in the pixel font: measure again once it has loaded.
   if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { stations.forEach(st => { st.sig = ""; }); if (on && state) draw(); });
 
-  // A branch crate waits on the out-tray of a lane that has handed back a branch.
+  // A branch crate waits on the console of a lane that has handed back a branch.
   function showPark(st) {
     const cls = `crate branch park${parked.has(st.lane) ? "" : " off"}`;
     if (st.park.getAttribute("class") !== cls) st.park.setAttribute("class", cls);
@@ -344,9 +401,10 @@
     const want = JSON.stringify([lanes.map(l => [l.name, bayOf(l), l.role]), p]);
     if (want !== layout || !svg) { layout = want; build(lanes, p); }
 
-    // A developer a running reviewer is reviewing gets a lit station.
-    const watched = new Set(lanes.filter(l => l && l.role === "reviewer" && (l.state === "running" || l.state === "held")
-      && typeof l.reviews === "string" && l.reviews).map(l => l.reviews));
+    // A developer a running reviewer is reviewing gets a light bridge from that reviewer.
+    const pairs = lanes.filter(l => l && l.role === "reviewer" && (l.state === "running" || l.state === "held")
+      && typeof l.reviews === "string" && l.reviews).map(l => [l.name, l.reviews]);
+    const watched = new Set(pairs.map(([, dev]) => dev));
     const counts = {};
     lanes.forEach(lane => {
       const st = stations.get(lane.name);
@@ -354,7 +412,7 @@
       const s = PROP[lane.state] || "idle";
       counts[s] = (counts[s] || 0) + 1;
       const reviewing = watched.has(lane.name);
-      const cls = `st s-${s}${reviewing ? " reviewed" : ""}`;
+      const cls = `st hue-${hue(lane.role)} s-${s}${reviewing ? " reviewed" : ""}`;
       if (st.g.getAttribute("class") !== cls) st.g.setAttribute("class", cls);
       placard(st, lane);
       showPark(st);
@@ -363,31 +421,43 @@
       const branch = parked.has(lane.name) ? ", branch ready" : "";
       st.g.setAttribute("aria-label", `Open lane ${lane.name}, ${LABEL[lane.state] || lane.state}${desk}${reviews}${branch}`);
     });
+    const bridgeKey = JSON.stringify(pairs);
+    if (parts.bridged !== bridgeKey) {
+      parts.bridged = bridgeKey;
+      parts.bridges.replaceChildren(...pairs.flatMap(([rev, dev]) => {
+        const a = stations.get(rev), b = stations.get(dev);
+        if (!a || !b || a === b) return [];
+        const pts = `${a.x},${BY - 16} ${a.x},${MID} ${b.x},${MID} ${b.x},${TY + 16}`;
+        return [S("polyline", { points: pts }, "bridge"), S("polyline", { points: pts }, "bridge-run")];
+      }));
+    }
 
     const at = new Date((Number(state.now) || Date.now() / 1000) * 1000), hr = at.getHours();
     const shift = hr >= 7 && hr < 17 ? "day" : (hr >= 17 && hr < 20) || (hr >= 5 && hr < 7) ? "dusk" : "night";
     svg.setAttribute("class", `fl ${shift}${state.totals && state.totals.running ? " working" : ""}${motionOff.matches ? " still" : ""}`);
     const t = state.totals || {};
-    parts.signTop.textContent = `LOIS WORKS · ${shift === "night" ? "NIGHT SHIFT" : shift === "dusk" ? "SWING SHIFT" : "DAY SHIFT"}`;
+    parts.signTop.textContent = `${shift === "night" ? "NIGHT SHIFT" : shift === "dusk" ? "SWING SHIFT" : "DAY SHIFT"} · THE FLOOR · FC-1984`;
     parts.signBot.textContent = `JOBS ${t.jobs ?? 0} · RUN ${t.running ?? 0} · $${Number(t.cost || 0).toFixed(2)}`;
 
     const attached = !!(state.term && state.term.running);
     parts.console.setAttribute("class", `console${state.bridge ? " lit" : ""}${attached ? " in" : ""}`);
     parts.note.textContent = !state.bridge ? "BRIDGE DOWN" : attached ? "ON DUTY" : "BACK SOON";
 
-    // Crates waiting at the arch: one per undecided held write (at most MAX_PARKED drawn),
+    // Crates waiting at the gate: one per undecided held write (at most MAX_PARKED drawn),
     // each named by its write: tool · role · repo · branch.
     const gate = Array.isArray(state.gate) ? state.gate : [];
     const held = gate.filter(c => c && c.decided !== "approve" && c.decided !== "decline");
     const waiting = held.length;
     parts.arch.setAttribute("class", `arch${waiting ? " holding" : ""}`);
+    parts.heldText.textContent = waiting ? `HELD ${waiting}` : "GATE CLEAR";
     const names = held.slice(0, MAX_PARKED).map(c => [c.tool, c.role, c.repo, c.branch].map(v => String(v || "")).filter(Boolean).join(" · ") || "held write");
     const parkedNames = JSON.stringify(names);
     if (parts.parked !== parkedNames) {
       parts.parked = parkedNames;
-      parts.queue.replaceChildren(...names.map((name, j) => crateShape(ARCH_X - 11 - j * 9, H - 38, "crate held", name)));
+      parts.queue.replaceChildren(...names.map((name, j) => crateShape(QUEUE_X + j * 9, BY - 6, "crate held", name)));
     }
     drawPile();
+    parts.denied.textContent = String(Math.min(denied, 99)).padStart(2, "0");
 
     const summary = [];
     if (counts.running) summary.push(`${counts.running} working`);
@@ -409,7 +479,7 @@
       title.textContent = label;
       g.append(title);
     }
-    g.append(R(x, y, 7, 6, "crate-box"), S("line", { x1: x, y1: y, x2: x + 7, y2: y + 6 }, "crate-x"), S("line", { x1: x + 7, y1: y, x2: x, y2: y + 6 }, "crate-x"));
+    g.append(R(x, y, 7, 6, "crate-box"), L(x, y, x + 7, y + 6, "crate-x"), L(x + 7, y, x, y + 6, "crate-x"));
     return g;
   }
   // A work order: a paper ticket with two lines on it, not a crate.
@@ -437,7 +507,7 @@
     anim.oncancel = () => { crates--; };
     return true;
   }
-  // The bin's pile: the last MAX_BINNED confiscated crates, two rows tucked behind the bin's lip.
+  // The derez field: the last MAX_BINNED confiscated crates, two rows under the gate.
   function drawPile() {
     if (!parts.pile) return;
     const key = JSON.stringify(binned);
@@ -445,12 +515,14 @@
     parts.piled = key;
     parts.pile.replaceChildren(...binned.map((label, i) => {
       const row = i < 3 ? 0 : 1, col = row ? i - 3 : i;
-      return crateShape(BIN_X - 0.5 + (row ? 3 : 0) + col * 6.5, H - 17 - row * 5, "crate bad", label);
+      return crateShape(BIN_X - 0.5 + (row ? 3 : 0) + col * 6.5, PILE_Y - 6 - row * 5, "crate bad", label);
     }));
   }
   function binCrate(label) {
     binned.push(label);
     if (binned.length > MAX_BINNED) binned.shift();
+    denied++;
+    if (parts.denied) parts.denied.textContent = String(Math.min(denied, 99)).padStart(2, "0");
     drawPile();
   }
   const BAD = new Set(["DENY", "NO", "FAILED"]), GOOD = new Set(["ALLOW", "OK", "WRITTEN"]);
@@ -465,13 +537,14 @@
     setTimeout(() => node.classList.remove(cls), ms);
   }
   function stamp() {
-    const g = S("g", { transform: `translate(${BIN_X - 16} ${H - 18}) rotate(-8)` }, "stamp");
+    const x = BIN_X + 14, y = PILE_Y - 14;
+    const g = S("g", { transform: `translate(${x} ${y}) rotate(-8)` }, "stamp");
     g.append(R(-30, -7, 60, 10, "stamp-box"), T(0, 1, "CONFISCATED", "stamp-t", "middle"));
     parts.fx.append(g);
-    g.animate([{ opacity: 0, transform: `translate(${BIN_X - 16}px, ${H - 18}px) rotate(-8deg) scale(1.6)` },
-               { opacity: 1, transform: `translate(${BIN_X - 16}px, ${H - 18}px) rotate(-8deg) scale(1)`, offset: 0.12 },
-               { opacity: 1, transform: `translate(${BIN_X - 16}px, ${H - 18}px) rotate(-8deg) scale(1)`, offset: 0.8 },
-               { opacity: 0, transform: `translate(${BIN_X - 16}px, ${H - 18}px) rotate(-8deg) scale(1)` }],
+    g.animate([{ opacity: 0, transform: `translate(${x}px, ${y}px) rotate(-8deg) scale(1.6)` },
+               { opacity: 1, transform: `translate(${x}px, ${y}px) rotate(-8deg) scale(1)`, offset: 0.12 },
+               { opacity: 1, transform: `translate(${x}px, ${y}px) rotate(-8deg) scale(1)`, offset: 0.8 },
+               { opacity: 0, transform: `translate(${x}px, ${y}px) rotate(-8deg) scale(1)` }],
               { duration: 2200, easing: "ease-out" }).onfinish = () => g.remove();
     flash(parts.bin, "hit-bin", 600);
   }
@@ -487,24 +560,26 @@
     const lanes = Array.isArray(state.lanes) ? state.lanes : [];
     const lane = lanes.find(l => l.role === role && (l.state === "running" || l.state === "held")) || lanes.find(l => l.role === role);
     const st = lane && stations.get(lane.name);
-    return st ? [st.x, st.y] : [26, CON_Y + 66];
+    return st ? [st.x, st.y] : [CON_X, CON_Y + 12];
   }
-  // Crates are drawn with their bottom centre on the point: this is the outbound belt's top.
-  const OUT_Y = () => H - 32;
+  // Crates ride the bottom side of the track to the gate: this is its centre line. A broker
+  // call's crate cuts straight across the loop to it, light-cycle fashion, then rides to the gate.
+  const OUT_Y = () => BY;
   function toArch(role, then) {
     const [x, y] = origin(role), oy = OUT_Y();
     return travel("crate", [[x, y], [x, oy], [ARCH_X - 4, oy]], then);
   }
+  // Past the gate the track runs on to the OUT portal, where the crate drops off the picture.
   function pass(fromX) {
     const oy = OUT_Y();
     flash(parts.arch, "ok", 500);
-    return travel("crate ok", [[fromX, oy], [DOOR_X + 10, oy]]);
+    return travel("crate ok", [[fromX, oy], [OUT_X, oy], [OUT_X, GLASS_B + 12]]);
   }
   function confiscate(fromX, label) {
     const oy = OUT_Y();
     flash(parts.arch, "no", 700);
     const landed = () => { stamp(); binCrate(label); };
-    const moved = travel("crate bad", [[fromX, oy], [BIN_X - 2, oy - 10], [BIN_X + 9, H - 8]], landed);
+    const moved = travel("crate bad", [[fromX, oy], [BIN_X + 4, oy + 14], [BIN_X + 9, PILE_Y]], landed);
     if (!moved) binCrate(label);
     return moved;
   }
@@ -521,8 +596,8 @@
         return false;
       }
       case "HELD": toArch(role); return false;    // it waits in the queue (drawn from the gate cards)
-      case "OK": case "WRITTEN": return pass(ARCH_X - 12);
-      case "NO": case "FAILED": return confiscate(ARCH_X - 12, line(ev));
+      case "OK": case "WRITTEN": return pass(ARCH_X + 4);
+      case "NO": case "FAILED": return confiscate(ARCH_X + 4, line(ev));
       case "JOB": {
         const st = stations.get(words[0]);
         if (st && words[1] === "done") pop(st, "+1");
@@ -532,8 +607,8 @@
     }
   }
 
-  // ---------- work flowing from the Coordinator to the door
-  // Park a branch crate on a lane's out-tray (kept across polls, drawn by draw()); true when it is on screen.
+  // ---------- work flowing from the Coordinator to the portal
+  // Park a branch crate on a lane's console (kept across polls, drawn by draw()); true when it is on screen.
   function park(name) {
     parked.add(name);
     const st = stations.get(name);
@@ -545,10 +620,12 @@
     const st = stations.get(name);
     if (st) showPark(st);
   }
-  // Rail paths between trays. Each starts and ends on a tray, with the crate's feet on the rail's centre line.
-  const dispatchPath = st => [CHUTE, [RAIL_A, CHUTE[1]], [RAIL_A, st.inTray[1]], st.inTray];
-  const handoffPath = (dev, rev) => [dev.outTray, [RAIL_B, dev.outTray[1]], [RAIL_B, rev.inTray[1]], rev.inTray];
-  const dropPath = rev => [rev.inTray, rev.outTray, [RAIL_C, rev.outTray[1]], [RAIL_C, OUT_Y()], [DOOR_X + 10, OUT_Y()]];
+  // Trips along the track. Each starts and ends on a console, with the crate's feet on the
+  // track's centre line in between; corners are turned in a few hops (arc()).
+  const dispatchPath = st => [CHUTE, [LX + RAD, CHUTE[1]], [LX + RAD, TY], [st.x, TY], st.inTray];
+  const handoffPath = (dev, rev) => [dev.outTray, [dev.x, TY], [RX - RAD, TY], ...arc(RX - RAD, TY + RAD, 270, 360), [RX, TY + RAD], [RX, BY - RAD],
+    ...arc(RX - RAD, BY - RAD, 0, 90), [RX - RAD, BY], [rev.x, BY], rev.inTray];
+  const dropPath = rev => [rev.inTray, rev.outTray, [rev.x, BY], [OUT_X, BY], [OUT_X, GLASS_B + 12]];
 
   // What changed in each lane since the last poll becomes a trip. History (the first poll, a
   // lane's first appearance, anything while the floor is hidden or motion is reduced) is
