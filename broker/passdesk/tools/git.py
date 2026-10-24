@@ -585,8 +585,12 @@ def tool_github_create_pr(args: dict, policy: dict) -> str:
     block_outbound_secrets("PR title", title)
     block_outbound_secrets("PR body", body)
     draft = bool(args.get("draft", True))
+    # The card shows the body's start, and carries its digest so two pull
+    # requests whose bodies differ only past the excerpt never share a card.
     require_approval({"tool": "github_create_pr", "repo": repo, "head": head, "base": base,
-                      "title": title, "body": body[:2000], "draft": draft},
+                      "title": title, "body": body[:2000],
+                      "body_sha256": hashlib.sha256(body.encode()).hexdigest(), "body_chars": len(body),
+                      "draft": draft},
                      job={"repo": repo, "head": head, "base": base, "title": title, "body": body, "draft": draft})
     return _open_pr(repo, head, base, title, body, draft)[1]
 
@@ -635,7 +639,7 @@ def _staged_pr_args(job: dict, card: dict, policy: dict, forge: str) -> tuple[st
     block_outbound_secrets("title", title)
     block_outbound_secrets("body", body)
     _job_matches(job, card, ("repo", "head", "base", "title", "draft"))
-    if card.get("body") != body[:2000]:
+    if card.get("body") != body[:2000] or card.get("body_sha256") != hashlib.sha256(body.encode()).hexdigest():
         raise Denied("the staged write's body does not match its approval card; nothing was written")
     return repo, head, base, title, body, draft
 
@@ -730,8 +734,6 @@ def complete_gitlab_create_mr(job: dict, card: dict, policy: dict) -> str:
     already as sent, "Draft: " included). Raises Denied if a check fails, the
     gitlab credential is gone or GitLab refuses it."""
     repo, head, base, title, body, _ = _staged_pr_args(job, card, policy, "gitlab")
-    if card.get("body_sha256") != hashlib.sha256(body.encode()).hexdigest():
-        raise Denied("the staged write's body does not match its approval card; nothing was written")
     if _TITLE_BAD_RE.search(title) or len(title) > _MR_TITLE_MAX or len(body) > _MR_BODY_MAX:
         raise Denied("the staged merge request's title or body is not one GitLab takes; nothing was written")
     ok, text = _open_mr(repo, remote_of(repo, policy), head, base, title, body)

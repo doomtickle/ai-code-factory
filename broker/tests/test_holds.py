@@ -3,6 +3,7 @@ writes, expiry, notification and installation at start-up. Ported from passdesk-
 hold moved into core (docs/decisions.md, 2026-10-21)."""
 
 import calendar
+import hashlib
 import io
 import json
 import os
@@ -878,10 +879,28 @@ class StageTests(StageBase):
         self.assertTrue(self.path("pending").exists())
         self.assertEqual(self.sent, [self.cid, self.cid])
 
-    def test_after_the_result_window_the_same_call_is_a_new_request(self):
+    def test_a_made_write_returns_its_result_for_as_long_as_its_record_exists(self):
         self.stage()
         self.decide(self.cid)
         holds.sweep_idle()
+        done = self.read("done")
+        # Long past expire_seconds (60 in this fixture), and with an unusable
+        # finish time: still made, never a card that could make it again.
+        for finished in (time.time() - 30 * 86_400, "soon"):
+            self.path("done").write_text(json.dumps({**done, "finished": finished}))
+            with self.assertRaises(Made):
+                self.call()
+        self.assertFalse(self.path("pending").exists())
+        self.assertEqual(len(self.writes), 1)
+        self.path("done").unlink()  # the record gone, the same call is a new request
+        self.stage()
+        self.assertTrue(self.path("pending").exists())
+
+    def test_after_the_window_a_declined_write_is_a_new_request(self):
+        self.stage()
+        self.decide(self.cid, verdict="decline")
+        holds.sweep_idle()
+        self.assertRaises(Denied, self.call)
         done = self.read("done")
         self.path("done").write_text(json.dumps({**done, "finished": time.time() - 61}))
         self.stage()  # expire_seconds is 60 in this fixture
@@ -1224,6 +1243,34 @@ class StagedPullRequestTests(StageBase):
         holds.sweep_idle()
         self.assertEqual(self.posts, [])
         self.assertIn("body does not match its approval card", self.read("done", cid)["result"])
+
+    def test_a_pr_job_whose_body_differs_only_past_the_excerpt_is_never_opened(self):
+        cid = self.staged_pr()
+        rec = self.read("queued", cid)
+        self.path("queued", cid).write_text(json.dumps({**rec, "job": {**rec["job"], "body": "x" * 2999 + "y"}}))
+        self.decide(cid)
+        holds.sweep_idle()
+        self.assertEqual(self.posts, [])
+        self.assertIn("body does not match its approval card", self.read("done", cid)["result"])
+
+    def test_pr_bodies_differing_only_past_the_excerpt_are_different_writes(self):
+        cid = self.staged_pr()
+        card = self.read("pending", cid)
+        self.assertEqual(card["body_sha256"], hashlib.sha256(("x" * 3000).encode()).hexdigest())
+        self.assertEqual(card["body_chars"], 3000)
+        self.PR = {**self.PR, "body": "x" * 2999 + "y"}
+        other = self.staged_pr()  # pending: its own card, not the first one's staged result
+        self.assertNotEqual(other, cid)
+        self.assertEqual(self.read("pending", other)["body"], card["body"])
+        self.PR = {**self.PR, "body": "x" * 3000}
+        self.decide(cid)
+        holds.sweep_idle()
+        self.assertEqual(json.loads(self.posts[0].data)["body"], "x" * 3000)
+        self.PR = {**self.PR, "body": "x" * 2999 + "y"}
+        self.assertEqual(self.staged_text(other).split("(id ", 1)[1][:16], other)  # made: not the first PR's URL
+        self.decide(other)
+        holds.sweep_idle()
+        self.assertEqual(json.loads(self.posts[1].data)["body"], "x" * 2999 + "y")
 
     def test_github_refusing_the_staged_pr_is_a_recorded_failure(self):
         cid = self.staged_pr()

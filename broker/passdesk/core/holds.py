@@ -16,7 +16,8 @@ it files the outcome under done/ (`queued`, `write` = running/done/failed/
 skipped, `result`, `finished`). The same call again while its card is
 pending gets the same staged result (no second card or notification); once
 the write is made it gets that write's stored result (`Made`: the PR URL,
-the pushed ref); while it is being made, or once declined, it is refused.
+the pushed ref) for as long as its done/ record exists; while it is being
+made, or once declined (for `expire_seconds`), it is refused.
 Either way nothing is written twice. After a failure or an expiry it stages
 a fresh card.
 
@@ -66,8 +67,9 @@ from .policy import load_policy
 # same bundle (its digest) to the same branch is the same card.
 _STABLE_FIELDS = {
     "git_push": ("tool", "principal", "repo", "branch", "base", "head", "bundle_sha256"),
-    "github_create_pr": ("tool", "principal", "repo", "head", "base", "title", "body", "draft"),
-    # The MR card carries the whole body's digest (its "body" is an excerpt).
+    # The PR and MR cards carry the whole body's digest (their "body" is an
+    # excerpt), so bodies that differ only past it are different cards.
+    "github_create_pr": ("tool", "principal", "repo", "head", "base", "title", "body", "body_sha256", "draft"),
     "gitlab_create_mr": ("tool", "principal", "repo", "head", "base", "title", "body", "body_sha256", "draft"),
     "github_create_issue": ("tool", "principal", "repo", "title", "body", "body_sha256", "labels"),
 }
@@ -372,11 +374,13 @@ def _queued_job(cid: str, pending: dict) -> dict | None:
 
 
 def _settled(cid: str, now: float, expire: int) -> None:
-    """The same call again once its staged write is settled (for `expire`
-    seconds after it finished): made, it raises Made with the write's stored
-    result; being made or declined, it raises Denied. Either way nothing is
-    written twice and a decline is not just asked again. A failure or an
-    expiry lets a fresh card be staged (returns). Only a done/ record that
+    """The same call again once its staged write is settled: made, it raises
+    Made with the write's stored result for as long as the done/ record
+    exists (a fresh card, approved again, would make the write twice: a
+    second issue); being made, or declined (for `expire` seconds after it
+    finished), it raises Denied. Either way nothing is written twice and a
+    decline is not just asked again. A failure, an expiry or a decline past
+    that window lets a fresh card be staged (returns). Only a done/ record that
     is this card counts: its stored id is cid (the record's own fields,
     the decision and the result, are not part of the card's id)."""
     done = _read(_path("done", cid))
@@ -387,13 +391,13 @@ def _settled(cid: str, now: float, expire: int) -> None:
         raise Denied(f"this exact write was approved (approval {cid}) and the gateway is making it now; nothing "
                      f"new was staged. Its outcome is recorded with the approval (`factory approvals`).")
     finished = done.get("finished")
-    if isinstance(finished, bool) or not isinstance(finished, (int, float)) or not math.isfinite(finished) \
-            or now - finished > expire:
-        return
     if write == "done":
         result = filters.sanitize(str(done.get("result") or ""), _RESULT_MAX)
         raise Made(f"Made by the gateway at {_iso(_timestamp(finished, now))} once approved (approval {cid}); "
                    f"this call staged and sent nothing new. The write's result:\n{result}", cid)
+    if isinstance(finished, bool) or not isinstance(finished, (int, float)) or not math.isfinite(finished) \
+            or now - finished > expire:
+        return
     if write == "skipped" and done.get("decision") != "expired":
         who = core_approvals.one_line(done.get("approver") or "unknown", 100)
         reason = filters.sanitize(" ".join(str(done.get("reason") or "").split()), 500)

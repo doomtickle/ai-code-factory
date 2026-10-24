@@ -32,7 +32,11 @@ Passdesk Pro plugin and moved into core, licence removed, on 2026-10-21
   secret scan (`gitlab_create_mr` also after confirming the gateway holds a
   `gitlab` token), and
   `github_create_issue` after its title, body and labels pass it and the
-  labels are confirmed to exist (its card carries a `body_sha256`). The
+  labels are confirmed to exist. The PR, MR and issue cards show the
+  body's first 2,000 characters and carry the whole body's `body_sha256`
+  (the PR and MR cards also `body_chars`); the digest is part of the card
+  id and checked against the job before the write, so two calls whose
+  bodies differ only past the excerpt are different cards. The
   hold covers only the tools `[approvals] tools` lists; nothing is held
   until that list names something (the usual list is `git_push`,
   `github_create_pr` and `gitlab_create_mr`; add `github_create_issue` to
@@ -165,10 +169,13 @@ content that actually gets pushed is still pinned by `head` and
   write, or once it is declined, the call is refused (`DENIED ... this
   exact write was approved (approval X) and the gateway is making it
   now`, `declined by NAME: REASON (approval X); nothing was written and
-  nothing new was staged.`). A made or declined write answers so for
-  `expire_seconds` after it finished; after that, or after a failure or
-  an expiry, the same call stages a fresh card for a person to decide
-  again. The done record counts only if its stored `id` is the card's. A pending card with no
+  nothing new was staged.`). A made write answers so for as long as its
+  done record exists, however long ago it was made: a fresh card,
+  approved again, would make the write a second time (a duplicate
+  issue). A declined write answers so for `expire_seconds` after it
+  finished; after that, or after a failure or an expiry (or once a made
+  write's done record is deleted), the same call stages a fresh card for
+  a person to decide again. The done record counts only if its stored `id` is the card's. A pending card with no
   job (left by a gateway that held calls open) is discarded
   (`approval-discarded`) and staged afresh.
 - **The done file** is the card plus the decision (`decision`,

@@ -27,12 +27,18 @@ Dated entries, for the user to review. Newest first.
     as in a call. A held tool with no job or completer is refused with
     nothing staged, rather than falling back to the retry hold.
   - The same call again: while pending, the same staged result (same id,
-    no second webhook); once the write is made (for `expire_seconds`
-    after), the write's stored result, cleaned again (`errors.Made`, record
-    `decision: made`: "Made by the gateway at T once approved (approval X);
-    this call staged and sent nothing new. The write's result:" and the
-    result, e.g. the PR URL); while running or once declined (for as
-    long), `DENIED` saying so; after a failure or an expiry, a fresh card.
+    no second webhook); once the write is made, for as long as its done/
+    record exists, the write's stored result, cleaned again (`errors.Made`,
+    record `decision: made`: "Made by the gateway at T once approved
+    (approval X); this call staged and sent nothing new. The write's
+    result:" and the result, e.g. the PR URL); while running, `DENIED`
+    saying so; once declined, `DENIED` for `expire_seconds` after; after a
+    failure, an expiry or that window, a fresh card. Owner decision
+    (second REVISE of #170): `Made` has no time limit, replacing our
+    `expire_seconds` window, because after the window a repeat would stage
+    a card that, approved again, files a duplicate issue (or opens a second
+    PR on another base). Deleting the done/ record is the way to ask for
+    the same write again.
     Either way a write is never made twice and a decline is not silently
     asked again. Owner decision (REVISE of #170), replacing our first
     choice of refusing after a made write too: the Coordinator can send the
@@ -64,6 +70,13 @@ Dated entries, for the user to review. Newest first.
     dashboard read the same files; only their wording changed. A pending
     card with no job (left by a gateway from before this change) is
     discarded and staged afresh on the next call.
+  - The PR card carries `body_sha256` and `body_chars` beside its
+    2,000-character body excerpt, as the MR and issue cards already did;
+    the digest is in its id fields and `complete_github_create_pr` checks
+    it against the job. Before, two PRs whose bodies differed only past
+    2,000 characters shared a card: the second call got the first's staged
+    result (its body silently dropped), and once the first was made, its
+    URL. This closes the card side of doomtickle/passdesk-ops#13 for PRs.
   - `card_id` for a tool without listed stable fields (a plugin tool) now
     leaves out the fields the hold adds (`id`, `nonce`, `created`,
     `expires`), so a stored card hashes to its own id; a fresh card has
