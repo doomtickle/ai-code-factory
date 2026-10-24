@@ -502,14 +502,16 @@ def log_line(text: str) -> None:
 def save_job_index() -> None:
     """Write the newest MAX_INDEXED_JOBS jobs (and every running one) to jobs.json:
     a 0600 temp file in the same folder, then a rename, so a reader never sees half
-    a file. Never raises: a full disk must not fail the job."""
+    a file. Never raises: a full disk must not fail the job. The snapshot is taken
+    inside _index_lock, so saves are ordered and the last one to write has the
+    newest view; callers must not hold _jobs_lock (it is taken after _index_lock)."""
     try:
-        with _jobs_lock:
-            jobs = sorted(_jobs.values(), key=lambda j: j.started, reverse=True)
-            keep = jobs[:MAX_INDEXED_JOBS] + [j for j in jobs[MAX_INDEXED_JOBS:] if j.status == "running"]
-            records = [j.record() for j in keep]
-        data = json.dumps({"version": JOB_INDEX_VERSION, "jobs": records}, ensure_ascii=False).encode("utf-8")
         with _index_lock:
+            with _jobs_lock:
+                jobs = sorted(_jobs.values(), key=lambda j: j.started, reverse=True)
+                keep = jobs[:MAX_INDEXED_JOBS] + [j for j in jobs[MAX_INDEXED_JOBS:] if j.status == "running"]
+                records = [j.record() for j in keep]
+            data = json.dumps({"version": JOB_INDEX_VERSION, "jobs": records}, ensure_ascii=False).encode("utf-8")
             path = job_index_file()
             tmp = path.with_name(f"{path.name}.tmp")
             try:

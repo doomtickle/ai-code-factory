@@ -10,6 +10,7 @@ import stat
 import sys
 import tempfile
 import textwrap
+import threading
 import time
 import unittest
 import uuid
@@ -1533,6 +1534,28 @@ class JobIndexTests(Base):
         self.assertNotIn("still running", json.dumps(after))
         status = json.loads(d.tool_job_status({}))
         self.assertEqual([j["job_id"] for j in status], [job_id])
+
+    def test_the_last_save_wins_even_when_an_earlier_one_is_waiting(self):
+        job_id = self.delegate("developer", "task")
+        d.tool_wait_for_job({"job_id": job_id, "timeout_seconds": 30})
+        job = d._jobs[job_id]
+        job.status = "running"
+        job.done.clear()
+        d.save_job_index()
+        self.assertEqual(self.index()["jobs"][0]["status"], "running")
+        # A save started while another holds the index lock must snapshot only
+        # once it gets the lock, so it sees the job as finished, not as it was.
+        with d._index_lock:
+            first = threading.Thread(target=d.save_job_index)
+            first.start()
+            time.sleep(0.2)
+            job.status = "done"
+            job.done.set()
+        first.join(5)
+        self.assertFalse(first.is_alive())
+        self.assertEqual(self.index()["jobs"][0]["status"], "done")
+        self.restart()
+        self.assertEqual(json.loads(d.tool_job_status({}))[0]["status"], "done")
 
     def test_index_keeps_a_one_line_task_not_the_full_text(self):
         self.delegate("developer", "first line\nsecret second line " + "y" * 5000)
