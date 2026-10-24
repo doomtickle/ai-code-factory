@@ -6,6 +6,7 @@ Run on the host with the system Python:
 """
 
 import json
+import os
 import tempfile
 import time
 import unittest
@@ -176,6 +177,7 @@ class RenderTests(unittest.TestCase):
         self.state, self.roles = root / "dispatch", root / "roles"
         (self.state / "logs").mkdir(parents=True)
         (self.state / "packets").mkdir()
+        (self.state / "pid").write_text(f"{os.getpid()}\n")
         for role, lanes in (("developer", "2"), ("reviewer", ""), ("tester", "")):
             (self.roles / role).mkdir(parents=True)
             (self.roles / role / "role.conf").write_text(f'DESCRIPTION="x"\nLANES="{lanes}"\n')
@@ -195,6 +197,17 @@ class RenderTests(unittest.TestCase):
     def test_lanes_follow_roles(self):
         self.assertEqual([l.name for l in self.watch.lanes], ["developer", "developer-lane2", "reviewer", "tester"])
 
+    def test_bridge_down_interrupts_running_lanes(self):
+        (self.state / "pid").unlink()
+        self.watch.refresh()
+        tester = next(l for l in self.watch.lanes if l.name == "tester")
+        self.assertEqual(tester.job["status"], "interrupted")
+        text = w.plain(w.render(self.watch, 130, 24, now=self.at("00:20:00")), 130)
+        self.assertIn("0 running", text.splitlines()[0])
+        self.assertIn("bridge down", text.splitlines()[0])
+        self.assertIn("! interrupted", text)
+        self.assertNotIn("● running", text)
+
     def test_layout(self):
         self.assertEqual(len(w.layout(6, 160, 40)), 6)
         self.assertEqual({x for _, x, _, _ in w.layout(6, 160, 40)}, {0, 80})  # 2 columns
@@ -211,7 +224,7 @@ class RenderTests(unittest.TestCase):
         self.assertEqual(len(lines), 24)
         self.assertIn("factory watch  myproj", lines[0])
         self.assertIn("last 24h: 1 jobs $1.31", lines[0])
-        self.assertIn("bridge down", lines[0])
+        self.assertIn("bridge up", lines[0])
         self.assertIn(" developer ─", text)
         self.assertIn("✓ done · 3:55 · sonnet-5 · $1.31", text)
         self.assertIn(" tester ─", text)

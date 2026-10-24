@@ -1281,12 +1281,12 @@ describe_loss() {
       else
         echo "nothing (it keeps no history)"
       fi ;;
-    "$COORDINATOR_SANDBOX") echo "the Coordinator's conversation history" ;;
+    "$COORDINATOR_SANDBOX") echo "the Coordinator's conversation history (the Coordinator is read-only, so a plan that exists only in that conversation is gone; ask a developer job to commit anything worth keeping first)" ;;
     *)
       if [ "$(role_get "${1#factory-}" WORKSPACE)" = rw ]; then
-        echo "the saved sessions of its lanes (their next tasks start fresh) and its lane clones: anything not committed to a factory/* branch (committed branches are already in your project as factory-<lane>/... refs)"
+        echo "the saved sessions of its lanes (they live on the sandbox's own disk, so the next tasks start fresh) and its lane clones: anything not committed to a factory/* branch (committed branches are already in your project as factory-<lane>/... refs)"
       else
-        echo "the role's saved sessions (its next tasks start fresh)"
+        echo "the role's saved sessions (they live on the sandbox's own disk, so its next tasks start fresh)"
       fi ;;
   esac
 }
@@ -1343,7 +1343,8 @@ plan_maybe_sandboxes() {
 #   commit<TAB>SHA<TAB>SUBJECT      each incoming commit (HEAD..@{u})
 #   recreate<TAB>SANDBOX<TAB>LOSES  out of date now (stale_sandboxes): recreated
 #   maybe<TAB>SANDBOX<TAB>WHY       may be recreated once the new code is built
-#   note<TAB>TEXT                   anything that changes what update does
+#   note<TAB>TEXT                   anything that changes what update does, and
+#                                   what every update drops or keeps
 cmd_update_plan() {
   local upstream changed="" sb stale broker_change
   if ! upstream="$(git "${BROKER_GIT_SAFE[@]}" -C "$ROOT" rev-parse --abbrev-ref '@{u}' 2>/dev/null)"; then
@@ -1366,6 +1367,10 @@ cmd_update_plan() {
       fi
     fi
   fi
+  # What every update drops, whichever sandboxes it recreates; the per-sandbox
+  # losses are the recreate lines. Keep in step with docs/guides/05-troubleshooting.md
+  # ("What survives an update or a disconnect").
+  printf 'note\t%s\n' "every update stops the dispatch bridge and all agent sandboxes: running jobs end (they show as interrupted afterwards; the job list, transcripts and review packets are kept) and held writes are dropped (queued writes, branches already in your project, saved sessions of sandboxes that aren't recreated, your Claude login and settings are kept)"
   stale="$(stale_sandboxes)"
   for sb in $stale; do printf 'recreate\t%s\t%s\n' "$sb" "$(describe_loss "$sb")"; done
   [ -z "$changed" ] || plan_maybe_sandboxes "$changed" | while IFS="$(printf '\t')" read -r sb why; do

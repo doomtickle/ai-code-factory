@@ -226,7 +226,7 @@ another.
 | `factory doctor` | Check the machine is ready; prints the fix for each problem (setup runs it first; the dashboard's DIAG key runs it too). Once the broker exists, it also runs the gateway's own doctor inside it: policy, tokens and grants, audit log, credentials, a live probe, GitHub or GitLab access per repo, the policy's hosts against the broker kit, whether holds are on, and a warning for any approval that expired with no decision |
 | `factory setup` | One-time setup (safe to re-run) |
 | `factory update [--yes]` | After pulling changes or editing kits, images or policy: pulls the latest factory, rebuilds, recreates only the sandboxes the changes affect (it lists them and what each loses, then asks), and restarts. It doesn't open the dashboard (so `factory update --yes` returns): run `factory dashboard` afterwards. The dashboard's UPDATE key runs `factory update --yes` after showing the plan |
-| `factory update --plan` | What `factory update` would do, changing nothing but a (hook-free) `git fetch`: the incoming commits, the sandboxes it would recreate and what each loses, the ones the incoming changes may make out of date (a guess from the changed files), and notes such as uncommitted changes that would skip the pull. Tab-separated lines (`commit`, `recreate`, `maybe`, `note`), for the dashboard |
+| `factory update --plan` | What `factory update` would do, changing nothing but a (hook-free) `git fetch`: the incoming commits, the sandboxes it would recreate and what each loses, the ones the incoming changes may make out of date (a guess from the changed files), and notes: what every update drops and keeps (running jobs, held writes, the job list), and anything such as uncommitted changes that would skip the pull. Tab-separated lines (`commit`, `recreate`, `maybe`, `note`), for the dashboard |
 | `factory start [dir] [--no-ui]` | Start the factory for a project (default: current folder) and open the dashboard. `--no-ui` (or `FACTORY_NO_UI=1`) opens no dashboard: talk to the Coordinator with `factory chat` in any terminal and follow roles with `factory watch` or `factory logs <role>`. The old `--layout` flag is accepted only as `web` (see "Layouts") |
 | `factory restart` | Stop the factory and start it again for the project it is bound to, (it doesn't open a second dashboard; one already open keeps running). The dashboard's RESTART key runs it |
 | `factory chat` | Talk to the Coordinator in this terminal (wraps `sbx run --name factory-coordinator`); `factory start` creates the sandbox first. Refuses while the Coordinator is open elsewhere (the dashboard) |
@@ -1269,6 +1269,10 @@ hasn't dispatched any jobs yet just shows an empty report.
   - `dispatch/imports/`: bundles being imported from a developer lane (deleted
     once imported)
   - `dispatch/packets/<job-id>.md`: the job's review packet (`factory packet`)
+  - `dispatch/jobs.json`: the job list (last 200 jobs, short records), written
+    at every status change and reloaded when the bridge starts, so
+    `job_status`, `wait_for_job` and `factory packet` still know old ids after
+    a restart; a job that was running becomes `interrupted`
   - `broker/audit.jsonl`: every broker call, with the calling role
   - Server errors: `dispatch/dispatch.log` and `broker/broker.log`
 - **Why state is outside the repo:** the broker re-reads its tool grants
@@ -1298,8 +1302,10 @@ hasn't dispatched any jobs yet just shows an empty report.
   `factory update` records a fingerprint of those inputs for each sandbox it
   creates. Before it removes anything, it lists each out-of-date sandbox and
   what recreating it discards, then asks (`--yes` skips the question):
-  - **Coordinator:** its conversation history.
-  - **A role:** its lanes' saved sessions; their next tasks start fresh. For
+  - **Coordinator:** its conversation history. It is read-only, so a plan
+    worth keeping must be committed through a developer job first.
+  - **A role:** its lanes' saved sessions (they live on the sandbox's own
+    disk); their next tasks start fresh. For
     the developer, also its lane clones: anything it didn't commit to a
     `factory/*` branch (committed branches are already in your project).
   - **Broker:** a GitHub token set only by hand with `sbx secret set github
@@ -1309,6 +1315,13 @@ hasn't dispatched any jobs yet just shows an empty report.
     hand-set one afterwards; `factory start` reminds you.
 
   Sandboxes created before fingerprints existed count as out of date once.
+
+  Every update (and `factory restart`) also stops the bridge and all agents:
+  running jobs end and show as `interrupted`, and held writes are dropped.
+  The job list, transcripts, packets, queued writes, brought-back branches and
+  the sessions of sandboxes that aren't recreated are kept. `factory update
+  --plan` states this up front; the full table is in
+  [Troubleshooting](docs/guides/05-troubleshooting.md#what-survives-an-update-or-a-disconnect).
 
   **Upgrading to lanes:** the developer sandbox used to mount your project
   read-write and edit your working tree directly. Now it mounts the project

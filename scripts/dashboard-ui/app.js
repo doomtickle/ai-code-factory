@@ -19,8 +19,8 @@
   const mmss = s => (s >= 3600 ? `${Math.floor(s / 3600)}:${pad(Math.floor(s / 60) % 60)}` : `${pad(Math.floor(s / 60))}:${pad(s % 60)}`);
   const ktok = n => (n == null ? "--" : n >= 1000 ? `${Math.round(n / 1000)}k` : String(n));
 
-  const LED = { running: "g blink", held: "a blink", revise: "a", done: "g", approved: "g", idle: "", cancelled: "r", failed: "r" };
-  const LABEL = { running: "Run", held: "Held", revise: "Revise", done: "Done", approved: "Approved", idle: "Idle", cancelled: "Cancelled", failed: "Failed" };
+  const LED = { running: "g blink", held: "a blink", revise: "a", done: "g", approved: "g", idle: "", cancelled: "r", failed: "r", interrupted: "r" };
+  const LABEL = { running: "Run", held: "Held", revise: "Revise", done: "Done", approved: "Approved", idle: "Idle", cancelled: "Cancelled", failed: "Failed", interrupted: "Interrupted" };
 
   let state = null, polledAt = 0, lastEvent = "", gateKey = null, gateCd = null;  // gateCd: the card the gate countdown follows
   // Monitor state: the open lane, its tab, the latest /api/lane data, a request

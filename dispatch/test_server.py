@@ -10,6 +10,7 @@ import stat
 import sys
 import tempfile
 import textwrap
+import threading
 import time
 import unittest
 import uuid
@@ -1505,6 +1506,248 @@ class FactoryDocsTest(Base):
         self.assertEqual(d.doc_slug("Getting the developer's work"), "getting-the-developers-work")
         self.assertEqual(d.doc_slug("Enabling approvals (Passdesk Pro)"), "enabling-approvals-passdesk-pro")
         self.assertEqual(d.doc_slug("`factory-test` modes"), "factory-test-modes")
+
+
+class JobIndexTests(Base):
+    """STATE/jobs.json: the job list survives a restart of the bridge."""
+
+    def restart(self):
+        """Forget every job in memory, as a new bridge process does, then reload."""
+        d._jobs.clear()
+        return d.load_job_index()
+
+    def index(self):
+        return json.loads((d.STATE / "jobs.json").read_text())
+
+    def test_round_trip_and_survives_a_restart(self):
+        job_id = self.delegate("developer", "add a feature\nwith a long\nbody " + "x" * 400)
+        before = json.loads(d.tool_wait_for_job({"job_id": job_id, "timeout_seconds": 30}))
+        self.assertEqual(before["status"], "done")
+        self.assertEqual(self.restart(), 1)
+        after = json.loads(d.tool_wait_for_job({"job_id": job_id, "timeout_seconds": 0}))
+        for key in ("job_id", "role", "lane", "status", "model", "cost_usd", "session_cost_usd",
+                    "context_tokens", "branches", "import_errors", "packet", "task"):
+            self.assertEqual(after[key], before[key], key)
+        self.assertTrue(after["restored"])
+        self.assertIn("REPORT: did add a feature", after["report"])
+        self.assertIn(f"factory packet {job_id}", after["note"])
+        self.assertNotIn("still running", json.dumps(after))
+        status = json.loads(d.tool_job_status({}))
+        self.assertEqual([j["job_id"] for j in status], [job_id])
+
+    def test_the_last_save_wins_even_when_an_earlier_one_is_waiting(self):
+        job_id = self.delegate("developer", "task")
+        d.tool_wait_for_job({"job_id": job_id, "timeout_seconds": 30})
+        job = d._jobs[job_id]
+        job.status = "running"
+        job.done.clear()
+        d.save_job_index()
+        self.assertEqual(self.index()["jobs"][0]["status"], "running")
+        # A save started while another holds the index lock must snapshot only
+        # once it gets the lock, so it sees the job as finished, not as it was.
+        with d._index_lock:
+            first = threading.Thread(target=d.save_job_index)
+            first.start()
+            time.sleep(0.2)
+            job.status = "done"
+            job.done.set()
+        first.join(5)
+        self.assertFalse(first.is_alive())
+        self.assertEqual(self.index()["jobs"][0]["status"], "done")
+        self.restart()
+        self.assertEqual(json.loads(d.tool_job_status({}))[0]["status"], "done")
+
+    def test_index_keeps_a_one_line_task_not_the_full_text(self):
+        self.delegate("developer", "first line\nsecret second line " + "y" * 5000)
+        raw = (d.STATE / "jobs.json").read_text()
+        self.assertNotIn("y" * 300, raw)
+        task = self.index()["jobs"][0]["task"]
+        self.assertNotIn("\n", task)
+        self.assertLessEqual(len(task), 200)
+        self.assertEqual(stat.S_IMODE((d.STATE / "jobs.json").stat().st_mode), 0o600)
+        self.assertFalse((d.STATE / "jobs.json.tmp").exists())
+
+    def test_written_when_a_job_starts_and_when_it_is_cancelled(self):
+        job_id = self.delegate("developer", "hang")
+        self.assertEqual([j["status"] for j in self.index()["jobs"]], ["running"])
+        d.tool_cancel_job({"job_id": job_id})
+        self.assertEqual([j["status"] for j in self.index()["jobs"]], ["cancelled"])
+        self.restart()
+        self.assertIn("already cancelled", d.tool_cancel_job({"job_id": job_id}))
+
+    def test_a_running_job_reloads_as_interrupted_and_its_lane_is_not_busy(self):
+        job_id = self.delegate("developer", "hang")
+        d.tool_cancel_job({"job_id": job_id})  # ends the test's own process
+        # What the file looked like when the bridge died: running, no end line, no packet.
+        data = self.index()
+        data["jobs"][0].update(status="running", finished=None)
+        (d.STATE / "jobs.json").write_text(json.dumps(data))
+        d.packet_path(job_id).unlink(missing_ok=True)
+        (d.STATE / "logs" / "developer.log").write_text(f"10:00:00  ▶ job {job_id} from the Coordinator\n")
+        self.assertEqual(self.restart(), 1)
+        job = d._jobs[job_id]
+        self.assertEqual(job.status, "interrupted")
+        self.assertTrue(job.done.is_set())
+        self.assertEqual(d.active_jobs("developer"), {})
+        out = json.loads(d.tool_wait_for_job({"job_id": job_id, "timeout_seconds": 0}))
+        self.assertEqual(out["status"], "interrupted")
+        self.assertIn("factory logs developer", out["report"])
+        self.assertNotIn("still running", json.dumps(out))
+        self.assertIn("developer [idle]", d.tool_list_roles({}))
+        self.assertEqual(self.index()["jobs"][0]["status"], "interrupted")
+        self.assertIn(f"■ job {job_id} interrupted after", (d.STATE / "logs" / "developer.log").read_text())
+        events = [json.loads(l) for l in (d.STATE / "audit.jsonl").read_text().splitlines()]
+        self.assertIn(("job-interrupted", job_id), [(e.get("event"), e.get("job_id")) for e in events])
+        new = json.loads(d.tool_wait_for_job({"job_id": self.delegate("developer", "again"), "timeout_seconds": 30}))
+        self.assertEqual(new["status"], "done")
+
+    def test_no_ghost_running_lane_when_the_index_is_gone(self):
+        (d.STATE / "logs" / "developer.log").write_text(
+            "09:00:00  ▶ job 20261021-090000-abcdef from the Coordinator\n09:05:00     > task\n")
+        self.restart()
+        lines = (d.STATE / "logs" / "developer.log").read_text().splitlines()
+        self.assertRegex(lines[-1], r"^\d\d:\d\d:\d\d  ■ job 20261021-090000-abcdef interrupted after \d+s$")
+        self.restart()  # closed once, not again
+        self.assertEqual((d.STATE / "logs" / "developer.log").read_text().splitlines(), lines)
+
+    def test_a_finished_transcript_is_left_alone(self):
+        job_id = self.delegate("developer", "one")
+        d.tool_wait_for_job({"job_id": job_id, "timeout_seconds": 30})
+        before = (d.STATE / "logs" / "developer.log").read_text()
+        self.restart()
+        self.assertEqual((d.STATE / "logs" / "developer.log").read_text(), before)
+
+    def test_corrupt_missing_and_odd_files_are_skipped(self):
+        path = d.STATE / "jobs.json"
+        self.assertEqual(self.restart(), 0)  # missing: nothing to say
+        for raw in (b"{not json", b"[]", b'{"version": 99, "jobs": []}', b'{"version": 1, "jobs": "x"}',
+                    b"\xff\xfe\x00", b""):
+            path.write_bytes(raw)
+            with mock.patch.object(d, "log_line") as log:
+                self.assertEqual(self.restart(), 0, raw)
+            self.assertTrue(log.called, raw)
+        self.assertEqual(d.tool_job_status({}), "No jobs yet.")
+
+    def test_oversized_and_non_regular_files_are_refused(self):
+        path = d.STATE / "jobs.json"
+        with mock.patch.object(d, "MAX_INDEX_BYTES", 10):
+            path.write_text(json.dumps({"version": 1, "jobs": []}))
+            self.assertEqual(self.restart(), 0)
+        path.unlink()
+        os.mkfifo(path)  # must not hang on open or read
+        self.assertEqual(self.restart(), 0)
+        path.unlink()
+        path.mkdir()
+        self.assertEqual(self.restart(), 0)
+
+    def test_a_symlinked_index_is_refused_and_not_written_through(self):
+        job_id = self.delegate("developer", "one")
+        d.tool_wait_for_job({"job_id": job_id, "timeout_seconds": 30})
+        target = d.STATE / "elsewhere.json"
+        target.write_text("target before")
+        (d.STATE / "jobs.json").unlink()
+        (d.STATE / "jobs.json").symlink_to(target)
+        with mock.patch.object(d, "log_line") as log:
+            self.assertEqual(self.restart(), 0)
+        self.assertTrue(log.called)
+        job = d.Job("developer", "t", None, lane="developer")
+        job.status = "done"
+        job.done.set()
+        d._jobs[job.id] = job
+        d.save_job_index()  # replaces the link itself; never writes through it
+        self.assertFalse((d.STATE / "jobs.json").is_symlink())
+        self.assertEqual(target.read_text(), "target before")
+
+    def test_bad_records_are_dropped_and_good_ones_kept(self):
+        job_id = self.delegate("developer", "one")
+        d.tool_wait_for_job({"job_id": job_id, "timeout_seconds": 30})
+        base = self.index()["jobs"][0]
+        bad = [
+            "text", 7, None, {},
+            dict(base, id="../../etc/passwd"), dict(base, id=7),
+            dict(base, id="20261021-090000-abcdef", role="Bad Role"),
+            dict(base, id="20261021-090001-abcdef", lane="../x"),
+            dict(base, id="20261021-090002-abcdef", status="exploded"),
+            dict(base, id="20261021-090003-abcdef", started="soon"),
+            dict(base, id="20261021-090004-abcdef", started=float("nan")),
+            dict(base, id="20261021-090005-abcdef", started=True),
+            dict(base),  # duplicate id
+        ]
+        odd = dict(base, id="20261021-090006-abcdef", started=base["started"] - 1, task=["x"], model=5,
+                   effort=None, context_tokens="many", cost_usd="free", session_cost_usd=float("inf"),
+                   branches=[1, {"repo": ".", "ref": 2, "commit": "c"}, {"repo": ".", "ref": "r", "commit": "c"}],
+                   import_errors="oops", packet="/etc/passwd", report={"x": 1}, rw=True)
+        (d.STATE / "jobs.json").write_text(json.dumps({"version": 1, "jobs": [base] + bad + [odd]}))
+        d._jobs.clear()
+        self.assertEqual(d.load_job_index(), 2)
+        job = d._jobs["20261021-090006-abcdef"]
+        self.assertEqual((job.task, job.model_used, job.effort, job.context_tokens), ("", None, "", None))
+        self.assertIsNone(job.session_cost_usd)
+        self.assertEqual(job.branches, [{"repo": ".", "ref": "r", "commit": "c"}])
+        self.assertEqual(job.import_errors, [])
+        self.assertIsNone(job.packet)
+        self.assertEqual(job.result, "")
+        self.assertNotIn("NaN", d.tool_job_status({}))
+
+    def test_packet_path_comes_from_the_packet_folder_not_the_file(self):
+        job_id = self.delegate("developer", "one")
+        d.tool_wait_for_job({"job_id": job_id, "timeout_seconds": 30})
+        data = self.index()
+        data["jobs"][0]["packet"] = "/etc/passwd"
+        (d.STATE / "jobs.json").write_text(json.dumps(data))
+        self.restart()
+        self.assertEqual(d._jobs[job_id].packet, str(d.packet_path(job_id)))
+        d.packet_path(job_id).unlink()
+        self.restart()
+        self.assertIsNone(d._jobs[job_id].packet)
+        out = json.loads(d.tool_wait_for_job({"job_id": job_id, "timeout_seconds": 0}))
+        self.assertNotIn("packet", out)
+
+    def test_the_index_is_capped_and_job_status_takes_a_limit(self):
+        for i in range(d.MAX_INDEXED_JOBS + 5):
+            job = d.Job("developer", f"task {i}", None, lane="developer")
+            job.id = f"20260101-000000-{i:06x}"
+            job.started, job.finished, job.status = 1_700_000_000 + i, 1_700_000_001 + i, "done"
+            job.done.set()
+            d._jobs[job.id] = job
+        d.save_job_index()
+        self.assertEqual(len(self.index()["jobs"]), d.MAX_INDEXED_JOBS)
+        self.assertEqual(self.restart(), d.MAX_INDEXED_JOBS)
+        self.assertEqual(len(json.loads(d.tool_job_status({}))), 20)
+        self.assertEqual(len(json.loads(d.tool_job_status({"limit": 200}))), d.MAX_INDEXED_JOBS)
+        newest = json.loads(d.tool_job_status({"limit": 1}))[0]["task"]
+        self.assertEqual(newest, f"task {d.MAX_INDEXED_JOBS + 4}")
+        for bad in (0, 201, True):
+            with self.assertRaises(d.Denied):
+                d.tool_job_status({"limit": bad})
+
+    def test_a_failed_index_write_does_not_fail_the_job(self):
+        with mock.patch.object(d.os, "replace", side_effect=OSError("disk full")), \
+                mock.patch.object(d, "log_line") as log:
+            job_id = self.delegate("developer", "one")
+            report = json.loads(d.tool_wait_for_job({"job_id": job_id, "timeout_seconds": 30}))
+        self.assertEqual(report["status"], "done")
+        self.assertTrue(log.called)
+
+    def test_a_restored_job_keeps_branches_and_import_errors(self):
+        job = d.Job("developer", "t", None, lane="developer", rw=True)
+        job.status, job.finished = "done", job.started + 3
+        job.branches = [{"repo": ".", "ref": "factory-developer/factory/x", "commit": "abc1234"}]
+        job.import_errors = ["import error: boom"]
+        job.done.set()
+        d._jobs[job.id] = job
+        d.save_job_index()
+        self.restart()
+        out = json.loads(d.tool_wait_for_job({"job_id": job.id, "timeout_seconds": 0}))
+        self.assertEqual(out["branches"], job.branches)
+        self.assertEqual(out["import_errors"], job.import_errors)
+
+    def test_a_saved_session_is_still_resumed_after_a_restart(self):
+        d.tool_wait_for_job({"job_id": self.delegate("developer", "one"), "timeout_seconds": 30})
+        sid = (d.STATE / "sessions" / "developer").read_text().strip()
+        self.restart()
+        d.tool_wait_for_job({"job_id": self.delegate("developer", "two"), "timeout_seconds": 30})
+        self.assertEqual(self.claude_calls()[-1][self.claude_calls()[-1].index("--resume") + 1], sid)
 
 
 if __name__ == "__main__":

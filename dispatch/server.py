@@ -22,6 +22,14 @@ the task, the branches (commits and diffstat), the tests the role reported,
 the broker calls its role made meanwhile, cost, and the report. `factory
 packet` prints it.
 
+The job list outlives the bridge: <DISPATCH_STATE>/jobs.json holds a short
+record of the last MAX_INDEXED_JOBS jobs (never the full task or the full
+report), written atomically at each status change and reloaded at start. A job
+recorded as running whose process is gone becomes "interrupted" (and its lane's
+transcript is closed with an "interrupted" line), so nothing shows as running
+without a live job. The file is untrusted input: a corrupt, oversized or
+symlinked one is skipped with a log line.
+
 It also answers the Coordinator's questions about the factory itself
 (factory_docs) from a read-only snapshot of the factory's markdown docs that
 start-dispatch.sh copies into <DISPATCH_STATE>/docs/.
@@ -44,6 +52,7 @@ import os
 import re
 import secrets
 import signal
+import stat
 import subprocess
 import sys
 import threading
@@ -412,6 +421,23 @@ class Job:
         self.packet: str | None = None  # path of the review packet, once written
         self.proc: subprocess.Popen | None = None
         self.done = threading.Event()
+        self.restored = False  # reloaded from the job index: no process, a short report only
+
+    def record(self) -> dict:
+        """What the job index keeps: a one-line task, never its full text."""
+        s = self.summary()
+        rec = {"id": self.id, "role": self.role, "lane": self.lane, "rw": self.rw,
+               "task": one_line(self.task, 200), "status": self.status,
+               "started": self.started, "finished": self.finished,
+               "model": self.model_used or self.model or "", "effort": self.effort,
+               "context_tokens": self.context_tokens,
+               "cost_usd": s.get("cost_usd"), "session_cost_usd": s.get("session_cost_usd"),
+               "branches": list(self.branches) if self.branches is not None else None,
+               "import_errors": list(self.import_errors) if self.import_errors is not None else None,
+               "packet": self.packet}
+        if self.status != "running":
+            rec["report"] = one_line(self.result, REPORT_SUMMARY_CHARS)
+        return rec
 
     def summary(self, with_result: bool = False) -> dict:
         end = self.finished or time.time()
@@ -435,11 +461,244 @@ class Job:
             out["packet"] = self.packet
         if with_result and self.status != "running":
             out["report"] = sanitize(self.result)
+        if self.restored:
+            out["restored"] = True
+            if with_result:
+                out["note"] = ("reloaded from the job index after a dispatch restart: the report is "
+                               "a short summary" + ("; the full one is in the review packet "
+                               f"(factory packet {self.id})" if self.packet else ""))
         return out
 
 
 _jobs: dict = {}
 _jobs_lock = threading.Lock()
+
+
+# --------------------------------------------------------------------------
+# Job index: STATE/jobs.json, so the job list survives a restart of the bridge
+# (factory restart/update, a crash, a reboot). The state folder is on the host,
+# outside every sandbox. Written atomically at each status change; read back at
+# start-up as untrusted data.
+
+JOB_INDEX_VERSION = 1
+MAX_INDEXED_JOBS = 200
+MAX_INDEX_BYTES = 5_000_000
+REPORT_SUMMARY_CHARS = 600
+_JOB_ID = re.compile(r"^[0-9]{8}-[0-9]{6}-[0-9a-f]{6}$")
+_LANE_NAME = re.compile(r"^[a-z][a-z0-9-]{1,40}$")
+JOB_STATUSES = ("running", "done", "failed", "cancelled", "interrupted")
+_index_lock = threading.Lock()
+
+
+def job_index_file() -> Path:
+    return STATE / "jobs.json"
+
+
+def log_line(text: str) -> None:
+    """A line in dispatch.log (stderr)."""
+    print(f"{time.strftime('%Y-%m-%dT%H:%M:%S')} dispatch: {text}", file=sys.stderr, flush=True)
+
+
+def save_job_index() -> None:
+    """Write the newest MAX_INDEXED_JOBS jobs (and every running one) to jobs.json:
+    a 0600 temp file in the same folder, then a rename, so a reader never sees half
+    a file. Never raises: a full disk must not fail the job. The snapshot is taken
+    inside _index_lock, so saves are ordered and the last one to write has the
+    newest view; callers must not hold _jobs_lock (it is taken after _index_lock)."""
+    try:
+        with _index_lock:
+            with _jobs_lock:
+                jobs = sorted(_jobs.values(), key=lambda j: j.started, reverse=True)
+                keep = jobs[:MAX_INDEXED_JOBS] + [j for j in jobs[MAX_INDEXED_JOBS:] if j.status == "running"]
+                records = [j.record() for j in keep]
+            data = json.dumps({"version": JOB_INDEX_VERSION, "jobs": records}, ensure_ascii=False).encode("utf-8")
+            path = job_index_file()
+            tmp = path.with_name(f"{path.name}.tmp")
+            try:
+                tmp.unlink()
+            except FileNotFoundError:
+                pass
+            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+            with os.fdopen(fd, "wb") as f:
+                f.write(data)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, path)
+    except (OSError, ValueError, TypeError) as e:
+        log_line(f"could not write the job index: {type(e).__name__}: {e}")
+
+
+def _text(value, limit: int) -> str | None:
+    return one_line(value, limit) if isinstance(value, str) else None
+
+
+def _number(value) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+        return None
+    return float(value)
+
+
+def job_from_record(rec) -> "Job | None":
+    """A finished-looking Job from one index record, or None if the record is not
+    well formed. Every field is checked: the file is data, not code."""
+    if not isinstance(rec, dict):
+        return None
+    job_id, role, lane = rec.get("id"), rec.get("role"), rec.get("lane")
+    status, started = rec.get("status"), _number(rec.get("started"))
+    if (not isinstance(job_id, str) or not _JOB_ID.match(job_id)
+            or not isinstance(role, str) or not _ROLE_NAME.match(role)
+            or not isinstance(lane, str) or not _LANE_NAME.match(lane)
+            or status not in JOB_STATUSES or started is None):
+        return None
+    rw = rec.get("rw") is True
+    job = Job(role, _text(rec.get("task"), 200) or "", None, _text(rec.get("model"), 80) or "",
+              None, "", _text(rec.get("effort"), 20) or "", lane=lane, rw=rw)
+    job.id, job.started, job.status = job_id, started, status
+    job.finished = _number(rec.get("finished"))
+    model = _text(rec.get("model"), 80)
+    job.model_used = model or None
+    tokens = rec.get("context_tokens")
+    job.context_tokens = tokens if isinstance(tokens, int) and not isinstance(tokens, bool) and tokens >= 0 else None
+    session_cost, cost = _number(rec.get("session_cost_usd")), _number(rec.get("cost_usd"))
+    if session_cost is not None:
+        job.session_cost_usd = session_cost
+        job.start_cost_usd = session_cost - cost if cost is not None and cost <= session_cost else None
+    if rw:
+        branches = []
+        for b in rec.get("branches") if isinstance(rec.get("branches"), list) else []:
+            if isinstance(b, dict) and all(isinstance(b.get(k), str) for k in ("repo", "ref", "commit")):
+                branches.append({k: one_line(b[k], 300) for k in ("repo", "ref", "commit")})
+        job.branches = branches[:50]
+        job.import_errors = [e for e in (_text(e, 2000) for e in (
+            rec.get("import_errors") if isinstance(rec.get("import_errors"), list) else [])) if e][:20]
+    job.result = _text(rec.get("report"), REPORT_SUMMARY_CHARS) or ""
+    # The packet path is recomputed, never taken from the file.
+    if status != "running" and packet_path(job_id).is_file():
+        job.packet = str(packet_path(job_id))
+    job.restored = True
+    job.done.set()
+    return job
+
+
+def read_job_index() -> list:
+    """Jobs from jobs.json, newest MAX_INDEXED_JOBS. A missing file is an empty
+    list; a symlink, an oversized, unreadable or corrupt file is skipped with a log
+    line, and so is any single bad record."""
+    path = job_index_file()
+    try:
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
+    except FileNotFoundError:
+        return []
+    except OSError as e:
+        log_line(f"job index {path} skipped (not opened: {type(e).__name__}; a symlink is refused)")
+        return []
+    try:
+        with os.fdopen(fd, "rb") as f:
+            st = os.fstat(f.fileno())
+            if not stat.S_ISREG(st.st_mode) or st.st_size > MAX_INDEX_BYTES:
+                log_line(f"job index {path} skipped (not a regular file of at most {MAX_INDEX_BYTES} bytes)")
+                return []
+            data = json.loads(f.read(MAX_INDEX_BYTES + 1).decode("utf-8"))
+    except (OSError, ValueError) as e:  # UnicodeDecodeError is a ValueError
+        log_line(f"job index {path} skipped (unreadable or corrupt: {type(e).__name__})")
+        return []
+    records = data.get("jobs") if isinstance(data, dict) and data.get("version") == JOB_INDEX_VERSION else None
+    if not isinstance(records, list):
+        log_line(f"job index {path} skipped (unknown layout)")
+        return []
+    jobs, seen, bad = [], set(), 0
+    for rec in records:
+        job = job_from_record(rec)
+        if job is None or job.id in seen:
+            bad += 1
+            continue
+        seen.add(job.id)
+        jobs.append(job)
+    if bad:
+        log_line(f"job index: ignored {bad} malformed or duplicate record(s)")
+    jobs.sort(key=lambda j: j.started, reverse=True)
+    return jobs[:MAX_INDEXED_JOBS]
+
+
+def interrupt_job(job: "Job", now: float) -> None:
+    """A job recorded as running, but with no process in this bridge (it died with the
+    bridge or the sandboxes). Its end is the last thing its lane's transcript shows."""
+    log = Transcript(job.lane)
+    try:
+        last = log.path.stat().st_mtime
+    except OSError:
+        last = now
+    job.status = "interrupted"
+    job.finished = min(now, max(job.started, last))
+    elapsed = round(job.finished - job.started)
+    job.result = ("[interrupted: the dispatch bridge stopped while this job was running (factory "
+                  "restart or update, a disconnect or a crash), so its claude process ended with it. "
+                  "Work it committed in a lane clone may still be there; nothing was imported. "
+                  f"Its transcript: factory logs {job.lane}. Send the task again, to the same lane "
+                  "to continue its session if that survived (list_roles).]")
+    try:
+        log.write(f"■ job {job.id} interrupted after {elapsed}s")
+    except OSError:
+        pass
+
+
+_TRANSCRIPT_MARK = re.compile(r"^(\d\d):(\d\d):(\d\d)  ([▶■]) job (\S+)", re.M)
+
+
+def close_dangling_transcripts() -> int:
+    """Append an end line to any lane transcript whose last job marker is a start
+    with no end: the dashboard shows such a lane as running, and no job of this bridge
+    is (the index missed it, or was lost). Reads only the end of each log."""
+    closed = 0
+    for path in sorted((STATE / "logs").glob("*.log")):
+        try:
+            with open(path, "rb") as f:
+                size = f.seek(0, os.SEEK_END)
+                f.seek(max(0, size - 262_144))
+                tail = f.read().decode("utf-8", "replace")
+            last_active = path.stat().st_mtime
+        except OSError:
+            continue
+        marks = _TRANSCRIPT_MARK.findall(tail)
+        if not marks or marks[-1][3] != "▶":
+            continue
+        hh, mm, ss, _, job_id = marks[-1]
+        lt = time.localtime(last_active)
+        elapsed = ((lt.tm_hour * 3600 + lt.tm_min * 60 + lt.tm_sec)
+                   - (int(hh) * 3600 + int(mm) * 60 + int(ss))) % 86400
+        lane = path.stem
+        if _LANE_NAME.match(lane) and _JOB_ID.match(job_id):
+            try:
+                Transcript(lane).write(f"■ job {job_id} interrupted after {elapsed}s")
+                closed += 1
+            except OSError:
+                pass
+    return closed
+
+
+def load_job_index() -> int:
+    """Reload the index into _jobs at start-up; running records become interrupted
+    (and the lane transcript, which the dashboard reads, gets an end line). Returns
+    the number of jobs reloaded."""
+    jobs = read_job_index()
+    now, interrupted = time.time(), []
+    for job in jobs:
+        if job.status == "running":
+            interrupt_job(job, now)
+            interrupted.append(job)
+    with _jobs_lock:
+        for job in jobs:
+            _jobs.setdefault(job.id, job)
+    if interrupted:
+        save_job_index()
+        for job in interrupted:
+            audit({"event": "job-interrupted", "job_id": job.id, "role": job.role, "lane": job.lane})
+    closed = close_dangling_transcripts()
+    if closed:
+        log_line(f"closed {closed} lane transcript(s) that showed a job still running")
+    if jobs:
+        log_line(f"job index: reloaded {len(jobs)} job(s), {len(interrupted)} interrupted")
+    return len(jobs)
 
 
 def active_jobs(role: str) -> dict:
@@ -1063,6 +1322,7 @@ def run_job(job: Job) -> None:
             log.write(f"   (no review packet: {one_line(f'{type(e).__name__}: {e}', 300)})")
         log.write(f"■ job {job.id} {job.status} after {round(job.finished - job.started)}s")
         audit({"event": "job-end", **job.summary()})
+        save_job_index()
         job.done.set()
 
 
@@ -1214,6 +1474,7 @@ def tool_delegate(args: dict) -> str:
         job.max_turns = roles[role]["max_turns"]
         job.max_job_seconds = roles[role]["max_job_seconds"]
         _jobs[job.id] = job
+    save_job_index()
     threading.Thread(target=run_job, args=(job,), daemon=True).start()
     if wait:
         return job_report(job, wait, session=mode)
@@ -1242,8 +1503,11 @@ def tool_wait_for_job(args: dict) -> str:
 
 
 def tool_job_status(args: dict) -> str:
+    limit = args.get("limit", 20)
+    if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= MAX_INDEXED_JOBS:
+        raise Denied(f"limit must be an integer from 1 to {MAX_INDEXED_JOBS}")
     with _jobs_lock:
-        recent = sorted(_jobs.values(), key=lambda j: j.started, reverse=True)[:20]
+        recent = sorted(_jobs.values(), key=lambda j: j.started, reverse=True)[:limit]
     if not recent:
         return "No jobs yet."
     return json.dumps([j.summary() for j in recent], ensure_ascii=False)
@@ -1273,6 +1537,7 @@ def tool_cancel_job(args: dict) -> str:
     if job.status != "running":
         return f"Job {job.id} already {job.status}."
     job.status = "cancelled"
+    save_job_index()
     stop_claude_in_sandbox(job)
     kill_group(job.proc, signal.SIGTERM)
     job.done.wait(30)
@@ -1461,7 +1726,12 @@ TOOLS = {
                      "and diffstat, tests, broker calls, cost, report); the user reads it with "
                      "`factory packet <job_id>`.",
                      {"job_id": {"type": "string"}, "timeout_seconds": {"type": "integer"}}, ["job_id"]),
-    "job_status": (tool_job_status, "Show the 20 most recent jobs and their status.", {}, []),
+    "job_status": (tool_job_status, "Show the most recent jobs (20 by default; limit up to 200) and their "
+                   "status. The list is kept on the user's machine across factory restarts and updates: "
+                   "a job that was running when the bridge stopped shows as interrupted (its transcript "
+                   "is `factory logs <lane>`), and wait_for_job on an old id returns its saved status, "
+                   "a short report and, if one was written, its review packet.",
+                   {"limit": {"type": "integer"}}, []),
     "cancel_job": (tool_cancel_job, "Stop a running job (other lanes of its role keep running).", {"job_id": {"type": "string"}}, ["job_id"]),
     "factory_docs": (tool_factory_docs, "The AI Code Factory's own documentation (the README, setup "
                      "guide and how-to guides of the factory itself, not of the user's project), for "
@@ -1648,6 +1918,7 @@ def main() -> None:
             sys.exit(f"{what} must be an existing directory (got {p})")
     for sub in ("logs", "sessions", "imports", "packets"):
         (STATE / sub).mkdir(exist_ok=True)
+    load_job_index()  # before the touch below: a lane log's mtime is when its last job was last active
     for stale in (STATE / "imports").glob("*.bundle"):  # left by a bridge that died mid-import
         stale.unlink(missing_ok=True)
     for role, info in load_roles().items():

@@ -150,6 +150,15 @@ socket, or host credentials. Full picture: README.md.
 
 ## Other constraints
 
+- Job state: the dispatch bridge keeps its job list in `FACTORY_STATE/dispatch/jobs.json`
+  (short records, never full task text or secrets; atomic write, `O_NOFOLLOW`,
+  validated on load, a bad file is skipped with a log line). A job recorded as
+  running with no live process reloads as `interrupted`, and no lane may show RUN
+  without a live job (dispatch closes dangling transcripts at start; `watch.py` and
+  the dashboard treat a down bridge as interrupted). Lane sessions live on the role
+  sandbox's own disk, so `factory update` losing them when it recreates that sandbox
+  is expected; `describe_loss` and the standing note in `cmd_update_plan` must say so,
+  and match what `cmd_update` really does.
 - Runtime state (audit logs, transcripts, token hashes, tool grants, roles' scratch
   dirs) lives in `FACTORY_STATE` (`scripts/lib/common.sh`,
   `~/.local/state/ai-code-factory/`), never in the repo or any agent workspace: the

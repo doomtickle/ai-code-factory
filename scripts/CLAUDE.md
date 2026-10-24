@@ -137,6 +137,8 @@ shell, a key in a request header (not just the cookie) on a POST or WebSocket wi
 `Origin` checked, kept out of reach of the page that shows agent-written content, and a
 confirm step before any host command.
 
+Lane state is read-only display derived from transcripts. A lane shows RUN only while the dispatch bridge's pid is alive (`watch.py` `Watch.refresh` marks running lanes `interrupted` otherwise); the bridge also closes dangling transcripts when it starts. Test fixtures that expect a RUN lane must write a live `dispatch/pid`.
+
 Demo mode (`factory dashboard --demo`, `scripts/dashboard_demo.py`) is the same server
 on a throwaway copy of the committed fixture `scripts/dashboard-demo/` and meets every
 rule above. It reads no `FACTORY_STATE` or broker state and refuses `--state`,

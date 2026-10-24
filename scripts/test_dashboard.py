@@ -10,6 +10,7 @@ Run on the host with the system Python:
 import hashlib
 import http.client
 import json
+import os
 import re
 import tempfile
 import time
@@ -48,6 +49,8 @@ class Fixture:
         logs = self.state / "dispatch" / "logs"
         logs.mkdir(parents=True)
         (self.state / "dispatch" / "packets").mkdir()
+        # The bridge is up (any live pid will do): with it down no lane can be running.
+        (self.state / "dispatch" / "pid").write_text(f"{os.getpid()}\n")
         t0, t1 = hms(now - 120), hms(now - 60)
         (logs / "developer.log").write_text(
             f"{t0}  ▶ job 20261019-000001-aaaaaa from the Coordinator\n"
@@ -110,6 +113,25 @@ class SnapshotTests(unittest.TestCase):
         # Agent text stays text: the snapshot carries it verbatim for the page to insert with textContent.
         self.assertIn("<script>alert(1)</script>", lanes["reviewer"]["tail"][1]["text"])
 
+    def test_no_lane_runs_without_the_bridge(self):
+        (self.fx.state / "dispatch" / "pid").unlink()
+        snap = self.board.snapshot(self.fx.now)
+        lanes = {lane["name"]: lane for lane in snap["lanes"]}
+        self.assertFalse(snap["bridge"])
+        self.assertEqual(lanes["developer"]["state"], "interrupted")  # its transcript never got an end line
+        self.assertEqual(lanes["reviewer"]["state"], "revise")  # finished jobs keep their state
+        self.assertEqual(snap["totals"]["running"], 0)
+        self.assertEqual(self.board.running(), {})
+        self.assertEqual(self.board.held(self.board.cards(self.fx.now)), {})
+
+    def test_a_job_the_bridge_closed_shows_interrupted(self):
+        logs = self.fx.state / "dispatch" / "logs"
+        with open(logs / "developer.log", "a") as f:
+            f.write(f"{hms(self.fx.now - 30)}  ■ job 20261019-000001-aaaaaa interrupted after 90s\n")
+        lane = next(x for x in self.board.snapshot(self.fx.now)["lanes"] if x["name"] == "developer")
+        self.assertEqual((lane["state"], lane["elapsed"]), ("interrupted", 90))
+        self.assertEqual(self.board.snapshot(self.fx.now)["totals"]["running"], 0)
+
     def test_desk_placard_fields(self):
         lanes = {lane["name"]: lane for lane in self.board.snapshot(self.fx.now)["lanes"]}
         self.assertEqual((lanes["developer"]["desk"], lanes["developer"]["reviews"]), ("x", ""))
@@ -157,7 +179,7 @@ class SnapshotTests(unittest.TestCase):
         self.assertEqual((card["id"], card["principal"], card["commits"], card["files"]), ("c0ffee", "developer", 2, ["a", "b", "c"]))
         self.assertGreater(card["seconds_left"], 1700)
         self.assertEqual((card["decided"], card["decided_by"], card["decided_at"]), (None, None, None))
-        self.assertFalse(snap["bridge"])
+        self.assertTrue(snap["bridge"])
 
     def test_events(self):
         events = self.board.snapshot(self.fx.now)["events"]
@@ -254,6 +276,7 @@ class HeldTests(unittest.TestCase):
             (self.roles / role / "role.conf").write_text(f'LANES="{lanes}"\n')
         self.logs = self.state / "dispatch" / "logs"
         self.logs.mkdir(parents=True)
+        (self.state / "dispatch" / "pid").write_text(f"{os.getpid()}\n")
         self.pending = self.state / "broker" / "approvals" / "pending"
         self.pending.mkdir(parents=True)
 

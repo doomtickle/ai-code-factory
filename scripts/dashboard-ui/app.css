@@ -281,7 +281,7 @@ a.tabkey { display: inline-block; text-decoration: none; }
 .st-running, .st-done, .st-approved { color: var(--led-green); }
 .st-held, .st-revise { color: var(--led-amber); }
 .st-idle { color: var(--silk-dim); }
-.st-cancelled, .st-failed { color: var(--led-red); }
+.st-cancelled, .st-failed, .st-interrupted { color: var(--led-red); }
 
 /* Rail */
 .rail { display: grid; grid-template-columns: minmax(260px, 1fr) minmax(0, 1.4fr) minmax(260px, 1fr); gap: 6px;

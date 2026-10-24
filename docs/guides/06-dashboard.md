@@ -104,7 +104,9 @@ Each module shows:
 
 - a status LED and tag: RUN (green, blinking), HELD (amber, blinking: a write
   is waiting for you), REVISE (amber: a review asked for changes), DONE or
-  APPROVED (green), CANCELLED or FAILED (red);
+  APPROVED (green), CANCELLED, FAILED or INTERRUPTED (red: the job was cut off
+  by a restart, update or disconnect; a lane only shows RUN while the dispatch
+  bridge is up and the job is live);
 - the live tail of its transcript, with tool calls, errors, branches and held
   writes in their own colours;
 - its model, cost, context size, and the time the job has run (or took).

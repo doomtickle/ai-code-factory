@@ -287,7 +287,7 @@
     armL.append(R(cx - 7.5, y - 8, 2, 7, "suit"), R(cx - 7.5, y - 2, 2, 1, "circuit"));
     armR.append(R(cx + 5.5, y - 8, 2, 7, "suit"), R(cx + 5.5, y - 2, 2, 1, "circuit"));
     const head = S("g", null, "hd");
-    head.append(R(cx - 3, y - 17, 6, 6, "skin"), R(cx - 4, y - 20, 8, 3.2, "helmet"), 
+    head.append(R(cx - 3, y - 17, 6, 6, "skin"), R(cx - 4, y - 20, 8, 3.2, "helmet"),
       R(cx - 4, y - 16.9, 8, 2.8, "shade-frame"), R(cx - 3.5, y - 16.5, 3, 2, "shade"), R(cx + 0.5, y - 16.5, 3, 2, "shade"),
       R(cx - 3, y - 16.2, 1, 0.5, "glint"), R(cx + 1, y - 16.2, 1, 0.5, "glint"));
     g.append(armL, armR, head);
@@ -352,8 +352,8 @@
 
   // ---------- each poll
   const LABEL = { running: "working", held: "held at the gate", revise: "asked to revise", done: "done", approved: "approved",
-    idle: "idle", cancelled: "cancelled", failed: "failed" };
-  const PROP = { running: "running", held: "held", revise: "revise", done: "done", approved: "done", idle: "idle", cancelled: "fail", failed: "fail" };
+    idle: "idle", cancelled: "cancelled", failed: "failed", interrupted: "interrupted" };
+  const PROP = { running: "running", held: "held", revise: "revise", done: "done", approved: "done", idle: "idle", cancelled: "fail", failed: "fail", interrupted: "fail" };
 
   // Placard text. All of it is agent-written (the server only trims it), so it goes in as text.
   const CHAR_W = 1.8;   // scene units per character of the placard font
