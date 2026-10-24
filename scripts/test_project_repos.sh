@@ -2,11 +2,12 @@
 set -euo pipefail
 
 # Parity test for project_repos, which exists in three copies that must agree:
-# scripts/lib/common.sh (host shell), dispatch/server.py (the bridge) and
-# templates/agent/factory-lane (inside the sandboxes). Each lists the git repos
-# of a project; if they disagreed, a role could be offered a repo the bridge
-# won't import, or the reverse. All three run on the same fixtures and must
-# print the same sorted list:
+# scripts/lib/common.sh (host shell), factory/repos.py (the Python CLI, which the
+# bridge, dispatch/server.py, imports) and templates/agent/factory-lane (inside
+# the sandboxes). Each lists the git repos of a project; if they disagreed, a role
+# could be offered a repo the bridge won't import, or the reverse. All of them run
+# on the same fixtures and must print the same sorted list (factory/test_repos.py
+# has the Python side's own cases):
 # - a repo, a folder whose .git is a file (worktree/submodule style), a repo
 #   named with a leading capital (byte order, not locale order)
 # - skipped: a hidden folder with a .git, a symlink to a repo, a folder with no
@@ -34,12 +35,19 @@ import server
 for r in server.project_repos(Path(sys.argv[1])):
     print(r)' "$1"
 }
+via_package() {
+  PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$REPO_ROOT" python3 -c '
+import sys
+from factory.repos import project_repos
+for r in project_repos(sys.argv[1]):
+    print(r)' "$1"
+}
 via_lane() { "$REPO_ROOT/templates/agent/factory-lane" repos "$1"; }
 
 # check LABEL PROJECT EXPECTED: each implementation, sorted, must equal EXPECTED.
 check() {
   local label="$1" project="$2" expected="$3" impl
-  for impl in via_common via_server via_lane; do
+  for impl in via_common via_package via_server via_lane; do
     assert_eq "$label: $impl" "$("$impl" "$project" | LC_ALL=C sort)" "$expected"
   done
 }
@@ -58,8 +66,8 @@ normal
 real-repo"
 
 # Same order from each, not just the same set.
-assert_eq "folder of repos: common.sh and server.py agree on the order" \
-  "$(via_common "$folder")" "$(via_server "$folder")"
+assert_eq "folder of repos: common.sh and the package agree on the order" \
+  "$(via_common "$folder")" "$(via_package "$folder")"
 
 # --- a project that is itself a repo ----------------------------------------
 mkdir -p "$tmp/repo-dir/.git" "$tmp/repo-dir/sub/.git"

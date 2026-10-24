@@ -2,6 +2,29 @@
 
 Dated entries, for the user to review. Newest first.
 
+## 2026-10-24
+
+- **The host CLI's Python package is `factory/` at the repo root, and the bridge
+  imports from it** (doomtickle/passdesk-ops#169, first PR). Root, not
+  `scripts/factory/`: the bridge, the dashboard scripts and the tests all find the
+  checkout root already, and `python3 <root>/factory` (what `bin/factory` runs)
+  needs no `PYTHONPATH`. `__main__.py` replaces `sys.path[0]` with the root when
+  run as a directory, so neither the working directory (a project may contain a
+  `factory/` folder) nor a module named like a stdlib one can stand in for the
+  package. `dispatch/server.py` puts the checkout root first on `sys.path` and
+  imports `factory.conf`, `factory.roles` and `factory.repos`: it is started as
+  `$ROOT/dispatch/server.py` from that same checkout, so deployment is unchanged,
+  and the bridge's own `role.conf` regex and `project_repos` are gone (one copy
+  left beside the bash ones). Differences from before, all toward bash's
+  behaviour: the `KEY="value"` line ends at `\n` only and trailing whitespace is
+  ASCII only (was `splitlines()` and `\s`), and an `enabled-roles` line is a role
+  name by bash's rule (any length) instead of the bridge's 2 to 31 characters;
+  the second is harmless because `load_roles` checks the name of every role it
+  finds in `roles/` anyway. `list_all_roles` sorts by bytes where bash's glob
+  sorts by the user's locale; they differ only for names like `foo` and `foo-bar`
+  under a locale that ignores dashes. What would change it: a reason to publish
+  the package (then a `pyproject.toml`), or the bridge moving off the host.
+
 ## 2026-10-23
 
 - **A write made after a hold says so in one first line**
