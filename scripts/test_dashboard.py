@@ -189,6 +189,9 @@ class DeskLabelTests(unittest.TestCase):
             ("Review factory-developer-lane2/factory/rate_limit.v2 now", "rate limit v2"),
             ("push factory/a-very-long-branch-name-indeed", "a very long branch"),
             ("Fix x, then factory/first and factory/second", "first"),
+            ("Put the bundle in .factory/outgoing/ then push factory/fix-x", "fix x"),
+            ("See https://example.com/o/factory/pull/1 and push factory/fix-x", "fix x"),
+            ("Edit a/factory/b then factory-developer/factory/fix-y", "fix y"),
         ):
             self.assertEqual(d.desk_label(text), want)
 
@@ -202,6 +205,7 @@ class DeskLabelTests(unittest.TestCase):
             ("Repo: passdesk-ops. Fix the **dashboard** crash", "Fix the dashboard"),
             ("Task: Fix the login crash", "Fix the login"),
             ("goal:make tests pass", "make tests pass"),
+            ("Repo: ai-code-factory.git Fix x", "Fix x"), ("Repository: a.b. Do it", "Do it"),
             ("Repo: x;Fix y", "Fix y"), ("Project: demo; Tidy up", "Tidy up"),
             ("\n\n  Tidy the `docs`  \nsecond line", "Tidy the docs"),
             ("Supercalifragilisticexpialidocious", "Supercalifragilis…"),
