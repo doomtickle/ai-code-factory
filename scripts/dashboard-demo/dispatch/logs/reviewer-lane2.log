@@ -1,5 +1,5 @@
 {{clock:-420}}  ▶ job 20261023-demo04-rev2 from the Coordinator
-{{clock:-420}}     > Review factory/greet-readme against main
+{{clock:-420}}     > Review factory-developer-lane2/factory/greet-readme against main
 {{clock:-420}}     model: claude-opus-5-5
 {{clock:-330}}  🔧 Read: {"file_path": "/work/example-app/README.md"}
 {{clock:-300}}     VERDICT: APPROVED

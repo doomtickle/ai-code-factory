@@ -193,10 +193,19 @@
 
   function station(lane, i, cw) {
     const cx = cw / 2, g = S("g", { tabindex: "0", role: "button" }, "st");
-    const st = { g, lane: lane.name };
-    g.append(R(1, 1, cw - 2, ROW - 2, "hit"), R(cx - 21, 42, 42, 8, "mat"));
+    const st = { g, lane: lane.name, cx, cw, sig: "" };
+    st.title = S("title");
+    g.append(st.title, R(1, 1, cw - 2, ROW - 2, "hit"), R(cx - 21, 42, 42, 8, "mat"));
     g.append(...worker(cx, 30, `hue-${hue(lane.role)}`));
     g.append(R(cx - 16, 30, 32, 4, "desk-top"), R(cx - 15, 34, 30, 9, "desk-front"), R(cx - 13, 37, 8, 1, "drawer"), R(cx + 5, 37, 8, 1, "drawer"));
+    // The placard: a paper note on the desk with the job in a few words, and under it, on a
+    // reviewer's, the developer it is reviewing. Hidden until draw() has text for it.
+    st.card = S("g", null, "card off");
+    st.cardBg = R(cx - 17, 35, 34, 6, "card-bg");
+    st.cardJob = T(cx, 39.5, "", "card-t", "middle");
+    st.cardTag = T(cx, 44.5, "", "card-tag", "middle");
+    st.card.append(st.cardBg, st.cardJob, st.cardTag);
+    g.append(st.card);
     g.append(R(cx - 13, 27, 2, 3, "stand"), R(cx - 18, 17, 12, 10, "bezel"), R(cx - 17, 18, 10, 8, "scr"));
     g.append(R(cx + 12, 22, 2, 8, "post"), R(cx + 10, 19, 6, 3, "beacon"));
     // Props: CSS shows the one that matches the lane's state.
@@ -225,21 +234,69 @@
     idle: "idle", cancelled: "cancelled", failed: "failed" };
   const PROP = { running: "running", held: "held", revise: "revise", done: "done", approved: "done", idle: "idle", cancelled: "fail", failed: "fail" };
 
+  // Placard text. All of it is agent-written (the server only trims it), so it goes in as text.
+  const CHAR_W = 1.8;   // scene units per character of the placard font
+  const devTag = name => {
+    const m = /^developer(?:-lane(\d+))?$/.exec(name);
+    return m ? `DEV ${m[1] || 1}` : clip(name.toUpperCase(), 8);
+  };
+  // The rendered width of a text node, or an estimate while it isn't laid out (floor hidden).
+  const width = (node, s) => {
+    let w = 0;
+    try { w = s ? node.getComputedTextLength() : 0; } catch (e) { /* not rendered */ }
+    return w > 0 ? w : s.length * CHAR_W;
+  };
+  // Put s in node, cut with an ellipsis until it is at most max units wide; returns what fits.
+  function fit(node, s, max) {
+    let out = s;
+    node.textContent = out;
+    for (let n = s.length; n > 1 && width(node, out) > max; n--) node.textContent = out = clip(s, n - 1);
+    return out;
+  }
+  function placard(st, lane) {
+    const desk = typeof lane.desk === "string" ? lane.desk : "";
+    const reviews = lane.role === "reviewer" && typeof lane.reviews === "string" ? lane.reviews : "";
+    const sig = JSON.stringify([desk, reviews, lane.task, lane.state]);
+    if (st.sig === sig) return;
+    st.sig = sig;
+    const maxW = Math.max(20, Math.min(36, st.cw - 4));
+    const job = fit(st.cardJob, desk, maxW - 4), tag = reviews ? fit(st.cardTag, `▸ ${devTag(reviews)}`, maxW - 4) : fit(st.cardTag, "", 0);
+    const w = Math.min(maxW, Math.ceil(Math.max(width(st.cardJob, job), width(st.cardTag, tag))) + 4);
+    st.cardBg.setAttribute("x", st.cx - w / 2);
+    st.cardBg.setAttribute("width", w);
+    st.cardBg.setAttribute("height", tag ? (job ? 11 : 6) : 6);
+    st.cardJob.setAttribute("y", job ? 39.5 : 0);
+    st.cardTag.setAttribute("y", job ? 44.5 : 39.5);
+    st.card.setAttribute("class", `card${job || tag ? "" : " off"}${tag ? " rev" : ""}`);
+    const first = String(lane.task || "").split("\n")[0];
+    st.title.textContent = job || tag ? clip(first, 300) : "";
+  }
+
+  // Placards are measured in the pixel font: measure again once it has loaded.
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { stations.forEach(st => { st.sig = ""; }); if (on && state) draw(); });
+
   function draw() {
     const lanes = Array.isArray(state.lanes) ? state.lanes : [];
     const p = plan(Math.max(lanes.length, 1));
     const want = JSON.stringify([lanes.map(l => [l.name, l.role]), p]);
     if (want !== layout || !svg) { layout = want; build(lanes, p); }
 
+    // A developer a running reviewer is reviewing gets a lit station.
+    const watched = new Set(lanes.filter(l => l && l.role === "reviewer" && (l.state === "running" || l.state === "held")
+      && typeof l.reviews === "string" && l.reviews).map(l => l.reviews));
     const counts = {};
     lanes.forEach(lane => {
       const st = stations.get(lane.name);
       if (!st) return;
       const s = PROP[lane.state] || "idle";
       counts[s] = (counts[s] || 0) + 1;
-      const cls = `st s-${s}`;
+      const reviewing = watched.has(lane.name);
+      const cls = `st s-${s}${reviewing ? " reviewed" : ""}`;
       if (st.g.getAttribute("class") !== cls) st.g.setAttribute("class", cls);
-      st.g.setAttribute("aria-label", `Open lane ${lane.name}, ${LABEL[lane.state] || lane.state}`);
+      placard(st, lane);
+      const desk = typeof lane.desk === "string" && lane.desk ? `, ${lane.desk}` : "";
+      const reviews = lane.role === "reviewer" && typeof lane.reviews === "string" && lane.reviews ? `, reviewing ${lane.reviews}` : "";
+      st.g.setAttribute("aria-label", `Open lane ${lane.name}, ${LABEL[lane.state] || lane.state}${desk}${reviews}`);
     });
 
     const at = new Date((Number(state.now) || Date.now() / 1000) * 1000), hr = at.getHours();

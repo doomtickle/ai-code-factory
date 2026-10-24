@@ -135,6 +135,14 @@ stay in reach.
   - red screen and smoke: failed or cancelled
   - asleep, with lights dimmed: idle
 
+  A paper placard on the desk names the lane's current job in a few words: the
+  topic of the first `factory/<topic>` branch its task names, else the task's
+  first words. Hover the station for the task's first line. A reviewer's
+  placard also says which developer it is reviewing (`▸ DEV 2` for
+  `developer-lane2`), read from the first `factory-<lane>/factory/` ref in its
+  task, and while that reviewer is running the developer's station is lit
+  amber. An idle lane has no placard.
+
   Click a station, or press its number, to open the lane monitor.
 - **Foreman's booth** (the Coordinator). ON DUTY while Terminal 0 is attached,
   BACK SOON when it isn't, BRIDGE DOWN when the dispatch bridge is down.

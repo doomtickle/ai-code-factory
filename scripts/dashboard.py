@@ -165,6 +165,10 @@ FULL = 1500        # transcript lines per lane in /api/lane
 EVENTS = 80        # event printer lines
 WRITES_TTL = 4     # seconds between reads of approvals/done/ for the deferred-write list
 VERDICT = re.compile(r"^- Verdict: (\S+)", re.M)
+DESK_MAX = 18      # characters of a lane's desk placard
+TOPIC = re.compile(r"(?:(?<=\.\.)|(?<=\borigin/)|(?<![\w./-]))(?:factory-[A-Za-z0-9-]+/)?factory/([A-Za-z0-9][A-Za-z0-9._-]*)")
+DEV_REF = re.compile(r"(?<![\w-])factory-(developer(?:-lane[0-9]+)?)/factory/")
+TASK_LABEL = re.compile(r"^(?:(?:repo|repository|project)\s*:\s*[^\s;]*[^\s.;][.;]?\s*|(?:task|goal)\s*:\s*)", re.IGNORECASE)
 
 
 # --------------------------------------------------------------------------
@@ -193,6 +197,38 @@ def num(value) -> float | None:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
     return float(value) if math.isfinite(value) else None
+
+
+def desk_label(brief: str) -> str:
+    """A few words (at most DESK_MAX characters) for what a job is about: the
+    topic of the first factory/<topic> branch the task names, else the first
+    words of its first non-empty line without a leading "Repo: x." label. One
+    clean line: only printable characters, no markup, "" when nothing is left."""
+    text = str(brief or "")
+    m = TOPIC.search(text)
+    if m:
+        words = re.sub(r"[-_.]+", " ", m.group(1)).split()
+    else:
+        first = next((ln for ln in text.splitlines() if ln.strip()), "")
+        first = "".join(ch if ch.isprintable() else " " for ch in first)
+        first = TASK_LABEL.sub("", first.strip(), count=1)
+        words = re.sub(r"[`*_#<>\[\]{}|\\]+", " ", first).split()
+    label = ""
+    for word in words:
+        word = "".join(ch for ch in word if ch.isprintable())
+        nxt = f"{label} {word}".strip()
+        if len(nxt) > DESK_MAX:
+            label = label or word[:DESK_MAX - 1] + "…"
+            break
+        label = nxt
+    return label
+
+
+def reviewed_lane(brief: str) -> str:
+    """The developer lane a task points a reviewer at: the lane in the first
+    factory-<lane>/factory/ ref (the form the bridge imports branches as), else ""."""
+    m = DEV_REF.search(str(brief or ""))
+    return m.group(1) if m else ""
 
 
 # --------------------------------------------------------------------------
@@ -374,10 +410,12 @@ class Dashboard:
                 if verdict in ("REVISE", "APPROVED"):
                     state = verdict.lower()
         model = str(rec.get("model") or (job or {}).get("model") or "")
+        brief = str((job or {}).get("brief") or (job or {}).get("task") or "") if state != "idle" else ""
         return {
             "name": lane.name, "role": lane.role, "state": state,
             "held_note": held.get(lane.name, "") if state == "held" else "",
             "job": (job or {}).get("id"), "task": (job or {}).get("task", ""),
+            "desk": desk_label(brief), "reviews": reviewed_lane(brief) if lane.role == "reviewer" else "",
             "model": model.replace("claude-", ""), "effort": rec.get("effort"),
             "elapsed": lane.elapsed(now), "ended": (job or {}).get("ended"),
             "cost": num(rec.get("cost_usd")), "context_tokens": num(rec.get("context_tokens")),
