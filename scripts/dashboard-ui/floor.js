@@ -13,8 +13,8 @@
 // console; the hand-off rides round the right end to a reviewer; approved work rides on
 // through the gate and out of the portal; a revise rides back the way it came. Every hop is
 // read from lane state the page already has (a lane's state, task, reviews and tail), never
-// from the server. The people are programs: a seated figure in a dark suit with circuit
-// lines in the role's colour and an identity disc behind the head that carries the state.
+// from the server. The people are programs: a seated person in a jacket tinted by the role's colour, with
+// circuit lines in that colour and an identity disc behind the head that carries the state.
 //
 // Floor events (doomtickle/passdesk-ops#162): for the sound layer (sound.js) or a
 // future shift ticket, the floor announces each crate's fate on document as a CustomEvent
@@ -275,21 +275,32 @@
     host.replaceChildren(svg);
   }
 
-  // A seated program, front view, its feet on y and centred on cx: a dark suit with circuit
-  // lines, a helmet with glowing shades, and the identity disc behind the head. The hue class sets
-  // --hue for the lines and the disc. cls marks the figure (e.g. "user") for CSS.
+  // A seated program, front view, its feet on y and centred on cx: a person in a jacket tinted
+  // by the role's colour (rim-lit so it stands off the panel), a round head with hair, a neck, glowing
+  // glasses and hands on the console, on a chair, with the identity disc behind the head. The hue
+  // class sets --hue for the jacket, the lines and the disc. cls marks the figure (e.g. "user") for CSS.
   function program(cx, y, hueCls, cls) {
     const g = S("g", null, `fig ${hueCls}${cls ? " " + cls : ""}`);
+    const P = (d, c) => S("path", { d }, c);
+    const at = (dx, dy) => `${cx + dx} ${y + dy}`;
     g.append(S("circle", { cx, cy: y - 16, r: 7.5 }, "disc"));
-    g.append(R(cx - 6, y - 11, 12, 11, "chair"), R(cx - 5, y - 10, 10, 9, "suit"),
-      R(cx - 5, y - 10, 10, 1, "circuit"), R(cx - 0.5, y - 10, 1, 8, "circuit"), R(cx - 4, y - 4, 8, 0.8, "circuit faint"));
+    g.append(S("rect", { x: cx - 6.8, y: y - 13.5, width: 13.6, height: 11.5, rx: 2.4 }, "chair"),
+      R(cx - 0.6, y - 3, 1.2, 2.6, "chair-post"), R(cx - 4.5, y - 1, 9, 1, "chair-base"));
+    g.append(P(`M${at(-1.7, -11.8)} L${at(-4.3, -10.9)} Q${at(-5.8, -10.3)} ${at(-5.8, -8.5)} L${at(-5.6, -3)} Q${at(-5.6, -1.7)} ${at(-4.3, -1.7)} L${at(4.3, -1.7)} Q${at(5.6, -1.7)} ${at(5.6, -3)} L${at(5.8, -8.5)} Q${at(5.8, -10.3)} ${at(4.3, -10.9)} L${at(1.7, -11.8)} Z`, "suit"),
+      P(`M${at(-1.9, -11.8)} L${at(0, -8.6)} L${at(1.9, -11.8)}`, "collar"),
+      R(cx - 0.4, y - 8.6, 0.8, 6, "circuit"), R(cx - 4, y - 3.6, 8, 0.8, "circuit faint"));
     const armL = S("g", null, "arm arm-l"), armR = S("g", null, "arm arm-r");
-    armL.append(R(cx - 7.5, y - 8, 2, 7, "suit"), R(cx - 7.5, y - 2, 2, 1, "circuit"));
-    armR.append(R(cx + 5.5, y - 8, 2, 7, "suit"), R(cx + 5.5, y - 2, 2, 1, "circuit"));
+    for (const [arm, k] of [[armL, -1], [armR, 1]]) {
+      const d = `M${at(k * 4.6, -9.6)} Q${at(k * 7.4, -7.2)} ${at(k * 6.4, -4.4)} L${at(k * 3.4, -2.4)}`;
+      arm.append(P(d, "sleeve-rim"), P(d, "sleeve"), S("circle", { cx: cx + k * 3.2, cy: y - 2, r: 1.25 }, "skin hand"));
+    }
     const head = S("g", null, "hd");
-    head.append(R(cx - 3, y - 17, 6, 6, "skin"), R(cx - 4, y - 20, 8, 3.2, "helmet"),
-      R(cx - 4, y - 16.9, 8, 2.8, "shade-frame"), R(cx - 3.5, y - 16.5, 3, 2, "shade"), R(cx + 0.5, y - 16.5, 3, 2, "shade"),
-      R(cx - 3, y - 16.2, 1, 0.5, "glint"), R(cx + 1, y - 16.2, 1, 0.5, "glint"));
+    head.append(R(cx - 1.2, y - 13.2, 2.4, 2.6, "skin neck"), S("ellipse", { cx, cy: y - 16.2, rx: 3.5, ry: 3.9 }, "skin"),
+      P(`M${at(-3.8, -16.6)} Q${at(-4, -20.9)} ${at(0, -20.9)} Q${at(4, -20.9)} ${at(3.8, -16.6)} Q${at(2, -18.7)} ${at(0, -18.5)} Q${at(-2, -18.7)} ${at(-3.8, -16.6)} Z`, "hair"),
+      S("rect", { x: cx - 3.7, y: y - 17.3, width: 7.4, height: 2.8, rx: 0.9 }, "shade-frame"),
+      S("rect", { x: cx - 3.3, y: y - 17, width: 3, height: 2.1, rx: 0.6 }, "shade"), S("rect", { x: cx + 0.3, y: y - 17, width: 3, height: 2.1, rx: 0.6 }, "shade"),
+      R(cx - 2.8, y - 16.7, 1, 0.5, "glint"), R(cx + 0.8, y - 16.7, 1, 0.5, "glint"),
+      P(`M${at(-1, -13.9)} Q${at(0, -13.3)} ${at(1, -13.9)}`, "mouth"));
     g.append(armL, armR, head);
     return [g];
   }

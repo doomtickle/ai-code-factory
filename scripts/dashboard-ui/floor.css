@@ -72,7 +72,7 @@
 .fl.working:not(.still) .chevrons { animation: run 1.2s linear infinite; }
 @keyframes run { to { stroke-dashoffset: -20; } }
 
-/* Programs: the suit is dark, the circuit lines and the disc take the role's hue */
+/* Programs: the jacket is a mid tone of the role's hue with a light rim, the circuit lines and the disc take the role's hue */
 .fl .hue-0 { --hue: var(--amber); --glow: var(--amber-glow); }
 .fl .hue-1 { --hue: var(--green); --glow: var(--green-glow); }
 .fl .hue-2 { --hue: #b77cff; --glow: rgba(183, 124, 255, .5); }
@@ -81,11 +81,18 @@
 .fl .hue-5 { --hue: var(--t-err); --glow: rgba(255, 110, 90, .5); }
 .fl .hue-6 { --hue: var(--t-user); --glow: rgba(255, 243, 214, .5); }
 .fl .hue-user { --hue: var(--matrix); --glow: var(--matrix-glow); }
-.fl .chair { fill: #0b0802; }
-.fl .suit { fill: #1a1206; }
+.fl .chair { fill: #4b4234; stroke: #8f8470; stroke-width: .5; }
+.fl .chair-post { fill: #6d6454; }
+.fl .chair-base { fill: #8f8470; }
+.fl .suit { fill: #7a5a1c; fill: color-mix(in srgb, var(--hue) 48%, #2b1e0b); stroke: #ffe2a6; stroke: color-mix(in srgb, var(--hue) 55%, #fff); stroke-width: .6; stroke-linejoin: round; }
+.fl .collar { fill: none; stroke: var(--hue); stroke-width: 1; stroke-linejoin: round; }
+.fl .sleeve-rim { fill: none; stroke: #ffe2a6; stroke: color-mix(in srgb, var(--hue) 55%, #fff); stroke-width: 3.4; stroke-linecap: round; stroke-linejoin: round; }
+.fl .sleeve { fill: none; stroke: #7a5a1c; stroke: color-mix(in srgb, var(--hue) 48%, #2b1e0b); stroke-width: 2.3; stroke-linecap: round; stroke-linejoin: round; }
 .fl .skin { fill: var(--amber-pale); }
 .fl .hue-user .skin { fill: var(--matrix-pale); }
-.fl .helmet { fill: #0b0802; }
+.fl .neck { opacity: .75; }
+.fl .hair { fill: #3a2a12; fill: color-mix(in srgb, var(--hue) 35%, #120c04); stroke: var(--hue); stroke-width: .4; stroke-linejoin: round; }
+.fl .mouth { fill: none; stroke: #7a5a1c; stroke-width: .5; stroke-linecap: round; }
 .fl .circuit { fill: var(--hue); }
 .fl .circuit.faint { opacity: .6; }
 .fl .shade-frame { fill: #050301; }
