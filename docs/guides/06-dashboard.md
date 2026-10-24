@@ -143,8 +143,8 @@ move, so the write gate and the control unit stay in reach.
   A small legend inside the loop says which side is which.
 - **Stations.** Each lane is a program seated at a console: a dark suit with
   circuit lines in its role's colour (developers amber, reviewers green, the
-  researcher purple, other roles a fixed hue each), a visor, and an identity
-  disc behind the head. The disc and the props show the lane's state:
+  researcher purple, other roles a fixed hue each), glowing shades in the same colour, and an
+  identity disc behind the head. The disc and the props show the lane's state:
   - disc spinning, hands typing, console lit: running
   - disc yellow and blinking, a Recognizer hovering with HOLD: held, a write
     is waiting for you
@@ -154,15 +154,17 @@ move, so the write gate and the control unit stay in reach.
   - asleep, dimmed, z's: idle
 
   The job is written on the console's glass in a few words: the topic of the
-  first `factory/<topic>` branch its task names, else the task's first words.
+  first `factory/<topic>` branch its task names, else the task's first words
+  (up to 40 characters). A title wider than the glass slides sideways to its end
+  and back; one that fits stays still.
   Hover the station for the task's first line. A reviewer's console also says
   which developer it is reviewing (`▸ DEV 2` for `developer-lane2`), and while
   that reviewer is running a **light bridge** runs across the inside of the
   loop from the reviewer to that developer, with one right-angle turn. An idle
   lane has nothing on its glass.
 
-  Each station keeps its number on a keycap. Click a station, or press its
-  number, to open the lane monitor.
+  Each station keeps its number on a keycap. Click a station, press its number, or
+  focus it and press Enter or Space, to open the lane monitor.
 - **Dispatch** (left). The Coordinator's console in matrix green, under the
   I/O beam. While Terminal 0 is attached a white-circuited User sits at it,
   the beam is lit and the plate reads ON DUTY; with the bridge up and nobody
@@ -209,7 +211,8 @@ what changes after the page has loaded; what was already there is history and
 is just shown (a lane that finished before you opened the page keeps its branch
 crate on the console). Denials (DENY, NO, FAILED) that happen while it is
 hidden are added to the derez field without animation. With reduced motion set
-in your system, nothing moves: the stations still show their state, branch
+in your system, nothing moves (a long job title keeps an ellipsis, and the
+tooltip has the whole line): the stations still show their state, branch
 crates still sit on their consoles and confiscated crates appear in the field
 without travelling there. At most 14 crates are in flight at once.
 

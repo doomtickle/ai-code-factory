@@ -276,7 +276,7 @@
   }
 
   // A seated program, front view, its feet on y and centred on cx: a dark suit with circuit
-  // lines, a helmet with a visor, and the identity disc behind the head. The hue class sets
+  // lines, a helmet with glowing shades, and the identity disc behind the head. The hue class sets
   // --hue for the lines and the disc. cls marks the figure (e.g. "user") for CSS.
   function program(cx, y, hueCls, cls) {
     const g = S("g", null, `fig ${hueCls}${cls ? " " + cls : ""}`);
@@ -287,7 +287,9 @@
     armL.append(R(cx - 7.5, y - 8, 2, 7, "suit"), R(cx - 7.5, y - 2, 2, 1, "circuit"));
     armR.append(R(cx + 5.5, y - 8, 2, 7, "suit"), R(cx + 5.5, y - 2, 2, 1, "circuit"));
     const head = S("g", null, "hd");
-    head.append(R(cx - 3, y - 17, 6, 6, "skin"), R(cx - 4, y - 20, 8, 3.2, "helmet"), R(cx - 4, y - 17.6, 8, 1, "circuit visor"));
+    head.append(R(cx - 3, y - 17, 6, 6, "skin"), R(cx - 4, y - 20, 8, 3.2, "helmet"), 
+      R(cx - 4, y - 16.9, 8, 2.8, "shade-frame"), R(cx - 3.5, y - 16.5, 3, 2, "shade"), R(cx + 0.5, y - 16.5, 3, 2, "shade"),
+      R(cx - 3, y - 16.2, 1, 0.5, "glint"), R(cx + 1, y - 16.2, 1, 0.5, "glint"));
     g.append(armL, armR, head);
     return [g];
   }
@@ -310,7 +312,10 @@
     else g.append(R(cx - 20, below ? conY - 2 : conY + 12, 40, 2, "lip"));
     // The placard: the job in a few words on the console's glass, and under it, on a
     // reviewer's, the developer it is reviewing. Hidden until draw() has text for it.
-    st.card = S("g", null, "card off");
+    st.card = S("g", { "clip-path": `url(#fl-card-${i})` }, "card off");
+    const cardClip = S("clipPath", { id: `fl-card-${i}` });
+    cardClip.append(R(cx - 18, conY + 1.5, 36, 9));
+    st.card.append(cardClip);
     st.cardBg = R(cx - 18, conY + 1.5, 36, 9, "card-bg");
     st.cardJob = T(cx, conY + 6, "", "card-t", "middle");
     st.cardTag = T(cx, conY + 10.6, "", "card-tag", "middle");
@@ -369,14 +374,34 @@
     for (let n = s.length; n > 1 && width(node, out) > max; n--) node.textContent = out = clip(s, n - 1);
     return out;
   }
+  // Text that is wider than the glass slides sideways (to its end and back, pausing at each),
+  // clipped to the glass; text that fits sits still in the middle. Reduced motion keeps the ellipsis.
+  const SLIDE = 9, PAUSE = 0.18;   // units per second; the share of each pass spent waiting at an end
+  function show(st, node, s, maxW, slide) {
+    for (const a of node.getAnimations ? node.getAnimations() : []) a.cancel();
+    node.setAttribute("text-anchor", "middle");
+    node.setAttribute("x", st.cx);
+    node.textContent = s;
+    if (!s || width(node, s) <= maxW) return s;
+    if (!slide || !node.animate) return fit(node, s, maxW);
+    const over = width(node, s) - maxW;
+    node.setAttribute("text-anchor", "start");
+    node.setAttribute("x", st.cx - maxW / 2);
+    const to = `translate(${-over}px, 0px)`, rest = { transform: "translate(0px, 0px)" };
+    node.animate([{ ...rest, offset: 0 }, { ...rest, offset: PAUSE }, { transform: to, offset: 1 - PAUSE }, { transform: to, offset: 1 }],
+      { duration: Math.max(1500, (over / SLIDE) * 1000 / (1 - 2 * PAUSE)), direction: "alternate", iterations: Infinity, easing: "linear" });
+    return s;
+  }
   function placard(st, lane) {
     const desk = typeof lane.desk === "string" ? lane.desk : "";
     const reviews = lane.role === "reviewer" && typeof lane.reviews === "string" ? lane.reviews : "";
-    const sig = JSON.stringify([desk, reviews, lane.task, lane.state]);
+    const slide = !motionOff.matches;
+    const sig = JSON.stringify([desk, reviews, lane.task, lane.state, slide]);
     if (st.sig === sig) return;
     st.sig = sig;
-    const maxW = 36;
-    const job = fit(st.cardJob, desk, maxW - 2), tag = reviews ? fit(st.cardTag, `▸ ${devTag(reviews)}`, maxW - 2) : fit(st.cardTag, "", 0);
+    const maxW = 34;
+    st.card.setAttribute("class", "card");   // measured on screen: a hidden card has no text length
+    const job = show(st, st.cardJob, desk, maxW, slide), tag = show(st, st.cardTag, reviews ? `▸ ${devTag(reviews)}` : "", maxW, slide);
     // One line sits in the middle of the glass; two share it.
     const top = Number(st.cardBg.getAttribute("y"));
     st.cardJob.setAttribute("y", tag ? top + 4.6 : top + 6.6);

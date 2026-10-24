@@ -140,7 +140,7 @@ class SnapshotTests(unittest.TestCase):
     def test_lanes(self):
         lanes = {lane["name"]: lane for lane in self.snap["lanes"]}
         self.assertEqual({n: lane["state"] for n, lane in lanes.items()},
-                         {"developer": "held", "developer-lane2": "idle", "developer-lane3": "idle",
+                         {"developer": "held", "developer-lane2": "idle", "developer-lane3": "held",
                           "reviewer": "running", "reviewer-lane2": "approved"})
         self.assertEqual({lane["role"] for lane in lanes.values()}, {"developer", "reviewer"})
         self.assertTrue(self.snap["bridge"])
@@ -151,7 +151,7 @@ class SnapshotTests(unittest.TestCase):
     def test_desk_placards(self):
         lanes = {lane["name"]: lane for lane in self.snap["lanes"]}
         self.assertEqual({n: (lane["desk"], lane["reviews"]) for n, lane in lanes.items()}, {
-            "developer": ("greet empty name", ""), "developer-lane2": ("", ""), "developer-lane3": ("", ""),
+            "developer": ("greet empty name", ""), "developer-lane2": ("", ""), "developer-lane3": ("Tidy the packaging metadata, changelog", ""),
             "reviewer": ("greet empty name", "developer"), "reviewer-lane2": ("greet readme", "developer-lane2")})
 
     def test_a_held_push_a_deny_and_a_branch(self):
