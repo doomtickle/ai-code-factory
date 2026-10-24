@@ -1351,6 +1351,7 @@ hasn't dispatched any jobs yet just shows an empty report.
   yourself (use `/usr/bin/python3` on macOS):
   - shell lint: `scripts/lint.sh` (downloads the pinned shellcheck once)
   - dispatch: `python3 -m unittest discover -s dispatch -v`
+  - Python CLI (`factory/`): `python3 -m unittest discover -s factory -t . -p 'test_*.py' -v`
   - host scripts: `python3 -m unittest discover -s scripts -p 'test_*.py' -v`
   - shell tests: `bash scripts/test_factory_update.sh`, and likewise
     `test_factory_secret.sh`, `test_factory_docs.sh` and `test_factory_lane.sh`
@@ -1397,6 +1398,9 @@ templates/agent/factory-test Runs tests in a sandbox-local copy (baked into deve
 templates/agent/factory-lane Lane clones: prepare, export bundles, bundle a branch for git_push, check out a branch to review
 templates/agent/factory-shot Renders a page the role built to a PNG with the image's headless Chrome (file:// and loopback only)
 config.example/              Example local settings for ~/.config/ai-code-factory/
+factory/                     The host CLI in Python, being ported from bin/factory command by command
+                             (docs/py-cli-migration.md); shares its role.conf parser and project_repos
+                             with the dispatch bridge
 scripts/lib/common.sh        Pinned versions, checksums, names, shared checks
 scripts/lib/roles.sh         Role parsing and validation
 scripts/lib/secrets.sh       keychains (macOS, secret-tool, Windows Credential Manager), factory secret

@@ -55,6 +55,8 @@ jobs:
           git config --global user.email "ci@example.invalid"
       - name: dispatch bridge
         run: python3 -m unittest discover -s dispatch -v
+      - name: factory Python CLI (factory/)
+        run: python3 -m unittest discover -s factory -t . -p 'test_*.py' -v
       - name: host Python scripts (analytics, approvals, dashboard, docs)
         run: python3 -m unittest discover -s scripts -p 'test_*.py' -v
       - name: factory-lane
@@ -116,6 +118,8 @@ jobs:
           git config --global user.email "ci@example.invalid"
       - name: dispatch bridge
         run: python3 -m unittest discover -s dispatch -v
+      - name: factory Python CLI (factory/)
+        run: python3 -m unittest discover -s factory -t . -p 'test_*.py' -v
       - name: host Python scripts (analytics, approvals, dashboard, docs)
         run: python3 -m unittest discover -s scripts -p 'test_*.py' -v
       - name: factory update
