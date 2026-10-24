@@ -104,8 +104,11 @@ def start_ticker(dest: Path, interval: float = 20.0, first: float = 8.0) -> thre
         n, wait = 0, first
         while not stop.wait(wait):
             rec = dict(TICKS[n % len(TICKS)], ts=iso(time.time()))
-            with open(dest / "broker" / "audit.jsonl", "a", encoding="utf-8") as f:
-                f.write(json.dumps(rec) + "\n")
+            try:
+                with open(dest / "broker" / "audit.jsonl", "a", encoding="utf-8") as f:
+                    f.write(json.dumps(rec) + "\n")
+            except OSError:  # the folder was removed at shutdown: stop quietly, don't recreate it
+                return
             n, wait = n + 1, interval
 
     threading.Thread(target=run, daemon=True).start()

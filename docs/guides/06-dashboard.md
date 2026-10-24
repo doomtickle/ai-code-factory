@@ -334,8 +334,8 @@ factory dashboard --demo
 It needs no `sbx`, broker, Coordinator or `factory setup`. It shows made-up
 data (`example/app`, a few lanes, one held push, a denied broker call and a
 branch) taken from `scripts/dashboard-demo/`, with times counted from the
-moment you start it, and adds a broker call every few seconds so the factory
-floor has crates to move. Open the link it prints, press the floor key and
+moment you start it, and adds a broker call 8 seconds after the start and then
+every 20 seconds, so the factory floor has crates to move. Open the link it prints, press the floor key and
 you can see a parked crate at the arch and a denied one going to the bin.
 
 Demo mode is display only. It never reads your real state folder: it copies

@@ -15,7 +15,6 @@ import re
 import shutil
 import signal
 import subprocess
-import sys
 import tempfile
 import threading
 import time
@@ -185,6 +184,21 @@ class TickerTests(unittest.TestCase):
             settled = log.read_text()
             time.sleep(0.1)
             self.assertEqual(log.read_text(), settled)  # set() stops it
+
+    def test_stops_quietly_when_the_folder_is_gone(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state = Path(tmp) / "demo"
+            demo.build(state, local_noon())
+            real = threading.Thread
+            threads = []
+            with mock.patch.object(demo.threading, "Thread",
+                                   lambda **kw: threads.append(real(**kw)) or threads[-1]):
+                stop = demo.start_ticker(state, interval=0.01, first=0.3)
+            shutil.rmtree(state)
+            threads[0].join(5)
+            self.assertFalse(threads[0].is_alive())
+            self.assertFalse(state.exists())  # not recreated
+            stop.set()
 
 
 class RefusalTests(unittest.TestCase):
