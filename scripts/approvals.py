@@ -16,7 +16,7 @@ here, so both write the same record.
     factory approvals approve <id> [--as NAME] [--reason TEXT]
     factory approvals decline <id> [--as NAME] [--reason TEXT]
     factory approvals watch                print cards and deferred writes as they arrive and change
-    factory approvals summary              one line for scripts: "pending oldest_min expired_unhandled decided running made failed"
+    factory approvals summary              one line for scripts: "pending oldest_min expired_unhandled approved running made failed"
 
 A decision is final for its card: a second approve or decline of the same
 card is refused, here and in the dashboard, rather than overwriting the
@@ -577,12 +577,14 @@ def is_expired_unhandled(state, card, now=None):
 def summarize(state, now=None):
     """pending: staged cards still waiting for a person (no decision of their
     own); oldest_minutes: the oldest of those, in minutes (None if none);
-    expired_unhandled: expired cards with no decision; decided: cards decided
-    and waiting for the gateway to act (they need no one); running, made,
+    expired_unhandled: expired cards with no decision; approved: cards
+    approved and waiting for the gateway to make the write (they need no
+    one; a declined card is just filed, so it isn't counted); running, made,
     failed: deferred writes as `factory approvals` lists them (being made,
     made in the last day, failed in the last three)."""
     cards = read_cards(state)
-    undecided = [c for c in cards if read_decision(state, c) is None]
+    decisions = [read_decision(state, c) for c in cards]
+    undecided = [c for c, d in zip(cards, decisions) if d is None]
     oldest_minutes = None
     if undecided:
         now_ts = time.time() if now is None else now
@@ -590,7 +592,8 @@ def summarize(state, now=None):
     expired_unhandled = sum(1 for c in undecided if minutes_left(c, now) < 0)
     states = [w["state"] for w in read_writes(state, now, limit=WRITES_SCAN)]
     return {"pending": len(undecided), "oldest_minutes": oldest_minutes, "expired_unhandled": expired_unhandled,
-            "decided": len(cards) - len(undecided), "running": states.count("running"),
+            "approved": sum(1 for d in decisions if d is not None and d.get("decision") == "approve"),
+            "running": states.count("running"),
             "made": states.count("made"), "failed": states.count("failed")}
 
 
@@ -598,11 +601,11 @@ def cmd_summary(state, _args):
     # One line, seven whitespace-separated fields, for a caller (bin/factory)
     # to read with `set --` rather than parsing JSON: undecided pending count,
     # the oldest undecided card's age in minutes (-1 if none), expired-unhandled
-    # count, decided cards the gateway has yet to act on, then deferred writes
+    # count, approved cards whose write the gateway has yet to start, then deferred writes
     # being made, made (last day) and failed (last three days).
     s = summarize(state)
     oldest = -1 if s["oldest_minutes"] is None else s["oldest_minutes"]
-    print("{} {} {} {} {} {} {}".format(s["pending"], oldest, s["expired_unhandled"], s["decided"], s["running"],
+    print("{} {} {} {} {} {} {}".format(s["pending"], oldest, s["expired_unhandled"], s["approved"], s["running"],
                                         s["made"], s["failed"]))
     return 0
 

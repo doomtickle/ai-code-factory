@@ -123,7 +123,8 @@ class DeclarationTests(PluginToolBase):
         self.assertInvalid(make_module(tools={"acme_x": self.tool(properties={"Bad": {"type": "string"}})}),
                            "argument name")
         self.assertInvalid(make_module(tools={"acme_x": self.tool(required=("missing",))}), "required")
-        for reserved in ("tool", "principal"):
+        for reserved in ("tool", "principal", "id", "nonce", "created", "expires", "approver", "decision",
+                         "result", "write"):
             self.assertInvalid(make_module(tools={"acme_x": self.tool(properties={reserved: {"type": "string"}})}),
                                "reserved")
         self.assertInvalid(make_module(tools={"acme_x": self.tool(writes_externally="yes")}), "writes_externally")
@@ -370,6 +371,67 @@ class HeldPluginToolTests(CallBase):
         self.assertEqual(done["write"], "done")
         self.assertIn("echo: ship it", done["result"])
         self.assertIn("UNTRUSTED CONTENT", done["result"])  # cleaned and wrapped as in the call
+
+    def decide(self, cid, verdict="approve", reason=""):
+        self.approve(cid)
+        rec = json.loads(self.path("decisions", cid).read_text())
+        self.path("decisions", cid).write_text(json.dumps({**rec, "decision": verdict, "reason": reason}))
+
+    def test_the_same_call_after_the_write_was_made_returns_its_result(self):
+        cid = self.staged({"text": "ship it"})
+        self.approve(cid)
+        holds.sweep_idle()
+        for _ in range(2):
+            text, err = self.call({"text": "ship it"})
+            self.assertFalse(err, text)
+            self.assertTrue(text.startswith("Made by the gateway at "), text)
+            self.assertIn(f"(approval {cid})", text)
+            self.assertIn("echo: ship it", text)
+            self.assertEqual(self.last_audit()["decision"], "made")
+        self.assertEqual(self.calls, [{"text": "ship it"}])  # run once, by the gateway
+        self.assertFalse(self.path("pending", cid).exists())
+
+    def test_the_same_call_after_a_decline_is_refused(self):
+        cid = self.staged({"text": "ship it"})
+        self.decide(cid, "decline", "not today")
+        holds.sweep_idle()
+        text, err = self.call({"text": "ship it"})
+        self.assertTrue(err)
+        self.assertIn(f"declined by daron: not today (approval {cid})", text)
+        self.assertFalse(self.path("pending", cid).exists())
+        self.assertEqual(self.calls, [])
+
+    def test_calls_that_differ_in_one_argument_get_their_own_cards(self):
+        first = self.staged({"text": "TICKET-1"})
+        second = self.staged({"text": "TICKET-2"})
+        self.assertNotEqual(first, second)
+        for cid in (first, second):
+            self.approve(cid)
+        holds.sweep_idle()
+        self.assertEqual(sorted(c["text"] for c in self.calls), ["TICKET-1", "TICKET-2"])
+
+    def test_the_gateway_checks_a_staged_argument_against_its_declared_type(self):
+        # Registration takes only string and boolean today; the completer uses
+        # the call's own type check (registry.type_ok), so it can't drift.
+        spec = PluginTool(handler=lambda args, policy: "ok", description="d", writes_externally=True,
+                          properties={"n": {"type": "integer"}, "x": {"type": "number"}, "o": {"type": "object"}})
+        complete = registry.guard("acme_typed", spec).complete
+        args = {"n": 3, "x": 1.5, "o": {"k": "v"}}
+        card = {**approvals.redacted(args), "tool": "acme_typed", "principal": "developer", "id": "c",
+                "nonce": "n", "created": 1, "expires": 2}
+        self.assertIn("ok", complete({"args": args}, card, {}))
+        for bad in ({"n": True}, {"n": "3"}, {"x": "1.5"}, {"o": [1]}):
+            with self.subTest(bad=bad), self.assertRaisesRegex(Denied, "not ones the tool takes"):
+                complete({"args": {**args, **bad}}, card, {})
+
+    def test_type_ok_is_the_json_schema_type(self):
+        for expected, good, bad in (("string", "a", 1), ("boolean", False, 0), ("integer", 3, 3.5),
+                                    ("number", 3.5, "3"), ("object", {}, []), ("array", [], {})):
+            with self.subTest(expected=expected):
+                self.assertTrue(registry.type_ok(expected, good))
+                self.assertFalse(registry.type_ok(expected, bad))
+        self.assertFalse(registry.type_ok("integer", True))
+        self.assertFalse(registry.type_ok("number", False))
 
     def test_staged_arguments_that_do_not_match_the_card_or_the_tool_never_run(self):
         for job in ({"args": {"text": "something else"}}, {"args": {"text": "x", "other": "y"}},

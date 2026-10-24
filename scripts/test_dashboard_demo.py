@@ -103,7 +103,7 @@ class BuildTests(unittest.TestCase):
             self.assertGreater(card["seconds_left"], 3600)
             lanes = {lane["name"]: lane for lane in snap["lanes"]}
             self.assertLess(lanes["developer"]["elapsed"], 900)  # a job started minutes ago, not days
-            self.assertEqual(lanes["developer"]["state"], "held")
+            self.assertEqual(lanes["developer"]["state"], "running")  # its push is staged: the agent moved on
 
     def test_the_card_names_the_patch_by_its_digest(self):
         demo.build(self.state, local_noon())
@@ -140,7 +140,7 @@ class SnapshotTests(unittest.TestCase):
     def test_lanes(self):
         lanes = {lane["name"]: lane for lane in self.snap["lanes"]}
         self.assertEqual({n: lane["state"] for n, lane in lanes.items()},
-                         {"developer": "held", "developer-lane2": "idle", "developer-lane3": "held",
+                         {"developer": "running", "developer-lane2": "idle", "developer-lane3": "running",
                           "reviewer": "running", "reviewer-lane2": "approved"})
         self.assertEqual({lane["role"] for lane in lanes.values()}, {"developer", "reviewer"})
         self.assertTrue(self.snap["bridge"])
@@ -154,14 +154,25 @@ class SnapshotTests(unittest.TestCase):
             "developer": ("greet empty name", ""), "developer-lane2": ("", ""), "developer-lane3": ("Tidy the packaging metadata, changelog", ""),
             "reviewer": ("greet empty name", "developer"), "reviewer-lane2": ("greet readme", "developer-lane2")})
 
-    def test_a_held_push_a_deny_and_a_branch(self):
+    def test_a_staged_push_a_deny_and_a_branch(self):
         card = self.snap["gate"][0]
         self.assertEqual((card["tool"], card["repo"], card["branch"], card["role"]),
                          ("git_push", "example/app", "factory/greet-empty-name", "developer"))
+        self.assertEqual((card["queued"], card["decided"]), (True, None))  # staged, waiting for a person
         kinds = {e["kind"] for e in self.snap["events"]}
-        self.assertTrue({"DENY", "ALLOW", "OK", "STAGED", "JOB"} <= kinds, kinds)
+        self.assertTrue({"DENY", "ALLOW", "OK", "STAGED", "WRITTEN", "FAILED", "JOB"} <= kinds, kinds)
         branches = [e["text"] for lane in self.snap["lanes"] for e in lane["tail"] if e["kind"] == "branch"]
         self.assertTrue(branches and all(b.startswith("factory/") for b in branches), branches)
+
+    def test_every_write_state_is_shown(self):
+        # Staged (the card above), approved and being written, done and failed.
+        writes = {w["id"]: (w["state"], w["tool"], w["summary"]) for w in self.snap["writes"]}
+        self.assertEqual(writes, {
+            "demo0002issue": ("running", "github_create_issue", ""),
+            "demo0000pr": ("made", "github_create_pr", "Opened PR #41: https://github.com/example/app/pull/41"),
+            "demo0003push": ("failed", "git_push", "factory/changelog-typo changed in the broker's mirror after the "
+                             "push was staged (another push to the same branch?); nothing was pushed")})
+        self.assertEqual(self.snap["writes"][0]["state"], "failed")  # failures first
 
     def test_spend_has_something_to_draw(self):
         self.assertGreater(self.snap["totals"]["cost"], 0)
@@ -228,12 +239,12 @@ class RefusalTests(unittest.TestCase):
         self.assertFalse((self.env.state / "dashboard").exists())  # no action log folder either
         self.assertEqual(self.env.post("state")[1]["action"]["phase"], "idle")
 
-    def test_the_card_stays_undecided_and_unqueued(self):
+    def test_the_card_stays_staged_and_undecided(self):
         card = self.env.card()
         self.env.post("decide", {"id": card["id"], "fp": card["fp"], "verdict": "approve"})
         again = self.env.card()
-        self.assertEqual((again["decided"], again["queued"]), (None, False))
-        self.assertEqual(self.env.board.snapshot(self.env.now)["lanes"][0]["state"], "held")
+        self.assertEqual((again["decided"], again["queued"]), (None, True))
+        self.assertEqual(self.env.board.snapshot(self.env.now)["lanes"][0]["state"], "running")
 
     def test_an_unknown_control_is_a_404(self):
         self.assertEqual(self.env.post("shell", {"cmd": "id"})[0], 404)

@@ -15,7 +15,7 @@ from unittest import mock
 
 from passdesk.core import approvals as core_approvals
 from passdesk.core import config, holds, notify, plugins, protocol
-from passdesk.core.errors import Denied, Staged
+from passdesk.core.errors import Denied, Made, Staged
 from passdesk.tools import git
 
 from . import test_git
@@ -830,17 +830,53 @@ class StageTests(StageBase):
         holds.sweep_idle()
         self.assertEqual(len(self.writes), 1)
 
-    def test_the_same_call_after_the_gateway_made_the_write_is_refused(self):
+    def test_the_same_call_after_the_gateway_made_the_write_returns_its_result(self):
+        self.write_result = "Opened draft PR https://github.com/acme/widgets/pull/7\nsecond line"
         self.stage()
         self.decide(self.cid)
         holds.sweep_idle()
         for _ in range(2):
-            with self.assertRaises(Denied) as cm:
+            with self.assertRaises(Made) as cm:
                 self.call()
-            self.assertIn(f"this exact write was already made by the gateway at", str(cm.exception))
-            self.assertIn(f"(approval {self.cid}): {self.write_result}; nothing new was staged.", str(cm.exception))
+            self.assertEqual(cm.exception.cid, self.cid)
+            self.assertTrue(cm.exception.text.startswith(f"Made by the gateway at "), cm.exception.text)
+            self.assertIn(f"once approved (approval {self.cid}); this call staged and sent nothing new.",
+                          cm.exception.text)
+            self.assertTrue(cm.exception.text.endswith(f"The write's result:\n{self.write_result}"))
         self.assertEqual(len(self.writes), 1)
         self.assertFalse(self.path("pending").exists())  # no new card
+        self.assertEqual(self.sent, [self.cid])  # no second notification
+        self.assertEqual(self.audit_events().count("approval-requested"), 1)
+
+    def test_the_stored_result_is_cleaned_again_before_it_is_returned(self):
+        self.stage()
+        self.decide(self.cid)
+        holds.sweep_idle()
+        done = self.read("done")
+        self.path("done").write_text(json.dumps({**done, "result": "made \x1b[31mred\x1b[0m " + "x" * 5000}))
+        with self.assertRaises(Made) as cm:
+            self.call()
+        self.assertNotIn("\x1b", cm.exception.text)
+        self.assertLess(len(cm.exception.text), 3500)
+
+    def test_a_done_record_for_another_card_is_not_this_writes_result(self):
+        self.stage()
+        self.decide(self.cid)
+        holds.sweep_idle()
+        done = self.read("done")
+        self.path("done").write_text(json.dumps({**done, "id": "0" * 16}))
+        self.stage()  # a fresh card, not the other record's result
+        self.assertTrue(self.path("pending").exists())
+
+    def test_a_failed_write_lets_the_same_call_stage_a_fresh_card(self):
+        self.stage()
+        self.decide(self.cid)
+        holds.sweep_idle()
+        done = self.read("done")
+        self.path("done").write_text(json.dumps({**done, "write": "failed", "result": "boom"}))
+        self.stage()
+        self.assertTrue(self.path("pending").exists())
+        self.assertEqual(self.sent, [self.cid, self.cid])
 
     def test_after_the_result_window_the_same_call_is_a_new_request(self):
         self.stage()
@@ -1158,9 +1194,9 @@ class StagedPullRequestTests(StageBase):
         self.assertEqual(json.loads(req.data), {"title": "Add it", "body": "x" * 3000, "head": "factory/x",
                                                 "base": "main", "draft": True})
         self.assertEqual(self.read("done", cid)["result"], "Opened PR #7: https://github.com/acme/widgets/pull/7")
-        with self.assertRaises(Denied) as cm:
-            self.open_pr()  # the same call again is refused, never opens a second
-        self.assertIn("Opened PR #7: https://github.com/acme/widgets/pull/7; nothing new was staged", str(cm.exception))
+        with self.assertRaises(Made) as cm:
+            self.open_pr()  # the same call again returns the PR, never opens a second
+        self.assertTrue(cm.exception.text.endswith("Opened PR #7: https://github.com/acme/widgets/pull/7"))
         self.assertEqual(len(self.posts), 1)
 
     def staged_text(self, cid):
@@ -1217,8 +1253,9 @@ class StagedPullRequestTests(StageBase):
             self.assertIn("merge request factory/x -> main on gitlab.acme.net/platform/api", cm.exception.text)
             self.decide(cid)
             holds.sweep_idle()
-            with self.assertRaisesRegex(Denied, "already made by the gateway"):
+            with self.assertRaises(Made) as again:
                 git.tool_gitlab_create_mr(mr, test_gitlab.GL_POLICY)
+            self.assertIn("https://gitlab.acme.net/platform/api/-/merge_requests/12", again.exception.text)
         [req] = sent
         self.assertEqual(req.get_header("Authorization"), f"Bearer {test_gitlab.GL_TOKEN}")
         self.assertEqual(json.loads(req.data)["title"], "Draft: Add the thing")
@@ -1297,8 +1334,9 @@ class StagedPushTests(HoldBase, test_git.GitFlowTests):
         self.assertEqual(done["write"], "done")
         self.assertTrue(done["result"].startswith(f"Pushed 1 commit(s) to acme/widgets:factory/feature ({head})."))
         (self.ws / ".factory/outgoing/f.bundle").write_bytes(saved)
-        with self.assertRaisesRegex(Denied, r"already made by the gateway .*: Pushed 1 commit\(s\)"):
-            self.push()  # the same call again: refused, not a second push
+        with self.assertRaises(Made) as again:
+            self.push()  # the same call again: the push's result, not a second push
+        self.assertIn(f"Pushed 1 commit(s) to acme/widgets:factory/feature ({head}).", again.exception.text)
 
     def test_a_staged_push_whose_ref_moved_pushes_nothing(self):
         self.make()

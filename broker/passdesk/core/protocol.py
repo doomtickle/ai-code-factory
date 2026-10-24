@@ -14,7 +14,7 @@ from .audit import audit, summarize_args
 from .auth import authenticate, principal_tools
 from .errors import Denied, Staged
 from .filters import sanitize
-from .registry import TOOLS, WRITES_EXTERNALLY, tool_list
+from .registry import TOOLS, WRITES_EXTERNALLY, tool_list, type_ok
 
 
 def grant_hint(principal: str) -> str:
@@ -65,8 +65,7 @@ def call_tool(name: str, args: object, principal: str) -> tuple[str, bool]:
             if key not in props:
                 raise Denied(f"unexpected argument {key!r}")
             expected = props[key]["type"]
-            if (expected == "string" and not isinstance(val, str)) or \
-               (expected == "boolean" and not isinstance(val, bool)):
+            if not type_ok(expected, val):
                 raise Denied(f"argument {key!r} must be a {expected}")
         if name in _WRITES_EXTERNALLY or name in WRITES_EXTERNALLY:
             try:
@@ -78,9 +77,10 @@ def call_tool(name: str, args: object, principal: str) -> tuple[str, bool]:
         record.update(decision="allow", result=sanitize(text, 500))
         return text, False
     except Staged as e:
-        # A held write staged for approval, which the gateway makes itself:
-        # a result, not a refusal (core/holds.py, docs/approvals.md).
-        record.update(decision="staged", result=sanitize(e.text, 500))
+        # A held write staged for approval, which the gateway makes itself,
+        # or (Made) the outcome of one it already made: a result, not a
+        # refusal (core/holds.py, docs/approvals.md).
+        record.update(decision=e.decision, result=sanitize(e.text, 500))
         return e.text, False
     except Denied as e:
         record.update(decision="deny", reason=str(e))

@@ -573,8 +573,9 @@ seconds (it checks every 5 s), from what it stored, never the agent's
 workspace, and files the outcome; if you decline, nothing is written and the
 outcome records your reason. An undecided card expires after a day by default
 (`expire_seconds`). The same call again while its card is pending gets the
-same result; once the write is made or declined it is refused, so nothing is
-written twice. (Until 24 Oct 2026 a call first waited `hold_seconds` for a
+same result; once the write is made it returns that write's result (the PR
+URL, say) and sends nothing new; while it is being made, or once declined, it
+is refused. Nothing is written twice. (Until 24 Oct 2026 a call first waited `hold_seconds` for a
 decision; that setting is gone, and `factory doctor` says to delete it.)
 Holds are part of the gateway;
 nothing is installed and there is no licence. They are off until you list the

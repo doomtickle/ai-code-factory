@@ -899,7 +899,8 @@ def complete_github_create_issue(job: dict, card: dict, policy: dict) -> str:
 _REPO_DESCRIPTION = "owner/name on GitHub, or <gitlab host>/<group>/<project> on the configured GitLab"
 _STAGED_NOTE = (" If the deployment holds it for approval, the result starts \"Staged for approval (id X); "
                 "nothing has been sent yet\": the gateway makes the write itself once a person approves it, so "
-                "report it as staged for approval, not done.")
+                "report it as staged for approval, not done. The same call again once it is made returns the write's "
+                "result and sends nothing new.")
 
 approvals.register_deferred("git_push", complete_git_push)
 approvals.register_deferred("github_create_pr", complete_github_create_pr)

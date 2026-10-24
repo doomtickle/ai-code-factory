@@ -479,14 +479,14 @@
     parts.console.setAttribute("class", `console${state.bridge ? " lit" : ""}${attached ? " in" : ""}`);
     parts.note.textContent = !state.bridge ? "BRIDGE DOWN" : attached ? "ON DUTY" : "BACK SOON";
 
-    // Crates waiting at the gate: one per undecided held write (at most MAX_PARKED drawn),
+    // Crates waiting at the gate: one per undecided staged write (at most MAX_PARKED drawn),
     // each named by its write: tool · role · repo · branch.
     const gate = Array.isArray(state.gate) ? state.gate : [];
     const held = gate.filter(c => c && c.decided !== "approve" && c.decided !== "decline");
     const waiting = held.length;
     parts.arch.setAttribute("class", `arch${waiting ? " holding" : ""}`);
-    parts.heldText.textContent = waiting ? `HELD ${waiting}` : "GATE CLEAR";
-    const names = held.slice(0, MAX_PARKED).map(c => [c.tool, c.role, c.repo, c.branch].map(v => String(v || "")).filter(Boolean).join(" · ") || "held write");
+    parts.heldText.textContent = waiting ? `STAGED ${waiting}` : "GATE CLEAR";
+    const names = held.slice(0, MAX_PARKED).map(c => [c.tool, c.role, c.repo, c.branch].map(v => String(v || "")).filter(Boolean).join(" · ") || "staged write");
     const parkedNames = JSON.stringify(names);
     if (parts.parked !== parkedNames) {
       parts.parked = parkedNames;

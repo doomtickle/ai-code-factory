@@ -27,13 +27,31 @@ Dated entries, for the user to review. Newest first.
     as in a call. A held tool with no job or completer is refused with
     nothing staged, rather than falling back to the retry hold.
   - The same call again: while pending, the same staged result (same id,
-    no second webhook); while running, made or declined (for
-    `expire_seconds` after), `DENIED` saying so, so a write is never made
-    twice and a decline is not silently asked again; after a failure or an
-    expiry, a fresh card. The agent never gets the write's own result any
-    more; it is in the approval's `done/` record (`factory approvals`, the
-    dashboard). We chose a refusal over reporting the old result to keep
-    one success shape.
+    no second webhook); once the write is made (for `expire_seconds`
+    after), the write's stored result, cleaned again (`errors.Made`, record
+    `decision: made`: "Made by the gateway at T once approved (approval X);
+    this call staged and sent nothing new. The write's result:" and the
+    result, e.g. the PR URL); while running or once declined (for as
+    long), `DENIED` saying so; after a failure or an expiry, a fresh card.
+    Either way a write is never made twice and a decline is not silently
+    asked again. Owner decision (REVISE of #170), replacing our first
+    choice of refusing after a made write too: the Coordinator can send the
+    same lane back once, after approval, to collect the PR URL with the
+    same call. A done/ record counts as this card's by its stored `id`, not
+    by hashing it again (for a plugin tool, the record's own fields would
+    change the hash, so a repeat after a made or declined write staged a
+    new card).
+  - A plugin tool's argument can't be named after a field the gateway sets
+    on the card (`tool`, `principal`, `id`, `nonce`, `created`, `expires`)
+    or on its done/ record (`decision`, `approver`, `reason`, `decided`,
+    `queued`, `write`, `result`, `started`, `finished`, `outcome`): the
+    first four of the hold's would be left out of the card id (two calls
+    differing only there shared a card, so the second write was dropped)
+    and made every approved call fail its card check; the done/ ones would
+    let an argument read as, say, the approver of a card that expired
+    undecided. Refused at registration. The completer checks each staged
+    argument with the call's own type check (`registry.type_ok`), so the
+    two can't drift if more JSON types are allowed.
   - Removed: `hold_seconds` (ignored, and the doctor warns to delete it; no
     migration needed), `with_held_note`/`held_note` and the plugin-hook
     outcome contract (whatever a hook returns is ignored now; a plugin
@@ -50,9 +68,8 @@ Dated entries, for the user to review. Newest first.
     leaves out the fields the hold adds (`id`, `nonce`, `created`,
     `expires`), so a stored card hashes to its own id; a fresh card has
     none of them, so ids are unchanged.
-  What would change it: an agent that needs the write's result in the
-  same session (a PR URL, say) often enough that a status tool is worth
-  adding.
+  What would change it: an agent that needs the write's result without
+  repeating the call (or often enough that a status tool is worth adding).
 
 - **The host CLI's Python package is `factory/` at the repo root, and the bridge
   imports from it** (doomtickle/passdesk-ops#169, first PR). Root, not

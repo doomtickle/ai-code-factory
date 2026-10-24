@@ -267,7 +267,7 @@
     setSeg($("ro-run"), String(state.totals.running));
   }
 
-  // The gate LCD is an aria-live region, so it is rebuilt only when the held
+  // The gate LCD is an aria-live region, so it is rebuilt only when the staged
   // cards change. The countdown ticks in an aria-hidden node (screen readers get
   // the expiry as a fixed clock time instead), so it is never re-announced.
   function renderGate() {
@@ -281,13 +281,34 @@
     // A decided card stays listed until the gateway acts on it; it waits for no one here.
     const decided = cards.filter(x => x.decided === "approve" || x.decided === "decline").length;
     $("gate-led").className = `led ${cards.length > decided ? "a blink" : cards.length ? "a" : ""}`;
-    const queued = cards.filter(x => x.queued).length;
-    const failed = writes.filter(w => w.state === "failed").length;
-    $("gate-state").textContent = (cards.length ? `Held · ${cards.length}${queued ? ` · ${queued} staged` : ""}${decided ? ` · ${decided} decided` : ""}` : "Clear")
-      + (failed ? ` · ✕ ${failed} write${failed > 1 ? "s" : ""} failed` : "");
+    // Every write's state: staged (waiting for a person), approved and being written
+    // (a card approved but not yet claimed, or a write running), done, failed.
+    const count = st => writes.filter(w => w.state === st).length;
+    const staged = cards.length - decided;
+    const failed = count("failed");
+    const states = [[staged, "staged", "st-staged"],
+      [cards.filter(x => x.decided === "approve").length + count("running"), "writing", "st-writing"],
+      [count("made"), "done", "st-done"], [failed, "failed", "st-failed"]].filter(([n]) => n > 0);
+    // The header says what needs someone: cards to decide and failed writes.
+    $("gate-state").textContent = [staged ? `${staged} staged` : "", failed ? `✕ ${failed} failed` : ""]
+      .filter(Boolean).join(" · ") || (states.length ? "Nothing to decide" : "Clear");
     gateCd = null;
+    if (cuFrame) {
+      // The control unit under this display shows every card in full, its expiry and
+      // the keys: here, one line of every write's state, coloured as the CU colours it.
+      const one = el("div", "one states");
+      if (!states.length) one.textContent = "No writes staged";
+      states.forEach(([n, word, cls], i) => {
+        if (i) one.append(" · ");
+        one.append(el("span", cls, `${word === "failed" ? "✕ " : ""}${n} ${word}`));
+      });
+      one.title = one.textContent;
+      lcd.replaceChildren(one);
+      $("gate-hint").textContent = "";
+      return;
+    }
     if (!cards.length) {
-      lcd.replaceChildren(el("div", cuFrame ? "one" : "big", "No writes held"));
+      lcd.replaceChildren(el("div", "big", "No writes staged"));
       $("gate-hint").textContent = "";
       return;
     }
@@ -305,18 +326,6 @@
     };
     const c = cards[0];
     const role = c.role || c.principal;
-    if (cuFrame) {
-      // The control unit under this display shows every card in full and has the
-      // keys: here, one line of what is waiting.
-      const tail = ` · ${c.tool} · ${role}${c.queued ? " · staged" : ""}${cards.length > 1 ? ` +${cards.length - 1}` : ""}`;
-      const one = gateCd ? countdown(`${cards.length} held · next `, tail) : el("div", null, `${cards.length} held${tail}`);
-      one.className = "one";
-      one.title = `${cards.length} held${tail}`;
-      lcd.replaceChildren(one);
-      tickGate();
-      $("gate-hint").textContent = "";
-      return;
-    }
     const what = c.tool === "git_push" ? `${c.commits ?? "?"} commits · ${c.file_count ?? "?"} files` : (c.title || c.tool);
     gateCd = c.seconds_left == null ? null : c;
     const line = gateCd ? countdown(`${what} · expires `) : el("div", null, `${what} · expiry unknown`);
@@ -329,14 +338,14 @@
       el("div", null, c.base ? `${c.branch} → ${c.base}` : c.branch),
       ...(c.queued ? [el("div", null, c.decided === "approve" ? "STAGED · the gateway is writing it" : "STAGED · the gateway writes it once approved")] : []),
       line,
-      ...(cards.length > 1 ? [el("div", null, `+ ${cards.length - 1} more held`)] : []));
+      ...(cards.length > 1 ? [el("div", null, `+ ${cards.length - 1} more staged`)] : []));
     tickGate();
     $("gate-hint").textContent = `Decide in a terminal: factory approvals approve ${c.id}  (or decline ${c.id} --reason "...")`;
   }
   // The gateway's recent deferred writes (approvals/done/, display only): one line each, failures
   // first and loud. Text comes from state files, already one clean line each; set as text only.
   // Hidden under the control unit, which shows the same list.
-  const WRITE_LABEL = { failed: "FAILED", running: "RUNNING", made: "MADE" };
+  const WRITE_LABEL = { failed: "FAILED", running: "WRITING", made: "DONE" };
   function renderWrites(writes) {
     const box = $("gate-writes");
     box.replaceChildren(...writes.map(w => {

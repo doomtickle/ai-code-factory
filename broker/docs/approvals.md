@@ -116,8 +116,9 @@ content that actually gets pushed is still pinned by `head` and
   > approve 0123456789abcdef`); if it is declined, or not decided by
   > 2026-10-23T09:15:00Z (in 23 h 59 min), nothing is written. Report it
   > as staged for approval (id 0123456789abcdef), not done. The gateway
-  > records the outcome with the approval (`factory approvals`); calling
-  > this tool again does not speed it up.
+  > records the outcome with the approval (`factory approvals`); once it
+  > has made the write, the same call again returns its result (e.g. the
+  > URL) and sends nothing new.
 
   Until 24 Oct 2026 a call first waited up to `hold_seconds` for a
   decision (approved in time, the write went out in the call), then
@@ -154,14 +155,20 @@ content that actually gets pushed is still pinned by `head` and
   refusal means nothing is written, and the failure is recorded.
 - **The same call again** (same card id) never stages or writes twice.
   While the card is pending (decided or not) it gets the same staged
-  result and no second notification. While the gateway is making the
-  write, once it is made, or once it is declined, it is refused (`DENIED
-  ... this exact write was approved (approval X) and the gateway is making
-  it now`, `... already made by the gateway at T (approval X): <first
-  line>; nothing new was staged.`, `declined by NAME: REASON (approval X);
-  nothing was written and nothing new was staged.`), for `expire_seconds`
-  after it finished; after that, or after a failure or an expiry, it
-  stages a fresh card for a person to decide again. A pending card with no
+  result and no second notification. Once the write is made it gets that
+  write's stored result, filtered again, as an ordinary result
+  (`errors.Made`, record `decision: made`): `Made by the gateway at T once
+  approved (approval X); this call staged and sent nothing new. The
+  write's result:` and the result on the next line (the PR or MR URL, the
+  pushed ref). So after approval, the agent that staged the write can
+  collect its outcome with the same call. While the gateway is making the
+  write, or once it is declined, the call is refused (`DENIED ... this
+  exact write was approved (approval X) and the gateway is making it
+  now`, `declined by NAME: REASON (approval X); nothing was written and
+  nothing new was staged.`). A made or declined write answers so for
+  `expire_seconds` after it finished; after that, or after a failure or
+  an expiry, the same call stages a fresh card for a person to decide
+  again. The done record counts only if its stored `id` is the card's. A pending card with no
   job (left by a gateway that held calls open) is discarded
   (`approval-discarded`) and staged afresh.
 - **The done file** is the card plus the decision (`decision`,

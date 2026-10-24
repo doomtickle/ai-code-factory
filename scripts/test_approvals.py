@@ -183,6 +183,19 @@ class ConsoleTests(unittest.TestCase):
         # bbbb is decided: waiting for the gateway, not for a person.
         self.assertEqual(out, "1 30 1 1 0 0 0\n")
 
+    def test_summary_counts_only_approvals_as_waiting_for_the_gateway(self):
+        now = time.time()
+        decisions = self.state / "approvals" / "decisions"
+        decisions.mkdir(parents=True)
+        for cid, verdict in (("aaaa000000000000", "approve"), ("bbbb000000000000", "decline"),
+                             ("cccc000000000000", "decline")):
+            self.put(card(cid, created=now - 60, expires=now + 600, nonce="n0nce"))
+            (decisions / "{}.json".format(cid)).write_text(
+                json.dumps({"id": cid, "nonce": "n0nce", "decision": verdict}))
+        code, out, _ = self.run_cli("summary")
+        self.assertEqual(code, 0)
+        self.assertEqual(out, "0 -1 0 1 0 0 0\n")  # the two declines are neither pending nor approved
+
     def test_summary_stale_decision_nonce_still_counts_as_unhandled(self):
         # Staging again after expiry mints a fresh nonce; a decision for the old
         # nonce belongs to a card that no longer exists in this form.
@@ -203,7 +216,7 @@ class ConsoleTests(unittest.TestCase):
         self.put(card("aaaa000000000000", created=now - 600, expires=now - 1))  # expired, no decision
         self.put(card("bbbb000000000000", created=now - 1200, expires=now + 600))  # 20 min old, not expired
         self.assertEqual(approvals.summarize(self.state, now=now),
-                          {"pending": 2, "oldest_minutes": 20, "expired_unhandled": 1, "decided": 0, "running": 0,
+                          {"pending": 2, "oldest_minutes": 20, "expired_unhandled": 1, "approved": 0, "running": 0,
                            "made": 0, "failed": 0})
 
     def test_missing_state_dir(self):

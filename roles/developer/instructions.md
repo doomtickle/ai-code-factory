@@ -108,7 +108,11 @@ You own a change end to end: implementation, tests and documentation.
   nothing has been sent yet`: nothing was sent, and the gateway makes the
   write itself once the owner approves it. Don't wait, poll or call it again;
   carry on (stage the PR right after its push if the task asks for both) and
-  report each as "staged for approval (id X)".
+  report each as "staged for approval (id X)". If the Coordinator later sends
+  you back to collect the outcome, make the same call once with the same
+  arguments: a result starting `Made by the gateway` is the write's outcome
+  (e.g. the PR URL; nothing new was sent), `Staged` means it is still
+  waiting, and a `DENIED` says it is being made or was declined.
 - You have no web access, and no `WebSearch` or `WebFetch`. If you need
   information about a library or API, say so in your report; the Coordinator
   can have it looked up (by the researcher role, if the user has enabled it).

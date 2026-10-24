@@ -15,8 +15,10 @@ from the stored job and card only, never the agent's workspace; either way
 it files the outcome under done/ (`queued`, `write` = running/done/failed/
 skipped, `result`, `finished`). The same call again while its card is
 pending gets the same staged result (no second card or notification); once
-the write is being made, made or declined it is refused, so nothing is
-written twice; after a failure or an expiry it stages a fresh card.
+the write is made it gets that write's stored result (`Made`: the PR URL,
+the pushed ref); while it is being made, or once declined, it is refused.
+Either way nothing is written twice. After a failure or an expiry it stages
+a fresh card.
 
 Pending cards expire after `expire_seconds`; an expired card is audited as
 `approval-expired` and filed under STATE/approvals/done/ as `expired` (with
@@ -57,7 +59,7 @@ from pathlib import Path
 from . import approvals as core_approvals
 from . import config, filters, notify
 from .audit import audit
-from .errors import Denied, Staged
+from .errors import Denied, Made, Staged
 from .policy import load_policy
 
 # The fields that identify "the same write": the same call again with the
@@ -357,8 +359,8 @@ def _staged_text(pending: dict, cid: str) -> str:
             f"{_what(pending)} and will make it itself once a person approves it (e.g. `factory approvals "
             f"approve {cid}`); if it is declined, or not decided by {_iso(expires)} (in "
             f"{_span(expires - now)}), nothing is written. Report it as staged for approval (id {cid}), not "
-            f"done. The gateway records the outcome with the approval (`factory approvals`); calling this "
-            f"tool again does not speed it up.")
+            f"done. The gateway records the outcome with the approval (`factory approvals`); once it has made "
+            f"the write, the same call again returns its result (e.g. the URL) and sends nothing new.")
 
 
 def _queued_job(cid: str, pending: dict) -> dict | None:
@@ -369,14 +371,16 @@ def _queued_job(cid: str, pending: dict) -> dict | None:
     return None
 
 
-def _refuse_settled(cid: str, now: float, expire: int) -> None:
-    """Refuse the same call again once its staged write is being made, was
-    made or was declined (for `expire` seconds after it finished), so the
-    write never happens twice and a decline is not just asked again. A
-    failure or an expiry lets a fresh card be staged. Only a done/ record
-    that is still this card (its stable fields hash to cid) counts."""
+def _settled(cid: str, now: float, expire: int) -> None:
+    """The same call again once its staged write is settled (for `expire`
+    seconds after it finished): made, it raises Made with the write's stored
+    result; being made or declined, it raises Denied. Either way nothing is
+    written twice and a decline is not just asked again. A failure or an
+    expiry lets a fresh card be staged (returns). Only a done/ record that
+    is this card counts: its stored id is cid (the record's own fields,
+    the decision and the result, are not part of the card's id)."""
     done = _read(_path("done", cid))
-    if not done or done.get("queued") is not True or card_id(done) != cid:
+    if not done or done.get("queued") is not True or done.get("id") != cid:
         return
     write = done.get("write")
     if write == "running":
@@ -387,9 +391,9 @@ def _refuse_settled(cid: str, now: float, expire: int) -> None:
             or now - finished > expire:
         return
     if write == "done":
-        first = next((ln for ln in str(done.get("result") or "").splitlines() if ln.strip()), "")
-        raise Denied(f"this exact write was already made by the gateway at {_iso(_timestamp(finished, now))} "
-                     f"(approval {cid}): {filters.sanitize(first, 500)}; nothing new was staged.")
+        result = filters.sanitize(str(done.get("result") or ""), _RESULT_MAX)
+        raise Made(f"Made by the gateway at {_iso(_timestamp(finished, now))} once approved (approval {cid}); "
+                   f"this call staged and sent nothing new. The write's result:\n{result}", cid)
     if write == "skipped" and done.get("decision") != "expired":
         who = core_approvals.one_line(done.get("approver") or "unknown", 100)
         reason = filters.sanitize(" ".join(str(done.get("reason") or "").split()), 500)
@@ -403,7 +407,7 @@ def _stage(card: dict, cid: str, job: dict, expire: int, now: float) -> dict:
     The job is written before the card, in one locked step, so a pending
     card always has its job by the time anyone can read it. Notifies once
     per fresh card, off this thread, so a slow webhook never delays the
-    call. Raises Denied if this write is already settled (_refuse_settled)."""
+    call. Raises Made or Denied if this write is already settled (_settled)."""
     with _lock:
         existing = _read(_path("pending", cid))
         if existing:
@@ -425,7 +429,7 @@ def _stage(card: dict, cid: str, job: dict, expire: int, now: float) -> dict:
                 audit({"event": "approval-discarded", "id": cid, "tool": existing.get("tool"),
                        "reason": "the pending card's expiry is unreadable" if expires is None
                        else "the pending card has no staged job"})
-        _refuse_settled(cid, now, expire)
+        _settled(cid, now, expire)
         # The nonce ties a decision to this card, not an earlier one with the
         # same id; timestamps would do that only if the clock never jumped.
         pending = {**card, "id": cid, "nonce": secrets.token_hex(8), "created": now, "expires": now + expire}
@@ -586,9 +590,10 @@ def _recover_interrupted() -> None:
 def hook(card: dict) -> None:
     """The approval point's hook (core.approvals.set_hook). Returns None for
     a tool the policy doesn't hold (the tool writes at once); for a held one
-    it stages the write (_stage) and raises Staged, or raises Denied if the
-    tool passed no job or has no completer (nothing is staged then) or the
-    same write is already settled."""
+    it stages the write (_stage) and raises Staged. The same write already
+    made raises Made (its stored result); being made or declined, Denied;
+    and Denied if the tool passed no job or has no completer (nothing is
+    staged then)."""
     policy = load_policy()
     expire, tools = settings(policy)
     if card.get("tool") not in tools:

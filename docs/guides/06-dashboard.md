@@ -130,7 +130,7 @@ move, so the write gate and the control unit stay in reach.
 
 - **The panel.** The plate carries the title, the shift (day, swing or night,
   by your clock), an LCD readout of today's jobs, running lanes and spend, the
-  gate's three LEDs (ALLOW, HOLD, DENY), a HELD lamp with the number of writes
+  gate's three LEDs (ALLOW, HOLD, DENY), a STAGED lamp with the number of writes
   waiting for you, and a red DENIED counter of calls refused since the page
   loaded. The tube follows Terminal 0's **CRT** knob: scanlines, grille and
   the rolling band go from nothing at 0 to a full tube at 10.
@@ -193,7 +193,7 @@ move, so the write gate and the control unit stay in reach.
   - a denied call derezzes: it is stamped CONFISCATED and lands in the derez
     field under the gate, the DENY LED lights and the counter ticks up
   - a held write waits on the track in front of the gate, blinking yellow,
-    until you decide it; the gate's lamp, the HOLD LED and the HELD lamp stay
+    until you decide it; the gate's lamp, the HOLD LED and the STAGED lamp stay
     on while anything waits
   - hover a crate waiting at the gate to read the write it holds (tool, role,
     repo, branch); hover a crate in the derez field to read the broker line
@@ -289,16 +289,18 @@ with the radio on stays silent until your first click or key press.
 
 Bottom right. With approvals on, every push and pull request a role makes
 waits here for you ([Enabling approvals](../../README.md#enabling-approvals)).
-With holds off, the gate always reads NO WRITES HELD and the agents' writes go
+With holds off, the gate always reads NO WRITES STAGED and the agents' writes go
 through under the broker's policy alone.
 
-The gate's display gives one line: how many writes are held (and how many of
-them are staged, below), the first one's tool and role, and the time left
-before it expires. Under it, the
+The gate's header counts what needs you: the writes staged for a decision
+and any that failed. Its display gives one line with every write's state:
+**STAGED** (amber, blinking: waiting for you), **WRITING** (approved, and the
+gateway is making it), **DONE** (green) and **FAILED** (red). Under it, the
 **control unit** shows the selected write in full: the tool, the role and its
 lanes, the repo, the branch (or head and base for a PR or merge request), its title, the
-commits and files, and the time left. **◀ ▶** step through several held
-writes.
+commits and files, and the time left. **◀ ▶** step through several staged
+writes. (With the control unit hidden, the display shows the first staged
+write instead, and the list of the gateway's writes appears under it.)
 
 ### Staged writes and their outcomes
 
@@ -309,11 +311,14 @@ approved**. When you approve it the gateway makes the write itself, within
 seconds, and the card reads **APPROVED, the gateway writes it within
 seconds** until it does.
 
-Under the card, **deferred writes** lists what the gateway did with recent
-approvals, failures first: **FAILED** (in red, with the reason, kept three
-days), **RUNNING** (the gateway is making it now) and **MADE** (with the
-first line of its result, such as the new PR's address; kept a day). A write
-that failed was not retried: ask the agent to make the request again. The
+Under the card, **the gateway's writes** lists what the gateway did with
+recent approvals, failures first: **FAILED** (in red, with the reason, kept
+three days), **APPROVED · WRITING** (the gateway is making it now) and
+**DONE** (with the first line of its result, such as the new PR's address;
+kept a day). A write that failed was not retried: ask the agent to make the
+request again. Once a write is done, the agent that staged it gets the same
+result (the PR's address, say) if it makes the same call again, and nothing
+is sent twice: the Coordinator can send the lane back once to collect it. The
 event printer shows STAGED, WRITTEN and FAILED lines for the same steps. This
 list only displays; it has no keys. The text in it comes from the gateway's
 state files and is shown as plain text.
@@ -337,8 +342,9 @@ and the agent's next call of that write stages a fresh card. If a newer write re
 reading, or it was decided elsewhere, the unit says so in words and decides
 nothing. Check the new card and press again.
 
-> **Note:** A held write names the role, not the lane. If two lanes of the
-> developer are running, both show as HELD.
+> **Note:** A card names the role, not the lane. A staged write never marks
+> a lane HELD; only a card the gateway didn't stage (left by an older
+> gateway) does, and if two lanes of that role are running, both show as HELD.
 
 ### Inspect a push before approving it
 
