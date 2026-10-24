@@ -41,6 +41,7 @@ END = re.compile(r"^■ job (\S+) (\w+) after (\d+)s")
 MODEL = re.compile(r"^   model: (.*)$")
 BRANCH = re.compile(r"^⎇ (?:branch )?(.*)$")
 PACKET = re.compile(r"^📄 review packet: factory packet (\S+)")
+BRIEF_MAX = 4000   # characters of a job's task kept for scanning
 CONF_LANES = re.compile(r'^LANES="(\d*)"', re.M)
 CONF_OPTIONAL = re.compile(r'^OPTIONAL="1"', re.M)
 # A tool call's JSON arguments are cut at 140 characters in the transcript, so
@@ -215,7 +216,7 @@ class Lane(Tail):
             return
         if e.kind == "start":
             self.job = {"id": e.text, "started": e.ts, "status": "running", "model": None,
-                        "seconds": None, "task": "", "ended": None}
+                        "seconds": None, "task": "", "brief": "", "ended": None}
         elif e.kind == "end" and self.job is not None:
             status, secs = e.text.split()
             self.job.update(status=status, seconds=int(secs), ended=e.ts)
@@ -223,8 +224,11 @@ class Lane(Tail):
             if self.job is not None:
                 self.job["model"] = e.text
             return  # shown in the title, not the body
-        elif e.kind == "task" and self.job is not None and not self.job["task"] and e.text.strip():
-            self.job["task"] = e.text.strip()
+        elif e.kind == "task" and self.job is not None and e.text.strip():
+            if not self.job["task"]:
+                self.job["task"] = e.text.strip()
+            if len(self.job["brief"]) < BRIEF_MAX:   # every line of the task, for callers that scan it
+                self.job["brief"] = (self.job["brief"] + "\n" + e.text.strip())[:BRIEF_MAX]
         elif e.kind == "packet":
             self.last_packet = e.text
         if e.kind in ("text", "result") and not e.text.strip():

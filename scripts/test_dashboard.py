@@ -110,6 +110,26 @@ class SnapshotTests(unittest.TestCase):
         # Agent text stays text: the snapshot carries it verbatim for the page to insert with textContent.
         self.assertIn("<script>alert(1)</script>", lanes["reviewer"]["tail"][1]["text"])
 
+    def test_desk_placard_fields(self):
+        lanes = {lane["name"]: lane for lane in self.board.snapshot(self.fx.now)["lanes"]}
+        self.assertEqual((lanes["developer"]["desk"], lanes["developer"]["reviews"]), ("x", ""))
+        self.assertEqual((lanes["reviewer"]["desk"], lanes["reviewer"]["reviews"]), ("x", ""))  # names a branch, not a developer ref
+        empty = Path(self.tmp.name) / "empty"
+        for lane in d.Dashboard(empty, self.fx.roles, "proj").snapshot()["lanes"]:
+            self.assertEqual((lane["desk"], lane["reviews"]), ("", ""))  # no job, no placard
+
+    def test_reviewer_reads_the_whole_task(self):
+        logs = self.fx.state / "dispatch" / "logs"
+        t = hms(self.fx.now - 30)
+        (logs / "reviewer.log").write_text(
+            f"{t}  ▶ job 20261019-000009-cccccc from the Coordinator\n"
+            f"{t}     > Please review.\n"
+            f"{t}     >\n"
+            f"{t}     > Branch: factory-developer-lane2/factory/rate-limit\n")
+        lane = next(x for x in self.board.snapshot(self.fx.now)["lanes"] if x["name"] == "reviewer")
+        self.assertEqual((lane["state"], lane["task"]), ("running", "Please review."))
+        self.assertEqual((lane["desk"], lane["reviews"]), ("rate limit", "developer-lane2"))
+
     def test_cards_draft_and_fingerprint(self):
         import approvals
         pending = self.fx.state / "broker" / "approvals" / "pending"
@@ -160,6 +180,47 @@ class SnapshotTests(unittest.TestCase):
         snap = board.snapshot()
         self.assertEqual([lane["state"] for lane in snap["lanes"]], ["idle", "idle"])
         self.assertEqual((snap["events"], snap["gate"], snap["totals"]["jobs"]), ([], [], 0))
+
+
+class DeskLabelTests(unittest.TestCase):
+    def test_branch_topic_wins(self):
+        for text, want in (
+            ("Repo: ai-code-factory. Branch from main; commit to `factory/desk-placards`.", "desk placards"),
+            ("Review factory-developer-lane2/factory/rate_limit.v2 now", "rate limit v2"),
+            ("push factory/a-very-long-branch-name-indeed", "a very long branch"),
+            ("Fix x, then factory/first and factory/second", "first"),
+        ):
+            self.assertEqual(d.desk_label(text), want)
+
+    def test_branch_pattern_ignores_lookalikes(self):
+        self.assertEqual(d.desk_label("Edit ai-code-factory/scripts today"), "Edit")
+        self.assertEqual(d.desk_label("use factory/<topic> branches"), "use factory/ topic")  # a placeholder is no branch
+
+    def test_fallback_first_words(self):
+        for text, want in (
+            ("Reject empty names in greet(), test it, and push", "Reject empty names"),
+            ("Repo: passdesk-ops. Fix the **dashboard** crash", "Fix the dashboard"),
+            ("\n\n  Tidy the `docs`  \nsecond line", "Tidy the docs"),
+            ("Supercalifragilisticexpialidocious", "Supercalifragilis…"),
+            ("", ""), ("   \n ", ""), ("Repo: x.", ""),
+        ):
+            self.assertEqual(d.desk_label(text), want)
+
+    def test_one_clean_line(self):
+        label = d.desk_label("\x1b[31m\u202eevil\x00 <b>thing</b>\ttab")
+        self.assertTrue(label.isprintable() and len(label) <= d.DESK_MAX, repr(label))
+        self.assertNotRegex(label, r"[<>\u202e]")
+        self.assertLessEqual(len(d.desk_label("word " * 50)), d.DESK_MAX)
+        self.assertEqual(d.desk_label(None), "")
+
+    def test_reviewed_lane(self):
+        for text, want in (
+            ("Review factory-developer/factory/x", "developer"),
+            ("Review factory-developer-lane3/factory/x and factory-developer/factory/y", "developer-lane3"),
+            ("Review factory/x", ""), ("factory-reviewer/factory/x", ""),
+            ("factory-developer-lane/factory/x", ""), ("xfactory-developer/factory/x", ""), ("", ""),
+        ):
+            self.assertEqual(d.reviewed_lane(text), want, text)
 
 
 def write_lane(logs: Path, name: str, job_id: str, now: float, extra: str = "") -> None:

@@ -148,6 +148,12 @@ class SnapshotTests(unittest.TestCase):
         self.assertEqual(self.snap["project"], "DEMO")
         self.assertIsNone(self.snap.get("term"))
 
+    def test_desk_placards(self):
+        lanes = {lane["name"]: lane for lane in self.snap["lanes"]}
+        self.assertEqual({n: (lane["desk"], lane["reviews"]) for n, lane in lanes.items()}, {
+            "developer": ("greet empty name", ""), "developer-lane2": ("", ""), "developer-lane3": ("", ""),
+            "reviewer": ("greet empty name", "developer"), "reviewer-lane2": ("greet readme", "developer-lane2")})
+
     def test_a_held_push_a_deny_and_a_branch(self):
         card = self.snap["gate"][0]
         self.assertEqual((card["tool"], card["repo"], card["branch"], card["role"]),

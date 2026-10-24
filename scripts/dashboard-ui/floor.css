@@ -44,6 +44,14 @@
 .fl .desk-top { fill: #8a6a45; }
 .fl .desk-front { fill: #6b4f31; }
 .fl .drawer { fill: #4a361f; }
+.fl .card.off { display: none; }
+.fl .card-bg { fill: var(--paper); stroke: #b9b39a; stroke-width: .5; }
+.fl.night .card-bg { fill: #d9d5c3; }
+.fl .card-t, .fl .card-tag { font-size: 4.4px; fill: #1b1c1f; }
+.fl .card-tag { fill: #1d4c96; }
+.fl .st.reviewed .mat { fill: #5a4a16; }
+.fl .st.reviewed .name { fill: var(--stripe-2); }
+.fl .st.reviewed .hit { stroke: var(--stripe-2); stroke-width: .8; }
 .fl .chair { fill: #26272a; }
 .fl .overalls { fill: #3a5f9e; }
 .fl .shirt { fill: #e6dfcb; }
