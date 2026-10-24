@@ -1084,10 +1084,13 @@ your browser. It shows:
   setting), and keeps its number in both forms: a digit key (or a click)
   opens the lane's full transcript and its latest review packet.
 - **Factory floor:** FLOOR (or `f`) redraws the Lanes bay as a pixel-art
-  shop floor: a workstation per lane showing its state, the Coordinator in
-  the foreman's booth, broker calls as crates through an X-ray arch (allowed
-  ones out the door, denied ones stamped CONFISCATED), held writes queued at
-  the arch and branches rolling to the dock. It only displays, from the same
+  shop floor: a workstation per lane showing its state, in a bay per role
+  (developers, then reviewers) beside the Coordinator's console. Work visibly
+  flows Coordinator, developer, reviewer, out: work orders and branch crates
+  ride rails between the bays, approved work leaves by the OUT door, and
+  broker calls ride the outbound belt as crates through an X-ray arch (allowed
+  ones out the door, denied ones stamped CONFISCATED, held writes queued at
+  the arch). It only displays, from the same
   state as the rest of the page.
 - **Write gate:** the pushes and pull requests the gateway is holding for you.
   A held write names the role, not the lane, so when two lanes of one role

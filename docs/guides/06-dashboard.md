@@ -144,10 +144,38 @@ stay in reach.
   amber. An idle lane has no placard.
 
   Click a station, or press its number, to open the lane monitor.
-- **Foreman's booth** (the Coordinator). ON DUTY while Terminal 0 is attached,
-  BACK SOON when it isn't, BRIDGE DOWN when the dispatch bridge is down.
-- **Broker gatehouse.** Every broker call is a crate that rides the outbound
-  belt through the X-ray arch:
+- **Coordinator console** (left, no worker). The plate reads ON DUTY while
+  Terminal 0 is attached (the screen is lit), BACK SOON when it isn't, BRIDGE
+  DOWN when the dispatch bridge is down. Work orders leave by its chute.
+- **Bays.** Developers' stations stand in one bay, reviewers' in a bay to its
+  right, each in a faint dashed outline with its label painted on the floor. A
+  lane of any other role (a researcher, a custom role) stands in a small bay
+  under the console. A bay with more lanes than fit becomes a grid. Numbers,
+  keys and lane order don't change with the bay. Every station has an in-tray
+  left of its desk and an out-tray to the right.
+- **Rails.** Three belts carry the work: the dispatch rail runs from the
+  console's chute past the developers' in-trays, the hand-off rail runs between
+  the developers' and the reviewers' bays, and the drop rail runs from the
+  reviewers down to the outbound belt. The outbound belt (`OUTBOUND ▸ OUT`)
+  runs along the bottom, under the X-ray arch, to the OUT door and the bin.
+- **How work moves.** Each trip is drawn from what the page already knows about
+  a lane, compared with the poll before:
+  - a developer lane starts running with a task it didn't have: a white work
+    order rides the dispatch rail from the console to its in-tray
+  - a developer hands back a branch (a new branch line in its log): a blue
+    branch crate is parked on its out-tray, until that lane takes its next job
+  - a reviewer starts (or is held) reviewing a developer lane: the blue crate
+    rides the hand-off rail from that developer's out-tray to the reviewer's
+    in-tray (one is launched even if none was parked), and the developer's
+    station is lit amber while the review runs
+  - a reviewer approves: a green crate drops down the drop rail onto the
+    outbound belt and leaves by the OUT door, which flashes. It passes under the
+    arch without lighting it: only broker calls light the arch. OUT means
+    approved and ready for you to merge, not merged
+  - a reviewer asks for changes: an amber crate rides the hand-off rail back to
+    the developer's out-tray
+- **Broker calls.** Every broker call is a crate that rides the outbound belt
+  through the X-ray arch:
   - an allowed call passes, with the arch flashing green, and goes out the door
   - a denied call is stamped CONFISCATED and lands in the bin
   - a held write waits in front of the arch under an amber lamp until you
@@ -157,17 +185,18 @@ stay in reach.
     it there. The bin keeps the last five. Both kinds take the keyboard focus
     (Tab) and are read out by a screen reader. The pile is only in this
     browser tab: it empties when you reload the page.
-- **Dock** (your project). When a lane hands back a branch, a crate rides the
-  lower belt to the dock.
 - **Sign.** The wall sign shows today's jobs, running lanes and spend. The
   windows follow your clock: day, swing and night shift.
 
 The floor reads the same state as the rest of the page and does nothing on its
-own. Moving crates are only animated while the floor is on screen; denials
-(DENY, NO, FAILED) that happen while it is hidden are added to the bin without
-animation. With reduced motion set in your system, nothing moves: the stations
-still show their state and confiscated crates appear in the bin without
-travelling there.
+own. Moving crates are only animated while the floor is on screen, and only for
+what changes after the page has loaded; what was already there is history and
+is just shown (a lane that finished before you opened the page keeps its branch
+crate on the out-tray). Denials (DENY, NO, FAILED) that happen while it is
+hidden are added to the bin without animation. With reduced motion set in your
+system, nothing moves: the stations still show their state, branch crates still
+sit on their out-trays and confiscated crates appear in the bin without
+travelling there. At most 14 crates are in flight at once.
 
 ### Floor events
 
@@ -180,7 +209,7 @@ throws doesn't disturb the floor.
 |---|---|---|
 | `factory-floor:passed` | a broker call is let through (ALLOW, OK, WRITTEN) | `kind`, `role`, `line`, `animated` |
 | `factory-floor:confiscated` | a broker call is refused (DENY, NO, FAILED) | `kind`, `role`, `line`, `animated` |
-| `factory-floor:docked` | a new branch line appears in a lane's log (any branch name, not only `factory/*`; it does not mean the work was delivered) | `lane`, `role`, `branch`, `animated` |
+| `factory-floor:docked` | a new branch line appears in a lane's log (any branch name, not only `factory/*`; it does not mean the work was delivered): the lane's branch crate is parked on its out-tray | `lane`, `role`, `branch`, `animated` |
 
 Each broker event fires once per call and each branch once per branch, as the
 page learns of it. They fire whether or not a crate is drawn (`animated` says
@@ -190,6 +219,8 @@ a lane's first appearance. A held write fires nothing until it is decided.
 Everything else in `detail` is a string, `animated` a boolean, and the object is
 frozen.
 
+For `docked`, `animated` says whether the branch crate was drawn on the out-tray
+(the floor is on and the lane has a station). For the broker events,
 `animated` reflects the first leg only. A denied call reports `animated: true`
 once its crate starts the trip to the arch, even if that crate is then binned
 without moving because too many crates are in flight.
