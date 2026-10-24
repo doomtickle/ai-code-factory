@@ -451,7 +451,7 @@ class Dashboard:
                 text = f"{rec.get('lane') or rec.get('role')} {status} {w.fmt_secs(num(rec.get('elapsed_seconds')) or 0)}"
                 if cost is not None:
                     text += f" ${cost:.2f}"
-                events.append({"t": ts, "kind": "JOB", "red": status in ("failed", "cancelled"), "text": text})
+                events.append({"t": ts, "kind": "JOB", "red": status in ("failed", "cancelled", "interrupted"), "text": text})
             for rec in self.broker.calls:
                 ev = self.broker_today(rec, midnight)
                 if ev:

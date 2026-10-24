@@ -45,6 +45,7 @@ The raw files are in the state folder, `~/.local/state/ai-code-factory/`
 | `dispatch/logs/<lane>.log` | Role transcripts, one per lane |
 | `dispatch/audit.jsonl` | Every Coordinator tool call and job end, with cost and context size |
 | `dispatch/packets/<job-id>.md` | The job's review packet (`factory packet <job-id>`) |
+| `dispatch/jobs.json` | The job list: the last 200 jobs, one short record each (no full task text), reloaded when the bridge starts |
 | `dispatch/dispatch.log` | Dispatch bridge errors |
 | `broker/audit.jsonl` | Every broker call, with the calling role |
 | `broker/broker.log` | Broker server errors |
@@ -310,8 +311,35 @@ minutes. Cancel it and tell me what it reported so far.
 The Coordinator calls `cancel_job`, which stops only that job; other lanes keep
 running. Anything the lane committed to a `factory/*` branch is still brought
 back. If the whole factory is unresponsive, `factory restart` (RESTART on the
-dashboard) restarts everything; running jobs are lost, but saved sessions, branches already
-brought back and logs are kept.
+dashboard) restarts everything; running jobs end (they show as interrupted
+afterwards), but the job list, saved sessions, branches already brought back
+and logs are kept. See [What survives an update or a disconnect](#what-survives-an-update-or-a-disconnect).
+
+### What survives an update or a disconnect
+
+`factory restart`, a reconnect, a reboot and `factory update` all stop the
+dispatch bridge, the broker and every agent sandbox. What happens to your work:
+
+| | Restart / reconnect | `factory update` |
+|---|---|---|
+| Jobs that were running | End. After the restart they show as INTERRUPTED (`job_status`, the dashboard, `factory watch`); no lane shows RUN without a live job. Re-delegate the task | Same |
+| The job list (`job_status`, `wait_for_job`, `factory packet <id>`) | Kept: the last 200 jobs are reloaded from `dispatch/jobs.json`. A reloaded job has a short report only; the full one is in its packet | Kept |
+| Transcripts, review packets, audit log, cost totals | Kept (host state folder) | Kept |
+| Lane sessions | Kept | Kept, except for a role whose sandbox is recreated (the plan lists it). The transcripts live on that sandbox's own disk, so recreating it destroys them and the next task starts fresh |
+| Developer lane clones | Kept | Lost for a recreated developer sandbox: anything not committed to a `factory/*` branch |
+| Branches already brought back (`factory-<lane>/factory/*`) | Kept | Kept |
+| Held writes waiting for approval | Dropped (the agent's call has already returned) | Dropped |
+| Queued writes (approved pushes, PRs, MRs the gateway will make) | Kept | Kept |
+| The Coordinator's conversation | Kept | Lost if the Coordinator is recreated |
+| Your Claude login and settings | Kept | Kept |
+
+`factory update --plan` (the dashboard's UPDATE key) prints this up front, and
+for each sandbox it will recreate, what that loses.
+
+The Coordinator is read-only: it can't write a file, so a plan that exists only
+in its conversation is lost when it is recreated. To keep a plan, ask for it to
+be committed through a developer job (a `factory/*` branch, a doc or an issue
+in the repo) before you update.
 
 ### "sent no response or progress for ...s; aborting"
 
@@ -331,8 +359,8 @@ timeout. The Coordinator's kit already raises
 the Coordinator's sandbox was created before that setting existed.
 **Fix:** run `factory update` to recreate the Coordinator with the current
 kit. This discards the Coordinator's conversation history (role sessions,
-branches already brought back and logs are kept), so note any open status
-first if you want to carry it into the new session.
+branches already brought back and logs are kept). The Coordinator is read-only,
+so have a developer job commit any plan you want to keep first.
 
 ### Costs keep climbing
 

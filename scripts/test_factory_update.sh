@@ -599,6 +599,10 @@ assert_contains "update --plan: the out-of-date broker is to be recreated, with 
 assert_empty "update --plan: the up-to-date Coordinator isn't" \
   "$(printf '%s\n' "$P_OUT" | grep "^recreate.factory-coordinator" || true)"
 assert_contains "update --plan: no bound project is noted" "$P_OUT" "no project is bound"
+assert_contains "update --plan: says up front what every update drops and keeps" \
+  "$P_OUT" "$(printf 'note\tevery update stops the dispatch bridge and all agent sandboxes: running jobs end')"
+assert_contains "update --plan: the standing note says interrupted jobs, held writes and what is kept" \
+  "$P_OUT" "held writes are dropped (queued writes, branches already in your project, saved sessions of sandboxes that aren't recreated"
 
 # Upstream gains a commit touching the Coordinator's kit and the broker's.
 mkdir -p "$tmp/seed/kits/coordinator" "$tmp/seed/kits/broker"

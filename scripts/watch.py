@@ -237,6 +237,16 @@ class Lane(Tail):
             return  # a code fence in a report: noise on screen
         self.entries.append(e)
 
+    def interrupt(self) -> None:
+        """The transcript shows a job running but nothing is running it (the bridge
+        is down): show it as interrupted, ending at the last thing the transcript says."""
+        job = self.job
+        if not job or job["status"] != "running":
+            return
+        ended = self.entries[-1].ts if self.entries else job["started"]
+        job.update(status="interrupted", ended=ended,
+                   seconds=(seconds_of_day(ended) - seconds_of_day(job["started"])) % 86400)
+
     def active(self, now: float | None = None) -> bool:
         """A job running, or one that ended less than ACTIVE_SECONDS ago."""
         if not self.job:
@@ -331,6 +341,11 @@ class Watch:
         for lane in self.lanes:
             lane.feed()
         self.audit.feed()
+        # A job lives only in the bridge process: with the bridge down (a restart,
+        # an update, a crash) no lane is running anything, whatever its transcript says.
+        if not self.bridge_alive():
+            for lane in self.lanes:
+                lane.interrupt()
 
     def bridge_alive(self) -> bool:
         try:
@@ -408,7 +423,7 @@ def job_info(lane: Lane, audit: Audit, now: float | None = None) -> tuple:
         return "·", "dim", "idle"
     status = job["status"]
     glyph, style = {"running": ("●", "warn"), "done": ("✓", "ok"), "failed": ("✗", "error"),
-                    "cancelled": ("■", "dim")}.get(status, ("?", "dim"))
+                    "cancelled": ("■", "dim"), "interrupted": ("!", "error")}.get(status, ("?", "dim"))
     bits = [status, fmt_secs(lane.elapsed(now) or 0)]
     if job.get("model"):
         bits.append(job["model"].replace("claude-", ""))

@@ -347,8 +347,8 @@
 
   // ---------- each poll
   const LABEL = { running: "working", held: "held at the gate", revise: "asked to revise", done: "done", approved: "approved",
-    idle: "idle", cancelled: "cancelled", failed: "failed" };
-  const PROP = { running: "running", held: "held", revise: "revise", done: "done", approved: "done", idle: "idle", cancelled: "fail", failed: "fail" };
+    idle: "idle", cancelled: "cancelled", failed: "failed", interrupted: "interrupted" };
+  const PROP = { running: "running", held: "held", revise: "revise", done: "done", approved: "done", idle: "idle", cancelled: "fail", failed: "fail", interrupted: "fail" };
 
   // Placard text. All of it is agent-written (the server only trims it), so it goes in as text.
   const CHAR_W = 1.8;   // scene units per character of the placard font
