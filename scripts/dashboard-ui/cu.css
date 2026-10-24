@@ -79,7 +79,7 @@ button, input { font: inherit; color: inherit; }
 .ln.title { color: var(--lcd-purple); }
 .ln.idle { text-align: center; font-size: 1.2em; text-transform: uppercase; padding-top: .4em; opacity: .8; }
 .ln.fault { color: var(--lcd-red); font-weight: 700; }
-/* A card that can't be decided any more: decided (waiting for the agent's retry) or expired. */
+/* A card that can't be decided any more: decided (waiting for the gateway to act) or expired. */
 .ln.st-ok { color: var(--lcd-green); font-weight: 700; }
 .ln.st-no { color: var(--lcd-red); font-weight: 700; }
 @keyframes lcdblink { 50% { opacity: .15; } }

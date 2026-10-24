@@ -204,22 +204,28 @@ const card = (over) => Object.assign({ id: "c1", tool: "git_push", role: "develo
   // 6. A decided card: its state on the glass, both keys dark, the reason shut.
   calls.length = 0;
   const at = new Date(2026, 9, 21, 14, 2).getTime() / 1000;
-  cards = [card({ id: "c6", fp: "fp6", decided: "approve", decided_by: "sam", decided_at: at })];
+  cards = [card({ id: "c6", fp: "fp6", queued: true, decided: "approve", decided_by: "sam", decided_at: at })];
   await advance(2000); await advance(3000);
-  assert.match($("deck-body").textContent, /^APPROVED, waiting for the agent's retryby sam at 14:02/);
+  assert.match($("deck-body").textContent, /^APPROVED, the gateway writes it within secondsby sam at 14:02/);
   assert.strictEqual($("btn-approve").disabled, true, "approve dark on a decided card");
   assert.strictEqual($("btn-decline").disabled, true, "decline dark on a decided card");
   assert.strictEqual($("reason").disabled, true);
   assert.strictEqual($("keys-hold").hidden, false);
-  assert.strictEqual($("keys-hold").textContent, "Approved · waiting for the agent's retry");
-  assert.match($("btn-approve").title, /^Approved by sam at 14:02; waiting for the agent to retry$/);
+  assert.strictEqual($("keys-hold").textContent, "Approved · the gateway writes it");
+  assert.match($("btn-approve").title, /^Approved by sam at 14:02; the gateway makes the write within seconds$/);
   $("btn-approve").fire("click"); await flush();          // even past the disabled key
   $("reason").value = "no"; $("reason").fire("keydown", { key: "Enter" }); await flush();
   assert.strictEqual(decisions().length, 0, "nothing is sent for a decided card");
   assert.match($("flash").textContent, /^Already decided: Approved by sam/);
-  cards = [card({ id: "c6", fp: "fp6", decided: "decline", decided_by: "sam", decided_at: at })];
+  cards = [card({ id: "c6", fp: "fp6", queued: true, decided: "decline", decided_by: "sam", decided_at: at })];
   await advance(2000);
   assert.match($("deck-body").textContent, /^DECLINEDby sam at 14:02/);
+  assert.match($("btn-approve").title, /^Declined by sam at 14:02; the gateway files it; nothing is written$/);
+  cards = [card({ id: "c6", fp: "fp6", queued: false, decided: "approve", decided_by: "sam", decided_at: at })];
+  await advance(2000);
+  assert.match($("deck-body").textContent, /^APPROVED, but not staged: nothing to write/);
+  cards = [card({ id: "c6", fp: "fp6", queued: true, decided: "decline", decided_by: "sam", decided_at: at })];
+  await advance(2000);
   assert.strictEqual($("keys-hold").textContent, "Declined");
   assert.strictEqual($("btn-decline").disabled, true);
   results.push("decided card shows its state, keys dark");
@@ -248,7 +254,7 @@ const card = (over) => Object.assign({ id: "c1", tool: "git_push", role: "develo
   // 8. Every refusal is shown as text.
   const live = async (id) => { cards = [card({ id, fp: id })]; await advance(2000); await advance(3000); };
   const cases = [
-    [409, { error: "decided", decided: "decline", decided_by: "kim", decided_at: at }, /^Already decided: Declined by kim at 14:02; waiting for the agent to retry\.$/],
+    [409, { error: "decided", decided: "decline", decided_by: "kim", decided_at: at }, /^Already decided: Declined by kim at 14:02; the gateway files it; nothing is written\.$/],
     [409, { error: "gone" }, /^Gone: /],
     [409, { error: "changed" }, /^Changed: /],
     [409, { error: "expired" }, /^Expired: /],

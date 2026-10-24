@@ -22,7 +22,13 @@ any of it off:
 - **Approvals.** A tool declared `writes_externally=True` gets an `intent`
   audit record before it runs, then goes through the approval point with
   the card `{"tool": <name>, <its arguments>, "principal": <caller>}`. List
-  the tool in `[approvals] tools` to hold it for a person (`docs/approvals.md`).
+  the tool in `[approvals] tools` to hold it for a person (`docs/approvals.md`):
+  the call is then staged ("Staged for approval (id X); nothing has been
+  sent yet") and, once a person approves, the gateway runs your handler
+  itself on the stored arguments (checked and secret-scanned again) and
+  records its result with the approval. So a held handler's result never
+  reaches the agent, and it must not depend on anything but its arguments
+  and the policy.
 - **Inbound cleaning.** Whatever your handler returns has terminal escapes
   and control characters stripped, known secret formats redacted and its
   size capped. It's then wrapped as untrusted content, so the agent treats

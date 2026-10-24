@@ -142,11 +142,19 @@ class PolicyChecks(DoctorBase):
         self.assertWarns(report, "[web].max_byte is not a setting")
 
     def test_approvals_is_a_known_table(self):
-        self.policy(GOOD_POLICY + '\n[approvals]\ntools = ["git_push"]\nhold_seconds = 45\n'
+        self.policy(GOOD_POLICY + '\n[approvals]\ntools = ["git_push"]\n'
                     "expire_seconds = 1800\npatch_max_bytes = 262_144\n")
         report = doctor.Report()
         doctor.check_policy(report, self.policy_path)
         self.assertEqual(report.messages(doctor.WARN), [])
+        # The retired setting: one warning saying what to do, not "a typo?".
+        self.policy(GOOD_POLICY + '\n[approvals]\ntools = ["git_push"]\nhold_seconds = 45\n')
+        report = doctor.Report()
+        doctor.check_policy(report, self.policy_path)
+        self.assertNoFailures(report)
+        self.assertEqual(report.messages(doctor.WARN),
+                         ["[approvals].hold_seconds is no longer used: a held write is staged at once and the gateway "
+                          "makes it itself once approved"])
         for bad in ("1", '"big"', "99_000_000"):
             self.policy(GOOD_POLICY + f"\n[approvals]\npatch_max_bytes = {bad}\n")
             report = doctor.Report()
@@ -158,11 +166,11 @@ class PolicyChecks(DoctorBase):
         report = doctor.Report()
         doctor.check_policy(report, self.policy_path)
         self.assertFails(report, "[approvals].tools must be a list")
-        self.policy(GOOD_POLICY + '\n[approvals]\ntools = ["git_push", "git_psuh"]\nhold_seconds = -1\n')
+        self.policy(GOOD_POLICY + '\n[approvals]\ntools = ["git_push", "git_psuh"]\nexpire_seconds = -1\n')
         report = doctor.Report()
         doctor.check_policy(report, self.policy_path)
         self.assertWarns(report, "names git_psuh, which is not a tool")
-        self.assertFails(report, "[approvals].hold_seconds = -1")
+        self.assertFails(report, "[approvals].expire_seconds = -1")
         self.policy(GOOD_POLICY + '\n[approvals]\ntools = ["git_push"]\nexpire_seconds = 2_000_000\n')
         report = doctor.Report()
         doctor.check_policy(report, self.policy_path)
@@ -718,7 +726,7 @@ class ApprovalChecks(DoctorBase):
         self.assertTrue(any('tools = ["git_push"' in line for line in self.all_text(report)))
 
     def test_on_lists_the_tools_the_cards_and_the_webhook(self):
-        self.policy(GOOD_POLICY + '\n[approvals]\ntools = ["git_push", "github_create_pr"]\nhold_seconds = 30\n')
+        self.policy(GOOD_POLICY + '\n[approvals]\ntools = ["git_push", "github_create_pr"]\n')
         self.state(grants={"developer": ["git_fetch", "git_push", "github_create_pr"]})  # no npm_fetch: no registry warning
         config.SECRETS_DIR.mkdir()
         hook = config.SECRETS_DIR / "approvals-webhook"
@@ -730,14 +738,14 @@ class ApprovalChecks(DoctorBase):
         self.assertNoFailures(report)
         self.assertEqual(report.messages(doctor.WARN), [])
         oks = report.messages(doctor.OK)
-        self.assertTrue(any(m.startswith("holds on for git_push, github_create_pr: a call waits 30 s") for m in oks))
+        self.assertTrue(any(m.startswith("holds on for git_push, github_create_pr: a held write is staged at once") for m in oks))
         self.assertIn("1 pending approval(s), the oldest 2 min old", oks)
-        self.assertFalse(any("queued" in t for _, _, t, _ in report.items))
+        self.assertFalse(any("of them staged" in t for _, _, t, _ in report.items))
         queued = config.STATE / "approvals" / "queued" / f"{'a' * 16}.json"
         queued.parent.mkdir(parents=True)
         queued.write_text('{"id": "aaaaaaaaaaaaaaaa"}')
         report = self.run_doctor()
-        self.assertTrue(any(t.startswith("1 of them queued: the gateway makes") for _, _, t, _ in report.items))
+        self.assertTrue(any(t.startswith("1 of them staged: the gateway makes") for _, _, t, _ in report.items))
         self.assertIn("approvals-webhook credential present: each new card is posted to it", oks)
 
     def test_expired_pending_and_a_missing_webhook_are_flagged(self):

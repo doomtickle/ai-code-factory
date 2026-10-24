@@ -631,7 +631,7 @@
         binCrate(line(ev));   // too many crates moving: bin it unseen
         return false;
       }
-      case "HELD": toArch(role); return false;    // it waits in the queue (drawn from the gate cards)
+      case "STAGED": case "HELD": toArch(role); return false;    // it waits in the queue (drawn from the gate cards)
       case "OK": case "WRITTEN": return pass(ARCH_X + 4);
       case "NO": case "FAILED": return confiscate(ARCH_X + 4, line(ev));
       case "JOB": {

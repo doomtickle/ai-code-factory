@@ -184,7 +184,7 @@ class SnapshotTests(unittest.TestCase):
     def test_events(self):
         events = self.board.snapshot(self.fx.now)["events"]
         # Oldest first; no "intent" record, nothing from three days ago.
-        self.assertEqual([e["kind"] for e in events], ["JOB", "HELD", "DENY", "ALLOW"])
+        self.assertEqual([e["kind"] for e in events], ["JOB", "STAGED", "DENY", "ALLOW"])
         deny = next(e for e in events if e["kind"] == "DENY")
         self.assertTrue(deny["red"])
         self.assertIn("https://api.github.com/x", deny["text"])
@@ -421,11 +421,13 @@ class BrokerEventTests(unittest.TestCase):
             self.assertEqual(audit.calls[0]["n"], 100)
 
 
-class QueuedEventTests(unittest.TestCase):
-    def test_queue_events_are_printed(self):
-        ev = d.broker_event({"ts": "2026-10-19T06:00:00Z", "event": "approval-queued", "id": "c1", "tool": "git_push",
-                             "repo": "o/r", "branch": "factory/x"})
-        self.assertEqual((ev["kind"], ev["red"], ev["text"]), ("QUEUED", True, "git_push o/r factory/x"))
+class StagedEventTests(unittest.TestCase):
+    def test_staging_events_are_printed(self):
+        # approval-requested is the staging; approval-queued is in older logs.
+        for event in ("approval-requested", "approval-queued"):
+            ev = d.broker_event({"ts": "2026-10-19T06:00:00Z", "event": event, "id": "c1", "tool": "git_push",
+                                 "repo": "o/r", "branch": "factory/x"})
+            self.assertEqual((ev["kind"], ev["red"], ev["text"]), ("STAGED", True, "git_push o/r factory/x"))
         ev = d.broker_event({"event": "approval-write-done", "id": "c1", "tool": "github_create_pr", "repo": "o/r",
                              "result": "\n\nhttps://github.com/o/r/pull/9\nsecond line"})
         self.assertEqual((ev["kind"], ev["red"]), ("WRITTEN", False))
@@ -436,9 +438,10 @@ class QueuedEventTests(unittest.TestCase):
         self.assertEqual((ev["kind"], ev["red"]), ("FAILED", True))
         self.assertTrue(ev["text"].endswith("· denied: branch moved"), ev["text"])
 
-    def test_queued_call_record_prints_nothing(self):
-        # The call itself is audited with decision "queued"; its approval-queued event is the line.
-        self.assertIsNone(d.broker_event({"tool": "git_push", "role": "developer", "decision": "queued"}))
+    def test_staged_call_record_prints_nothing(self):
+        # The call itself is audited with decision "staged"; its approval-requested event is the line.
+        for decision in ("staged", "queued"):
+            self.assertIsNone(d.broker_event({"tool": "git_push", "role": "developer", "decision": decision}))
 
     def test_hostile_reason_and_result_print_as_one_clean_line(self):
         evil = "bad\x1b[2J\r\n‮evil​\x00" + "x" * 5000

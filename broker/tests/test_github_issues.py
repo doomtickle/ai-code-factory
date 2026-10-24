@@ -4,13 +4,14 @@ standalone (gateway holds the token) and proxy (sbx) modes."""
 
 import hashlib
 import json
+import time
 import urllib.error
 import urllib.request
 from unittest import mock
 
 from passdesk import doctor
-from passdesk.core import approvals, config, credentials, protocol
-from passdesk.core.errors import Denied
+from passdesk.core import approvals, config, credentials, holds, notify, protocol
+from passdesk.core.errors import Denied, Staged
 from passdesk.tools import git
 
 from .base import FAKE_GH, POLICY, Base, _FakeHTTPResponse, fake_http_error
@@ -72,12 +73,70 @@ class StandaloneIssueTests(Base):
         self.assertEqual(req.get_header("Authorization"), f"Bearer {TOKEN}")
         self.assertEqual(json.loads(req.data), {"title": "Something broke", "body": "Steps:\n1. run it"})
 
-    def test_a_held_and_approved_issue_says_so_in_its_result(self):
-        approvals.set_hook(lambda card: {"id": "0123456789abcdef", "approver": "daron",
-                                         "decided": "2026-10-22T09:15:00Z", "waited_seconds": 31})
-        out = self.run_tool(ARGS, Fake())
-        self.assertEqual(out, "Opened issue #5 in acme/tracker: https://github.com/acme/tracker/issues/5; held for "
-                              'approval (id 0123456789abcdef), approved by "daron" at 2026-10-22T09:15:00Z after 31 s.')
+    def held(self, policy=ISSUE_POLICY):
+        """Core's hold on github_create_issue, decisions written as the console does."""
+        held_policy = {**policy, "approvals": {"tools": ["github_create_issue"], "expire_seconds": 600}}
+        for p in (mock.patch.object(holds, "load_policy", lambda: held_policy),
+                  mock.patch.object(notify, "send_async", lambda *a: None),
+                  mock.patch.object(notify, "send_result_async", lambda *a: None)):
+            p.start()
+            self.addCleanup(p.stop)
+        approvals.set_hook(holds.hook)
+
+    def approve(self, cid):
+        pending = json.loads((config.STATE / "approvals" / "pending" / f"{cid}.json").read_text())
+        path = config.STATE / "approvals" / "decisions" / f"{cid}.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"id": cid, "nonce": pending["nonce"], "decision": "approve", "approver": "daron",
+                                    "ts": time.time()}))
+
+    def done(self, cid):
+        return json.loads((config.STATE / "approvals" / "done" / f"{cid}.json").read_text())
+
+    def test_a_held_issue_is_staged_and_filed_by_the_gateway_once_on_approval(self):
+        self.held()
+        fake = Fake([labels_page(["bug", "Priority:P2"])])
+        with self.assertRaises(Staged) as cm:
+            self.run_tool({**ARGS, "labels": "BUG, priority:p2"}, fake)
+        self.assertTrue(cm.exception.text.startswith(f"Staged for approval (id {cm.exception.cid}); nothing has "
+                                                     "been sent yet."))
+        self.assertIn("issue on acme/tracker", cm.exception.text)
+        self.assertEqual(fake.posts(), [])
+        self.approve(cm.exception.cid)
+        with mock.patch.object(git.NO_REDIRECT_OPENER, "open", side_effect=fake):
+            holds.sweep_idle()
+            holds.sweep_idle()
+        [post] = fake.posts()
+        self.assertEqual(json.loads(post.data), {"title": "Something broke", "body": "Steps:\n1. run it",
+                                                 "labels": ["bug", "Priority:P2"]})
+        self.assertEqual(post.get_header("Authorization"), f"Bearer {TOKEN}")
+        done = self.done(cm.exception.cid)
+        self.assertEqual((done["write"], done["result"]),
+                         ("done", "Opened issue #5 in acme/tracker: https://github.com/acme/tracker/issues/5"))
+
+    def test_a_staged_issue_whose_job_does_not_match_its_card_is_never_filed(self):
+        self.held()
+        fake = Fake()
+        with self.assertRaises(Staged) as cm:
+            self.run_tool(ARGS, fake)
+        cid = cm.exception.cid
+        path = config.STATE / "approvals" / "queued" / f"{cid}.json"
+        for job in ({"body": "something else"}, {"labels": ["bug"]}, {"labels": "bug"},
+                    {"title": f"leak {FAKE_GH}"}):
+            with self.subTest(job=job):
+                rec = json.loads(path.read_text()) if path.exists() else None
+                if rec is None:
+                    with self.assertRaises(Staged) as cm:
+                        self.run_tool(ARGS, fake)
+                    cid = cm.exception.cid
+                    rec = json.loads(path.read_text())
+                path.write_text(json.dumps({**rec, "job": {**rec["job"], **job}}))
+                self.approve(cid)
+                with mock.patch.object(git.NO_REDIRECT_OPENER, "open", side_effect=fake):
+                    holds.sweep_idle()
+                self.assertEqual(self.done(cid)["write"], "failed")
+                (config.STATE / "approvals" / "done" / f"{cid}.json").unlink()
+        self.assertEqual(fake.posts(), [])
 
     def test_only_repos_on_the_issue_allowlist(self):
         fake = Fake()

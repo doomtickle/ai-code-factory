@@ -175,19 +175,21 @@ def register_plugin_tools(module_name: str, namespace: str, tools: dict[str, Plu
         PLUGIN_TOOLS[name] = module_name
         if spec.writes_externally:
             WRITES_EXTERNALLY.add(name)
+            approvals.register_deferred(name, entries[name][0].complete)
+
+
+# Card fields the gateway sets, never a plugin tool's argument.
+_CARD_OWN_FIELDS = {"tool", "principal", "id", "nonce", "created", "expires"}
 
 
 def guard(name: str, spec: PluginTool) -> Handler:
     """The handler registered for a plugin tool: the gateway's own checks
-    around the plugin's handler, which a plugin cannot skip."""
+    around the plugin's handler, which a plugin cannot skip. A tool declared
+    writes_externally passes the approval point its arguments as the job, so
+    a held call is staged and the gateway runs the handler itself once it
+    is approved (complete(), registered by register_plugin_tools)."""
 
-    def run(args: dict, policy: dict) -> str:
-        for key, val in args.items():
-            if isinstance(val, str):
-                filters.block_outbound_secrets(f"argument {key!r}", val)
-        if spec.writes_externally:
-            # The gateway's own fields last, so no argument can stand in for them.
-            approvals.require({**args, "tool": name})
+    def call(args: dict, policy: dict) -> str:
         try:
             out = spec.handler(dict(args), policy)
         except Denied as e:
@@ -198,4 +200,33 @@ def guard(name: str, spec: PluginTool) -> Handler:
             raise TypeError(f"plugin tool {name} returned {type(out).__name__}, not text")
         return filters.untrusted(f"plugin tool {name}", filters.sanitize(out))
 
+    def scan(args: dict) -> None:
+        for key, val in args.items():
+            if isinstance(val, str):
+                filters.block_outbound_secrets(f"argument {key!r}", val)
+
+    def run(args: dict, policy: dict) -> str:
+        scan(args)
+        if spec.writes_externally:
+            # The gateway's own fields last, so no argument can stand in for them.
+            approvals.require({**args, "tool": name}, job={"args": dict(args)})
+        return call(args, policy)
+
+    def complete(job: dict, card: dict, policy: dict) -> str:
+        """Run a staged call the person approved, from the stored arguments
+        only: they must still be what the tool declares, pass the secret
+        scan again and be exactly what the card shows."""
+        args = job.get("args")
+        if not isinstance(args, dict) or not set(spec.required) <= set(args) \
+                or not set(args) <= set(spec.properties) \
+                or any(not isinstance(v, str if spec.properties[k].get("type") == "string" else bool)
+                       for k, v in args.items()):
+            raise Denied(f"the staged {name} call's arguments are not ones the tool takes; nothing was run")
+        scan(args)
+        shown = {k: v for k, v in card.items() if k not in _CARD_OWN_FIELDS}
+        if card.get("tool") != name or shown != approvals.redacted(args):
+            raise Denied(f"the staged {name} call's arguments do not match its approval card; nothing was run")
+        return call(args, policy)
+
+    run.complete = complete  # type: ignore[attr-defined]
     return run

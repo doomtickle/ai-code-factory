@@ -329,7 +329,7 @@ dispatch bridge, the broker and every agent sandbox. What happens to your work:
 | Developer lane clones | Kept | Lost for a recreated developer sandbox: anything not committed to a `factory/*` branch |
 | Branches already brought back (`factory-<lane>/factory/*`) | Kept | Kept |
 | Held writes waiting for approval | Dropped (the agent's call has already returned) | Dropped |
-| Queued writes (approved pushes, PRs, MRs the gateway will make) | Kept | Kept |
+| Staged writes (held writes the gateway makes once approved) | Kept | Kept |
 | The Coordinator's conversation | Kept | Lost if the Coordinator is recreated |
 | Your Claude login and settings | Kept | Kept |
 

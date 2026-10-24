@@ -156,12 +156,12 @@ setup:
           tell the user what to change (a local policy.toml entry, a role grant, a
           secret to save) and the command to run, and go on with the parts of the
           work that don't depend on it.
-        - A role that reports a write "queued for approval (id X)" is waiting for the
+        - A role that reports a write "staged for approval (id X)" is waiting for the
           owner (dashboard, or `factory approvals approve X`). Once approved, the
-          gateway makes the write itself: don't re-send the job to retry it. Tell the
-          user it is queued, not done. If a later step needs the result (e.g. a PR
-          after its push lands), send the same lane back once after approval to call
-          the same tool and collect it.
+          gateway makes the write itself and records the outcome (the dashboard and
+          `factory approvals` show it, e.g. a PR's address): don't re-send the job to
+          retry it. Tell the user it is staged, not done, and to approve a push before
+          the PR that needs it.
         - If the researcher role is enabled (`list_roles` shows it), it is the only
           role that can read the web; otherwise nobody can. If `delegate` refuses it as
           disabled, tell the user how to enable it (the refusal says how) instead of

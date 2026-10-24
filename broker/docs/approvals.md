@@ -11,12 +11,11 @@ Passdesk Pro plugin and moved into core, licence removed, on 2026-10-21
 - **An approval point**, `core/approvals.py`: `require(card)` is called by a
   tool right before its external write, with a card describing what is about
   to happen. Core's default returns immediately. A deployment may install a
-  hook with `set_hook(fn)`; the hook returns to allow or raises `Denied`.
-  When it allows a write that was held, it may return the outcome,
-  `{"id", "approver", "decided", "waited_seconds"}` (core's hold does);
-  `require` passes that back to the tool, and returns `None` for anything
-  else (no hook, a write that wasn't held, a plugin hook that returns
-  `None`), so a plugin written against the old contract still works.
+  hook with `set_hook(fn)`; the hook returns to allow or raises `Denied`
+  (core's hold raises `Staged` instead, see below). Whatever a hook
+  returns is ignored; `require` returns `None`. Every tool that writes also
+  passes `require` a *job*, the exact checked arguments of its write, which
+  only core's hold reads (`approvals.job()` while the hook runs).
 - **The caller's identity** for the card: `PRINCIPAL`, a context variable
   the protocol layer sets for each call.
 - **Plugin loading**, `core/plugins.py`: `PASSDESK_PLUGINS` names modules
@@ -26,9 +25,9 @@ Passdesk Pro plugin and moved into core, licence removed, on 2026-10-21
   named, nothing loads and the gateway behaves exactly as before.
 - **The call sites.** `git_push` builds its card after every check has
   passed (bundle verified, every commit secret-scanned, limits applied) and
-  calls `require` *outside* the tool lock, so a pending approval never
-  blocks another role's git call; it then re-takes the lock, confirms the
-  ref it validated is unchanged, and pushes. `github_create_pr` and
+  calls `require` *outside* the tool lock, so staging never blocks another
+  role's git call; unheld, it then re-takes the lock, confirms the ref it
+  validated is unchanged, and pushes. `github_create_pr` and
   `gitlab_create_mr` call `require` after the title and body pass the
   secret scan (`gitlab_create_mr` also after confirming the gateway holds a
   `gitlab` token), and
@@ -100,136 +99,98 @@ content that actually gets pushed is still pinned by `head` and
   with the settings. Absent or empty, nothing is installed: no hook, no
   patch files, no holds, exactly the gateway as it was without the plugin.
   A plugin that installs its own hook replaces this one.
-- **The hold.** The hook computes a card id (a hash of the card's stable
-  fields, including the bundle's digest), looks for a decision with that id,
-  and otherwise records the card as pending, notifies, and waits.
-- **A short hold, then the queue** (doomtickle/passdesk-ops#91). An MCP
-  tool call cannot stay open for as long as a person may take: some clients
-  cut a call at 60 seconds. So the hook waits up to `hold_seconds` (default
-  45) for a decision. Approved: the write proceeds in the same call, exactly
-  as before. Declined: the agent gets `DENIED` with the approver's reason.
-  Still undecided:
-  - **`git_push`, `github_create_pr` and `gitlab_create_mr` are queued.**
-    Each passes `require` a *job* next to its card: the arguments of its
-    write, every one already checked (for a push: repo, branch, base, the
-    verified head and the bundle's digest; for a PR or MR: repo, head, base,
-    title as sent, the whole body, draft), and registers a completer
-    (`approvals.register_deferred`). The hook stores the job as
-    `approvals/queued/<id>.json` (`id`, the card's `nonce`, `tool`,
-    `queued`, `job`; no credential) and raises `Queued`, which the protocol
-    layer returns as an ordinary result, not an error (the call's audit
-    record says `decision: queued` and `approval: <id>`):
+- **Staged, never waiting** (doomtickle/passdesk-ops#170). The hook
+  computes a card id (a hash of the card's stable fields, including the
+  bundle's digest) and stages the write at once: in one locked step it
+  stores the tool's job as `approvals/queued/<id>.json` (`id`, the card's
+  `nonce`, `tool`, `queued`, `job`; no credential), then the card as
+  `approvals/pending/<id>.json`, so a card is never visible without its
+  job. It notifies and raises `Staged`, which the protocol layer returns as
+  an ordinary result, not an error (the call's audit record says
+  `decision: staged` and `approval: <id>`). Nothing is sent from the call.
+  This is the only result a held call gets:
 
-    > Queued for approval (id 0123456789abcdef); nothing has been sent yet.
-    > The gateway has verified this push of factory/x to acme/widgets and
-    > will make it itself once a person approves it (e.g. `factory approvals
-    > approve 0123456789abcdef`); if it is declined, or not decided by
-    > 2026-10-23T09:15:00Z (in 23 h 59 min), nothing is written. Report it
-    > as queued, not done. Calling this exact tool again with the same
-    > arguments reports its status, and its result once the gateway has made
-    > it.
+  > Staged for approval (id 0123456789abcdef); nothing has been sent yet.
+  > The gateway has verified this push of factory/x to acme/widgets and
+  > will make it itself once a person approves it (e.g. `factory approvals
+  > approve 0123456789abcdef`); if it is declined, or not decided by
+  > 2026-10-23T09:15:00Z (in 23 h 59 min), nothing is written. Report it
+  > as staged for approval (id 0123456789abcdef), not done. The gateway
+  > records the outcome with the approval (`factory approvals`); calling
+  > this tool again does not speed it up.
 
-    The verified ref stays where `git_push` put it, in the gateway's
-    private mirror (`<REF_NAMESPACE>/<branch>`). On approval the gateway
-    makes the write itself, from the sweeper (every 5 seconds) or from a
-    retry of the same call, whichever comes first: in one locked step it
-    files `done/<id>.json` as `running` and removes the card, decision and
-    job, so the write is claimed exactly once (a retry that finds no card
-    checks for that record under the same lock before making a new card,
-    so it reports a write claimed meanwhile rather than asking again). The
-    completer then checks the job again against the current policy (repo
-    allowlist, branch prefix and
-    protection, secret scan of a title and body) and against the stored
-    card (same `head` and `bundle_sha256`; same title, body and draft; the
-    card's own fields still hash to its id), and only then writes. A push
-    re-takes the tool lock, needs the mirror to still exist and its ref to
-    still point at the card's head, secret-scans that range again (so even
-    a hand-made job can only push what passes the scan) and pushes exactly
-    as `git_push` does: hooks and repo config off, the credential only in
-    one child's `GIT_CONFIG_*` environment. A PR or MR is opened from the
-    stored arguments exactly as the tool opens it, the token read at that
-    moment. Nothing reads the agent's workspace again. Any failed check, a
-    missing credential or the forge's refusal means nothing is written, and
-    the failure is recorded.
-  - **Any other tool** (`github_create_issue`, a plugin's tool) keeps the
-    old behaviour: a denial that names the approval id and asks the agent
-    to retry the same call once a person has decided. A retry with the same
-    arguments has the same id, so a decision made in between is honoured.
-- **A retry of a queued write.** The same call again (same card id) never
-  queues or writes twice. While the card is undecided it gets the same
-  queued result. Approved but not yet made, the retry makes it in that call
-  and gets the result; while the gateway is making it, `Approved (id X);
-  the gateway is making this write now. Call this exact tool again with the
-  same arguments in a minute for its result; until then, report it as
-  queued, not done.` Once made, the retry gets the write's result and the
-  held clause (see below) with `; written by the gateway at T` added, for
-  `expire_seconds` after the write; after that the same call is a new
-  request. Declined, it gets `DENIED ... declined by NAME: REASON (approval
-  X, queued)` for the same window. Failed, it gets the failure once
-  (`the gateway could not make the approved write (id X): ...`); the call
-  after that starts a new approval. Expired, it starts a fresh card, as
-  before.
-- **The done file of a queued write** is the card plus the decision
-  (`decision`, `approver`, `reason`, `decided`) and `queued: true`,
-  `write` (`running`, `done`, `failed` or `skipped` for a decline or
-  expiry), `result` (the write's result or why it failed, filtered like
-  any result, at most 3,000 characters), `finished` (Unix time) and, once
-  approved, `outcome` (the held line's fields). A console reads it to show
-  what became of an approval. A write still `running` when the gateway
-  starts was cut off by a restart: it is filed as `failed` ("it may or may
-  not have reached the forge"), never retried.
-- **A restart while queued** loses nothing: the card, the job and the
+  Until 24 Oct 2026 a call first waited up to `hold_seconds` for a
+  decision (approved in time, the write went out in the call), then
+  queued a push, PR or MR and asked for a retry of anything else. That
+  gave agents three result shapes; `hold_seconds` is now ignored and the
+  doctor says to delete it.
+- **What is staged.** Every tool that writes passes `require` a job and
+  registers a completer (`approvals.register_deferred`): `git_push` (repo,
+  branch, base, the verified head and the bundle's digest; the verified
+  ref stays in the gateway's private mirror at `<REF_NAMESPACE>/<branch>`),
+  `github_create_pr` and `gitlab_create_mr` (repo, head, base, title as
+  sent, the whole body, draft), `github_create_issue` (repo, title, the
+  whole body, the labels as GitHub spells them) and a plugin tool declared
+  `writes_externally` (its arguments, `core/registry.py`). A held tool with
+  no job or no completer is refused with nothing staged.
+- **The gateway makes approved writes.** The sweeper (every 5 seconds)
+  finds each decision: in one locked step it files `done/<id>.json` (as
+  `running` for an approval) and removes the card, decision and job, so a
+  write is claimed exactly once, however often the decision is written or
+  the sweep runs. The completer then checks the job again against the
+  current policy (repo allowlist, branch prefix and protection, secret
+  scan of every text it sends) and against the stored card (same `head`
+  and `bundle_sha256`; same title, body, labels, draft or plugin arguments;
+  the card's own fields still hash to its id), and only then writes. A
+  push re-takes the tool lock, needs the mirror to still exist and its ref
+  to still point at the card's head, secret-scans that range again (so
+  even a hand-made job can only push what passes the scan) and pushes
+  exactly as `git_push` does: hooks and repo config off, the credential
+  only in one child's `GIT_CONFIG_*` environment. A PR, MR or issue is
+  opened from the stored arguments exactly as the tool opens it, the token
+  read at that moment; a plugin tool's handler runs on the stored
+  arguments, its output cleaned as in a call. Nothing reads the agent's
+  workspace again. Any failed check, a missing credential or the forge's
+  refusal means nothing is written, and the failure is recorded.
+- **The same call again** (same card id) never stages or writes twice.
+  While the card is pending (decided or not) it gets the same staged
+  result and no second notification. While the gateway is making the
+  write, once it is made, or once it is declined, it is refused (`DENIED
+  ... this exact write was approved (approval X) and the gateway is making
+  it now`, `... already made by the gateway at T (approval X): <first
+  line>; nothing new was staged.`, `declined by NAME: REASON (approval X);
+  nothing was written and nothing new was staged.`), for `expire_seconds`
+  after it finished; after that, or after a failure or an expiry, it
+  stages a fresh card for a person to decide again. A pending card with no
+  job (left by a gateway that held calls open) is discarded
+  (`approval-discarded`) and staged afresh.
+- **The done file** is the card plus the decision (`decision`,
+  `approver`, `reason`, `decided`) and `queued: true`, `write` (`running`,
+  `done`, `failed` or `skipped` for a decline or expiry), `result` (the
+  write's result or why it failed, filtered like any result, at most 3,000
+  characters), `finished` (Unix time) and, once approved, `outcome` (`id`,
+  `approver`, `decided` in UTC, and `waited_seconds` from the card's
+  creation to the decision; a time that isn't a usable Unix time counts as
+  now). A console reads it to show what became of an approval. A write
+  still `running` when the gateway starts was cut off by a restart: it is
+  filed as `failed` ("it may or may not have reached the forge"), never
+  retried.
+- **A restart while staged** loses nothing: the card, the job and the
   mirror's ref are files. At start-up the sweeper makes any write approved
-  meanwhile and files any card that expired meanwhile.
-- **The result says it was held** (doomtickle/passdesk-ops#141). An
-  approval that lands within the hold looks to the agent like a slow call,
-  so every write that went through a hold (approved in the call, or picked
-  up by a retry) says so in the first line of its result, after the write
-  itself (doomtickle/passdesk-ops#153; before that it was a last line that
-  a developer read as "pushed" and "held" at once): `Pushed 2 commit(s) to
-  o/r:factory/x (abc...); held for approval (id X), approved by "NAME" at
-  2026-10-22T09:15:00Z after N s.` The tool's first line loses its final
-  full stop to the clause (a first line ending in a colon, as `Push
-  rejected by GitHub:` does, keeps it after the clause), and the rest of the
-  result follows unchanged.
-  An agent therefore sees one of three shapes, and each says where the write
-  stands: `Queued for approval (id X); nothing has been sent yet...` means
-  nothing was sent; `Approved (id X); the gateway is making this write
-  now...` means it is in progress; a first line with `; held for approval
-  (id X), approved by "NAME"...` means the write was made (or the forge
-  refused it, if the line says so) after the approval. `decided`
-  is the decision's time in UTC and `waited_seconds` runs from the card's
-  creation (the first held call) to the decision, so a retry reports how
-  long the write really waited for a person; a decision or creation time
-  that isn't a usable Unix time (not a number, not finite, out of range)
-  counts as now. The approver's name comes from the console's file, so it
-  is filtered like any result (secrets redacted, control characters
-  removed), also loses Unicode format characters (bidi overrides, zero-width
-  characters) and C1 controls, is quoted (a `"` in it becomes `'`) and is
-  kept to one line of at most 100 characters. The line is added to every
-  result the tool returns after approval, including a push the forge
-  rejected or an HTTP error status from the API. A failure the tool
-  doesn't turn into a result (no connection, a timeout) comes back as
-  `Broker error: ...` without the line; then only the call's audit record
-  says it was held, with `approval: <id>`. A write that wasn't held is
-  unchanged, byte for byte.
-  Pending cards expire after `expire_seconds` (default 86,400, a day;
-  60 s to 604,800, a week); an expired card is a denial, and a later retry
-  makes a fresh one.
+  meanwhile and files any card that expired meanwhile. Pending cards
+  expire after `expire_seconds` (default 86,400, a day; 60 s to 604,800, a
+  week); nothing is written for an expired card.
 - **Expired cards leave `pending/` on their own.** An expired card is
   audited as `approval-expired` and filed under `approvals/done/` as
-  `expired` (with any decision that came too late), whether a retry of the
-  same call finds it or a sweep over `pending/` does. The sweep runs inside
+  `expired` (with any decision that came too late), whether the same call
+  again finds it or a sweep over `pending/` does. The sweep runs inside
   every held call, once when the server starts (before it serves a call)
   and every 5 seconds on a daemon thread (which first makes the approved
-  queued writes, so one approved just before its expiry is made), so a card
-  left behind by an
-  agent that never retried, or one that expired while the gateway was down,
-  is filed without waiting for another held write. The idle sweep also
-  prunes the patches that leaves unnamed. It runs only while core's hold is
-  the installed hook (holds on, no plugin hook over it), and a failing
-  sweep is logged by error type and retried on the next tick; it never
-  stops the server or fails a held call.
+  writes, so one approved just before its expiry is made). The idle sweep
+  also prunes the patches that leaves unnamed. It runs only while core's
+  hold is the installed hook (holds on, no plugin hook over it), and a
+  failing sweep is logged by error type and retried on the next tick; it
+  never stops the server or fails a held call.
 - **Decisions are files.** The state directory is shared between the gateway
   and its deployment and with nothing else, so it is the channel:
   `approvals/pending/<id>.json` is the card, `approvals/decisions/<id>.json`
@@ -240,37 +201,36 @@ content that actually gets pushed is still pinned by `head` and
   directory is the approver, which is the person running the machine. A
   networked approver API is the standalone deployment's job, later.
 - **Notification.** One outbound POST per card to a webhook URL, and one
-  more when the gateway has made (or failed to make) a queued write (`the
+  more when the gateway has made (or failed to make) a staged write (`the
   gateway made the approved push of B to R: <first line of the result>`, or
   `... FAILED: ...`), with a
   plain-text summary under the keys Slack, Discord and ntfy each read, sent
-  on its own thread so a slow webhook never shortens the hold. The URL is
+  on its own thread so a slow webhook never delays the call. The URL is
   a credential (a Slack webhook URL grants posting), so it is the
   `approvals-webhook` credential, delivered like the others nothing can
   proxy-inject (`core/credentials.py`: a file in the gateway's own sandbox,
   a Docker secret, or `PASSDESK_SECRET_APPROVALS_WEBHOOK_FILE`), read fresh
   on every use. A failed notification is logged and never blocks or leaks
   the card.
-- **The record.** Every step is an audit event: `approval-requested`,
-  `approval-queued`, `approval-granted` (with the approver),
+- **The record.** Every step is an audit event: `approval-requested` (the
+  write was staged), `approval-granted` (with the approver),
   `approval-declined`, `approval-expired` (with any decision that came too
-  late; the last three with `queued: true` for a queued card), and for a
-  queued write `approval-write-done` (with its result) or
-  `approval-write-failed` (with the reason). The tool
-  call's own record follows as today, and carries `approval: <id>` when
-  the call went through a hold, also if the write then failed (its
-  `decision` is `deny` or `error`), so a review of the log can tell a held
-  write from an unheld one.
+  late; these three with `queued: true`), `approval-discarded`, and for an
+  approved write `approval-write-done` (with its result) or
+  `approval-write-failed` (with the reason). Logs from before 24 Oct 2026
+  also have `approval-queued`. The tool call's own record follows as
+  today, with `decision: staged` and `approval: <id>`, so a review of the
+  log can tell a held write from an unheld one.
 - **No licence.** There is nothing to deliver, verify or renew.
 
 ## What the deployment ships (`ai-code-factory`)
 
 - `factory approvals`: list pending cards, show one, approve or decline it
   (with a name and a reason), and a watch mode. Plain files in the state
-  directory; standard-library Python 3.9 for the macOS host. With the
-  queue it should also mark a pending card that has a `queued/` job ("the
-  gateway writes it on approval") and show what became of a queued write
-  from its `done/` file (`write`, `result`).
+  directory; standard-library Python 3.9 for the macOS host. It marks a
+  pending card that has its `queued/` job as staged ("the gateway writes it
+  on approval") and shows what became of a staged write from its `done/`
+  file (`write`, `result`).
 - Credential delivery for the webhook URL, from the host keychain into the
   gateway sandbox, the same way as Jira and Gemini. Inert when absent.
 - `[approvals].tools` in its local policy overlay, baked into the image.

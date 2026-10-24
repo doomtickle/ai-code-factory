@@ -278,12 +278,12 @@
     gateKey = key;
     renderWrites(writes);
     const lcd = $("gate-lcd");
-    // A decided card stays held until the agent retries; it waits for no one here.
+    // A decided card stays listed until the gateway acts on it; it waits for no one here.
     const decided = cards.filter(x => x.decided === "approve" || x.decided === "decline").length;
     $("gate-led").className = `led ${cards.length > decided ? "a blink" : cards.length ? "a" : ""}`;
     const queued = cards.filter(x => x.queued).length;
     const failed = writes.filter(w => w.state === "failed").length;
-    $("gate-state").textContent = (cards.length ? `Held · ${cards.length}${queued ? ` · ${queued} queued` : ""}${decided ? ` · ${decided} decided` : ""}` : "Clear")
+    $("gate-state").textContent = (cards.length ? `Held · ${cards.length}${queued ? ` · ${queued} staged` : ""}${decided ? ` · ${decided} decided` : ""}` : "Clear")
       + (failed ? ` · ✕ ${failed} write${failed > 1 ? "s" : ""} failed` : "");
     gateCd = null;
     if (!cards.length) {
@@ -308,7 +308,7 @@
     if (cuFrame) {
       // The control unit under this display shows every card in full and has the
       // keys: here, one line of what is waiting.
-      const tail = ` · ${c.tool} · ${role}${c.queued ? " · queued" : ""}${cards.length > 1 ? ` +${cards.length - 1}` : ""}`;
+      const tail = ` · ${c.tool} · ${role}${c.queued ? " · staged" : ""}${cards.length > 1 ? ` +${cards.length - 1}` : ""}`;
       const one = gateCd ? countdown(`${cards.length} held · next `, tail) : el("div", null, `${cards.length} held${tail}`);
       one.className = "one";
       one.title = `${cards.length} held${tail}`;
@@ -327,7 +327,7 @@
       ...(lanes.length ? [el("div", null, `from ${role} (lane${lanes.length > 1 ? "s" : ""}: ${lanes.join(", ")})`)] : []),
       el("div", null, `→ ${c.repo}`),
       el("div", null, c.base ? `${c.branch} → ${c.base}` : c.branch),
-      ...(c.queued ? [el("div", null, c.decided === "approve" ? "QUEUED · the gateway is writing it" : "QUEUED · the gateway writes it once approved")] : []),
+      ...(c.queued ? [el("div", null, c.decided === "approve" ? "STAGED · the gateway is writing it" : "STAGED · the gateway writes it once approved")] : []),
       line,
       ...(cards.length > 1 ? [el("div", null, `+ ${cards.length - 1} more held`)] : []));
     tickGate();

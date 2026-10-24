@@ -293,51 +293,47 @@ With holds off, the gate always reads NO WRITES HELD and the agents' writes go
 through under the broker's policy alone.
 
 The gate's display gives one line: how many writes are held (and how many of
-them are queued, below), the first one's tool and role, and the time left
+them are staged, below), the first one's tool and role, and the time left
 before it expires. Under it, the
 **control unit** shows the selected write in full: the tool, the role and its
 lanes, the repo, the branch (or head and base for a PR or merge request), its title, the
 commits and files, and the time left. **◀ ▶** step through several held
 writes.
 
-### Queued writes and their outcomes
+### Staged writes and their outcomes
 
-A write you haven't decided within the broker's hold (45 seconds by default)
-is **queued**: the agent is told it is waiting for approval and moves on, so
-the lane no longer shows HELD for it. The card stays on the gate, marked
-**QUEUED: the agent has moved on; the gateway writes it when approved**. When
-you approve it the gateway makes the write itself, within seconds, and the
-card reads **APPROVED, the gateway writes it within seconds**; there is no
-retry to wait for.
+Every held write is **staged**: the agent is told it is waiting for approval
+and moves on at once, so the lane doesn't show HELD for it. The card stays on
+the gate, marked **STAGED: the agent has moved on; the gateway writes it when
+approved**. When you approve it the gateway makes the write itself, within
+seconds, and the card reads **APPROVED, the gateway writes it within
+seconds** until it does.
 
 Under the card, **deferred writes** lists what the gateway did with recent
 approvals, failures first: **FAILED** (in red, with the reason, kept three
 days), **RUNNING** (the gateway is making it now) and **MADE** (with the
 first line of its result, such as the new PR's address; kept a day). A write
 that failed was not retried: ask the agent to make the request again. The
-event printer shows QUEUED, WRITTEN and FAILED lines for the same steps. This
+event printer shows STAGED, WRITTEN and FAILED lines for the same steps. This
 list only displays; it has no keys. The text in it comes from the gateway's
 state files and is shown as plain text.
 
 ### Decide a held write
 
 - **APPROVE** lets it through. One press decides.
-- **DECLINE** refuses it. Type a reason first: it's required, and the agent
-  reads it.
+- **DECLINE** refuses it. Type a reason first: it's required, and the
+  recorded outcome keeps it.
 
-A decision is final for that card. A push, pull request or merge request
-(the default held set) is picked up by the call if it is still waiting, and
-otherwise written by the gateway within seconds, with no retry to wait for.
-For any other held tool the card stays on the gate until the agent retries
-its call (the retry picks your decision up), and meanwhile it reads
-**APPROVED, waiting for the agent's retry** or **DECLINED**. Either way it
-shows who decided and when, and both keys are dark. Pressing again, here or with
+A decision is final for that card. The gateway makes an approved write (or
+files a declined one) within seconds; until then the card reads **APPROVED,
+the gateway writes it within seconds** or **DECLINED**, shows who decided and
+when, and both keys are dark. Pressing again, here or with
 `factory approvals`, never changes the first decision; if two people decide
 at once, only one decision is written and the other is told who got there
 first.
 
-An expired card reads **EXPIRED** with its keys dark: the agent's retry
-makes a fresh card. If a newer write replaced the card while you were
+An expired card reads **EXPIRED** with its keys dark: nothing is written,
+and the agent's next call of that write stages a fresh card. If a newer write replaced the card while you were
 reading, or it was decided elsewhere, the unit says so in words and decides
 nothing. Check the new card and press again.
 
@@ -385,7 +381,7 @@ The **SERVICE** row has three keys. None runs on the first press.
   FOUND; fix what it lists, then press DIAG again.
 
 - **RESTART** runs `factory restart`. First the unit shows what it will
-  cancel: the running jobs and the held writes it drops. Queued writes are
+  cancel: the running jobs and the held writes it drops. Staged writes are
   files the gateway keeps, so they are listed as kept, not dropped.
 - **UPDATE** runs `factory update --yes`. First the unit shows the incoming
   commits, the sandboxes it will recreate and what each loses (from `factory
@@ -412,9 +408,9 @@ Stands in for: `factory doctor`, `factory restart`, `factory update` and
 
 - **Spend / hour:** today's cost as a bar per hour since midnight, then per
   role, with today's job count.
-- **Event printer:** today's broker calls (allowed, denied, held, queued and
+- **Event printer:** today's broker calls (allowed, denied, staged and
   decided), the gateway's deferred writes (WRITTEN, or FAILED in red) and
-  finished jobs, newest at the bottom. Denied, held, queued and failed calls,
+  finished jobs, newest at the bottom. Denied, staged and failed calls,
   and failed or cancelled jobs, print in red; the header counts the denied ones. Scroll up to read older lines; the printer stays put
   until you scroll back down.
 

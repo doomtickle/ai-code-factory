@@ -12,7 +12,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from . import approvals, auth, config, credentials, holds, plugins, policy
 from .audit import audit, summarize_args
 from .auth import authenticate, principal_tools
-from .errors import Denied, Queued
+from .errors import Denied, Staged
 from .filters import sanitize
 from .registry import TOOLS, WRITES_EXTERNALLY, tool_list
 
@@ -77,10 +77,10 @@ def call_tool(name: str, args: object, principal: str) -> tuple[str, bool]:
         text = fn(args, policy.load_policy())
         record.update(decision="allow", result=sanitize(text, 500))
         return text, False
-    except Queued as e:
-        # A held write the gateway will complete itself (or already has):
+    except Staged as e:
+        # A held write staged for approval, which the gateway makes itself:
         # a result, not a refusal (core/holds.py, docs/approvals.md).
-        record.update(decision=e.state, result=sanitize(e.text, 500))
+        record.update(decision="staged", result=sanitize(e.text, 500))
         return e.text, False
     except Denied as e:
         record.update(decision="deny", reason=str(e))
@@ -89,8 +89,7 @@ def call_tool(name: str, args: object, principal: str) -> tuple[str, bool]:
         record.update(decision="error", reason=sanitize(f"{type(e).__name__}: {e}", 1000))
         return f"Broker error: {sanitize(str(e), 2000)}", True
     finally:
-        # The hold this call passed, so the record says the write was held
-        # even if the write itself then failed (doomtickle/passdesk-ops#141).
+        # The approval this call staged, so the record names it.
         if approvals.HELD_ID.get():
             record["approval"] = approvals.HELD_ID.get()
         record["ms"] = round((time.monotonic() - started) * 1000)

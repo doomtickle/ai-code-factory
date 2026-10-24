@@ -8,8 +8,8 @@ fresh through core.credentials on every use and never logged. The body
 carries the same plain-text summary under the keys Slack (`text`), Discord
 (`content`) and ntfy (`message`) read. A failure is logged and never blocks
 or leaks the card. `send_async` runs the POST on its own thread so a slow
-webhook never eats into the hold (doomtickle/passdesk-ops#14).
-`send_result_async` posts, the same way, the outcome of a queued write the
+webhook never delays the call (doomtickle/passdesk-ops#14).
+`send_result_async` posts, the same way, the outcome of a staged write the
 gateway made (or failed to make) after approval (doomtickle/passdesk-ops#91).
 """
 
@@ -77,7 +77,7 @@ def summary(card: dict, cid: str, expires_in_minutes: int) -> str:
 
 
 def result_summary(cid: str, what: str, ok: bool, result: str) -> str:
-    """One line for the outcome of a queued write: what it was and the first
+    """One line for the outcome of a staged write: what it was and the first
     line of its result (already filtered by the caller), capped like a
     card's summary."""
     first = " ".join((result.strip().splitlines() or [""])[0].split())
@@ -117,7 +117,7 @@ def _post(text: str, cid: str, url: str | None = None) -> bool:
 
 
 def send_async(card: dict, cid: str, expires_in_minutes: int) -> threading.Thread:
-    """`send` on a daemon thread, so the hold never waits on the webhook.
+    """`send` on a daemon thread, so the held call never waits on the webhook.
     Returns the thread (tests join it); the card is the redacted copy the
     hook was given, so nothing new leaves with it."""
     t = threading.Thread(target=send, args=(card, cid, expires_in_minutes), name=f"notify-{cid}", daemon=True)

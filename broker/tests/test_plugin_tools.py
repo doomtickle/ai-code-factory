@@ -5,6 +5,7 @@ approvals), plus the doctor, the principal CLI and the example plugin."""
 import hashlib
 import json
 import sys
+import time
 import types
 import urllib.error
 from pathlib import Path
@@ -12,7 +13,7 @@ from unittest import mock
 
 from passdesk import doctor, principal
 from passdesk import tools  # noqa: F401 - registers every tool
-from passdesk.core import approvals, config, plugins, protocol, registry
+from passdesk.core import approvals, config, holds, notify, plugins, protocol, registry
 from passdesk.core.errors import Denied
 from passdesk.core.registry import PluginTool
 
@@ -44,6 +45,9 @@ class PluginToolBase(Base):
         super().setUp()
         saved = (dict(registry.TOOLS), dict(registry.PLUGIN_TOOLS), set(registry.WRITES_EXTERNALLY),
                  dict(registry._namespaces))
+        deferred = mock.patch.dict(approvals._deferred)
+        deferred.start()
+        self.addCleanup(deferred.stop)
 
         def restore():
             registry.TOOLS.clear()
@@ -159,7 +163,7 @@ class RegistrationTests(PluginToolBase):
         self.assertEqual(registry.TOOLS["acme_echo"][2]["text"]["type"], "string")
 
 
-class CallTests(PluginToolBase):
+class CallBase(PluginToolBase):
     """Plugin tools called through the protocol layer, as an agent would."""
 
     def setUp(self):
@@ -189,6 +193,8 @@ class CallTests(PluginToolBase):
     def last_audit(self):
         return json.loads((config.STATE / "audit.jsonl").read_text().strip().splitlines()[-1])
 
+
+class CallTests(CallBase):
     def test_denied_without_a_grant_and_audited(self):
         self.add()
         self.grant("web_fetch")
@@ -316,6 +322,69 @@ class CallTests(PluginToolBase):
         text, err = self.call({"text": "ship it"})
         self.assertTrue(err)
         self.assertIn("declined by a person", text)
+        self.assertEqual(self.calls, [])
+
+
+class HeldPluginToolTests(CallBase):
+    """A plugin tool declared writes_externally and held by core's hold is
+    staged, and the gateway runs its handler once approved."""
+
+    def setUp(self):
+        super().setUp()
+        policy = {"approvals": {"tools": ["acme_echo"], "expire_seconds": 600}}
+        for patch in (mock.patch.object(holds, "load_policy", lambda: policy),
+                      mock.patch.object(notify, "send_async", lambda *a: None),
+                      mock.patch.object(notify, "send_result_async", lambda *a: None)):
+            patch.start()
+            self.addCleanup(patch.stop)
+        approvals.set_hook(holds.hook)
+        self.add(writes_externally=True)
+        self.grant("acme_echo")
+
+    def path(self, kind, cid):
+        return config.STATE / "approvals" / kind / f"{cid}.json"
+
+    def staged(self, args):
+        text, err = self.call(args)
+        self.assertFalse(err, text)
+        self.assertTrue(text.startswith("Staged for approval (id "), text)
+        self.assertIn("acme_echo call", text)
+        self.assertEqual(self.calls, [])
+        return text.split("(id ", 1)[1].split(")", 1)[0]
+
+    def approve(self, cid):
+        nonce = json.loads(self.path("pending", cid).read_text())["nonce"]
+        self.path("decisions", cid).parent.mkdir(parents=True, exist_ok=True)
+        self.path("decisions", cid).write_text(json.dumps({"id": cid, "nonce": nonce, "decision": "approve",
+                                                           "approver": "daron", "ts": time.time()}))
+
+    def test_a_held_call_is_staged_and_run_once_by_the_gateway_on_approval(self):
+        cid = self.staged({"text": "ship it", "flag": True})
+        self.assertEqual(json.loads(self.path("queued", cid).read_text())["job"],
+                         {"args": {"text": "ship it", "flag": True}})
+        self.approve(cid)
+        holds.sweep_idle()
+        holds.sweep_idle()
+        self.assertEqual(self.calls, [{"text": "ship it", "flag": True}])
+        done = json.loads(self.path("done", cid).read_text())
+        self.assertEqual(done["write"], "done")
+        self.assertIn("echo: ship it", done["result"])
+        self.assertIn("UNTRUSTED CONTENT", done["result"])  # cleaned and wrapped as in the call
+
+    def test_staged_arguments_that_do_not_match_the_card_or_the_tool_never_run(self):
+        for job in ({"args": {"text": "something else"}}, {"args": {"text": "x", "other": "y"}},
+                    {"args": {"flag": True}}, {"args": {"text": 3}}, {"args": "x"},
+                    {"args": {"text": f"leak {FAKE_GH}"}}):
+            with self.subTest(job=job):
+                cid = self.staged({"text": "x"})
+                rec = json.loads(self.path("queued", cid).read_text())
+                self.path("queued", cid).write_text(json.dumps({**rec, "job": job}))
+                self.approve(cid)
+                holds.sweep_idle()
+                done = json.loads(self.path("done", cid).read_text())
+                self.assertEqual(done["write"], "failed", done)
+                self.assertIn("secret" if "leak" in str(job) else "nothing was run", done["result"])
+                self.path("done", cid).unlink()
         self.assertEqual(self.calls, [])
 
 

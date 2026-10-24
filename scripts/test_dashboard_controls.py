@@ -489,7 +489,7 @@ class DecideTests(unittest.TestCase):
         self.assertEqual(self.decide(id="nope", fp=fp, verdict="approve")[1], {"error": "gone"})
         self.assertEqual(self.decide(id="pr", fp=fp, verdict="approve")[1], {"error": "gone"})  # no prefix match
         self.assertEqual(self.decide(id="pr1 ", fp=fp, verdict="approve")[1], {"error": "gone"})
-        # The card expired and the agent's retry made a new one, same id, new nonce.
+        # The card expired and the agent's next call staged a new one, same id, new nonce.
         write_card(e.fx.state, "pr1", e.fx.now, nonce="fresh")
         code, out, _ = self.decide(id="pr1", fp=fp, verdict="approve")
         self.assertEqual((code, out), (409, {"error": "changed"}))

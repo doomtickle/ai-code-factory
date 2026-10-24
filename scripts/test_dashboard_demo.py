@@ -159,7 +159,7 @@ class SnapshotTests(unittest.TestCase):
         self.assertEqual((card["tool"], card["repo"], card["branch"], card["role"]),
                          ("git_push", "example/app", "factory/greet-empty-name", "developer"))
         kinds = {e["kind"] for e in self.snap["events"]}
-        self.assertTrue({"DENY", "ALLOW", "OK", "HELD", "JOB"} <= kinds, kinds)
+        self.assertTrue({"DENY", "ALLOW", "OK", "STAGED", "JOB"} <= kinds, kinds)
         branches = [e["text"] for lane in self.snap["lanes"] for e in lane["tail"] if e["kind"] == "branch"]
         self.assertTrue(branches and all(b.startswith("factory/") for b in branches), branches)
 

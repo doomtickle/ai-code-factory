@@ -212,14 +212,17 @@ def _check_policy_shape(report: Report, pol: dict) -> None:
                     report.warn(f"[approvals].tools names {t}, which is not a tool; a typo?",
                                 f"tools that can be held: {', '.join(holds.SUGGESTED_TOOLS)}, github_create_issue, "
                                 "and a plugin tool declared writes_externally")
-        for key in ("hold_seconds", "expire_seconds"):
-            value = appr.get(key)
-            if value is not None and (isinstance(value, bool) or not isinstance(value, int) or value < 0):
-                report.fail(f"[approvals].{key} = {value!r} is not a whole number of seconds")
-            elif key == "expire_seconds" and value is not None \
-                    and not holds.EXPIRE_MIN <= value <= holds.EXPIRE_MAX:
-                report.warn(f"[approvals].expire_seconds = {value} is outside {holds.EXPIRE_MIN} to "
-                            f"{holds.EXPIRE_MAX} (a week)", f"the gateway uses {holds.settings(pol)[1]} instead")
+    if isinstance(appr, dict):
+        value = appr.get("expire_seconds")
+        if value is not None and (isinstance(value, bool) or not isinstance(value, int) or value < 0):
+            report.fail(f"[approvals].expire_seconds = {value!r} is not a whole number of seconds")
+        elif value is not None and not holds.EXPIRE_MIN <= value <= holds.EXPIRE_MAX:
+            report.warn(f"[approvals].expire_seconds = {value} is outside {holds.EXPIRE_MIN} to "
+                        f"{holds.EXPIRE_MAX} (a week)", f"the gateway uses {holds.settings(pol)[0]} instead")
+        if "hold_seconds" in appr:
+            report.warn("[approvals].hold_seconds is no longer used: a held write is staged at once and the "
+                        "gateway makes it itself once approved", "delete the line from policy.toml; the gateway "
+                        "ignores it")
     if isinstance(appr, dict) and "patch_max_bytes" in appr:
         value = appr["patch_max_bytes"]
         lo, hi = approvals.PATCH_MAX_BYTES_MIN, approvals.PATCH_MAX_BYTES_MAX
@@ -949,13 +952,14 @@ def check_approvals(report: Report, pol: dict | None, granted: set[str]) -> None
     a person will hear about it. Reads the state directory and the webhook
     credential; changes nothing."""
     report.section("Approvals")
-    hold, expire, tools = holds.settings(pol or {})
+    expire, tools = holds.settings(pol or {})
     if not tools:
         report.info("holds are off: [approvals].tools is empty or absent, so every granted write goes straight out",
                     f"to hold writes for a person, set [approvals] tools = {json.dumps(holds.SUGGESTED_TOOLS)} "
                     "and rebuild the image")
     else:
-        report.ok(f"holds on for {', '.join(tools)}: a call waits {hold} s, a card can be decided for {expire} s")
+        report.ok(f"holds on for {', '.join(tools)}: a held write is staged at once and can be decided for "
+                  f"{expire} s")
         unused = sorted(t for t in tools if t not in granted)
         if unused and granted:
             report.info(f"{', '.join(unused)} held but granted to no principal")
@@ -973,15 +977,16 @@ def check_approvals(report: Report, pol: dict | None, granted: set[str]) -> None
         oldest = f", the oldest {int(max(ages) // 60)} min old" if ages else ""
         text = f"{len(pending)} pending approval(s){oldest}"
         if stale:
-            report.warn(text + f"; {stale} already expired and will be refused on retry",
-                        "the agent must retry the call to make a fresh card; an un-retried card is "
-                        "filed as expired by the running gateway's sweep within a minute (or at its next start)")
+            report.warn(text + f"; {stale} already expired, so nothing will be written for them",
+                        "the running gateway's sweep files an expired card within a minute (or at its next "
+                        "start); the agent's next call of that write stages a fresh card")
         else:
             report.ok(text) if tools else report.warn(text + " although holds are off",
                                                        "left from an earlier policy; harmless, decide or delete them")
-        queued = len(_card_files("queued"))
-        if queued:
-            report.info(f"{queued} of them queued: the gateway makes each of those writes itself once it is approved")
+        staged = len(_card_files("queued"))
+        if staged:
+            report.info(f"{staged} of them staged: the gateway makes each of those writes itself once it is "
+                        "approved")
     elif tools:
         report.ok("no pending approvals")
     if tools and not credentials.secrets_dir().is_dir():

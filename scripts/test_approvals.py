@@ -41,6 +41,11 @@ class ConsoleTests(unittest.TestCase):
         self.tmp.cleanup()
 
     def put(self, c):
+        """A card as the gateway stages it: its job first, then the card."""
+        queued = self.state / "approvals" / "queued"
+        queued.mkdir(parents=True, exist_ok=True)
+        (queued / "{}.json".format(c["id"])).write_text(json.dumps({"id": c["id"], "nonce": c.get("nonce"),
+                                                                    "tool": c.get("tool"), "job": {}}))
         (self.state / "approvals" / "pending" / "{}.json".format(c["id"])).write_text(json.dumps(c))
 
     def run_cli(self, *argv):
@@ -112,8 +117,9 @@ class ConsoleTests(unittest.TestCase):
             code, out, err = self.run_cli(second, cid, "--as", "bob", *args)
             self.assertEqual(code, 1)
             self.assertEqual(out, "")
-            self.assertRegex(err, r"already {} by alice at \d{{4}}-\d\d-\d\d \d\d:\d\d; waiting for the agent to retry".format(
-                "approved" if first == "approve" else "declined"))
+            self.assertRegex(err, r"already {} by alice at \d{{4}}-\d\d-\d\d \d\d:\d\d; {}".format(
+                "approved" if first == "approve" else "declined",
+                "the gateway makes the write within seconds" if first == "approve" else "the gateway files it"))
             rec = json.loads((self.state / "approvals" / "decisions" / "{}.json".format(cid)).read_text())
             self.assertEqual((rec["decision"], rec["approver"]), (first, "alice"))
 
@@ -136,9 +142,13 @@ class ConsoleTests(unittest.TestCase):
         self.assertEqual(code, 0)
         lines = out.splitlines()
         a = lines.index(next(l for l in lines if l.startswith("aaaa")))
-        self.assertFalse(lines[a + 1].startswith("    ["), "an undecided card has no note")
-        self.assertRegex(out, r"bbbb000000000000 .*\n    \[approved by alice at .*; waiting for the agent to retry\]")
-        self.assertRegex(out, r"cccc000000000000 .*\n    \[expired; the agent's retry will make a fresh card\]")
+        self.assertEqual(lines[a + 1], "    [staged: the agent has moved on; the gateway makes the write when it is "
+                                       "approved]")
+        self.assertRegex(out, r"bbbb000000000000 .*\n    \[approved by alice at .*; the gateway makes the write within "
+                              r"seconds\]")
+        self.assertRegex(out, r"cccc000000000000 .*\n    \[expired; nothing is written \(the agent's next call of it "
+                              r"stages a fresh card\)\]")
+        self.assertNotIn("retry", out)
         code, out, _ = self.run_cli("show", "bbbb")
         self.assertIn("decided        approve", out)
         self.assertIn("decided_by     alice", out)
@@ -150,7 +160,7 @@ class ConsoleTests(unittest.TestCase):
     def test_summary_none_pending(self):
         code, out, _ = self.run_cli("summary")
         self.assertEqual(code, 0)
-        self.assertEqual(out, "0 -1 0 0\n")
+        self.assertEqual(out, "0 -1 0 0 0 0 0\n")
 
     def test_summary_several_with_oldest_age(self):
         now = time.time()
@@ -158,7 +168,7 @@ class ConsoleTests(unittest.TestCase):
         self.put(card("bbbb000000000000", created=now - 120, expires=now + 600))  # 2 min old
         code, out, _ = self.run_cli("summary")
         self.assertEqual(code, 0)
-        self.assertEqual(out, "2 15 0 0\n")
+        self.assertEqual(out, "2 15 0 0 0 0 0\n")
 
     def test_summary_expired_unhandled_vs_expired_but_decided(self):
         now = time.time()
@@ -170,11 +180,11 @@ class ConsoleTests(unittest.TestCase):
             json.dumps({"id": "bbbb000000000000", "nonce": "n0nce", "decision": "approve"}))
         code, out, _ = self.run_cli("summary")
         self.assertEqual(code, 0)
-        # bbbb is decided: waiting for the agent's retry, not for a person.
-        self.assertEqual(out, "1 30 1 1\n")
+        # bbbb is decided: waiting for the gateway, not for a person.
+        self.assertEqual(out, "1 30 1 1 0 0 0\n")
 
     def test_summary_stale_decision_nonce_still_counts_as_unhandled(self):
-        # A retry after expiry mints a fresh nonce; a decision for the old
+        # Staging again after expiry mints a fresh nonce; a decision for the old
         # nonce belongs to a card that no longer exists in this form.
         now = time.time()
         self.put(card("aaaa000000000000", created=now - 1800, expires=now - 120, nonce="new-nonce"))
@@ -184,7 +194,7 @@ class ConsoleTests(unittest.TestCase):
             json.dumps({"id": "aaaa000000000000", "nonce": "stale-nonce", "decision": "approve"}))
         code, out, _ = self.run_cli("summary")
         self.assertEqual(code, 0)
-        self.assertEqual(out, "1 30 1 0\n")
+        self.assertEqual(out, "1 30 1 0 0 0 0\n")
 
     def test_summarize_with_injectable_now(self):
         # A fixed `now` far from wall-clock time makes the expected ages exact,
@@ -193,7 +203,8 @@ class ConsoleTests(unittest.TestCase):
         self.put(card("aaaa000000000000", created=now - 600, expires=now - 1))  # expired, no decision
         self.put(card("bbbb000000000000", created=now - 1200, expires=now + 600))  # 20 min old, not expired
         self.assertEqual(approvals.summarize(self.state, now=now),
-                          {"pending": 2, "oldest_minutes": 20, "expired_unhandled": 1, "decided": 0})
+                          {"pending": 2, "oldest_minutes": 20, "expired_unhandled": 1, "decided": 0, "running": 0,
+                           "made": 0, "failed": 0})
 
     def test_missing_state_dir(self):
         code, _, err = self.run_cli_with_state(self.state / "missing")
@@ -430,51 +441,47 @@ class DeferredWriteTests(unittest.TestCase):
         self.assertFalse(approvals.is_queued(self.state, dict(c, nonce=None)))
         self.assertFalse(approvals.is_queued(self.state, dict(c, id="../x")))
 
-    def test_list_marks_queued_cards(self):
+    def test_list_marks_staged_cards_and_ones_left_unstaged(self):
         self.queue(card())
-        self.put("pending", card("ffff000011112222"))
+        self.put("pending", card("ffff000011112222"))  # no job: an older gateway's card
         code, out, _ = self.run_cli()
         self.assertEqual(code, 0)
         first, second = out.split("ffff000011112222")
-        self.assertIn("[queued: the agent has moved on; the gateway makes the write when it is approved]", first)
-        self.assertNotIn("queued", second)
+        self.assertIn("[staged: the agent has moved on; the gateway makes the write when it is approved]", first)
+        self.assertIn("[not staged (an older gateway's card): approving it makes nothing; the agent's next call "
+                      "stages it]", second)
 
     def test_approve_a_queued_card_says_the_gateway_writes_it(self):
         self.queue(card())
         code, out, _ = self.run_cli("approve", "abcdef", "--as", "daron")
         self.assertEqual(code, 0)
-        self.assertIn("the gateway will make it within seconds", out)
-        self.assertNotIn("retry will", out)
+        self.assertIn("This write is staged: the gateway will make it within seconds", out)
+        self.assertNotIn("retry", out)
         code, _, err = self.run_cli("approve", "abcdef")
         self.assertEqual(code, 1)
         self.assertIn("the gateway makes the write within seconds", err)
         _, out, _ = self.run_cli("list")
         self.assertIn("approved by daron", out)
         self.assertIn("the gateway makes the write within seconds", out)
-        self.assertNotIn("agent to retry", out)
+        self.assertNotIn("retry", out)
 
-    def test_decline_and_plain_approve_keep_their_words(self):
+    def test_decline_and_an_unstaged_card_say_nothing_is_written(self):
         self.queue(card())
         _, out, _ = self.run_cli("decline", "abcdef", "--reason", "no")
-        self.assertIn("nothing is written", out)
-        # A push, PR or MR whose hold runs out becomes a queue job: the gateway makes the write, not a retry.
-        for n, tool in enumerate(("git_push", "github_create_pr", "gitlab_create_mr")):
+        self.assertIn("This write is staged: the gateway files the decline and nothing is written.", out)
+        # Every held tool is staged alike; a card with no job makes nothing.
+        for n, tool in enumerate(("git_push", "github_create_issue")):
             cid = "ffff00001111222{}".format(n)
             self.put("pending", card(cid, tool=tool))
             code, out, _ = self.run_cli("approve", cid)
             self.assertEqual(code, 0, tool)
-            self.assertIn("The call proceeds if it is still waiting; otherwise the gateway makes it within seconds", out, tool)
-            self.assertNotIn("retry will", out, tool)
-        # Any other held tool returns to the agent, which retries.
-        self.put("pending", card("eeee000011112222", tool="github_create_issue"))
-        _, out, _ = self.run_cli("approve", "eeee")
-        self.assertIn("The agent's call proceeds if it is still waiting; otherwise its retry will.", out)
-        self.assertNotIn("gateway", out)
+            self.assertIn("This card was not staged (an older gateway's card), so nothing is made from it", out, tool)
+            self.assertNotIn("retry", out, tool)
 
     def test_done_writes_listed_failures_first(self):
         self.put("done", done_rec("1111000011110000", result="Pushed 2 commit(s) to acme/widgets:factory/x (abc).\nremote: ..."))
         self.put("done", done_rec("2222000022220000", write="failed", finished=time.time() - 60,
-                                  result="factory/x changed in the broker's mirror after the push was queued\nretry"))
+                                  result="factory/x changed in the broker's mirror after the push was staged\nagain"))
         self.put("done", done_rec("3333000033330000", write="running"))
         self.put("done", done_rec("4444000044440000", write="skipped"))      # declined: no write
         self.put("done", dict(done_rec("5555000055550000"), queued=False))   # a held call, not a deferred write
@@ -484,7 +491,7 @@ class DeferredWriteTests(unittest.TestCase):
         lines = [ln for ln in out.splitlines() if ln[:4] in ("1111", "2222", "3333", "4444", "5555")]
         self.assertEqual([ln[:4] for ln in lines], ["2222", "3333", "1111"])
         self.assertIn("!! FAILED", lines[0])
-        self.assertIn("changed in the broker's mirror after the push was queued retry", out)
+        self.assertIn("changed in the broker's mirror after the push was staged again", out)
         self.assertIn("(the gateway is making it now)", lines[1])
         self.assertIn("made", lines[2])
         self.assertIn("Pushed 2 commit(s) to acme/widgets:factory/x (abc).", out)
@@ -569,7 +576,7 @@ class DeferredWriteTests(unittest.TestCase):
         self.queue(c)
         approvals.watch_once(self.state, seen, queued, writes, lines.append)
         self.assertEqual(len(lines), 2)
-        self.assertIn("queued: the agent has moved on", lines[1])
+        self.assertIn("staged: the agent has moved on", lines[1])
         approvals.watch_once(self.state, seen, queued, writes, lines.append)
         self.assertEqual(len(lines), 2)
         self.put("done", done_rec(write="running"))
@@ -585,11 +592,16 @@ class DeferredWriteTests(unittest.TestCase):
         self.assertIn("!! FAILED", lines[4])
         self.assertIn("boom", lines[4])
 
-    def test_summary_is_unchanged_by_queued_cards(self):
+    def test_summary_counts_staged_cards_and_deferred_writes(self):
         self.queue(card())
-        self.assertEqual(approvals.summarize(self.state)["pending"], 1)
+        self.put("done", done_rec("1111000011110000"))
+        self.put("done", done_rec("2222000022220000", write="running"))
+        self.put("done", done_rec("3333000033330000", write="failed", result="boom"))
+        self.put("done", done_rec("4444000044440000", write="failed", finished=time.time() - 5 * 24 * 3600))
+        s = approvals.summarize(self.state)
+        self.assertEqual((s["pending"], s["running"], s["made"], s["failed"]), (1, 1, 1, 1))
         _, out, _ = self.run_cli("summary")
-        self.assertEqual(len(out.split()), 4)
+        self.assertEqual(out.split()[4:], ["1", "1", "1"])
 
 
 if __name__ == "__main__":

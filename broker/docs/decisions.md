@@ -4,6 +4,56 @@ Dated entries, for the user to review. Newest first.
 
 ## 2026-10-24
 
+- **Every held write is staged; the gateway makes it; one result shape**
+  (doomtickle/passdesk-ops#170, part of #167; supersedes most of item 2 of
+  #141 and the first-line held note of #153). A held call used to wait up
+  to `hold_seconds` (45) for a decision, then queue a push, PR or MR and
+  ask for a retry of an issue or plugin call. Agents met three shapes
+  (`Queued ...`, `Approved ...; the gateway is making this write now`, and
+  a result with `; held for approval ... approved by` folded into its first
+  line), and the developer instructions carried a rule for telling them
+  apart. Now a held call never waits: the hook stores the job and then the
+  card in one locked step and returns `Staged for approval (id X); nothing
+  has been sent yet. ...` (`errors.Staged`, record `decision: staged`). The
+  sweeper makes every approved write from the stored job, as the queue
+  did, and files the outcome under `done/`. What changed with it:
+  - `github_create_issue` and plugin tools declared `writes_externally`
+    now pass a job and register a completer, so they are staged too. The
+    issue's job carries the labels as GitHub spells them (looked up at
+    staging time); the completer checks them against the card's
+    case-insensitively. A plugin tool's completer re-checks the stored
+    arguments against the tool's declaration, the secret scan and the
+    card (`core/registry.py`), then runs the handler and cleans its output
+    as in a call. A held tool with no job or completer is refused with
+    nothing staged, rather than falling back to the retry hold.
+  - The same call again: while pending, the same staged result (same id,
+    no second webhook); while running, made or declined (for
+    `expire_seconds` after), `DENIED` saying so, so a write is never made
+    twice and a decline is not silently asked again; after a failure or an
+    expiry, a fresh card. The agent never gets the write's own result any
+    more; it is in the approval's `done/` record (`factory approvals`, the
+    dashboard). We chose a refusal over reporting the old result to keep
+    one success shape.
+  - Removed: `hold_seconds` (ignored, and the doctor warns to delete it; no
+    migration needed), `with_held_note`/`held_note` and the plugin-hook
+    outcome contract (whatever a hook returns is ignored now; a plugin
+    hook still allows by returning and refuses with `Denied`), the
+    `Queued` error, the `approval-queued` audit event (the
+    `approval-requested` event is the staging), and the "retry this
+    exact call" denial.
+  - Kept: the file layout (`pending/`, `queued/` for the job, `decisions/`,
+    `done/` with `queued: true`), so `factory approvals` and the
+    dashboard read the same files; only their wording changed. A pending
+    card with no job (left by a gateway from before this change) is
+    discarded and staged afresh on the next call.
+  - `card_id` for a tool without listed stable fields (a plugin tool) now
+    leaves out the fields the hold adds (`id`, `nonce`, `created`,
+    `expires`), so a stored card hashes to its own id; a fresh card has
+    none of them, so ids are unchanged.
+  What would change it: an agent that needs the write's result in the
+  same session (a PR URL, say) often enough that a status tool is worth
+  adding.
+
 - **The host CLI's Python package is `factory/` at the repo root, and the bridge
   imports from it** (doomtickle/passdesk-ops#169, first PR). Root, not
   `scripts/factory/`: the bridge, the dashboard scripts and the tests all find the

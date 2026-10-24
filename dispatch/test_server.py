@@ -1365,8 +1365,8 @@ class ImportTests(Base):
         now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         records = [{"ts": now, "principal": "developer", "tool": "npm_fetch", "decision": "allow"},
                    {"ts": now, "principal": "reviewer", "tool": "npm_fetch", "decision": "allow"},
-                   {"ts": now, "principal": "developer", "tool": "git_push", "decision": "queued"},
-                   {"ts": now, "principal": "developer", "tool": "git_push", "event": "approval-queued\x1b[2J"},
+                   {"ts": now, "principal": "developer", "tool": "git_push", "decision": "staged"},
+                   {"ts": now, "principal": "developer", "tool": "git_push", "event": "approval-requested\x1b[2J"},
                    {"ts": now, "event": "approval-write-failed", "tool": "git_push", "reason": "no role on this one"},
                    {"ts": "2020-01-01T00:00:00Z", "principal": "developer", "tool": "git_push",
                     "decision": "deny", "reason": "long ago"},
@@ -1390,8 +1390,8 @@ class ImportTests(Base):
         calls = text.split("## Broker calls by the developer role during the job\n\n")[1].split("\n\n## ")[0]
         self.assertIn("npm_fetch  allow", calls)
         self.assertNotIn("long ago", calls)  # outside the job's time window
-        self.assertRegex(calls, r"git_push  queued\n")  # a queued call shows its decision
-        self.assertRegex(calls, r"git_push  approval-queued")  # an event shows its name, one clean line
+        self.assertRegex(calls, r"git_push  staged\n")  # a staged call shows its decision
+        self.assertRegex(calls, r"git_push  approval-requested")  # an event shows its name, one clean line
         self.assertNotIn("\x1b", calls)
         self.assertNotIn("no role on this one", calls)  # the gateway's write outcomes name no role
         self.assertEqual(calls.count("\n") + 1, 3)  # the reviewer's call and the non-tool record are not listed
