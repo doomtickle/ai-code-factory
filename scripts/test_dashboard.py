@@ -796,7 +796,7 @@ class PageTests(unittest.TestCase):
         self.assertEqual(licenses, {"OFL-VT323.txt", "OFL-BarlowCondensed.txt", "OFL-DotGothic16.txt"})
 
     def test_no_html_sinks(self):
-        for name in ("app.js", "floor.js", "sound.js"):
+        for name in ("app.js", "floor.js", "sound.js", "radio.js"):
             js = (UI / name).read_text()
             for sink in ("innerHTML", "outerHTML", "insertAdjacentHTML", "document.write", "eval(", "new Function"):
                 self.assertNotIn(sink, js, f"{name} uses {sink}")
@@ -957,6 +957,44 @@ class PageTests(unittest.TestCase):
         self.assertIn('if (e.key === "s" || e.key === "S") { $("sound-key").click(); return; }', app)
         # S sits after the monitor's own keys, so it never fires inside the modal.
         self.assertLess(app.index('e.key === "p") setTab'), app.index('$("sound-key").click()'))
+
+    def test_radio_layer_only_listens(self):
+        # The factory radio (a Konami-code easter egg beside the sound layer) is synthesised
+        # from key names alone: no request, no audio file, nothing read from the page or state.
+        js = (UI / "radio.js").read_text()
+        for call in ("fetch(", "XMLHttpRequest", "WebSocket", "EventSource", "sendBeacon", "postMessage", ".src", "href",
+                     "new Audio", "<audio", "decodeAudioData", "createMediaElementSource", "textContent", "e.detail", "dispatchEvent",
+                     "preventDefault", "stopPropagation", "stopImmediatePropagation", "createElement", "location", "cookie"):
+            self.assertNotIn(call, js, f"radio.js uses {call}")
+        self.assertEqual(re.findall(r"getElementById\(([^)]*)\)", js), ['"radio-key"'])   # the badge is the only page element it touches
+        self.assertEqual(sorted(set(re.findall(r'addEventListener\("([a-z]+)"', js))), ["click", "keydown"])
+        self.assertIn('const CODE = ["arrowup", "arrowup", "arrowdown", "arrowdown", "arrowleft", "arrowright", "arrowleft", "arrowright", "b", "a"];', js)
+        self.assertIn("if (e.repeat", js)                                           # holding a key doesn't advance the code
+        self.assertIn("t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)", js)   # typing in a field doesn't count
+        self.assertIn("let on = false,", js)                                        # off until the code is typed
+        self.assertIn('const STORE = "fc1984-radio";', js)
+        self.assertIn('if (localStorage.getItem(STORE) === "1") setOn(true, false);', js)
+        self.assertRegex(js, r"try \{ if \(localStorage\.getItem\(STORE\)")        # storage may be blocked
+        self.assertIn("const BPM = 72;", js)
+        self.assertIn("LEVEL = 0.10;", js)
+        self.assertIn("createConvolver", js)
+        self.assertIn("setTimeout(tick, TICK)", js)                                 # look-ahead scheduler
+        # Its own context, created only in wake(), which runs from a key press or the first gesture.
+        self.assertEqual(js.count("new AC()"), 1)
+        self.assertEqual(js.count("wake()"), 3)   # its definition, the code, the first-gesture hook
+        self.assertEqual(js.count("clearTimeout(timer)"), 1)
+
+    def test_radio_key_is_wired(self):
+        html = (UI / "index.html").read_text()
+        self.assertLess(html.index('<script src="/sound.js" defer></script>'), html.index('<script src="/radio.js" defer></script>'))
+        self.assertRegex(html, r'<button class="tabkey radio-key" type="button" id="radio-key" aria-pressed="false" hidden>Radio</button>')
+        self.assertEqual(d.STATIC["/radio.js"], ("radio.js", "text/javascript; charset=utf-8"))
+        self.assertTrue((UI / "radio.js").is_file())
+        css = (UI / "floor.css").read_text()
+        self.assertIn(".lanes-h .radio-key", css)
+        # The main page's key handler is untouched: the code rides on its own listener.
+        app = (UI / "app.js").read_text()
+        self.assertNotIn("radio", app)
 
     def test_page_obeys_its_csp(self):
         html = (UI / "index.html").read_text()

@@ -10,8 +10,9 @@
 .floor .fl { display: block; width: 100%; height: 100%; shape-rendering: crispEdges; border-radius: 6px;
   background: linear-gradient(180deg, var(--case-hi), var(--case) 40%, var(--case-lo));
   box-shadow: inset 0 1px 0 rgba(255,255,255,.08), inset 0 -1px 0 rgba(0,0,0,.6), 0 2px 0 #000; }
-.lanes-h .floor-key, .lanes-h .sound-key { margin-left: 4px; }
+.lanes-h .floor-key, .lanes-h .sound-key, .lanes-h .radio-key { margin-left: 4px; }
 .sound-key:disabled { opacity: .5; cursor: not-allowed; }
+.radio-key[hidden] { display: none; }   /* .tabkey sets no display, but keep the badge hidden whatever the cascade says */
 
 /* Type: VT323 for anything the tube says, Barlow for anything printed on the case. */
 .fl text { font-family: var(--f-crt); font-size: 7px; fill: var(--amber); shape-rendering: auto; }

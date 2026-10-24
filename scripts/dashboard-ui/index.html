@@ -9,6 +9,7 @@
 <script src="/app.js" defer></script>
 <script src="/floor.js" defer></script>
 <script src="/sound.js" defer></script>
+<script src="/radio.js" defer></script>
 </head>
 <body>
 <div class="rack">
@@ -61,7 +62,7 @@
     </section>
 
     <section class="bay lanes-bay" aria-labelledby="lanes-h">
-      <div class="bay-h plate lanes-h"><span class="silk" id="lanes-h">Lanes</span><span class="rule"></span><span class="silk">Press 1–9 to open a lane · F floor · S sound · Esc closes</span><a class="help" href="/docs/#guide-dashboard:lanes" target="factory-docs" aria-label="Help: lanes">?</a><button class="tabkey floor-key" type="button" id="floor-key" aria-pressed="false" aria-controls="floor">Floor</button><a class="help" href="/docs/#guide-dashboard:the-factory-floor" target="factory-docs" aria-label="Help: the factory floor">?</a><button class="tabkey sound-key" type="button" id="sound-key" aria-pressed="false">Sound</button></div>
+      <div class="bay-h plate lanes-h"><span class="silk" id="lanes-h">Lanes</span><span class="rule"></span><span class="silk">Press 1–9 to open a lane · F floor · S sound · Esc closes</span><a class="help" href="/docs/#guide-dashboard:lanes" target="factory-docs" aria-label="Help: lanes">?</a><button class="tabkey floor-key" type="button" id="floor-key" aria-pressed="false" aria-controls="floor">Floor</button><a class="help" href="/docs/#guide-dashboard:the-factory-floor" target="factory-docs" aria-label="Help: the factory floor">?</a><button class="tabkey sound-key" type="button" id="sound-key" aria-pressed="false">Sound</button><button class="tabkey radio-key" type="button" id="radio-key" aria-pressed="false" hidden>Radio</button></div>
       <div class="lanes" id="lanes"></div>
       <!-- Nothing running: one standby panel instead of a wall of empty modules. -->
       <div class="standby plate" id="standby" hidden>

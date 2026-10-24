@@ -5,6 +5,7 @@
 // element at its centre is the station), a click opens that lane's monitor, Enter and Space
 // do too, and it wears glasses. Job titles wider than the console glass slide, clipped to it;
 // short ones and everything under prefers-reduced-motion stay still (ellipsis + tooltip).
+// It also types the Konami code to check the factory radio badge (radio.js) shows, hides and remembers.
 "use strict";
 const { spawn } = require("node:child_process");
 const assert = require("node:assert");
@@ -77,6 +78,21 @@ async function run(url) {
     await floorOn(b);
     const names = await b.ev(`[...document.querySelectorAll(".fl .st")].map(g => g.querySelector(".name").textContent)`);
     assert.ok(names.some(n => n.startsWith("developer")) && names.some(n => n.startsWith("reviewer")), `developer and reviewer stations: ${names}`);
+
+    // The factory radio: hidden until the Konami code is typed, off again with the code or the badge.
+    const radio = () => b.ev(`(() => { const k = document.getElementById("radio-key"); return [k.hidden, k.getAttribute("aria-pressed"), localStorage.getItem("fc1984-radio")]; })()`);
+    const konami = async (...keys) => { for (const k of keys) await b.key(k, k.length === 1 ? "Key" + k.toUpperCase() : k, k.length === 1 ? k : undefined); await b.sleep(100); };
+    const CODE = ["ArrowUp", "ArrowUp", "ArrowDown", "ArrowDown", "ArrowLeft", "ArrowRight", "ArrowLeft", "ArrowRight", "b", "a"];
+    assert.deepStrictEqual(await radio(), [true, "false", null], "the radio badge starts hidden");
+    await konami(...CODE.slice(0, 9), "x", "a");
+    assert.strictEqual((await radio())[0], true, "a wrong key starts the code over");
+    await konami("ArrowUp", ...CODE);
+    assert.deepStrictEqual(await radio(), [false, "true", "1"], "the Konami code, after an extra Up, turns the radio on and shows the badge");
+    await b.ev(`document.getElementById("radio-key").click()`);
+    assert.deepStrictEqual(await radio(), [true, "false", "0"], "the badge turns the radio off and hides itself");
+    await konami(...CODE);
+    await konami(...CODE);
+    assert.deepStrictEqual(await radio(), [true, "false", "0"], "the code toggles the radio");
 
     const stations = await b.ev(`[...document.querySelectorAll(".fl .st")].map((g, i) => {
       const r = g.querySelector(".hit").getBoundingClientRect(), x = r.x + r.width / 2, y = r.y + r.height / 2, top = document.elementFromPoint(x, y);
