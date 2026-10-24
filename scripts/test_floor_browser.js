@@ -86,8 +86,8 @@ async function run(url) {
     assert.deepStrictEqual(await radio(), [true, "false", null], "the radio badge starts hidden");
     await konami(...CODE.slice(0, 9), "x", "a");
     assert.strictEqual((await radio())[0], true, "a wrong key starts the code over");
-    await konami(...CODE);
-    assert.deepStrictEqual(await radio(), [false, "true", "1"], "the Konami code turns the radio on and shows the badge");
+    await konami("ArrowUp", ...CODE);
+    assert.deepStrictEqual(await radio(), [false, "true", "1"], "the Konami code, after an extra Up, turns the radio on and shows the badge");
     await b.ev(`document.getElementById("radio-key").click()`);
     assert.deepStrictEqual(await radio(), [true, "false", "0"], "the badge turns the radio off and hides itself");
     await konami(...CODE);

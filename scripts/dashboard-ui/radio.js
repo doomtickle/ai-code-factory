@@ -45,7 +45,7 @@
 
   let on = false, ctx = null, master = null, room = null, noise = null;
   let live = null;         // the running session: { bus, dry, wet, echo, pad, sources }
-  let timer = 0, offTimer = 0, nextAt = 0, step = 0, mi = 3, restBar = false;
+  let timer = 0, offTimer = 0, oldBus = null, nextAt = 0, step = 0, mi = 3, restBar = false;
 
   // ---------- building blocks
   // One second of white noise, shared by the drums.
@@ -233,6 +233,12 @@
     restBar = false;
     tick();
   }
+  // Cancel the pending park of the last session and detach its (silent) bus from the master.
+  function release() {
+    clearTimeout(offTimer);
+    offTimer = 0;
+    if (oldBus) { try { oldBus.disconnect(); } catch (e) { /* gone */ } oldBus = null; }
+  }
   // Stop every node still scheduled, then park the context.
   function end() {
     clearTimeout(timer);
@@ -244,9 +250,10 @@
     try { l.bus.gain.cancelScheduledValues(now); l.bus.gain.setTargetAtTime(0, now, 0.02); } catch (e) { /* closing anyway */ }
     for (const s of l.sources) { try { s.stop(now + 0.1); } catch (e) { /* already ended */ } }
     l.sources.clear();
+    release();
+    oldBus = l.bus;
     offTimer = setTimeout(() => {
-      offTimer = 0;
-      try { l.bus.disconnect(); } catch (e) { /* gone */ }
+      release();
       if (!on && ctx && ctx.state === "running") { const p = ctx.suspend(); if (p && p.catch) p.catch(() => {}); }
     }, 200);
   }
@@ -263,8 +270,7 @@
         room = impulse(2.5);
         noise = noiseBuffer();
       }
-      clearTimeout(offTimer);
-      offTimer = 0;
+      release();
       if (ctx.state === "running") begin();
       else { const p = ctx.resume(); if (p && p.then) p.then(begin, () => {}); }
       return true;
@@ -288,7 +294,7 @@
     const k = e.key.toLowerCase();
     if (MODS.has(k)) return;
     if (e.ctrlKey || e.metaKey || e.altKey) { typed = 0; return; }
-    if (k !== CODE[typed]) { typed = k === CODE[0] ? 1 : 0; return; }   // a wrong key starts over (Up may begin a new try)
+    if (k !== CODE[typed]) { typed = k === CODE[0] ? (typed === 2 ? 2 : 1) : 0; return; }   // a wrong key starts over; an extra Up after Up Up keeps those two
     if (++typed < CODE.length) return;
     typed = 0;
     if (on) { setOn(false, true); return; }
