@@ -200,6 +200,9 @@ class DeskLabelTests(unittest.TestCase):
         for text, want in (
             ("Reject empty names in greet(), test it, and push", "Reject empty names"),
             ("Repo: passdesk-ops. Fix the **dashboard** crash", "Fix the dashboard"),
+            ("Task: Fix the login crash", "Fix the login"),
+            ("goal:make tests pass", "make tests pass"),
+            ("Repo: x;Fix y", "Fix y"), ("Project: demo; Tidy up", "Tidy up"),
             ("\n\n  Tidy the `docs`  \nsecond line", "Tidy the docs"),
             ("Supercalifragilisticexpialidocious", "Supercalifragilis…"),
             ("", ""), ("   \n ", ""), ("Repo: x.", ""),

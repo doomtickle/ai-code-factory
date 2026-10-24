@@ -168,7 +168,7 @@ VERDICT = re.compile(r"^- Verdict: (\S+)", re.M)
 DESK_MAX = 18      # characters of a lane's desk placard
 TOPIC = re.compile(r"(?<![\w-])factory/([A-Za-z0-9][A-Za-z0-9._-]*)")
 DEV_REF = re.compile(r"(?<![\w-])factory-(developer(?:-lane[0-9]+)?)/factory/")
-TASK_LABEL = re.compile(r"^(?:repo|repository|project|task|goal)\s*:\s*\S+?[.;]?(?:\s+|$)", re.I)
+TASK_LABEL = re.compile(r"^(?:(?:repo|repository|project)\s*:\s*[^\s.;]+[.;]?\s*|(?:task|goal)\s*:\s*)", re.I)
 
 
 # --------------------------------------------------------------------------
