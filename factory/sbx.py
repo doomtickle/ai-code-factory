@@ -91,7 +91,6 @@ def reference_problem(path):
     return None
 
 
-
 # The one network allow the factory adds to the global policy (scripts/01-init-security.sh).
 GLOBAL_ALLOW = "api.anthropic.com"
 _COLUMN = re.compile(r"CREATED VIA|APPLIES TO|\S+")
@@ -101,10 +100,12 @@ _NEEDED = ("SOURCE", "APPLIES TO", "RULE_ID", "TYPE", "DECISION", "RESOURCES")
 def extra_global_allows(ctx):
     """The network allows in the host's global sbx policy (local scope, applies to all)
     other than GLOBAL_ALLOW, as [(resource, rule_id)]; [] when there are none, None when
-    `sbx policy ls` fails or its table can't be read. Read from the --wide table (the JSON
-    layout isn't in docs/reference/sbx-cli.md): columns are cut at the header's offsets, and
+    `sbx policy ls` fails or times out, its table can't be read, or a rule's scope is neither
+    `all` nor `sandbox:*`. Read from the --wide table (the JSON layout isn't in
+    docs/reference/sbx-cli.md): columns are cut at the header's offsets, and
     a row with an empty SOURCE continues the RESOURCES of the one above."""
-    got = ctx.capture(["sbx", "policy", "ls", "--wide", "--source", "local", "--type", "network", "--decision", "allow"])
+    got = ctx.capture(["sbx", "policy", "ls", "--wide", "--source", "local", "--type", "network", "--decision", "allow"],
+                      timeout=15)
     if got.status != 0:
         return None
     lines = got.out.split("\n")
@@ -128,7 +129,12 @@ def extra_global_allows(ctx):
         rules.append(cell)
     found = []
     for rule in rules:
-        if (rule["SOURCE"], rule["APPLIES TO"], rule["TYPE"], rule["DECISION"]) != ("local", "all", "network", "allow"):
+        if (rule["SOURCE"], rule["TYPE"], rule["DECISION"]) != ("local", "network", "allow"):
+            continue
+        scope = rule["APPLIES TO"]
+        if scope != "all" and not scope.startswith("sandbox:"):
+            return None
+        if scope != "all":
             continue
         for resource in re.split(r"[,\s]+", rule["RESOURCES"]):
             if resource and resource not in ("-", GLOBAL_ALLOW, GLOBAL_ALLOW + ":443"):

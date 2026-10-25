@@ -344,6 +344,19 @@ class GlobalPolicyTest(DoctorTest):
         self.assertEqual(asked, [["sbx", "policy", "ls", "--wide", "--source", "local", "--type", "network",
                                   "--decision", "allow"]])
 
+    def test_it_gives_sbx_a_timeout_so_a_hang_becomes_a_skip(self):
+        seen = []
+        ctx = mock.Mock()
+        ctx.capture = lambda argv, **kw: seen.append(kw) or context.Captured(124, "", "")
+        self.assertIsNone(sbx.extra_global_allows(ctx))
+        self.assertEqual(seen, [{"timeout": 15}])
+
+    def test_an_unrecognised_scope_skips_the_check_instead_of_passing_it(self):
+        table = policy_table(("local", "everything", "odd-1", "allow", "evil.example"))
+        out = self.policy_lines(policy=table)
+        self.assertIn("extra-host check skipped\n", out)
+        self.assertNotIn("allows only", out)
+
     def test_without_sbx_nothing_is_checked(self):
         self.docker()
         out = self.run_doctor()[1]
