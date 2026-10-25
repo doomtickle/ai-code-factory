@@ -181,8 +181,11 @@ coordinator_broker_tools() {
 role_sandbox() { printf 'factory-%s' "$1"; }
 role_broker_mcp() { printf 'factory-broker-%s' "$1"; }
 
-# in_list WORD "LIST" -> success if WORD is one of the space-separated LIST
+# in_list WORD "LIST" -> success if WORD is one of the space-separated LIST.
+# An empty WORD, or one holding a space, tab or newline, is never in the list
+# (so "low medium" is not in "low medium high"), as factory/roles.py _in_list.
 in_list() {
+  case "$1" in '' | *[[:space:]]*) return 1 ;; esac
   case " $2 " in *" $1 "*) return 0 ;; *) return 1 ;; esac
 }
 

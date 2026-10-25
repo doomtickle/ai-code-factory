@@ -10,6 +10,7 @@ stricter, a test says so and asserts only the Python.
 
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import tempfile
@@ -337,15 +338,30 @@ class RoleConfTest(Fixture):
                                            'validate_role "$2"'), "_", REPO, name],
                            env=dict(os.environ, XDG_CONFIG_HOME=os.path.dirname(self.config)), check=True)
 
-    def test_python_is_stricter_where_bash_s_in_list_matches_adjacent_words(self):
-        # bash's in_list is a substring test on word boundaries, so TEMPLATE="developer reviewer" and
-        # EFFORT="low medium" pass there. Python wants one exact word.
-        for old, new in (('TEMPLATE="developer"', 'TEMPLATE="developer reviewer"'),
-                         ('WORKSPACE="rw"', 'WORKSPACE="rw ro"'), ('EFFORT=""', 'EFFORT="low medium"'),
-                         ('WORKSPACE="rw"', 'WORKSPACE="rw"\nOPTIONAL="0 1"')):
+    def test_a_value_of_several_words_or_none_is_refused_alike(self):
+        # in_list takes one exact word: TEMPLATE="developer reviewer" and EFFORT="low medium" are not
+        # in their lists, in bash as in Python; an empty TEMPLATE or WORKSPACE is not either.
+        for old, new, message in (
+                ('TEMPLATE="developer"', 'TEMPLATE="developer reviewer"', "TEMPLATE must be one of"),
+                ('TEMPLATE="developer"', 'TEMPLATE=""', "TEMPLATE must be one of"),
+                ('WORKSPACE="rw"', 'WORKSPACE="rw ro"', "WORKSPACE must be rw or ro"),
+                ('WORKSPACE="rw"', 'WORKSPACE=""', "WORKSPACE must be rw or ro"),
+                ('EFFORT=""', 'EFFORT="low medium"', "EFFORT must be low"),
+                ('EFFORT=""', 'EFFORT="low\tmedium"', "EFFORT must be low"),
+                ('WORKSPACE="rw"', 'WORKSPACE="rw"\nOPTIONAL="0 1"', "OPTIONAL must be 1")):
             self.role_conf("developer", DEVELOPER.replace(old, new))
-            with self.assertRaises(FactoryError):
-                roles.validate_role(self.paths, "developer")
+            self.assertIn(message, self.role_check() or "", new)
+
+    def test_bash_in_list_takes_one_exact_word(self):
+        for word, listing, expected in (("low", "low medium high", 0), ("high", "low medium high", 0),
+                                        ("low medium", "low medium high", 1), ("medium high", "low medium high", 1),
+                                        ("", "low medium high", 1), ("", " a b ", 1), ("", "", 1), ("", "a  b", 1),
+                                        ("a\tb", "a\tb c", 1), ("a\nb", "a\nb c", 1), (" a", "a b", 1),
+                                        ("a ", "a b", 1), ("low", "", 1)):
+            status = self.bash("in_list %s %s" % (shlex.quote(word), shlex.quote(listing)))[0]
+            self.assertEqual(status, expected, (word, listing))
+            if "\t" not in listing and "\n" not in listing:  # the lists are space-separated words
+                self.assertEqual(roles._in_list(word, listing), expected == 0, (word, listing))
 
 
 class StrictLinesTest(Fixture):

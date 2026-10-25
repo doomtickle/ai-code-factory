@@ -30,6 +30,7 @@ bash and Python side by side, and `main` works after every one.
 | `factory roles` | 1 (foundation) |
 | `factory analytics`, `approvals` (and `approve`), `watch`, `docs`, `dashboard`/`gui`, `config init`, `role new` | 2 |
 | Role validation core (`validate_role`, `validate_role_overrides`, `validate_enabled_roles`, `role_lane_names`, `coordinator_broker_tools`; no new command; `role new` uses it) | 3 |
+| Bash `in_list` takes one exact word, as Python's `_in_list` (no new command) | done |
 
 ## Remaining, in order
 
@@ -42,13 +43,12 @@ bash and Python side by side, and `main` works after every one.
    `doctor`, `start`, `status` and `logs`); `factory/test_roles_validation.py` runs both on the same fixtures
    and requires the same refusals and messages. It replaced `test_factory_role_overrides.sh`;
    its `disabled_role_sandboxes` check stays there, against the bash, until `doctor` is ported
-   (step 4). The Python is deliberately stricter in one way: bash's `in_list` also accepts
-   several adjacent words (`EFFORT="low medium"`), Python wants one exact word (step 3 tightens the bash).
-3. **Tighten bash `in_list`** (after #90 merges): make it return false when `$1` is empty or
-   contains a space, so `EFFORT="low medium"`, `WORKSPACE="rw ro"` and similar fail in bash
-   as they do in Python. Then flip `test_python_is_stricter...` in
-   `factory/test_roles_validation.py` to a parity test. This does not move the security
-   boundary: those keys are not overridable.
+   (step 4).
+3. **Tighten bash `in_list`**: done. It returns false when `$1` is empty or holds a space, tab
+   or newline, so `EFFORT="low medium"`, `WORKSPACE="rw ro"`, `TEMPLATE="developer reviewer"` and
+   `OPTIONAL="0 1"` fail in bash as they do in Python, and `factory/test_roles_validation.py`
+   requires the same refusal and message from both. This did not move the security boundary:
+   those keys are not overridable.
 4. **Read-only inspection**: `doctor` (with `scripts/lib/preflight.sh`), `status`,
    `logs`, `packet`. `status` waits for #170.
 5. **`secret`** (`save`, `forget`, `set`, `rm`, `ls`, with `scripts/lib/secrets.sh`);
