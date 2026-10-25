@@ -4,6 +4,7 @@ optional roles are switched on. Port of scripts/lib/roles.sh: the lookups
 validation (validate_role, validate_role_overrides, validate_enabled_roles,
 role_lane_names, coordinator_broker_tools). The bash copies stay until the
 commands that still call them are ported; tests run both on the same fixtures.
+(disabled_role_sandboxes, used only by `factory doctor`, has no bash copy any more.)
 
 Every config file read here is data: parsed line by line, never sourced or run.
 A failed check raises FactoryError with the message bash's `die` prints.
@@ -97,6 +98,20 @@ def list_roles(paths):
     """The roles this machine runs: all but optional ones enabled-roles doesn't name."""
     listed = set(enabled_roles_listed(paths))
     return [r for r in list_all_roles(paths) if not role_optional(paths, r) or r in listed]
+
+
+def role_sandbox(role):
+    return "factory-" + role
+
+
+def disabled_role_sandboxes(paths, existing):
+    """The sandboxes in `existing` (names, as `sbx ls -q` lists them) that belong to optional
+    roles this machine has switched off. Nothing removes them: a role being turned off must
+    never delete its sandbox on its own; `factory doctor` names them and prints the command
+    to remove each."""
+    names = set(existing)
+    return [role_sandbox(r) for r in list_all_roles(paths)
+            if role_optional(paths, r) and not role_listed_enabled(paths, r) and role_sandbox(r) in names]
 
 
 def role_get(paths, role, key):

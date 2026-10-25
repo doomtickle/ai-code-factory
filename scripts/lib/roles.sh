@@ -65,21 +65,6 @@ role_listed_enabled() { in_list "$1" "$(enabled_roles_listed | tr '\n' ' ')"; }
 # role_optional ROLE -> success if ROLE's committed role.conf sets OPTIONAL="1"
 role_optional() { [ "$(conf_get "$ROOT/roles/$1/role.conf" OPTIONAL)" = 1 ]; }
 
-# disabled_role_sandboxes -> sandboxes that still exist for optional roles this
-# machine has switched off (one per line). Nothing removes them: a role being
-# turned off must never delete its sandbox on its own; `factory doctor` names
-# them and prints the command to remove each.
-disabled_role_sandboxes() {
-  local existing r
-  existing="$(sbx ls -q 2>/dev/null || true)"
-  for r in $(list_all_roles); do
-    role_optional "$r" || continue
-    ! role_listed_enabled "$r" || continue
-    ! printf '%s\n' "$existing" | grep -qx "$(role_sandbox "$r")" || role_sandbox "$r"
-  done
-  return 0
-}
-
 # validate_enabled_roles -> dies unless enabled-roles holds only blank lines,
 # comments and names of roles in roles/ (a typo would silently enable nothing).
 validate_enabled_roles() {

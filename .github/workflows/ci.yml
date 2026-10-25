@@ -85,8 +85,8 @@ jobs:
         run: bash scripts/test_factory_state.sh
       - name: factory GitLab checks
         run: bash scripts/test_factory_gitlab.sh
-      - name: fresh-clone doctor and start checks
-        run: bash scripts/test_factory_doctor.sh
+      - name: fresh-clone start and helper checks
+        run: bash scripts/test_factory_helpers.sh
       - name: Jira cloud_id and lane identity checks
         run: bash scripts/test_factory_config.sh
 
@@ -136,8 +136,8 @@ jobs:
         run: bash scripts/test_factory_state.sh
       - name: factory GitLab checks
         run: bash scripts/test_factory_gitlab.sh
-      - name: fresh-clone doctor and start checks
-        run: bash scripts/test_factory_doctor.sh
+      - name: fresh-clone start and helper checks
+        run: bash scripts/test_factory_helpers.sh
       - name: Jira cloud_id and lane identity checks
         run: bash scripts/test_factory_config.sh
       # factory-lane runs only inside the Linux sandboxes, so it's tested on Linux.
