@@ -37,6 +37,7 @@ assert_eq "inert: broker-kit/spec.yaml allows no host" \
 assert_eq "inert: no uncommented example host in the example" \
   "$(grep -rh -v '^[[:space:]]*#' "$REPO_ROOT/config.example" | grep -c 'example\.' || true)" 0
 assert_contains "help: lists config init" "$("$REPO_ROOT/bin/factory" help)" "factory config init"
+assert_contains "help: lists docs --print" "$("$REPO_ROOT/bin/factory" help)" "factory docs [--print]"
 
 # --- 2. jira_cloud_id_set ----------------------------------------------------------
 fns="$tmp/fns.sh"
