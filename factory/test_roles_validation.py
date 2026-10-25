@@ -185,6 +185,18 @@ class ValueTest(Fixture):
             self.assertIn(expected, message, line)
             self.assertTrue(message.endswith(" (set in %s)" % self.override_file), line)
 
+    def test_odd_values_are_judged_alike_in_every_locale(self):
+        # Unicode digits, letters and spaces, and ASCII whitespace other than the space: a locale must
+        # not make bash accept (or Python reject) any of them.
+        odd = ("٣", "é", "a\u00a0b", "x\u2003", "\u20031", "1\v", "\v1", "1\f", "1\r", "1\t", "\t1")
+        keys = ("MODEL", "MODELS", "EFFORT", "LANES", "MAX_SESSION_TOKENS", "MAX_TURNS", "MAX_JOB_SECONDS")
+        utf8 = [l for l in locales_installed() if re.search(r"utf-?8", l, re.I)][:3]
+        for locale in ["C"] + utf8:
+            for key in keys:
+                for value in odd:
+                    self.override('%s="%s"\n' % (key, value))
+                    self.role_check(locale=locale)
+
     def test_the_exact_messages(self):
         for line, expected in (
             ('MODEL="a b"', "MODEL must contain only letters, digits, dots, dashes, underscores"),
@@ -539,13 +551,20 @@ class LaneNamesTest(Fixture):
         self.override('LANES="5"\n')
         self.assertEqual(roles.role_lane_names(self.paths, "developer")[-1], "developer-lane5")
 
-    def test_every_value_gives_the_lanes_bash_does(self):
-        for value in ("1", "2", "8", "9", "", "x", " 3", "3 ", "\t3", "3\t", "+3", "010", "-1", "0", "3.5", "1 2",
-                      "0x3", "٣", "9223372036854775808", "-9223372036854775809", " ", "+", "-", "3x", "\v3", "3\v",
-                      "00000000000000000000000000000000004"):
-            self.role_conf("developer", DEVELOPER.replace('LANES="3"', 'LANES="%s"' % value))
-            status, out, _ = self.bash("role_lane_names developer")
-            self.assertEqual((status, out.split()), (0, roles.role_lane_names(self.paths, "developer")), repr(value))
+    def test_every_value_gives_the_lanes_bash_does_in_every_locale(self):
+        values = ("1", "2", "8", "9", "", "x", " 3", "3 ", "\t3", "3\t", "+3", "010", "-1", "0", "3.5", "1 2",
+                  "0x3", "٣", "9223372036854775808", "-9223372036854775809", " ", "+", "-", "3x", "\v3", "3\v",
+                  "\f3", "3\f", "\r3", "3\r", "\u00a03", "3\u00a0", "\u20033", "3\u2003",
+                  "00000000000000000000000000000000004")
+        # Bash's [ -le ] trims \v, \f and \r differently from one version to the next, and [[:blank:]]
+        # from one locale to the next: Python must follow the pinned rule (spaces and tabs), not them.
+        utf8 = [l for l in locales_installed() if re.search(r"utf-?8", l, re.I)][:3]
+        for locale in ["C"] + utf8:
+            for value in values:
+                self.role_conf("developer", DEVELOPER.replace('LANES="3"', 'LANES="%s"' % value))
+                status, out, _ = self.bash("role_lane_names developer", locale)
+                self.assertEqual((status, out.split()), (0, roles.role_lane_names(self.paths, "developer")),
+                                 (locale, value))
 
     def test_the_override_decides_the_count(self):
         self.override('LANES="2"\n')
@@ -590,7 +609,7 @@ class CoordinatorToolsTest(Fixture):
 
 class BashOnlyHelpersTest(Fixture):
     """disabled_role_sandboxes is only used by `factory doctor` (bin/factory) and has no Python
-    counterpart until doctor is ported (docs/py-cli-migration.md, step 3); it is checked here, in
+    counterpart until doctor is ported (docs/py-cli-migration.md, step 4); it is checked here, in
     bash, so the shell test it came from can go."""
 
     def disabled(self, existing):

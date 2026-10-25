@@ -211,10 +211,11 @@ def coordinator_broker_tools(paths):
 
 
 def _lane_count(value):
-    """How many lanes bash's `[ "$k" -le "$n" ]` loop counts up to for `value`: an integer
-    with optional sign and surrounding blanks; anything else (and anything past a 64-bit
-    integer) makes the test fail, so the role has just its first lane."""
-    m = re.fullmatch(r"[ \t\n\v\f\r]*([+-]?[0-9]+)[ \t\n\v\f\r]*", value)
+    """How many lanes bash's role_lane_names counts up to for `value`: an integer with optional
+    sign and surrounding spaces or tabs (only those: \\v, \\f and \\r are trimmed by some bash
+    versions' `[ -le ]` and not others, so bash spells the pattern out); anything else (and
+    anything past a 64-bit integer) leaves the role just its first lane."""
+    m = re.fullmatch(r"[ \t]*([+-]?[0-9]+)[ \t]*", value)
     if m is None or abs(int(m.group(1))) >= 2 ** 63:
         return 1
     return int(m.group(1))

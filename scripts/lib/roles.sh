@@ -139,7 +139,7 @@ role_get() {
 # validate_role_override ROLE -> dies unless ROLE's override (if any) holds
 # only blank lines, comments and KEY="value" lines for ROLE_OVERRIDE_KEYS.
 validate_role_override() {
-  local f line trimmed key
+  local f line trimmed key LC_ALL=C # [[:space:]] is ASCII whitespace only, in every locale
   f="$(role_override_file "$1")"
   [ -e "$f" ] || return 0
   [ -f "$f" ] || die "$f: not a regular file"
@@ -207,8 +207,11 @@ role_lanes() {
 # transcript (DISPATCH_STATE sessions/<lane>, logs/<lane>.log); all lanes
 # share the role's one sandbox.
 role_lane_names() {
-  local n k
+  local n k LC_ALL=C # [[:blank:]] is space and tab only, in every locale
   n="$(role_lanes "$1")"
+  # An integer with optional sign and surrounding blanks, else just lane 1. Spelled out
+  # because `[ -le ]` trims trailing \v, \f and \r in some bash versions and not in others.
+  if [[ "$n" =~ ^[[:blank:]]*([+-]?[0-9]+)[[:blank:]]*$ ]]; then n="${BASH_REMATCH[1]}"; else n=1; fi
   printf '%s\n' "$1"
   k=2
   while [ "$k" -le "$n" ]; do
