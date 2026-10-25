@@ -10,6 +10,8 @@ from factory.context import Context, FactoryError, Paths
 # (a test keeps them equal); every other command still runs in bash.
 COMMANDS = {
     "analytics": wrappers.analytics,
+    "approvals": wrappers.approvals,
+    "approve": wrappers.approvals,
     "config": config.run,
     "dashboard": wrappers.dashboard,
     "docs": docs.run,

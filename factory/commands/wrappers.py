@@ -1,5 +1,5 @@
 """Commands that locate one of the host Python scripts in scripts/ and hand over to it:
-analytics, dashboard (and gui), watch. The script keeps its own tests and its own
+analytics, approvals (and approve), dashboard (and gui), watch. The script keeps its own tests and its own
 argument parsing; this only adds the paths it needs from the factory's state."""
 
 import os
@@ -14,6 +14,10 @@ def script_argv(ctx, name, *leading):
 
 def analytics(ctx, args):
     return ctx.exec(script_argv(ctx, "analytics.py", "--state", ctx.paths.state) + args)
+
+
+def approvals(ctx, args):
+    return ctx.exec(script_argv(ctx, "approvals.py", "--state", ctx.paths.broker_state) + args)
 
 
 def watch(ctx, args):

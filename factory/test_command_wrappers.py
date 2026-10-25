@@ -1,4 +1,4 @@
-"""Tests for factory/commands/wrappers.py: analytics, dashboard/gui and watch."""
+"""Tests for factory/commands/wrappers.py: analytics, approvals, dashboard/gui and watch."""
 
 import os
 import unittest
@@ -21,6 +21,16 @@ class WrapperTest(CommandTest):
         self.assertEqual(self.run_command("analytics", "--json", "--top", "3"), 0)
         self.assertEqual([a for a, _ in self.execs],
                          [self.script("analytics.py") + ["--state", self.state, "--json", "--top", "3"]])
+
+    def test_approvals_gets_the_broker_state_folder_and_its_arguments(self):
+        self.assertEqual(self.run_command("approvals", "decline", "7", "--reason", "no thanks"), 0)
+        self.assertEqual([a for a, _ in self.execs], [self.script("approvals.py") + [
+            "--state", os.path.join(self.state, "broker"), "decline", "7", "--reason", "no thanks"]])
+
+    def test_approve_is_approvals_and_passes_its_arguments_as_given(self):
+        self.assertIs(COMMANDS["approve"], COMMANDS["approvals"])
+        self.run_command("approve", "7")
+        self.assertEqual(self.execs[0][0][-3:], ["--state", os.path.join(self.state, "broker"), "7"])
 
     def test_watch_passes_the_dispatch_state_roles_and_the_project_name(self):
         self.bind("/home/me/code/my-app\n")

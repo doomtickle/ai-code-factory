@@ -67,7 +67,7 @@ export GIT_TERMINAL_PROMPT=0
 g() { git -c safe.directory='*' -c core.fsmonitor=false "$@"; }
 
 # project_repos PROJECT: see the header. Keep identical to project_repos() in
-# scripts/lib/common.sh and dispatch/server.py; scripts/test_project_repos.sh
+# scripts/lib/common.sh and factory/repos.py; scripts/test_project_repos.sh
 # runs all three on one fixture and fails if they differ.
 project_repos() {
   local p="$1" d name

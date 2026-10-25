@@ -26,7 +26,7 @@ ROOT="$(dirname "$SCRIPTS")"
 # run there; factory/cli.py's COMMANDS lists the same names (a test keeps them equal).
 # Everything else falls through to the bash below until it is ported. Only when run
 # directly: a test that sources this file still gets the bash functions.
-PORTED_COMMANDS="analytics config dashboard docs gui role roles watch"
+PORTED_COMMANDS="analytics approvals approve config dashboard docs gui role roles watch"
 if [ "${BASH_SOURCE[0]}" = "$0" ] && [ -n "${1:-}" ]; then
   case " $PORTED_COMMANDS " in
     *" $1 "*)
@@ -1273,15 +1273,6 @@ cmd_update() {
   fi
 }
 
-# --- approvals ---------------------------------------------------------------------
-# cmd_approvals -> the approval console (scripts/approvals.py):
-# plain files under the broker state dir, host Python, nothing else.
-cmd_approvals() {
-  local python
-  python="$(resolve_python)"
-  "$python" "$SCRIPTS/approvals.py" --state "$FACTORY_BROKER_STATE" "$@"
-}
-
 # --- main ----------------------------------------------------------------------------
 # Guarded so a test can source this file (to call e.g. pull_factory directly)
 # without running main: BASH_SOURCE[0] equals $0 only when run directly.
@@ -1301,7 +1292,6 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
     logs|log) cmd_logs "$@" ;;
     packet|packets) cmd_packet "$@" ;;
     secret) cmd_secret "$@" ;;
-    approvals|approve) cmd_approvals "$@" ;;
     help|-h|--help) usage ;;
     *) usage; die "unknown command: $command" ;;
   esac

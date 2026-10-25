@@ -13,7 +13,7 @@ readonly RESERVED_ROLE_NAMES="broker coordinator dispatch"
 
 # list_all_roles -> every role in roles/, enabled or not
 list_all_roles() {
-  local d
+  local d LC_ALL=C # byte order, as factory/roles.py sorts; a locale puts dev-ops after developer
   for d in "$ROOT"/roles/*/; do
     [ -f "$d/role.conf" ] && basename "$d"
   done

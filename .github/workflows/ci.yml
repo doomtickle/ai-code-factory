@@ -61,7 +61,7 @@ jobs:
         run: python3 -m unittest discover -s scripts -p 'test_*.py' -v
       - name: factory-lane
         run: bash scripts/test_factory_lane.sh
-      - name: project_repos parity (common.sh, dispatch/server.py, factory-lane)
+      - name: project_repos parity (common.sh, factory/repos.py, factory-lane)
         run: bash scripts/test_project_repos.sh
       - name: factory-test Python mode
         run: bash scripts/test_factory_test.sh

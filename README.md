@@ -1354,7 +1354,7 @@ hasn't dispatched any jobs yet just shows an empty report.
   to GitHub Pages whenever the docs change on main, with links to repo files
   pointing at that commit on GitHub (`scripts/docs.py --link-base`).
 - **Under the hood:** `factory` runs the scripts in `scripts/` (the Python wrappers for
-  `analytics`, `watch`, `docs` and `dashboard` are in `factory/commands/`):
+  `analytics`, `approvals`, `watch`, `docs` and `dashboard` are in `factory/commands/`):
   - `install-prereqs.sh`, `00-build-templates.sh` and `01-init-security.sh` (setup)
   - `02-launch-factory.sh <dir>`, which calls `start-broker.sh` and `start-dispatch.sh`
   - `03-stop-factory.sh`
