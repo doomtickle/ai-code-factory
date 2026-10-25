@@ -26,7 +26,7 @@ ROOT="$(dirname "$SCRIPTS")"
 # run there; factory/cli.py's COMMANDS lists the same names (a test keeps them equal).
 # Everything else falls through to the bash below until it is ported. Only when run
 # directly: a test that sources this file still gets the bash functions.
-PORTED_COMMANDS="analytics approvals approve config dashboard docs gui role roles watch"
+PORTED_COMMANDS="analytics approvals approve config dashboard docs gui log logs packet packets role roles watch"
 if [ "${BASH_SOURCE[0]}" = "$0" ] && [ -n "${1:-}" ]; then
   case " $PORTED_COMMANDS " in
     *" $1 "*)
@@ -809,75 +809,7 @@ cmd_reset() {
   ok "factory is no longer bound to a project"
 }
 
-# --- logs / roles ------------------------------------------------------------------
-cmd_logs() {
-  local name="${1:-}"
-  case "$name" in
-    "")
-      say "Usage: factory logs <name>   where <name> is one of:"
-      say "  $(list_roles | tr '\n' ' ')broker dispatch"
-      ;;
-    broker|dispatch)
-      local file="$FACTORY_STATE/$name/audit.jsonl"
-      [ -f "$file" ] || die "no $name log yet"
-      tail -n 30 -F "$file" | jq -r --unbuffered \
-        '[.ts[11:19], (.role // ""), (.tool // .event // ""), (.decision // .status // (if .tool then .event else null end) // ""), (.reason // "")] | map(select(. != "")) | join("  ")'
-      ;;
-    *)
-      # A role: every lane's transcript (with several, tail heads each chunk
-      # with its file name). Or one lane of a role, e.g. developer-lane2.
-      local lane lanes logs=()
-      printf '%s' "$name" | grep -Eqx '[a-z][a-z0-9-]{1,40}' || die "unknown role '$name' (see: factory roles)"
-      if [ -f "$ROOT/roles/$name/role.conf" ]; then
-        lanes="$(role_lane_names "$name")"
-      else
-        case "$name" in
-          *-lane[0-9]*) lane="${name%-lane*}" ;;
-          *) lane="" ;;
-        esac
-        [ -n "$lane" ] && [ -f "$ROOT/roles/$lane/role.conf" ] && role_lane_names "$lane" | grep -qx -- "$name" \
-          || die "unknown role '$name' (see: factory roles; one lane: <role>-lane<N>, N up to its LANES)"
-        lanes="$name"
-      fi
-      mkdir -p "$FACTORY_DISPATCH_STATE/logs"
-      for lane in $lanes; do
-        touch "$FACTORY_DISPATCH_STATE/logs/$lane.log"
-        logs+=("$FACTORY_DISPATCH_STATE/logs/$lane.log")
-      done
-      tail -n 100 -F "${logs[@]}"
-      ;;
-  esac
-}
-
-# cmd_packet [<job-id> | latest | <lane> | --list] -> print a job's review
-# packet, written by the dispatch bridge after every job to
-# dispatch/packets/<job-id>.md in the state folder. Job ids start with the
-# job's timestamp, so reverse name order is newest first.
-cmd_packet() {
-  local dir="$FACTORY_DISPATCH_STATE/packets" which="${1:-latest}" f id
-  [ $# -le 1 ] || die "usage: factory packet [<job-id> | latest | <lane> | --list]"
-  [ -d "$dir" ] && [ -n "$(ls -A "$dir" 2>/dev/null)" ] \
-    || die "no review packets yet (the dispatch bridge writes one per job to $dir)"
-  case "$which" in
-    --list|-l|list)
-      ls -1r "$dir" | sed -n 's/\.md$//p' | head -n 20 | while IFS= read -r id; do
-        printf '%s  %s\n' "$id" "$(sed -n '1s/^# //p' "$dir/$id.md")"
-      done
-      return ;;
-    latest) f="$dir/$(ls -1r "$dir" | head -n 1)" ;;
-    *)
-      printf '%s' "$which" | grep -Eq '^[A-Za-z0-9-]{1,80}$' || die "not a job id or lane: $which"
-      if [ -f "$dir/$which.md" ]; then
-        f="$dir/$which.md"
-      else
-        # A lane name: its newest packet.
-        f="$(grep -l -x -- "- Lane: $which" "$dir"/*.md 2>/dev/null | sort -r | head -n 1 || true)"
-        [ -n "$f" ] || die "no packet for job or lane '$which' (see: factory packet --list)"
-      fi ;;
-  esac
-  cat "$f"
-}
-
+# --- roles ------------------------------------------------------------------
 # lanes_label ROLE -> "1 lane" / "3 lanes": how many jobs ROLE runs at once
 lanes_label() {
   local n
@@ -1289,8 +1221,6 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
     stop|down) cmd_stop "$@" ;;
     restart) cmd_restart "$@" ;;
     reset) cmd_reset "$@" ;;
-    logs|log) cmd_logs "$@" ;;
-    packet|packets) cmd_packet "$@" ;;
     secret) cmd_secret "$@" ;;
     help|-h|--help) usage ;;
     *) usage; die "unknown command: $command" ;;
