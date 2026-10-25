@@ -85,8 +85,6 @@ jobs:
         run: bash scripts/test_factory_state.sh
       - name: factory GitLab checks
         run: bash scripts/test_factory_gitlab.sh
-      - name: local role overrides
-        run: bash scripts/test_factory_role_overrides.sh
       - name: fresh-clone doctor and start checks
         run: bash scripts/test_factory_doctor.sh
       - name: Jira cloud_id and lane identity checks

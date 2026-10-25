@@ -10,13 +10,9 @@ import shutil
 import subprocess
 
 from factory.context import FactoryError
-from factory.roles import RESERVED_ROLE_NAMES, valid_role_name
+from factory.roles import RESERVED_ROLE_NAMES, known_broker_tools, valid_role_name, validate_role
 
 USAGE = "usage: factory role new <name> [like]"
-
-# validate_role still lives in scripts/lib/roles.sh until role validation is ported
-# (docs/py-cli-migration.md, step 2); the new role is checked by running it from there.
-VALIDATE_ROLE = '. "$1/scripts/lib/common.sh"; ROOT="$1"; . "$1/scripts/lib/roles.sh"; validate_role "$2"'
 
 
 def _lines(data):
@@ -55,10 +51,7 @@ def _edit(path, rewrite, name):
 
 def new(ctx, args):
     root = ctx.paths.root
-    # roles.sh dies without this file; new-role.sh sourced it first, so nothing was written before.
-    if not os.path.isfile(os.path.join(root, "broker", "tools.txt")):
-        raise FactoryError("%s/broker/tools.txt is missing: broker/ is incomplete in this checkout "
-                           "(restore it with 'git -C %s checkout HEAD -- broker')" % (root, root))
+    known_broker_tools(ctx.paths)  # validate_role needs the tool list: fail before scaffolding anything
     if not 1 <= len(args) <= 2:
         raise FactoryError(USAGE)
     name = args[0]
@@ -77,9 +70,7 @@ def new(ctx, args):
         _edit(os.path.join(target, "role.conf"), rewrite_role_conf, name)
     except OSError as e:
         raise FactoryError("cannot scaffold roles/%s: %s" % (name, e.strerror or e))
-    status = ctx.run(["bash", "-c", "set -euo pipefail; " + VALIDATE_ROLE, "factory", root, name])
-    if status != 0:
-        return status
+    validate_role(ctx.paths, name)
     if not shutil.which("sbx", path=ctx.environ.get("PATH", os.defpath)):
         raise FactoryError("sbx not found in PATH (needed to validate the role's kit)")
     status = ctx.run(["sbx", "kit", "validate", os.path.join(target, "kit")], stdout=subprocess.DEVNULL)

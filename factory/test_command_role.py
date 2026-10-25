@@ -1,12 +1,13 @@
 """Tests for factory/commands/role.py (factory role new). Ported from the new-role.sh part
-(8) of scripts/test_factory_role_overrides.sh, plus the rest of what the script did."""
+of the old shell test for role overrides, plus the rest of what the script did."""
 
+import io
 import os
 import shutil
 import unittest
 from unittest import mock
 
-from factory.cli import COMMANDS
+from factory.cli import COMMANDS, main
 from factory.commands import role
 from factory.conf import read_conf
 from factory.fixtures import REPO, CommandTest
@@ -16,12 +17,11 @@ from factory.roles import valid_role_name
 class RoleNewTest(CommandTest):
     def setUp(self):
         super().setUp()
-        # The real roles, the real tool list and the real validate_role (still bash).
+        # The real roles and the real tool list.
         for sub in ("reviewer", "researcher", "developer"):
             shutil.copytree(os.path.join(REPO, "roles", sub), os.path.join(self.root, "roles", sub))
         os.makedirs(os.path.join(self.root, "broker"))
         shutil.copy(os.path.join(REPO, "broker", "tools.txt"), os.path.join(self.root, "broker", "tools.txt"))
-        shutil.copytree(os.path.join(REPO, "scripts", "lib"), os.path.join(self.root, "scripts", "lib"))
         self.sbx_log = os.path.join(self.tmp, "sbx-calls")
         self.tool("sbx", 'echo "$*" >> "%s"\n' % self.sbx_log)
 
@@ -126,9 +126,9 @@ class RoleNewTest(CommandTest):
 
     def test_a_source_role_that_does_not_validate_fails_with_validate_roles_message(self):
         os.remove(self.path("reviewer", "instructions.md"))
-        rc, out, err = self.new("designer")
-        self.assertEqual((rc, out), (1, ""))
-        self.assertEqual(err, "error: role designer: missing or empty roles/designer/instructions.md\n")
+        err = io.StringIO()
+        rc = main(["role", "new", "designer"], root=self.root, environ=self.environ, stdout=io.StringIO(), stderr=err)
+        self.assertEqual((rc, err.getvalue()), (1, "error: role designer: missing or empty roles/designer/instructions.md\n"))
         self.assertFalse(os.path.exists(self.sbx_log), "sbx is not asked about a role that failed validation")
 
     def test_a_failing_sbx_kit_validate_is_the_exit_status(self):
