@@ -8,7 +8,9 @@ set -euo pipefail
 #    no download (the developer/reviewer images carry one; roles have no egress).
 # 2. One reporting another version, or none on PATH, falls through to the
 #    download path, which still checks the pinned SHA-256.
-# 3. The Dockerfiles take the pin as build args with no defaults, and
+# 3. templates/agent/extract-tar-member (how the images unpack the release
+#    without an xz program) takes only the named regular-file member.
+# 4. The Dockerfiles take the pin as build args with no defaults, and
 #    00-build-templates.sh passes them from lib/common.sh.
 #
 # A fake shellcheck and a stub curl on a private PATH in a throwaway checkout:
@@ -111,7 +113,46 @@ case "$(uname -s)-$(uname -m)" in
   *) echo "skip - no pinned shellcheck asset for $(uname -s) $(uname -m)" ;;
 esac
 
-# 3. Image build wiring.
+# 3. extract-tar-member.
+X="$REPO_ROOT/templates/agent/extract-tar-member"
+if python3 -c 'import lzma' 2>/dev/null; then
+  python3 - "$tmp/sc.tar.xz" <<'PY'
+import io, sys, tarfile
+with tarfile.open(sys.argv[1], "w:xz") as t:
+    def add(name, data=b"", type=tarfile.REGTYPE, link=""):
+        i = tarfile.TarInfo(name); i.type = type; i.linkname = link
+        i.size = len(data) if type == tarfile.REGTYPE else 0
+        t.addfile(i, io.BytesIO(data) if type == tarfile.REGTYPE else None)
+    add("sc-v1/shellcheck", b"#!/bin/sh\necho the binary\n")
+    add("sc-v1/README.txt", b"readme")
+    add("sc-v1/link", type=tarfile.SYMTYPE, link="/etc/passwd")
+    add("sc-v1/dir", type=tarfile.DIRTYPE)
+PY
+  mkdir "$tmp/x"
+  "$X" "$tmp/sc.tar.xz" sc-v1/shellcheck "$tmp/x/shellcheck" && rc=0 || rc=$?
+  assert_eq "extract-tar-member: extracts the named member" "$rc" "0"
+  assert_eq "extract-tar-member: contents are the member's" "$(cat "$tmp/x/shellcheck")" "$(printf '#!/bin/sh\necho the binary')"
+  [ -x "$tmp/x/shellcheck" ] && ok "extract-tar-member: the result is executable" || bad "extract-tar-member: the result is executable"
+  assert_eq "extract-tar-member: extracts nothing else" "$(ls "$tmp/x")" "shellcheck"
+  fails() { # fails LABEL FRAGMENT ARGS...
+    local label="$1" frag="$2" out rc; shift 2
+    out="$("$X" "$@" 2>&1)" && rc=0 || rc=$?
+    [ "$rc" != 0 ] && assert_contains "extract-tar-member: $label" "$out" "$frag" || bad "extract-tar-member: $label (exit 0)"
+  }
+  fails "a missing member is refused" "no member" "$tmp/sc.tar.xz" sc-v1/nope "$tmp/x/a"
+  fails "a symlink member is refused" "not a regular file" "$tmp/sc.tar.xz" sc-v1/link "$tmp/x/b"
+  fails "a directory member is refused" "not a regular file" "$tmp/sc.tar.xz" sc-v1/dir "$tmp/x/c"
+  fails "a partial name is refused" "no member" "$tmp/sc.tar.xz" shellcheck "$tmp/x/d"
+  fails "an existing destination is refused" "exists" "$tmp/sc.tar.xz" sc-v1/shellcheck "$tmp/x/shellcheck"
+  echo "not xz" > "$tmp/junk"
+  fails "a file that is not .tar.xz is refused" "extract-tar-member:" "$tmp/junk" sc-v1/shellcheck "$tmp/x/e"
+  fails "wrong usage is refused" "Usage" "$tmp/sc.tar.xz"
+  assert_eq "extract-tar-member: refused cases wrote nothing" "$(ls "$tmp/x")" "shellcheck"
+else
+  echo "skip - python3 has no lzma here"
+fi
+
+# 4. Image build wiring.
 for t in developer reviewer; do
   df="$REPO_ROOT/templates/$t/Dockerfile"
   for a in SHELLCHECK_VERSION SHELLCHECK_LINUX_X86_64_SHA256 SHELLCHECK_LINUX_AARCH64_SHA256; do
@@ -119,6 +160,14 @@ for t in developer reviewer; do
     build_arg="$(grep -c -- "--build-arg \"$a=\$$a\"" "$REPO_ROOT/scripts/00-build-templates.sh" || true)"
     assert_eq "00-build-templates.sh passes $a from common.sh" "$build_arg" "1"
   done
+  grep -q 'extract-tar-member' "$df" && ! grep -q 'tar -x' "$df" \
+    && ok "$t Dockerfile: unpacks with extract-tar-member, not the xz program" \
+    || bad "$t Dockerfile: unpacks with extract-tar-member, not the xz program"
+  grep -q 'python3' <(grep '^RUN for t in' "$df") && ok "$t Dockerfile: the tool check includes python3" \
+    || bad "$t Dockerfile: the tool check includes python3"
+  grep -qx '!templates/agent/extract-tar-member' "$REPO_ROOT/.dockerignore" \
+    && ok ".dockerignore lets the build context carry extract-tar-member" \
+    || bad ".dockerignore lets the build context carry extract-tar-member"
   grep -q 'sha256sum -c' "$df" && grep -q 'dpkg --print-architecture' "$df" && grep -q '/usr/local/bin/shellcheck' "$df" \
     && ok "$t Dockerfile: ShellCheck is arch-selected, verified and installed" \
     || bad "$t Dockerfile: ShellCheck is arch-selected, verified and installed"

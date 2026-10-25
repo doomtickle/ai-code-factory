@@ -40,9 +40,13 @@ RUN curl -fsSLo /tmp/yarn.tgz "https://registry.npmjs.org/yarn/-/yarn-${YARN_VER
 # scripts/lib/common.sh via 00-build-templates.sh and have no default here, so a
 # build without them fails. The asset is chosen by `dpkg --print-architecture`
 # (amd64 on WSL2/Linux, arm64 on Apple silicon) and checked before extracting.
+# The base has no xz program but its python3 has lzma, so extract-tar-member
+# (python tarfile) pulls out only the shellcheck binary, by its exact path; no
+# extra package is installed.
 ARG SHELLCHECK_VERSION
 ARG SHELLCHECK_LINUX_X86_64_SHA256
 ARG SHELLCHECK_LINUX_AARCH64_SHA256
+COPY --chmod=0555 templates/agent/extract-tar-member /tmp/extract-tar-member
 USER root
 RUN : "${SHELLCHECK_VERSION:?build arg SHELLCHECK_VERSION is required}" \
       "${SHELLCHECK_LINUX_X86_64_SHA256:?build arg SHELLCHECK_LINUX_X86_64_SHA256 is required}" \
@@ -54,9 +58,8 @@ RUN : "${SHELLCHECK_VERSION:?build arg SHELLCHECK_VERSION is required}" \
     esac \
  && curl -fsSLo /tmp/shellcheck.tar.xz "https://github.com/koalaman/shellcheck/releases/download/v${SHELLCHECK_VERSION}/shellcheck-v${SHELLCHECK_VERSION}.${sc_asset}.tar.xz" \
  && echo "${sc_sha256}  /tmp/shellcheck.tar.xz" | sha256sum -c - \
- && tar -xJf /tmp/shellcheck.tar.xz -C /tmp \
- && install -m 0755 "/tmp/shellcheck-v${SHELLCHECK_VERSION}/shellcheck" /usr/local/bin/shellcheck \
- && rm -rf /tmp/shellcheck.tar.xz "/tmp/shellcheck-v${SHELLCHECK_VERSION}" \
+ && /tmp/extract-tar-member /tmp/shellcheck.tar.xz "shellcheck-v${SHELLCHECK_VERSION}/shellcheck" /usr/local/bin/shellcheck \
+ && rm -f /tmp/shellcheck.tar.xz /tmp/extract-tar-member \
  && shellcheck --version | grep -qx "version: ${SHELLCHECK_VERSION}"
 # Last, so editing the scripts reuses the cached layers above. factory-lane
 # manages the role's private git clones of the read-only project (lanes) and
