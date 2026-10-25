@@ -166,6 +166,13 @@ jobs:
               'factory-lane -h >/dev/null && factory-test -h >/dev/null && git --version' \
               || { echo "::error::$image is missing factory-lane, factory-test or git"; exit 1; }
           done
+          pin="$(sed -n 's/^readonly SHELLCHECK_VERSION="\(.*\)"$/\1/p' scripts/lib/common.sh)"
+          [ -n "$pin" ] || { echo "::error::no SHELLCHECK_VERSION in scripts/lib/common.sh"; exit 1; }
+          for image in factory-developer:v3 factory-reviewer:v3; do
+            got="$(docker run --rm --network none --entrypoint shellcheck "$image" --version | sed -n 's/^version: //p')"
+            [ "$got" = "$pin" ] \
+              || { echo "::error::$image has shellcheck '$got', expected the pinned $pin"; exit 1; }
+          done
 
   broker:
     # The broker's own tests, as passdesk-broker's workflow ran them before

@@ -35,35 +35,6 @@ RUN curl -fsSLo /tmp/yarn.tgz "https://registry.npmjs.org/yarn/-/yarn-${YARN_VER
  && npm install -g --ignore-scripts --no-audit --no-fund /tmp/yarn.tgz \
  && rm /tmp/yarn.tgz \
  && [ "$(yarn --version)" = "${YARN_VERSION}" ]
-# ShellCheck, so a role (no egress) can run scripts/lint.sh, which prefers a
-# shellcheck on PATH at the pinned version. The version and both hashes come from
-# scripts/lib/common.sh via 00-build-templates.sh and have no default here, so a
-# build without them fails. The asset is chosen by `dpkg --print-architecture`
-# (amd64 on WSL2/Linux, arm64 on Apple silicon) and checked before extracting.
-# The base has no xz program but its python3 has lzma, so extract-tar-member
-# (python tarfile) pulls out only the shellcheck binary, by its exact path; no
-# extra package is installed.
-ARG SHELLCHECK_VERSION
-ARG SHELLCHECK_LINUX_X86_64_SHA256
-ARG SHELLCHECK_LINUX_AARCH64_SHA256
-COPY --chmod=0555 templates/agent/extract-tar-member /tmp/extract-tar-member
-USER root
-RUN : "${SHELLCHECK_VERSION:?build arg SHELLCHECK_VERSION is required}" \
-      "${SHELLCHECK_LINUX_X86_64_SHA256:?build arg SHELLCHECK_LINUX_X86_64_SHA256 is required}" \
-      "${SHELLCHECK_LINUX_AARCH64_SHA256:?build arg SHELLCHECK_LINUX_AARCH64_SHA256 is required}" \
- && case "$(dpkg --print-architecture)" in \
-      amd64) sc_asset=linux.x86_64; sc_sha256="${SHELLCHECK_LINUX_X86_64_SHA256}" ;; \
-      arm64) sc_asset=linux.aarch64; sc_sha256="${SHELLCHECK_LINUX_AARCH64_SHA256}" ;; \
-      *) echo "no ShellCheck build for $(dpkg --print-architecture)" >&2; exit 1 ;; \
-    esac \
- && curl -fsSLo /tmp/shellcheck.tar.xz "https://github.com/koalaman/shellcheck/releases/download/v${SHELLCHECK_VERSION}/shellcheck-v${SHELLCHECK_VERSION}.${sc_asset}.tar.xz" \
- && echo "${sc_sha256}  /tmp/shellcheck.tar.xz" | sha256sum -c - \
- && /tmp/extract-tar-member /tmp/shellcheck.tar.xz "shellcheck-v${SHELLCHECK_VERSION}/shellcheck" /usr/local/bin/shellcheck \
- && rm -f /tmp/shellcheck.tar.xz /tmp/extract-tar-member \
- && shellcheck --version | grep -qx "version: ${SHELLCHECK_VERSION}"
-# Last, so editing the scripts reuses the cached layers above. factory-lane
-# manages the role's private git clones of the read-only project (lanes) and
-# the reviewer's checkouts of branches to review.
 # Chrome for Testing's headless shell, so a role can render a page it built
 # (the docs, the dashboard files) to a PNG and look at it with Read. It loads
 # file:// and localhost only: the sandbox's network policy (the kit) is
@@ -102,6 +73,35 @@ RUN apt-get update \
  && chmod -R a+rX /opt/chrome-headless-shell \
  && ln -s /opt/chrome-headless-shell/chrome-headless-shell /usr/local/bin/chrome-headless-shell \
  && [ "$(chrome-headless-shell --version 2>/dev/null | grep -o "[0-9][0-9.]*")" = "${CHROME_VERSION}" ]
+# ShellCheck, so a role (no egress) can run scripts/lint.sh, which prefers a
+# shellcheck on PATH at the pinned version. The version and both hashes come from
+# scripts/lib/common.sh via 00-build-templates.sh and have no default here, so a
+# build without them fails. The asset is chosen by `dpkg --print-architecture`
+# (amd64 on WSL2/Linux, arm64 on Apple silicon) and checked before extracting.
+# The base has no xz program but its python3 has lzma, so extract-tar-member
+# (python tarfile) pulls out only the shellcheck binary, by its exact path; no
+# extra package is installed.
+ARG SHELLCHECK_VERSION
+ARG SHELLCHECK_LINUX_X86_64_SHA256
+ARG SHELLCHECK_LINUX_AARCH64_SHA256
+COPY --chmod=0555 templates/agent/extract-tar-member /tmp/extract-tar-member
+USER root
+RUN : "${SHELLCHECK_VERSION:?build arg SHELLCHECK_VERSION is required}" \
+      "${SHELLCHECK_LINUX_X86_64_SHA256:?build arg SHELLCHECK_LINUX_X86_64_SHA256 is required}" \
+      "${SHELLCHECK_LINUX_AARCH64_SHA256:?build arg SHELLCHECK_LINUX_AARCH64_SHA256 is required}" \
+ && case "$(dpkg --print-architecture)" in \
+      amd64) sc_asset=linux.x86_64; sc_sha256="${SHELLCHECK_LINUX_X86_64_SHA256}" ;; \
+      arm64) sc_asset=linux.aarch64; sc_sha256="${SHELLCHECK_LINUX_AARCH64_SHA256}" ;; \
+      *) echo "no ShellCheck build for $(dpkg --print-architecture)" >&2; exit 1 ;; \
+    esac \
+ && curl -fsSLo /tmp/shellcheck.tar.xz "https://github.com/koalaman/shellcheck/releases/download/v${SHELLCHECK_VERSION}/shellcheck-v${SHELLCHECK_VERSION}.${sc_asset}.tar.xz" \
+ && echo "${sc_sha256}  /tmp/shellcheck.tar.xz" | sha256sum -c - \
+ && /tmp/extract-tar-member /tmp/shellcheck.tar.xz "shellcheck-v${SHELLCHECK_VERSION}/shellcheck" /usr/local/bin/shellcheck \
+ && rm -f /tmp/shellcheck.tar.xz /tmp/extract-tar-member \
+ && shellcheck --version | grep -qx "version: ${SHELLCHECK_VERSION}"
+# Last, so editing the scripts reuses the cached layers above. factory-lane
+# manages the role's private git clones of the read-only project (lanes) and
+# the reviewer's checkouts of branches to review.
 COPY --chmod=0555 templates/agent/factory-shot /usr/local/bin/factory-shot
 COPY --chmod=0555 templates/agent/factory-test /usr/local/bin/factory-test
 COPY --chmod=0555 templates/agent/factory-lane /usr/local/bin/factory-lane

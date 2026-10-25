@@ -160,6 +160,12 @@ for t in developer reviewer; do
     build_arg="$(grep -c -- "--build-arg \"$a=\$$a\"" "$REPO_ROOT/scripts/00-build-templates.sh" || true)"
     assert_eq "00-build-templates.sh passes $a from common.sh" "$build_arg" "1"
   done
+  chrome_line="$(grep -n 'chrome-headless-shell --version' "$df" | cut -d: -f1)"
+  sc_line="$(grep -n 'shellcheck --version' "$df" | cut -d: -f1)"
+  copy_line="$(grep -n '^COPY --chmod=0555 templates/agent/factory-shot' "$df" | cut -d: -f1)"
+  [ -n "$chrome_line" ] && [ "$chrome_line" -lt "$sc_line" ] && [ "$sc_line" -lt "$copy_line" ] \
+    && ok "$t Dockerfile: the ShellCheck layer sits after Chrome's and before the COPYs" \
+    || bad "$t Dockerfile: the ShellCheck layer sits after Chrome's and before the COPYs"
   grep -q 'extract-tar-member' "$df" && ! grep -q 'tar -x' "$df" \
     && ok "$t Dockerfile: unpacks with extract-tar-member, not the xz program" \
     || bad "$t Dockerfile: unpacks with extract-tar-member, not the xz program"
@@ -172,6 +178,9 @@ for t in developer reviewer; do
     && ok "$t Dockerfile: ShellCheck is arch-selected, verified and installed" \
     || bad "$t Dockerfile: ShellCheck is arch-selected, verified and installed"
 done
+grep -q 'entrypoint shellcheck' "$REPO_ROOT/.github/workflows/ci.yml" && grep -q -- '--network none --entrypoint shellcheck' "$REPO_ROOT/.github/workflows/ci.yml" \
+  && ok "ci.yml runs shellcheck --version in the role images with no network" \
+  || bad "ci.yml runs shellcheck --version in the role images with no network"
 aarch64="$(sed -n 's/^readonly SHELLCHECK_LINUX_AARCH64_SHA256="\(.*\)"$/\1/p' "$REPO_ROOT/scripts/lib/common.sh")"
 case "$aarch64" in
   *[!0-9a-f]* | "") bad "SHELLCHECK_LINUX_AARCH64_SHA256 is a 64-char hex digest" ;;
