@@ -129,6 +129,7 @@ Everything is pinned for repeatable setups:
 | ruff 0.16.8 | `templates/reviewer/Dockerfile`, `templates/developer/Dockerfile` |
 | yarn 1.22.22 (+ SHA-256) and `factory-test` | `templates/developer/Dockerfile`, `templates/reviewer/Dockerfile` |
 | Chrome for Testing headless shell 156.0.8078.47 (linux64 and linux-arm64, each + SHA-256; its Ubuntu libraries and fonts pinned only by the base image digest) | `templates/developer/Dockerfile`, `templates/reviewer/Dockerfile` |
+| ShellCheck 0.10.0 (linux x86_64 and aarch64, each + SHA-256) | `scripts/lib/common.sh` (also darwin aarch64, for `scripts/lint.sh` on a host); the images get it as build args from `scripts/00-build-templates.sh` |
 | Broker code + policy | `broker/` at this repo's commit, baked into `factory-broker:v3` at build time |
 | Dispatch bridge runtime | macOS system Python (`/usr/bin/python3`); `python3` on PATH on Linux |
 
@@ -1342,7 +1343,10 @@ hasn't dispatched any jobs yet just shows an empty report.
   request and push to main: on Linux with Python 3.9 and 3.14, on macOS 14 with
   the system bash and Python, plus shellcheck and an image build. To run them
   yourself (use `/usr/bin/python3` on macOS):
-  - shell lint: `scripts/lint.sh` (downloads the pinned shellcheck once)
+  - shell lint: `scripts/lint.sh` (uses a `shellcheck` on PATH that reports exactly the
+    pinned version, else downloads the pinned one once). The developer and reviewer
+    images carry it, so roles, which have no network, can run `scripts/lint.sh`; a
+    template rebuild (`factory update`) is needed to get it into an existing setup
   - dispatch: `python3 -m unittest discover -s dispatch -v`
   - Python CLI (`factory/`): `python3 -m unittest discover -s factory -t . -p 'test_*.py' -v`
   - host scripts: `python3 -m unittest discover -s scripts -p 'test_*.py' -v`
@@ -1387,7 +1391,7 @@ docs/setup-wsl.md            Step-by-step setup on Windows 11 with WSL2
 docs/guides/*.md             Task-oriented guides (rendered by factory docs)
 docs/mac-quickstart.html     One-page Mac quickstart
 windows/enable-wsl.ps1       Windows side of that setup: WSL, Ubuntu, nested virtualization
-templates/<image>/           Pinned images: developer (+ruff), reviewer (+ruff)
+templates/<image>/           Pinned images: developer (+ruff, shellcheck), reviewer (+ruff, shellcheck)
 templates/agent/factory-test Runs tests in a sandbox-local copy (baked into developer and reviewer)
 templates/agent/factory-lane Lane clones: prepare, export bundles, bundle a branch for git_push, check out a branch to review
 templates/agent/factory-shot Renders a page the role built to a PNG with the image's headless Chrome (file:// and loopback only)
@@ -1439,6 +1443,10 @@ Change pins on purpose, in their own commit, and re-run the full setup to test.
   `scripts/gen-sbx-reference.sh` (writes `docs/reference/sbx-cli.md`; agents have
   no `sbx`, so they check it before using a flag, and `factory doctor` warns while
   it is missing, not yet generated, or for a different version than `SBX_VERSION`).
+- **ShellCheck:** change `SHELLCHECK_VERSION` and the `SHELLCHECK_*_SHA256` values in
+  `scripts/lib/common.sh` only; `scripts/lint.sh` and the images (via build args in
+  `scripts/00-build-templates.sh`) read them from there. Hash each release asset:
+  `curl -sL <asset URL> | shasum -a 256`.
 - **ruff:** change `RUFF_VERSION` in both `templates/reviewer/Dockerfile` and `templates/developer/Dockerfile`.
 - **yarn:** change `YARN_VERSION` and `YARN_SHA256` in **both**
   `templates/developer/Dockerfile` and `templates/reviewer/Dockerfile`. Get the

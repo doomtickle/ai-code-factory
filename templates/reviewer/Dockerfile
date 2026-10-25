@@ -32,6 +32,29 @@ RUN curl -fsSLo /tmp/yarn.tgz "https://registry.npmjs.org/yarn/-/yarn-${YARN_VER
  && npm install -g --ignore-scripts --no-audit --no-fund /tmp/yarn.tgz \
  && rm /tmp/yarn.tgz \
  && [ "$(yarn --version)" = "${YARN_VERSION}" ]
+# ShellCheck, so a role (no egress) can run scripts/lint.sh, which prefers a
+# shellcheck on PATH at the pinned version. The version and both hashes come from
+# scripts/lib/common.sh via 00-build-templates.sh and have no default here, so a
+# build without them fails. The asset is chosen by `dpkg --print-architecture`
+# (amd64 on WSL2/Linux, arm64 on Apple silicon) and checked before extracting.
+ARG SHELLCHECK_VERSION
+ARG SHELLCHECK_LINUX_X86_64_SHA256
+ARG SHELLCHECK_LINUX_AARCH64_SHA256
+USER root
+RUN : "${SHELLCHECK_VERSION:?build arg SHELLCHECK_VERSION is required}" \
+      "${SHELLCHECK_LINUX_X86_64_SHA256:?build arg SHELLCHECK_LINUX_X86_64_SHA256 is required}" \
+      "${SHELLCHECK_LINUX_AARCH64_SHA256:?build arg SHELLCHECK_LINUX_AARCH64_SHA256 is required}" \
+ && case "$(dpkg --print-architecture)" in \
+      amd64) sc_asset=linux.x86_64; sc_sha256="${SHELLCHECK_LINUX_X86_64_SHA256}" ;; \
+      arm64) sc_asset=linux.aarch64; sc_sha256="${SHELLCHECK_LINUX_AARCH64_SHA256}" ;; \
+      *) echo "no ShellCheck build for $(dpkg --print-architecture)" >&2; exit 1 ;; \
+    esac \
+ && curl -fsSLo /tmp/shellcheck.tar.xz "https://github.com/koalaman/shellcheck/releases/download/v${SHELLCHECK_VERSION}/shellcheck-v${SHELLCHECK_VERSION}.${sc_asset}.tar.xz" \
+ && echo "${sc_sha256}  /tmp/shellcheck.tar.xz" | sha256sum -c - \
+ && tar -xJf /tmp/shellcheck.tar.xz -C /tmp \
+ && install -m 0755 "/tmp/shellcheck-v${SHELLCHECK_VERSION}/shellcheck" /usr/local/bin/shellcheck \
+ && rm -rf /tmp/shellcheck.tar.xz "/tmp/shellcheck-v${SHELLCHECK_VERSION}" \
+ && shellcheck --version | grep -qx "version: ${SHELLCHECK_VERSION}"
 # Last, so editing the scripts reuses the cached layers above. factory-lane
 # manages the role's private git clones of the read-only project (lanes) and
 # the reviewer's checkouts of branches to review.

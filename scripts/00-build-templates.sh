@@ -50,9 +50,15 @@ build() {
 }
 
 # developer/reviewer use the repo root as the context for shared files;
-# .dockerignore limits it to what they COPY.
-build developer "$ROOT/templates/developer/Dockerfile" "$ROOT"
-build reviewer "$ROOT/templates/reviewer/Dockerfile" "$ROOT"
+# .dockerignore limits it to what they COPY. They install the ShellCheck pinned
+# in lib/common.sh (the Dockerfiles have no defaults for these args).
+shellcheck_args=(
+  --build-arg "SHELLCHECK_VERSION=$SHELLCHECK_VERSION"
+  --build-arg "SHELLCHECK_LINUX_X86_64_SHA256=$SHELLCHECK_LINUX_X86_64_SHA256"
+  --build-arg "SHELLCHECK_LINUX_AARCH64_SHA256=$SHELLCHECK_LINUX_AARCH64_SHA256"
+)
+build developer "$ROOT/templates/developer/Dockerfile" "$ROOT" "${shellcheck_args[@]}"
+build reviewer "$ROOT/templates/reviewer/Dockerfile" "$ROOT" "${shellcheck_args[@]}"
 # The broker builds from the export of the committed broker/ made above, with
 # that directory as the build context.
 # This machine's policy overlay (an empty one if there is none) goes in as its
