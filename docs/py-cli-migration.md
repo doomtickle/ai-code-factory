@@ -62,10 +62,14 @@ bash and Python side by side, and `main` works after every one.
    Python, so it no longer needs `jq`.
    `status` keeps the bash output byte for byte (checked against the bash it replaced on about 30
    fixtures, plain and on a terminal, including exit codes and stderr), with these deliberate
-   differences: `sbx version` failing outright is reported as "sbx 0.45.1 required, found
-   'unknown'" where bash exited silently (`require_sbx`), and the approvals line now only knows
+   differences (1) `sbx version` failing outright is reported as "sbx 0.45.1 required, found
+   'unknown'" where bash exited silently (`require_sbx`); (2) the approvals line now only knows
    the staged-only flow of #170 (staged, approved/being written, done, failed; no held or waiting
-   lane state, no `hold_seconds`). Its helpers went with it: `cmd_status`, `lanes_label`,
+   lane state, no `hold_seconds`); (3) when `sbx ls --json` fails or returns something that is not
+   a sandbox list, bash exited silently (under `pipefail`, with sbx's own exit status and whatever
+   sbx and jq wrote to stderr), while Python stops with "error: could not list the sandboxes ..."
+   and exit 1; (4) `running`/`stopped` are coloured only in the status column, where the old `sed`
+   coloured the first match anywhere on the line. Its helpers went with it: `cmd_status`, `lanes_label`,
    `approvals_summary`, `approvals_status_line` (bin/factory) and `local_settings_present`
    (`common.sh`) are deleted, since nothing else in bash called them. The bash `policy_value`,
    `policy_string`, `gitlab_*`, `jira_cloud_id_set`, `any_jira_tool_granted`,
