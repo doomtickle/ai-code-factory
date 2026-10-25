@@ -102,9 +102,8 @@ STANDBY above it.
 
 Each module shows:
 
-- a status LED and tag: RUN (green, blinking), HELD (amber, blinking: a write
-  is waiting for you), REVISE (amber: a review asked for changes), DONE or
-  APPROVED (green), CANCELLED, FAILED or INTERRUPTED (red: the job was cut off
+- a status LED and tag: RUN (green, blinking), REVISE (amber: a review asked
+  for changes), DONE or APPROVED (green), CANCELLED, FAILED or INTERRUPTED (red: the job was cut off
   by a restart, update or disconnect; a lane only shows RUN while the dispatch
   bridge is up and the job is live);
 - the live tail of its transcript, with tool calls, errors, branches and held
@@ -146,8 +145,6 @@ move, so the write gate and the control unit stay in reach.
   researcher purple, other roles a fixed hue each), glowing shades in the same colour, and an
   identity disc behind the head. The disc and the props show the lane's state:
   - disc spinning, hands typing, console lit: running
-  - disc yellow and blinking, a Recognizer hovering with HOLD: held, a write
-    is waiting for you
   - disc dim and a green ✓ by the console: done or approved
   - FIX tag by the console: a review asked for changes
   - disc red and broken, fragments over the head: failed or cancelled
@@ -342,9 +339,8 @@ and the agent's next call of that write stages a fresh card. If a newer write re
 reading, or it was decided elsewhere, the unit says so in words and decides
 nothing. Check the new card and press again.
 
-> **Note:** A card names the role, not the lane. A staged write never marks
-> a lane HELD; only a card the gateway didn't stage (left by an older
-> gateway) does, and if two lanes of that role are running, both show as HELD.
+> **Note:** A card names the role, not the lane, and no card marks a lane
+> HELD: the agent's call returned when the write was staged.
 
 ### Inspect a push before approving it
 

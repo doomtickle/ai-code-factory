@@ -84,8 +84,8 @@ set aside under a lock and never blocks the new card. Every held write is staged
 (`approvals/queued/<id>.json` with the card's id and nonce, its job) and written by the
 gateway within seconds of approval; the agent's call returned when it was staged. The
 unit shows a decided card with its keys dark until the gateway acts on it, and an
-undecided staged one is marked STAGED. A decided, expired or staged card never marks a
-lane HELD (`Dashboard.held()`). The unit's
+undecided staged one is marked STAGED. No card marks a lane held: the agent's
+call returned when the write was staged. The unit's
 deferred-writes list (`writes` in its state, from `approvals.read_writes`) is display
 only, every field cleaned to one line and drawn as text.
 

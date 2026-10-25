@@ -103,7 +103,7 @@ class SnapshotTests(unittest.TestCase):
     def test_lanes(self):
         snap = self.board.snapshot(self.fx.now)
         lanes = {lane["name"]: lane for lane in snap["lanes"]}
-        self.assertEqual(lanes["developer"]["state"], "held")  # running, and its push is on the gate
+        self.assertEqual(lanes["developer"]["state"], "running")  # its push is on the gate, staged: the call returned
         self.assertEqual(lanes["developer"]["model"], "haiku-4-5")
         self.assertEqual(lanes["developer"]["tail"][-1]["kind"], "tool")
         self.assertEqual(lanes["developer"]["tail"][-1]["text"], "broker git_push(repo=o/r, branch=factory/x)")
@@ -122,7 +122,6 @@ class SnapshotTests(unittest.TestCase):
         self.assertEqual(lanes["reviewer"]["state"], "revise")  # finished jobs keep their state
         self.assertEqual(snap["totals"]["running"], 0)
         self.assertEqual(self.board.running(), {})
-        self.assertEqual(self.board.held(self.board.cards(self.fx.now)), {})
 
     def test_a_job_the_bridge_closed_shows_interrupted(self):
         logs = self.fx.state / "dispatch" / "logs"
@@ -297,22 +296,21 @@ class HeldTests(unittest.TestCase):
         write_lane(self.logs, "developer-lane2", "20261019-000002-bbbbbb", self.now)
         self.card("c1", "developer")
         lanes, gate = self.snap()
-        # We can't tell which developer lane is waiting: both show held, and say why.
-        self.assertEqual((lanes["developer"]["state"], lanes["developer-lane2"]["state"]), ("held", "held"))
-        self.assertIn("one of 2 running developer lanes", lanes["developer-lane2"]["held_note"])
+        # A card names the role, not the lane, and holds no lane: both keep running.
+        self.assertEqual((lanes["developer"]["state"], lanes["developer-lane2"]["state"]), ("running", "running"))
+        self.assertNotIn("held_note", lanes["developer-lane2"])
         self.assertEqual(lanes["developer-lane3"]["state"], "idle")
         self.assertEqual((gate[0]["role"], gate[0]["lanes"]), ("developer", ["developer", "developer-lane2"]))
 
     def test_one_running_lane_of_several(self):
-        # The hold belongs to lane2, the only developer lane running, though the card says "developer".
+        # The card lists lane2, the only developer lane running, though it says "developer".
         write_lane(self.logs, "developer-lane2", "20261019-000002-bbbbbb", self.now)
         self.card("c1", "developer")
         lanes, gate = self.snap()
-        self.assertEqual((lanes["developer"]["state"], lanes["developer-lane2"]["state"]), ("idle", "held"))
-        self.assertEqual(lanes["developer-lane2"]["held_note"], "")
+        self.assertEqual((lanes["developer"]["state"], lanes["developer-lane2"]["state"]), ("idle", "running"))
         self.assertEqual(gate[0]["lanes"], ["developer-lane2"])
 
-    def test_decided_and_expired_cards_hold_nothing(self):
+    def test_decided_and_expired_cards_show_in_the_gate(self):
         import approvals
         write_lane(self.logs, "developer", "20261019-000001-aaaaaa", self.now)
         self.card("declined", "developer", nonce="n")
@@ -321,33 +319,30 @@ class HeldTests(unittest.TestCase):
         approvals.write_decision(self.state / "broker", card, "decline", "tester", "no")
         lanes, gate = self.snap()
         self.assertEqual(lanes["developer"]["state"], "running")
-        self.assertEqual(lanes["developer"]["held_note"], "")
         self.assertEqual({c["id"]: (c["decided"], c["seconds_left"] < 0) for c in gate},
                          {"declined": ("decline", False), "expired": (None, True)})
-        # A live, undecided card beside them still holds the lane.
+        # A live, undecided card holds no lane, in the snapshot or the lane detail (Monitor).
         self.card("live", "developer")
-        self.assertEqual(self.snap()[0]["developer"]["state"], "held")
-        # So does the lane detail (Monitor).
+        self.assertEqual(self.snap()[0]["developer"]["state"], "running")
         detail = d.Dashboard(self.state, self.roles, "proj").lane_detail("developer", self.now)
-        self.assertEqual(detail["state"], "held")
+        self.assertEqual(detail["state"], "running")
+        self.assertNotIn("held_note", detail)
 
     def queue(self, cid, nonce="n"):
         folder = self.state / "broker" / "approvals" / "queued"
         folder.mkdir(parents=True, exist_ok=True)
         (folder / f"{cid}.json").write_text(json.dumps({"id": cid, "nonce": nonce, "tool": "git_push"}))
 
-    def test_queued_card_holds_nothing_and_is_marked(self):
+    def test_queued_card_is_marked(self):
         write_lane(self.logs, "developer", "20261019-000001-aaaaaa", self.now)
         self.card("q1", "developer", nonce="n")
         self.queue("q1")
         lanes, gate = self.snap()
         self.assertEqual(lanes["developer"]["state"], "running")  # the agent's call already returned
-        self.assertEqual(lanes["developer"]["held_note"], "")
         self.assertEqual([(c["id"], c["queued"], c["decided"]) for c in gate], [("q1", True, None)])
-        # A live card beside it still holds the lane, and is not marked queued.
+        # A live card beside it is not marked queued.
         self.card("live", "developer", nonce="m")
         lanes, gate = self.snap()
-        self.assertEqual(lanes["developer"]["state"], "held")
         self.assertEqual({c["id"]: c["queued"] for c in gate}, {"q1": True, "live": False})
 
     def test_queued_file_for_another_card_marks_nothing(self):
@@ -355,7 +350,6 @@ class HeldTests(unittest.TestCase):
         self.card("q1", "developer", nonce="new")
         self.queue("q1", nonce="old")  # an earlier card with the same id
         lanes, gate = self.snap()
-        self.assertEqual(lanes["developer"]["state"], "held")
         self.assertFalse(gate[0]["queued"])
 
     def test_card_for_role_with_no_running_lane(self):

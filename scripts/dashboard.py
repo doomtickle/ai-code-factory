@@ -383,31 +383,13 @@ class Dashboard:
                 out[-1]["fp"] = approvals.card_fingerprint(card)
         return out
 
-    @staticmethod
-    def held(cards: list) -> dict:
-        """Lane name -> note for each running lane whose role has a write held.
-        With one running lane the hold is surely its own (note ""); with several
-        the card can't say which, so each is marked held and the note says so.
-        A decided, expired or staged card holds nothing: the agent's call
-        returned as soon as the write was staged."""
-        out: dict = {}
-        for card in cards:
-            if card["decided"] or card.get("queued") or (card["seconds_left"] is not None and card["seconds_left"] < 0):
-                continue
-            lanes = card["lanes"]
-            note = "" if len(lanes) == 1 else (
-                f"one of {len(lanes)} running {card['role']} lanes is held; the broker names the role, not the lane")
-            for name in lanes:
-                out[name] = note
-        return out
-
-    def lane_json(self, lane: w.Lane, now: float, held: dict, tail: int) -> dict:
+    def lane_json(self, lane: w.Lane, now: float, tail: int) -> dict:
         job = lane.job
         rec = (self.watch.audit.jobs.get(job["id"]) if job else None) or {}
         state = "idle"
         if job:
             if job["status"] == "running":
-                state = "held" if lane.name in held else "running"
+                state = "running"
             elif lane.active(now):
                 state = job["status"]
                 verdict = self.verdict(job["id"]) if state == "done" else None
@@ -417,7 +399,6 @@ class Dashboard:
         brief = str((job or {}).get("brief") or (job or {}).get("task") or "") if state != "idle" else ""
         return {
             "name": lane.name, "role": lane.role, "state": state,
-            "held_note": held.get(lane.name, "") if state == "held" else "",
             "job": (job or {}).get("id"), "task": (job or {}).get("task", ""),
             "desk": desk_label(brief), "reviews": reviewed_lane(brief) if lane.role == "reviewer" else "",
             "model": model.replace("claude-", ""), "effort": rec.get("effort"),
@@ -431,8 +412,7 @@ class Dashboard:
         with self.lock:
             self.refresh()
             cards = self.cards(now)
-            held = self.held(cards)
-            lanes = [self.lane_json(lane, now, held, TAIL) for lane in self.watch.lanes]
+            lanes = [self.lane_json(lane, now, TAIL) for lane in self.watch.lanes]
 
             midnight = local_midnight(now)
             jobs = []
@@ -491,7 +471,7 @@ class Dashboard:
             lane = next((x for x in self.watch.lanes if x.name == name), None)
             if lane is None:
                 return None
-            out = self.lane_json(lane, now, self.held(self.cards(now)), FULL)
+            out = self.lane_json(lane, now, FULL)
             out["packet"] = self.watch.packet_text(lane)
         return out
 
