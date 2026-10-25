@@ -286,9 +286,13 @@ class KeychainWarningsTest(StatusTest):
 
     def test_a_stored_token_is_not_warned_about(self):
         self.jira()
-        self.tool("secret-tool", "echo token\n")
+        self.tool("secret-tool", "echo status-token-4f7q\n")
         self.environ.pop("FACTORY_KEYCHAIN")
-        self.assertEqual(self.warnings(), ["  ! [jira].cloud_id is not set (see README: Enabling Jira)"])
+        rc, out, err = self.status()
+        self.assertEqual((rc, err), (0, ""))
+        self.assertEqual([l for l in out.split("\n") if l.startswith("  ! ")],
+                         ["  ! [jira].cloud_id is not set (see README: Enabling Jira)"])
+        self.assertNotIn("status-token-4f7q", out + err)  # only tested for being non-empty, never shown
 
     def test_a_locked_keychain_says_so_instead(self):
         self.jira()
