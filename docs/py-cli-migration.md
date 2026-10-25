@@ -30,6 +30,7 @@ bash and Python side by side, and `main` works after every one.
 | `factory roles` | 1 (foundation) |
 | `factory analytics`, `approvals` (and `approve`), `watch`, `docs`, `dashboard`/`gui`, `config init`, `role new` | 2 |
 | Role validation core (`validate_role`, `validate_role_overrides`, `validate_enabled_roles`, `role_lane_names`, `coordinator_broker_tools`; no new command; `role new` uses it) | 3 |
+| `factory logs` (and `log`), `packet` (and `packets`): step 4, part 2 | 4 (part) |
 | Bash `in_list` takes one exact word, as Python's `_in_list` (no new command) | done |
 
 ## Remaining, in order
@@ -50,7 +51,9 @@ bash and Python side by side, and `main` works after every one.
    requires the same refusal and message from both. This did not move the security boundary:
    those keys are not overridable.
 4. **Read-only inspection**: `doctor` (with `scripts/lib/preflight.sh`), `status`,
-   `logs`, `packet`. `status` waits for #170.
+   `logs`, `packet`. `logs` and `packet` are done (`factory/commands/logs.py`, `packet.py`);
+   `logs` hands following to `tail -F` (it already survives rotation and heads each file)
+   and formats the audit lines in Python, so it no longer needs `jq`. `status` waits for #170.
 5. **`secret`** (`save`, `forget`, `set`, `rm`, `ls`, with `scripts/lib/secrets.sh`);
    `test_factory_secret.sh` is the biggest test to port, so it is a pull request by itself.
 6. **Run state**: sandbox fingerprints and `stale_sandboxes` (`common.sh`), then
