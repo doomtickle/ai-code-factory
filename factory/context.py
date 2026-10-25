@@ -82,13 +82,37 @@ def _exec(argv, env):
 Captured = collections.namedtuple("Captured", "status out err")
 
 
+def _stop(proc, own_group):
+    """End a child that is still running and wait for it, so none is left behind."""
+    try:
+        if own_group:
+            os.killpg(proc.pid, signal.SIGKILL)
+        else:
+            proc.terminate()
+    except OSError:
+        pass
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+    for pipe in (proc.stdout, proc.stderr):
+        if pipe:
+            pipe.close()
+
+
 def _capture(argv, env, timeout=None, merge=False):
     """Run argv with stdin from /dev/null and collect its output as text. The status is a
     shell's: 127 if the program is not found, 126 if it cannot run, 124 if it ran past
-    `timeout` seconds (it is killed with its children), 128+n if a signal n ended it."""
+    `timeout` seconds (it is killed with its children), 128+n if a signal n ended it.
+    With a timeout the program gets its own session, so the whole group can be killed;
+    without one it stays in this terminal's process group, so Ctrl-C reaches it too, and
+    an interrupt here still ends and reaps it before it propagates."""
+    own_group = timeout is not None
     try:
         proc = subprocess.Popen(argv, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                                stderr=subprocess.STDOUT if merge else subprocess.PIPE, start_new_session=True)
+                                stderr=subprocess.STDOUT if merge else subprocess.PIPE,
+                                start_new_session=own_group)
     except FileNotFoundError:
         return Captured(127, "", "%s: command not found\n" % argv[0])
     except OSError as e:
@@ -106,6 +130,9 @@ def _capture(argv, env, timeout=None, merge=False):
             out, err = proc.communicate(timeout=5)
         except subprocess.TimeoutExpired:
             out, err = b"", b""
+    except BaseException:
+        _stop(proc, own_group)
+        raise
     if status is None:
         status = 128 - proc.returncode if proc.returncode < 0 else proc.returncode
     return Captured(status, (out or b"").decode("utf-8", "replace"), (err or b"").decode("utf-8", "replace"))
