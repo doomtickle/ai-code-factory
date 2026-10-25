@@ -1,6 +1,7 @@
 """Tests for factory/repos.py (project_repos). Fixtures are the ones scripts/test_project_repos.sh
 runs against common.sh, dispatch/server.py and factory-lane."""
 
+import errno
 import os
 import subprocess
 import tempfile
@@ -85,7 +86,12 @@ class ProjectReposTest(unittest.TestCase):
         p = os.path.join(self.tmp, "bytes")
         mkdir(p)
         for raw in (b"b\xff", b"a", b"\xc3\xa9"):
-            os.makedirs(os.path.join(os.fsencode(p), raw, b".git"))
+            try:
+                os.makedirs(os.path.join(os.fsencode(p), raw, b".git"))
+            except OSError as e:
+                if e.errno != errno.EILSEQ:
+                    raise
+                self.skipTest("filesystem rejects non-UTF-8 names")
         self.assertEqual([os.fsencode(r) for r in project_repos(p)], [b"a", b"b\xff", b"\xc3\xa9"])
 
     def test_matches_the_bash_and_sandbox_implementations(self):
