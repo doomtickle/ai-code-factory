@@ -11,7 +11,9 @@ its argv and environment and keeps what it reads on stdin in a file of its own.
 """
 
 import os
+import shutil
 import subprocess
+import tempfile
 
 from factory import keychain, secrets
 from factory.fixtures import REPO, CommandTest
@@ -113,7 +115,8 @@ case "$op" in
 esac
 """
 
-VALUE = "kr-secret-9"
+# Distinctive, so no file can hold it by chance (the leak checks scan every file).
+VALUE = "kr-secret-Wg5Ra"
 GITHUB_LISTED = "SCOPE  SECRET  SERVICE\nfactory-broker   -   github"
 
 
@@ -129,8 +132,13 @@ class SecretFakes(CommandTest):
         self.tool("secret-tool", FAKE_SECRET_TOOL)
         self.tool("security", FAKE_SECURITY)
         self.powershell = self.tool("powershell.exe", FAKE_POWERSHELL)
+        # No Python under test writes bytecode into the scratch folder, which is its HOME and which
+        # the leak checks scan: macOS's system Python caches under ~/Library/Caches/com.apple.python.
+        pycache = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, pycache)
         self.environ.update({"FAKE_LOG": self.log, "FACTORY_KEYCHAIN": "none", "FACTORY_POWERSHELL": self.powershell,
-                             "FAKE_KEYRING_FILE": os.path.join(self.tmp, "keyring-value"), "LC_ALL": "C"})
+                             "FAKE_KEYRING_FILE": os.path.join(self.tmp, "keyring-value"), "LC_ALL": "C",
+                             "PYTHONDONTWRITEBYTECODE": "1", "PYTHONPYCACHEPREFIX": pycache})
         self.keyring_value(VALUE + "\n")
         self.markers = os.path.join(self.state, "secrets-manual")
 
@@ -269,11 +277,11 @@ class DeliverTest(Parity):
     def test_the_delivery_script_writes_the_file_atomically(self):
         # Run it for real in a local sh, with the secrets folder moved into the scratch folder.
         script = secrets.DELIVER_SCRIPT.replace("/etc/factory-broker/secrets", os.path.join(self.tmp, "secrets"))
-        cp = subprocess.run(["sh", "-c", script, "_", "jira"], input=b"line1\nline2", env={"PATH": "/usr/bin:/bin"})
+        cp = subprocess.run(["sh", "-c", script, "_", "jira"], input=b"line1-q7Zk3\nline2-Yt6Lb", env={"PATH": "/usr/bin:/bin"})
         self.assertEqual(cp.returncode, 0)
         path = os.path.join(self.tmp, "secrets", "jira")
         with open(path, "rb") as f:
-            self.assertEqual(f.read(), b"line1\nline2")
+            self.assertEqual(f.read(), b"line1-q7Zk3\nline2-Yt6Lb")
         self.assertEqual(os.stat(path).st_mode & 0o777, 0o600)
         self.assertFalse(os.path.exists(path + ".tmp"))
 

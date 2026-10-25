@@ -9,7 +9,6 @@ over a value checks that it reached the right program's stdin and nothing else: 
 environment, no output, no file under the scratch folder.
 """
 
-import fcntl
 import os
 import pty
 import select
@@ -25,6 +24,20 @@ from factory.test_secrets import GITHUB_LISTED, VALUE, SecretFakes
 FACTORY = [sys.executable, os.path.join(REPO, "factory")]
 NAMES = "jira gemini npm-registry gitlab approvals-webhook"
 SET_OK = "  ✓ delivered '%s' to the broker sandbox; 'factory start' will no longer touch it from the keychain\n"
+
+# Session leader for the Ctrl-C test: takes its stdin (the pty) as its controlling terminal, runs
+# the command (argv[2:]) as a child in that session and foreground group, then writes the command's
+# status and whether echo is on to the fd in argv[1]. It catches SIGINT with a handler that does
+# nothing (the command gets the default again when it execs; SIG_IGN would be inherited).
+CTRL_C_LEADER = r"""
+import fcntl, os, signal, subprocess, sys, termios
+fcntl.ioctl(0, termios.TIOCSCTTY, 0)
+signal.signal(signal.SIGINT, lambda *_: None)
+status = subprocess.call(sys.argv[2:])
+echo = 1 if termios.tcgetattr(0)[3] & termios.ECHO else 0
+with os.fdopen(int(sys.argv[1]), "w") as report:
+    report.write("status=%d echo=%d\n" % (status, echo))
+"""
 
 
 class SecretTest(SecretFakes):
@@ -46,11 +59,11 @@ class NamesTest(SecretTest):
         for verb in ("set", "rm", "save", "forget"):
             for name in ("../etc-passwd", "not-a-real-secret", "jira gemini", "passdesk-license", "", "-x", "--help"):
                 with self.subTest(verb=verb, name=name):
-                    status, out, err = self.factory(verb, name, stdin="lic-key-xyz\n", FACTORY_KEYCHAIN="wincred")
+                    status, out, err = self.factory(verb, name, stdin="lic-key-Rw2Xp\n", FACTORY_KEYCHAIN="wincred")
                     names = NAMES + (" github" if verb in ("save", "forget") else "")
                     self.assertEqual((status, out, err), (1, "", "error: unknown secret '%s' (one of: %s)\n" % (name, names)))
                     self.assertEqual(self.sbx_calls() + self.text("ps-args.log"), "")
-        self.assert_not_leaked("lic-key-xyz")
+        self.assert_not_leaked("lic-key-Rw2Xp")
 
     def test_github_is_not_a_file_set_can_deliver(self):
         status, _, err = self.factory("set", "github", stdin="x\n")
@@ -70,19 +83,19 @@ class NamesTest(SecretTest):
 
 class SetTest(SecretTest):
     def test_the_value_goes_to_the_broker_on_stdin_only(self):
-        status, out, err = self.factory("set", "jira", stdin="topsecret123\n")
+        status, out, err = self.factory("set", "jira", stdin="topsecret-Nc5Jd\n")
         self.assertEqual((status, out, err), (0, SET_OK % "jira", ""))
-        self.assertEqual(self.logged("sbx-stdin"), b"topsecret123")  # one trailing newline dropped
+        self.assertEqual(self.logged("sbx-stdin"), b"topsecret-Nc5Jd")  # one trailing newline dropped
         self.assertIn("exec -i factory-broker sh -c", self.sbx_calls())
         self.assertEqual(self.argv("sbx-argv.bin")[-1][-2:], ["_", "jira"])
-        self.assert_not_leaked("topsecret123", out, err)
+        self.assert_not_leaked("topsecret-Nc5Jd", out, err)
 
     def test_only_one_trailing_newline_is_dropped(self):
-        self.factory("set", "npm-registry", stdin="line1\nline2\n\n")
-        self.assertEqual(self.logged("sbx-stdin"), b"line1\nline2\n")
-        self.factory("set", "npm-registry", stdin="line1\nline2")
-        self.assertEqual(self.logged("sbx-stdin"), b"line1\nline2")
-        self.assert_not_leaked("line1")
+        self.factory("set", "npm-registry", stdin="line1-q7Zk3\nline2-Yt6Lb\n\n")
+        self.assertEqual(self.logged("sbx-stdin"), b"line1-q7Zk3\nline2-Yt6Lb\n")
+        self.factory("set", "npm-registry", stdin="line1-q7Zk3\nline2-Yt6Lb")
+        self.assertEqual(self.logged("sbx-stdin"), b"line1-q7Zk3\nline2-Yt6Lb")
+        self.assert_not_leaked("line1-q7Zk3")
 
     def test_an_empty_value_is_refused(self):
         for value in ("", "\n"):
@@ -92,11 +105,11 @@ class SetTest(SecretTest):
                 self.assertFalse(os.path.exists(os.path.join(self.markers, "gemini")))
 
     def test_set_marks_the_name_and_rm_clears_it(self):
-        self.assertEqual(self.factory("set", "gitlab", stdin="gl-tok-xyz\n")[0], 0)
+        self.assertEqual(self.factory("set", "gitlab", stdin="gl-tok-Kd3Wv\n")[0], 0)
         marker = os.path.join(self.markers, "gitlab")
         self.assertEqual(os.path.getsize(marker), 0)  # never the value
         self.assertEqual(os.stat(self.markers).st_mode & 0o777, 0o700)
-        self.assert_not_leaked("gl-tok-xyz")
+        self.assert_not_leaked("gl-tok-Kd3Wv")
         self.assertEqual(self.factory("ls"), (0, "  gitlab\n", ""))
         self.assertEqual(self.factory("rm", "gitlab"),
                          (0, "  ✓ removed 'gitlab' from the broker sandbox\n", ""))
@@ -106,10 +119,10 @@ class SetTest(SecretTest):
                          (0, "No secrets are managed with 'factory secret set' (see: factory secret).\n", ""))
 
     def test_a_failed_delivery_leaves_no_marker(self):
-        status, out, err = self.factory("set", "gemini", stdin="willnotarrive\n", FAKE_SBX_DELIVER_FAIL="1")
+        status, out, err = self.factory("set", "gemini", stdin="willnotarrive-Pf8Gs\n", FAKE_SBX_DELIVER_FAIL="1")
         self.assertEqual((status, out, err), (1, "", "error: could not deliver 'gemini' to the broker sandbox\n"))
         self.assertFalse(os.path.exists(os.path.join(self.markers, "gemini")))
-        self.assert_not_leaked("willnotarrive", out, err)
+        self.assert_not_leaked("willnotarrive-Pf8Gs", out, err)
 
     def test_a_marker_that_cannot_be_written_is_an_error(self):
         self.write("state/ai-code-factory/secrets-manual", "")
@@ -154,12 +167,13 @@ class SetTest(SecretTest):
 class TerminalTest(SecretTest):
     def test_a_typed_value_is_not_echoed(self):
         """The value typed at the hidden prompt: the prompt on stderr, nothing echoed back to
-        the terminal, a newline after it, and the value on sbx's stdin."""
+        the terminal, a newline after it, and the value on sbx's stdin. The test keeps its own
+        fd of the pty open until it has read the echo: what happens to unread output once the
+        last one closes differs between Linux and macOS."""
         master, slave = pty.openpty()
         self.reset()
         proc = subprocess.Popen(FACTORY + ["secret", "set", "jira"], stdin=slave, stdout=subprocess.PIPE,
                                 stderr=subprocess.PIPE, env=dict(self.environ), cwd=self.tmp)
-        os.close(slave)
         prompt = b"Value for jira (input hidden): "
         got = b""
         deadline = time.time() + 20
@@ -168,33 +182,35 @@ class TerminalTest(SecretTest):
             if ready:
                 got += os.read(proc.stderr.fileno(), 1)
         self.assertEqual(got, prompt)
-        os.write(master, b"typed-secret-7\n")
+        os.write(master, b"typed-secret-Mz4Uc\n")
         out, err = proc.communicate(timeout=20)
         echoed = b""
         while select.select([master], [], [], 0.2)[0]:
-            try:
-                chunk = os.read(master, 1024)
-            except OSError:
-                break
+            chunk = os.read(master, 1024)
             if not chunk:
                 break
             echoed += chunk
+        os.close(slave)
         os.close(master)
         self.assertEqual((proc.returncode, out.decode(), err), (0, SET_OK % "jira", b"\n"))
-        self.assertNotIn(b"typed-secret-7", echoed)
-        self.assertEqual(self.logged("sbx-stdin"), b"typed-secret-7")
-        self.assert_not_leaked("typed-secret-7")
+        self.assertNotIn(b"typed-secret-Mz4Uc", echoed)
+        self.assertEqual(self.logged("sbx-stdin"), b"typed-secret-Mz4Uc")
+        self.assert_not_leaked("typed-secret-Mz4Uc")
 
     def test_ctrl_c_at_the_prompt_restores_echo_and_exits_130(self):
-        """Ctrl-C typed at the hidden prompt (the pty is the command's controlling terminal, so
-        the terminal driver sends SIGINT): echo is on again, the status is 130, the prompt line
-        is ended, and nothing is delivered."""
+        """Ctrl-C typed at the hidden prompt (the pty is the controlling terminal, so the terminal
+        driver sends SIGINT): echo is on again, the status is 130, the prompt line is ended, and
+        nothing is delivered. The command runs under CTRL_C_LEADER, which reads the terminal once
+        the command has exited: on macOS the terminal is revoked when its session leader exits,
+        so the test can't read it after that."""
         master, slave = pty.openpty()
         self.assertTrue(termios.tcgetattr(slave)[3] & termios.ECHO)
+        report_r, report_w = os.pipe()
         self.reset()
-        proc = subprocess.Popen(FACTORY + ["secret", "set", "jira"], stdin=slave, stdout=subprocess.PIPE,
-                                stderr=subprocess.PIPE, env=dict(self.environ), cwd=self.tmp, start_new_session=True,
-                                preexec_fn=lambda: fcntl.ioctl(0, termios.TIOCSCTTY, 0))
+        proc = subprocess.Popen([sys.executable, "-c", CTRL_C_LEADER, str(report_w)] + FACTORY + ["secret", "set", "jira"],
+                                stdin=slave, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=dict(self.environ),
+                                cwd=self.tmp, start_new_session=True, pass_fds=(report_w,))
+        os.close(report_w)
         prompt = b"Value for jira (input hidden): "
         got = b""
         deadline = time.time() + 20
@@ -204,50 +220,52 @@ class TerminalTest(SecretTest):
                 got += os.read(proc.stderr.fileno(), 1)
         self.assertEqual(got, prompt)
         self.assertFalse(termios.tcgetattr(slave)[3] & termios.ECHO)  # off while it waits
-        os.write(master, b"half-typed\x03")
+        os.write(master, b"half-typed-Hq4Tz\x03")
         out, err = proc.communicate(timeout=20)
-        restored = termios.tcgetattr(slave)[3] & termios.ECHO
+        with os.fdopen(report_r) as f:
+            report = f.read()
         os.close(slave)
         os.close(master)
-        self.assertTrue(restored)
-        self.assertEqual((proc.returncode, out, err), (130, b"", b"\n"))
+        self.assertEqual(proc.returncode, 0)
+        self.assertEqual(report, "status=130 echo=1\n")
+        self.assertEqual((out, err), (b"", b"\n"))
         self.assertNotIn("exec", self.sbx_calls())
-        self.assert_not_leaked("half-typed")
+        self.assert_not_leaked("half-typed-Hq4Tz")
 
 
 class SaveTest(SecretTest):
     def test_wincred_save_delivers_to_the_running_broker(self):
         self.mark("jira")
-        status, out, err = self.factory("save", "jira", stdin="wc-secret-1\n", FACTORY_KEYCHAIN="wincred")
+        status, out, err = self.factory("save", "jira", stdin="wc-secret-Bx9Qe\n", FACTORY_KEYCHAIN="wincred")
         self.assertEqual((status, err), (0, ""))
         self.assertEqual(out, "  ✓ saved factory-jira in the keychain (wincred); every broker start delivers it from now on\n"
                               "  ✓ delivered 'jira' to the running broker\n")
-        self.assertEqual(self.logged("ps-stdin"), b"wc-secret-1")
+        self.assertEqual(self.logged("ps-stdin"), b"wc-secret-Bx9Qe")
         self.assertIn("Retrieve('factory-jira'", self.text("ps-args.log"))
-        self.assertEqual(self.logged("sbx-stdin"), b"wc-secret-1")
+        self.assertEqual(self.logged("sbx-stdin"), b"wc-secret-Bx9Qe")
         self.assertFalse(os.path.exists(os.path.join(self.markers, "jira")))  # the keychain manages it now
-        self.assert_not_leaked("wc-secret-1", out, err)
+        self.assert_not_leaked("wc-secret-Bx9Qe", out, err)
 
     def test_secret_tool_save(self):
-        status, out, err = self.factory("save", "gitlab", stdin="st-secret-3\n", FACTORY_KEYCHAIN="secret-tool",
+        status, out, err = self.factory("save", "gitlab", stdin="st-secret-Jh2Vn\n", FACTORY_KEYCHAIN="secret-tool",
                                         FAKE_KEYRING="found")
         self.assertEqual((status, err), (0, ""))
         self.assertEqual(self.argv("keyring-argv.bin")[0],
                          ["store", "--label", "AI Code Factory: factory-gitlab", "service", "factory-gitlab"])
-        self.assertEqual(self.logged("keyring-stdin"), b"st-secret-3")
-        self.assert_not_leaked("st-secret-3", out, err)
+        self.assertEqual(self.logged("keyring-stdin"), b"st-secret-Jh2Vn")
+        self.assert_not_leaked("st-secret-Jh2Vn", out, err)
 
     def test_github_becomes_the_broker_scoped_sbx_secret(self):
-        status, out, err = self.factory("save", "github", stdin="gh-token-abc\n", FACTORY_KEYCHAIN="wincred")
+        status, out, err = self.factory("save", "github", stdin="gh-token-Ts7Cw\n", FACTORY_KEYCHAIN="wincred")
         self.assertEqual((status, err), (0, ""))
         self.assertEqual(out, "  ✓ saved factory-github in the keychain (wincred); every broker start delivers it from now on\n"
                               "GitHub token for factory-broker restored from the keychain (factory-github)\n")
         self.assertIn("secret set -f github --sandbox factory-broker", self.sbx_calls())
-        self.assertEqual(self.logged("sbx-secret-stdin"), b"gh-token-abc")
+        self.assertEqual(self.logged("sbx-secret-stdin"), b"gh-token-Ts7Cw")
         set_calls = [c for c in self.argv("sbx-argv.bin") if c[:2] == ["secret", "set"]]
         self.assertTrue(set_calls)
         self.assertTrue(all(c[-2:] == ["--sandbox", "factory-broker"] for c in set_calls))  # never global
-        self.assert_not_leaked("gh-token-abc", out, err)
+        self.assert_not_leaked("gh-token-Ts7Cw", out, err)
 
     def test_with_the_broker_stopped(self):
         status, out, err = self.factory("save", "gemini", stdin="v-1\n", FACTORY_KEYCHAIN="wincred", FAKE_SBX_STATE="stopped")
