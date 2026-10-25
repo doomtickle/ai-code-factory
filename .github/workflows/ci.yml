@@ -67,8 +67,6 @@ jobs:
         run: bash scripts/test_factory_test.sh
       - name: factory update
         run: bash scripts/test_factory_update.sh
-      - name: factory secret
-        run: bash scripts/test_factory_secret.sh
       - name: Coordinator claudeMdExcludes
         run: bash scripts/test_claude_md_exclude.sh
       - name: sbx CLI reference
@@ -120,8 +118,6 @@ jobs:
         run: python3 -m unittest discover -s scripts -p 'test_*.py' -v
       - name: factory update
         run: bash scripts/test_factory_update.sh
-      - name: factory secret
-        run: bash scripts/test_factory_secret.sh
       - name: Coordinator claudeMdExcludes
         run: bash scripts/test_claude_md_exclude.sh
       - name: factory layout

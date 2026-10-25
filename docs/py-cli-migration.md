@@ -34,6 +34,7 @@ bash and Python side by side, and `main` works after every one.
 | Bash `in_list` takes one exact word, as Python's `_in_list` (no new command) | done |
 | `factory doctor`: `factory/commands/doctor.py`, with the helpers it uses in `factory/preflight.py` (`scripts/lib/preflight.sh` ported, the bash stays for `install-prereqs.sh`), `factory/sbx.py` and `factory/policy.py`; `disabled_role_sandboxes` in `factory/roles.py` | 4 (part 1) |
 | `factory status`: `factory/commands/status.py`, with `factory/keychain.py` (`keychain_has` and the lookups it uses), `factory/approvals.py` (the approvals summary and status line, shared with `doctor`), `require_sbx` in `factory/sbx.py` and the Jira/npm token checks in `factory/policy.py`; tests in `factory/test_command_status.py` | 4 (part 3) |
+| `factory secret` (`save`, `forget`, `set`, `rm`, `ls`): `factory/commands/secret.py`, with the `scripts/lib/secrets.sh` helpers it uses in `factory/secrets.py` and the keychain ones in `factory/keychain.py` (shared with `status`; the bash stays for `start-broker.sh` and `keychain_warn_missing`) | 5 |
 
 ## Remaining, in order
 
@@ -74,11 +75,32 @@ bash and Python side by side, and `main` works after every one.
    (`common.sh`) are deleted, since nothing else in bash called them. The bash `policy_value`,
    `policy_string`, `gitlab_*`, `jira_cloud_id_set`, `any_jira_tool_granted`,
    `npm_private_registry_needs_token`, `setup_done`, `require_sbx` and the `secrets.sh` keychain
-   helpers stay while `start` and `secret` call them; `factory/test_policy.py`,
+   helpers stay while `start` calls them; `factory/test_policy.py`,
    `test_sbx.py`, `test_keychain.py` and `test_preflight.py` run bash and Python on the same
    fixtures.
-5. **`secret`** (`save`, `forget`, `set`, `rm`, `ls`, with `scripts/lib/secrets.sh`);
-   `test_factory_secret.sh` is the biggest test to port, so it is a pull request by itself.
+5. **`secret`**: done. `factory/commands/secret.py` holds `save`, `forget`, `set`, `rm` and `ls`;
+   `factory/secrets.py` the helpers they use (names, delivery and revocation over `sbx exec`, the
+   `factory secret set` markers, the per-name and GitHub keychain sync). The keychain itself
+   (lookup, has, store, delete and the Credential Manager scripts) is one copy in
+   `factory/keychain.py`, which `status` also uses; running a program with a value on its stdin is
+   `factory/programs.py`. `keychain_backend` and `wincred_powershell` were already in
+   `factory/preflight.py`, and the version check is `sbx.require_sbx`. A value is bytes and goes only to a program's stdin; the hidden prompt
+   turns echo off before it prints. `scripts/lib/secrets.sh` stays: `start-broker.sh` calls
+   `secret_sync_from_keychain`, `github_sync_from_keychain` and `secret_clear_all_manual` on every
+   start, and `bin/factory`'s `keychain_warn_missing` (for `start`/`status`) calls `keychain_has`.
+   `factory/test_secrets.py` runs the bash and the Python helpers on the same fakes and requires the
+   same statuses, values, messages and argv (the delivery and PowerShell scripts byte for byte);
+   it also tests `secret_clear_all_manual` and `keychain_warn_missing`, which have no Python copy
+   yet. `factory/test_command_secret.py` replaces `test_factory_secret.sh`; it passed against the
+   bash `cmd_secret` before that was deleted. Deliberate differences, all on failure paths:
+   - when the marker can't be written, bash also printed `mkdir`'s or the shell's own error before
+     its `error:` line; Python prints only the `error:` line;
+   - a program that is not installed is reported as `<name>: command not found`, without bash's
+     `line N:` prefix;
+   - what a program prints is passed on once it exits rather than as it runs (no visible change:
+     the programs involved print at most a line);
+   - a NUL byte in a value is kept (bash's `$(...)` dropped it with a warning);
+   - delivery and revocation check the name again themselves (bash relied on its callers).
 6. **Run state**: sandbox fingerprints and `stale_sandboxes` (`common.sh`), then
    `stop`, `restart`, `reset`, `chat`, with `03-stop-factory.sh`.
 7. **`start`**, with `start-broker.sh`, `start-dispatch.sh` and `02-launch-factory.sh`

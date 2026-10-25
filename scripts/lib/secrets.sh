@@ -9,10 +9,12 @@
 # Two ways a value reaches here:
 #   - scripts/start-broker.sh, from the host OS keychain (secret_sync_from_keychain),
 #     every time the broker starts;
-#   - `factory secret set/rm` (bin/factory), for machines with no OS keychain
-#     (e.g. WSL2), which deliver/revoke directly and never touch the keychain.
-# Both go through secret_deliver_file / secret_revoke_file, so the remote
-# code is byte-for-byte identical either way.
+#   - `factory secret set/rm` (factory/commands/secret.py), for machines with
+#     no OS keychain (e.g. WSL2), which deliver/revoke directly and never touch
+#     the keychain.
+# The Python port of these helpers (factory/secrets.py) runs the same remote
+# code byte for byte; factory/test_secrets.py runs both on the same fakes.
+# Keep them in step until start-broker.sh is ported too.
 #
 # A name `factory secret set` has delivered is marked at
 # $FACTORY_STATE/secrets-manual/<name> (an empty file - never the value) so
