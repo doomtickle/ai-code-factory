@@ -14,7 +14,7 @@ bash and Python side by side, and `main` works after every one.
 - `bin/factory` lists the same names in `PORTED_COMMANDS` and `exec`s the package for
   them; every other command still runs the bash. A test keeps the two lists equal.
 - Shared core already in Python: `factory/conf.py` (the `KEY="value"` parser),
-  `factory/roles.py` (role lookups, overrides, enabled roles), `factory/repos.py`
+  `factory/roles.py` (role lookups, overrides, enabled roles, role validation), `factory/repos.py`
   (`project_repos`), `factory/context.py` (paths, styles). The dispatch bridge
   imports the first three. Until the bash that uses `scripts/lib/roles.sh` and
   `common.sh` is gone, tests compare the Python against those helpers on the same
@@ -29,29 +29,38 @@ bash and Python side by side, and `main` works after every one.
 |---|---|
 | `factory roles` | 1 (foundation) |
 | `factory analytics`, `approvals` (and `approve`), `watch`, `docs`, `dashboard`/`gui`, `config init`, `role new` | 2 |
+| Role validation core (`validate_role`, `validate_role_overrides`, `validate_enabled_roles`, `role_lane_names`, `coordinator_broker_tools`; no new command; `role new` uses it) | 3 |
 
 ## Remaining, in order
 
-1. **Wrappers of Python scripts and small commands**: done (PR 2). The wrappers `exec`
-   their script, so signals reach it, and `role new` still calls the bash `validate_role`
-   until step 2 replaces it (`factory/roles.py` already has `valid_role_name`, checked
-   against it by a test).
-2. **Role validation** (`validate_role`, `validate_role_overrides`,
-   `validate_enabled_roles`, `role_lane_names`, `coordinator_broker_tools` from
-   `scripts/lib/roles.sh`) into `factory/roles.py`, with the shell tests that cover them
-   (`test_factory_role_overrides.sh`) ported. Everything after this depends on it.
-3. **Read-only inspection**: `doctor` (with `scripts/lib/preflight.sh`), `status`,
+1. **Wrappers of Python scripts and small commands**: done (PR 2).
+2. **Role validation**: done (PR 3). `validate_role`, `validate_role_overrides`,
+   `validate_enabled_roles`, `role_lane_names` and `coordinator_broker_tools` are in
+   `factory/roles.py` (with `known_broker_tools`), and `role new` calls them. The bash
+   copies in `scripts/lib/roles.sh` stay until steps 4, 6 and 7 port their callers
+   (`start-broker.sh`, `start-dispatch.sh`, `02-launch-factory.sh`, and `bin/factory`'s
+   `doctor`, `start`, `status` and `logs`); `factory/test_roles_validation.py` runs both on the same fixtures
+   and requires the same refusals and messages. It replaced `test_factory_role_overrides.sh`;
+   its `disabled_role_sandboxes` check stays there, against the bash, until `doctor` is ported
+   (step 4). The Python is deliberately stricter in one way: bash's `in_list` also accepts
+   several adjacent words (`EFFORT="low medium"`), Python wants one exact word (step 3 tightens the bash).
+3. **Tighten bash `in_list`** (after #90 merges): make it return false when `$1` is empty or
+   contains a space, so `EFFORT="low medium"`, `WORKSPACE="rw ro"` and similar fail in bash
+   as they do in Python. Then flip `test_python_is_stricter...` in
+   `factory/test_roles_validation.py` to a parity test. This does not move the security
+   boundary: those keys are not overridable.
+4. **Read-only inspection**: `doctor` (with `scripts/lib/preflight.sh`), `status`,
    `logs`, `packet`. `status` waits for #170.
-4. **`secret`** (`save`, `forget`, `set`, `rm`, `ls`, with `scripts/lib/secrets.sh`);
+5. **`secret`** (`save`, `forget`, `set`, `rm`, `ls`, with `scripts/lib/secrets.sh`);
    `test_factory_secret.sh` is the biggest test to port, so it is a pull request by itself.
-5. **Run state**: sandbox fingerprints and `stale_sandboxes` (`common.sh`), then
+6. **Run state**: sandbox fingerprints and `stale_sandboxes` (`common.sh`), then
    `stop`, `restart`, `reset`, `chat`, with `03-stop-factory.sh`.
-6. **`start`**, with `start-broker.sh`, `start-dispatch.sh` and `02-launch-factory.sh`
+7. **`start`**, with `start-broker.sh`, `start-dispatch.sh` and `02-launch-factory.sh`
    (the riskiest: it creates sandboxes and delivers credentials; the credential rules in
    `CLAUDE.md` apply unchanged, argv lists only).
-7. **`setup` and `update`**, with `00-build-templates.sh`, `01-init-security.sh`,
+8. **`setup` and `update`**, with `00-build-templates.sh`, `01-init-security.sh`,
    `install-prereqs.sh`.
-8. **Finish**: delete `scripts/lib/*.sh` and the bash tests, leave `bin/factory` as a shim
+9. **Finish**: delete `scripts/lib/*.sh` and the bash tests, leave `bin/factory` as a shim
    with no `PORTED_COMMANDS` list (it always runs Python), drop the parity tests, update
    `scripts/lint.sh`. `templates/agent/factory-lane` and `factory-test` stay bash: they run
    inside the sandboxes, not on the host.
