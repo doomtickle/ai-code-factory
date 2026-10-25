@@ -50,8 +50,8 @@ esac
 . "$SCRIPTS/lib/secrets.sh"
 
 
-if [ -t 1 ]; then B=$'\033[1m' D=$'\033[2m' G=$'\033[32m' Y=$'\033[33m' R=$'\033[31m' N=$'\033[0m'
-else B="" D="" G="" Y="" R="" N=""; fi
+if [ -t 1 ]; then B=$'\033[1m' G=$'\033[32m' Y=$'\033[33m' R=$'\033[31m' N=$'\033[0m'
+else B="" G="" Y="" R="" N=""; fi
 
 say() { printf '%s\n' "$*"; }
 step() { printf '\n%s==> %s%s\n' "$B" "$*" "$N"; }

@@ -19,6 +19,11 @@ class ApprovalsTest(CommandTest):
         os.symlink(sys.executable, os.path.join(sysdir, "python3"))
         self.environ["PATH"] = sysdir
 
+    def ctx(self, tty=False):
+        ctx = super().ctx(tty)
+        ctx.uname = ("Linux", "x86_64")  # never the host's: macOS would always pick /usr/bin/python3
+        return ctx
+
     def stub(self, text, code=0):
         os.makedirs(os.path.join(self.paths.broker_state, "approvals", "pending"), exist_ok=True)
         self.write("repo/scripts/approvals.py",
