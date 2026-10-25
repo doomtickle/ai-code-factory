@@ -130,6 +130,9 @@ def _capture(argv, env, timeout=None, merge=False):
             out, err = proc.communicate(timeout=5)
         except subprocess.TimeoutExpired:
             out, err = b"", b""
+        except BaseException:
+            _stop(proc, own_group)
+            raise
     except BaseException:
         _stop(proc, own_group)
         raise

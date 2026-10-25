@@ -79,6 +79,20 @@ class InterruptTest(unittest.TestCase):
         killpg.assert_called_once_with(proc.pid, signal.SIGKILL)
         self.assertEqual(proc.calls, [("communicate", 10), ("wait", 5)])
 
+    def test_an_interrupt_while_waiting_after_a_timeout_still_reaps_the_child(self):
+        def communicate(timeout):
+            if timeout == 10:
+                raise context.subprocess.TimeoutExpired("x", 10)
+            raise KeyboardInterrupt
+
+        proc = FakeProc(communicate)
+        with mock.patch.object(context.subprocess, "Popen", return_value=proc), \
+                mock.patch.object(context.os, "killpg") as killpg:
+            with self.assertRaises(KeyboardInterrupt):
+                context._capture(["x"], {}, timeout=10)
+        self.assertEqual(proc.calls, [("communicate", 10), ("communicate", 5), ("wait", 5)])
+        self.assertEqual(killpg.call_count, 2)
+
     def test_a_child_that_ignores_terminate_is_killed(self):
         calls = []
 
@@ -95,6 +109,34 @@ class InterruptTest(unittest.TestCase):
             with self.assertRaises(KeyboardInterrupt):
                 context._capture(["x"], {})
         self.assertEqual(calls, [("terminate",), ("wait", 5), ("kill",), ("wait", None)])
+
+
+class StopTest(unittest.TestCase):
+    def test_a_group_that_is_already_gone_is_not_an_error(self):
+        proc = FakeProc(None)
+        with mock.patch.object(context.os, "killpg", side_effect=ProcessLookupError):
+            context._stop(proc, True)
+        self.assertEqual(proc.calls, [("wait", 5)])
+
+    def test_a_child_that_is_already_gone_is_not_an_error(self):
+        proc = FakeProc(None)
+        proc.terminate = mock.Mock(side_effect=ProcessLookupError)
+        context._stop(proc, False)
+        proc.terminate.assert_called_once_with()
+        self.assertEqual(proc.calls, [("wait", 5)])
+
+    def test_a_kill_that_is_refused_is_not_an_error(self):
+        proc = FakeProc(None)
+        with mock.patch.object(context.os, "killpg", side_effect=PermissionError):
+            context._stop(proc, True)
+        self.assertEqual(proc.calls, [("wait", 5)])
+
+    def test_the_pipes_are_closed(self):
+        proc = FakeProc(None)
+        proc.stdout, proc.stderr = mock.Mock(), mock.Mock()
+        context._stop(proc, False)
+        proc.stdout.close.assert_called_once_with()
+        proc.stderr.close.assert_called_once_with()
 
 
 class RealProcessTest(unittest.TestCase):
