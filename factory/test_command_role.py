@@ -49,6 +49,17 @@ class RoleNewTest(CommandTest):
         self.assertEqual(conf["DESCRIPTION"], "TODO: one line describing what the designer does")
         self.assertEqual(conf["WORKSPACE"], "ro")
 
+    def test_a_checkout_without_the_tool_list_creates_nothing(self):
+        os.remove(os.path.join(self.root, "broker", "tools.txt"))
+        before = sorted(os.listdir(self.path()))
+        with self.assertRaises(role.FactoryError) as cm:
+            self.new("designer")
+        self.assertIn("broker/tools.txt is missing", str(cm.exception))
+        self.assertEqual(sorted(os.listdir(self.path())), before)
+        os.makedirs(os.path.join(self.root, "broker"), exist_ok=True)
+        shutil.copy(os.path.join(REPO, "broker", "tools.txt"), os.path.join(self.root, "broker", "tools.txt"))
+        self.assertEqual(self.new("designer")[0], 0)
+
     def test_the_kit_is_renamed(self):
         self.new("designer")
         spec = self.read("designer", "kit", "spec.yaml")

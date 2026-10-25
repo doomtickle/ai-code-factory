@@ -54,11 +54,15 @@ def _edit(path, rewrite, name):
 
 
 def new(ctx, args):
+    root = ctx.paths.root
+    # roles.sh dies without this file; new-role.sh sourced it first, so nothing was written before.
+    if not os.path.isfile(os.path.join(root, "broker", "tools.txt")):
+        raise FactoryError("%s/broker/tools.txt is missing: broker/ is incomplete in this checkout "
+                           "(restore it with 'git -C %s checkout HEAD -- broker')" % (root, root))
     if not 1 <= len(args) <= 2:
         raise FactoryError(USAGE)
     name = args[0]
     like = args[1] if len(args) > 1 else "reviewer"
-    root = ctx.paths.root
     if not valid_role_name(name):
         raise FactoryError("invalid role name '%s' (lowercase letters, digits, dashes; not ending in -lane<N>; "
                            "not: %s)" % (name, " ".join(RESERVED_ROLE_NAMES)))
