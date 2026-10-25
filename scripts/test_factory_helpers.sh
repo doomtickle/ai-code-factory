@@ -82,7 +82,7 @@ run_in() {
 # Part 1: a checkout whose broker/ is incomplete
 # ===========================================================================
 make_checkout "$tmp/fresh3" nobroker
-run_in "$tmp/fresh3" logs
+run_in "$tmp/fresh3" stop
 out="$(cat "$tmp/out")"
 [ "$RC" -ne 0 ] && ok "other commands still stop without broker/" || bad "other commands still stop without broker/"
 assert_contains "roles.sh says what is missing" "$out" "broker/tools.txt is missing"

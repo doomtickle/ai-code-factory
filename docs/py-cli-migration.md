@@ -30,6 +30,7 @@ bash and Python side by side, and `main` works after every one.
 | `factory roles` | 1 (foundation) |
 | `factory analytics`, `approvals` (and `approve`), `watch`, `docs`, `dashboard`/`gui`, `config init`, `role new` | 2 |
 | Role validation core (`validate_role`, `validate_role_overrides`, `validate_enabled_roles`, `role_lane_names`, `coordinator_broker_tools`; no new command; `role new` uses it) | 3 |
+| `factory logs` (and `log`), `packet` (and `packets`): step 4, part 2 | 4 (part) |
 | Bash `in_list` takes one exact word, as Python's `_in_list` (no new command) | done |
 | `factory doctor`: `factory/commands/doctor.py`, with the helpers it uses in `factory/preflight.py` (`scripts/lib/preflight.sh` ported, the bash stays for `install-prereqs.sh`), `factory/sbx.py` and `factory/policy.py`; `disabled_role_sandboxes` in `factory/roles.py` | 4 (part 1) |
 
@@ -49,11 +50,13 @@ bash and Python side by side, and `main` works after every one.
    `OPTIONAL="0 1"` fail in bash as they do in Python, and `factory/test_roles_validation.py`
    requires the same refusal and message from both. This did not move the security boundary:
    those keys are not overridable.
-4. **Read-only inspection**: `doctor` is done (part 1): `factory/test_command_doctor.py` replaces
-   the doctor half of `test_factory_doctor.sh`; what tests bash helpers still in `bin/factory`
-   (`logs`, `require_project_commits`, `sbx_not_signed_in`, `run_or_die`, `approvals_status_line`)
-   stays shell as `scripts/test_factory_helpers.sh` until `status`/`logs`/`start` are ported.
-   `status`, `logs` and `packet` remain. `status` waits for #170. The bash `policy_value`,
+4. **Read-only inspection**: `doctor`, `logs` and `packet` are done. `factory/test_command_doctor.py`
+   replaces the doctor half of `test_factory_doctor.sh`; what tests bash helpers still in `bin/factory`
+   (`require_project_commits`, `sbx_not_signed_in`, `run_or_die`, `approvals_status_line`)
+   stays shell as `scripts/test_factory_helpers.sh` until `status`/`start` are ported.
+   `logs` and `packet` live in `factory/commands/logs.py` and `packet.py`; `logs` hands following
+   to `tail -F` (it already survives rotation and heads each file) and formats the audit lines in
+   Python, so it no longer needs `jq`. `status` remains, and waits for #170. The bash `policy_value`,
    `gitlab_*`, `setup_done` and `approvals_summary` stay while `start`/`status` call them;
    `factory/test_policy.py` and `factory/test_preflight.py` run bash and Python on the same
    fixtures.
