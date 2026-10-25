@@ -156,7 +156,7 @@ validate_role_override() {
 # validate_role_overrides -> dies if an override names no role in roles/, or if
 # enabled-roles (see Optional roles above) is malformed.
 validate_role_overrides() {
-  local f r
+  local f r LC_ALL=C # byte order, as factory/roles.py sorts; a locale sorts Zed after a-y
   validate_enabled_roles
   for f in "$FACTORY_CONFIG"/roles/*.conf; do
     [ -e "$f" ] || continue

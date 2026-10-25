@@ -311,8 +311,9 @@ class RoleConfTest(Fixture):
 
     def test_the_real_tool_list_and_reserved_names_match_bash(self):
         real = Paths(REPO, "", "")
-        cp = subprocess.run(["bash", "-c", 'ROOT="$1"; . "$1/scripts/lib/common.sh"; . "$1/scripts/lib/roles.sh"; '
-                             'printf %s "$KNOWN_BROKER_TOOLS"', "_", REPO], stdout=subprocess.PIPE, check=True)
+        cp = subprocess.run(["bash", "-c", ('ROOT="$1"; . "$1/scripts/lib/common.sh"; . "$1/scripts/lib/roles.sh"; '
+                                            'printf %s "$KNOWN_BROKER_TOOLS"'), "_", REPO],
+                            stdout=subprocess.PIPE, check=True)
         self.assertEqual(cp.stdout.decode(), roles.known_broker_tools(real))
         self.assertTrue(roles.known_broker_tools(real))
 
@@ -320,9 +321,9 @@ class RoleConfTest(Fixture):
         real = Paths(REPO, self.config, self.state)
         for name in roles.list_all_roles(real):
             roles.validate_role(real, name)
-            cp = subprocess.run(["bash", "-c", 'ROOT="$1"; . "$1/scripts/lib/common.sh"; . "$1/scripts/lib/roles.sh"; '
-                                 'validate_role "$2"', "_", REPO, name], env=dict(
-                                     os.environ, XDG_CONFIG_HOME=os.path.dirname(self.config)), check=True)
+            subprocess.run(["bash", "-c", ('ROOT="$1"; . "$1/scripts/lib/common.sh"; . "$1/scripts/lib/roles.sh"; '
+                                           'validate_role "$2"'), "_", REPO, name],
+                           env=dict(os.environ, XDG_CONFIG_HOME=os.path.dirname(self.config)), check=True)
 
     def test_python_is_stricter_where_bash_s_in_list_matches_adjacent_words(self):
         # bash's in_list is a substring test on word boundaries, so TEMPLATE="developer reviewer" and
@@ -385,6 +386,15 @@ class StrictLinesTest(Fixture):
         os.symlink(self.config, self.override_file)  # to a directory
         self.assertEqual(self.role_check(), "%s: not a regular file" % self.override_file)
 
+    @unittest.skipIf(os.geteuid() == 0, "root reads any file")
+    def test_an_unreadable_override_is_an_error_not_a_traceback(self):
+        self.override('LANES="2"\n')
+        os.chmod(self.override_file, 0)
+        self.addCleanup(os.chmod, self.override_file, 0o600)
+        with self.assertRaises(FactoryError) as cm:
+            roles.validate_role(self.paths, "developer")
+        self.assertEqual(str(cm.exception), "%s: can't be read (Permission denied)" % self.override_file)
+
     def test_bytes_that_are_not_utf8_are_data(self):
         self.override(b'MODEL="\xff\xfe"\n')
         self.assertIn("MODEL must contain only", self.role_check())
@@ -426,6 +436,12 @@ class OverridesFolderTest(Fixture):
         self.assertIn("/Zed.conf: no role named 'Zed'", self.overrides_check())
         os.remove(os.path.join(self.overrides, "Zed.conf"))
         self.assertIn("/a-y.conf: no role named 'a-y'", self.overrides_check())
+
+    def test_several_bad_overrides_are_reported_in_byte_order_in_every_locale(self):
+        for name in ("b-x", "a-y", "Zed", "c-z"):
+            self.override("", role=name)
+        for locale in ["C"] + [l for l in locales_installed() if not re.match(r"(c|posix)(\.|$)", l, re.I)][:3]:
+            self.assertIn("/Zed.conf: no role named 'Zed'", self.overrides_check(locale), locale)
 
     def test_enabled_roles_are_validated_first(self):
         self.write(self.enabled, "nobody\n")
@@ -566,8 +582,9 @@ class CoordinatorToolsTest(Fixture):
 
     def test_the_real_coordinator_grant(self):
         real = Paths(REPO, "", "")
-        cp = subprocess.run(["bash", "-c", 'ROOT="$1"; . "$1/scripts/lib/common.sh"; . "$1/scripts/lib/roles.sh"; '
-                             'coordinator_broker_tools', "_", REPO], stdout=subprocess.PIPE, check=True)
+        cp = subprocess.run(["bash", "-c", ('ROOT="$1"; . "$1/scripts/lib/common.sh"; . "$1/scripts/lib/roles.sh"; '
+                                            'coordinator_broker_tools'), "_", REPO],
+                            stdout=subprocess.PIPE, check=True)
         self.assertEqual(cp.stdout.decode().rstrip("\n"), roles.coordinator_broker_tools(real))
 
 

@@ -167,7 +167,11 @@ def validate_role_override(paths, role):
         return
     if not os.path.isfile(path):
         raise FactoryError("%s: not a regular file" % path)
-    for line in read_text(path).split("\n"):
+    try:
+        text = read_text(path)
+    except OSError as e:
+        raise FactoryError("%s: can't be read (%s)" % (path, e.strerror or e))
+    for line in text.split("\n"):
         trimmed = line.lstrip(_SPACE)
         if trimmed == "" or trimmed.startswith("#"):
             continue
