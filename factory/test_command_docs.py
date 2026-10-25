@@ -3,6 +3,7 @@ scripts/test_factory_docs.sh."""
 
 import io
 import os
+import shutil
 import stat
 import subprocess
 import sys
@@ -33,6 +34,13 @@ class DocsTest(CommandTest):
         self.write("repo/scripts/docs.py", STUB_DOCS)
         self.log = os.path.join(self.tmp, "docs-calls")
         self.environ["DOCS_STUB_LOG"] = self.log
+        # The opener stubs need mv and printf, but the host's own openers (xdg-open on a CI
+        # runner, wslview, open) must stay invisible: PATH is the stub folder plus links to those two.
+        tools = os.path.join(self.tmp, "host-tools")
+        os.makedirs(tools)
+        for name in ("mv", "printf"):
+            os.symlink(shutil.which(name), os.path.join(tools, name))
+        self.environ["PATH"] = os.path.join(self.tmp, "bin") + os.pathsep + tools
         self.opened = os.path.join(self.tmp, "opened")
         self.index = os.path.join(self.state, "docs", "index.html")
         self.system = mock.patch.object(docs, "system_name", return_value="Linux")
