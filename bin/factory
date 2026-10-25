@@ -21,6 +21,19 @@ ROOT="$(dirname "$SCRIPTS")"
 
 # shellcheck source=../scripts/lib/common.sh
 . "$SCRIPTS/lib/common.sh"
+
+# Commands already ported to the Python package (factory/, docs/py-cli-migration.md)
+# run there; factory/cli.py's COMMANDS lists the same names (a test keeps them equal).
+# Everything else falls through to the bash below until it is ported. Only when run
+# directly: a test that sources this file still gets the bash functions.
+PORTED_COMMANDS="roles"
+if [ "${BASH_SOURCE[0]}" = "$0" ] && [ -n "${1:-}" ]; then
+  case " $PORTED_COMMANDS " in
+    *" $1 "*)
+      py="$(resolve_python)"
+      exec "$py" "$ROOT/factory" "$@" ;;
+  esac
+fi
 # roles.sh dies without broker/tools.txt.
 # 'factory docs', 'factory help' and 'factory config' need neither, so they skip it: they must
 # work on a fresh clone, before 'factory setup' (a test sourcing this file
@@ -873,22 +886,6 @@ lanes_label() {
   if [ "$n" = 1 ]; then echo "1 lane"; else echo "$n lanes"; fi
 }
 
-cmd_roles() {
-  local r
-  for r in $(list_roles); do
-    printf '%s%-18s%s %-9s %-8s %s\n' "$B" "$r" "$N" \
-      "$( [ "$(role_get "$r" WORKSPACE)" = rw ] && echo "branches" || echo "read-only")" \
-      "$(lanes_label "$r")" "$(role_get "$r" DESCRIPTION)"
-    printf '  %snetwork tools: %s%s\n' "$D" "$(role_get "$r" BROKER_TOOLS | sed 's/ /, /g; s/^$/none/')" "$N"
-    [ ! -f "$(role_override_file "$r")" ] \
-      || printf '  %slocal overrides: %s%s\n' "$D" "$(role_override_file "$r")" "$N"
-  done
-  for r in $(list_all_roles); do
-    role_optional "$r" && ! role_listed_enabled "$r" || continue
-    printf '%s%-18s%s off (optional)  enable: add "%s" to %s, then factory start\n' "$D" "$r" "$N" "$r" "$(enabled_roles_file)"
-  done
-}
-
 cmd_role() {
   case "${1:-}" in
     new) shift; "$SCRIPTS/new-role.sh" "$@" ;;
@@ -1475,7 +1472,6 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
     packet|packets) cmd_packet "$@" ;;
     watch) cmd_watch "$@" ;;
     dashboard|gui) cmd_dashboard "$@" ;;
-    roles) cmd_roles "$@" ;;
     role) cmd_role "$@" ;;
     config) cmd_config "$@" ;;
     secret) cmd_secret "$@" ;;

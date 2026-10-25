@@ -63,8 +63,9 @@ socket, or host credentials. Full picture: README.md.
   branches the bridge imports with hooks/fsmonitor forced off. The only writable
   project path any role mounts is `.factory/outgoing` (`02-launch-factory.sh` creates
   it, git-ignored, refuses symlinks). The project must be a git repo or folder of git
-  repos (`project_repos` in `scripts/lib/common.sh`, `dispatch/server.py`,
-  `factory-lane` — kept identical, `scripts/test_project_repos.sh` checks it) for rw roles to run.
+  repos (`project_repos` in `scripts/lib/common.sh`, `factory/repos.py` (which
+  `dispatch/server.py` imports), `factory-lane` — kept identical, `scripts/test_project_repos.sh`
+  checks it) for rw roles to run.
 - Developer/reviewer images carry a pinned headless Chrome (`chrome-headless-shell`,
   via `templates/agent/factory-shot`/DevTools) for rendering and screenshotting work —
   not a network capability: kits unchanged, the browser reaches only `file://` and
@@ -106,7 +107,7 @@ socket, or host credentials. Full picture: README.md.
   `broker-kit/` mixes in broker egress hosts, `projects/<name>.md` holds per-project
   notes `start-dispatch.sh` appends to role instructions, and `roles/<role>.conf`
   overrides a role's tuning keys only (`ROLE_OVERRIDE_KEYS` in `scripts/lib/roles.sh`
-  and `dispatch/server.py`; never `BROKER_TOOLS`, `WORKSPACE`, `TEMPLATE` or anything
+  and `factory/roles.py`, which `dispatch/server.py` imports; never `BROKER_TOOLS`, `WORKSPACE`, `TEMPLATE` or anything
   else that moves the security boundary), parsed as data and snapshotted by
   `start-dispatch.sh` into `FACTORY_STATE` for the bridge. `enabled-roles` (one
   role name per line, validated, snapshotted the same way) only switches optional
@@ -164,7 +165,12 @@ socket, or host credentials. Full picture: README.md.
   `~/.local/state/ai-code-factory/`), never in the repo or any agent workspace: the
   broker re-reads grants/hashes on every call, and the factory may work on its own
   repo.
-- Scripts must be POSIX-compliant Bash with `set -euo pipefail`.
+- Scripts must be POSIX-compliant Bash with `set -euo pipefail`. The host CLI is moving
+  to Python (`factory/`, standard library only, 3.9+; plan and order in
+  `docs/py-cli-migration.md`): port a command there rather than extending its bash, keep
+  `bin/factory`'s `PORTED_COMMANDS` equal to `factory/cli.py`'s `COMMANDS`, call programs
+  with argv lists (never `shell=True`), and keep the `role.conf` parser and `project_repos`
+  single (`factory/conf.py`, `factory/repos.py`; the dispatch bridge imports them).
 - This repo is shared with the team, so every setup must be repeatable: pin container
   images by digest, tools by exact version (with checksums for downloads), and keep
   pins in `scripts/lib/common.sh` or the relevant Dockerfile. In `.github/workflows/`,

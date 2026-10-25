@@ -108,7 +108,7 @@ assert_not_contains "setup builds nothing" "$(cat "$tmp/forbidden" 2>/dev/null)"
 assert_not_contains "setup signs in to nothing" "$(cat "$tmp/forbidden" 2>/dev/null)" "sbx login"
 
 make_checkout "$tmp/fresh3" nobroker
-run_in "$tmp/fresh3" roles
+run_in "$tmp/fresh3" logs
 out="$(cat "$tmp/out")"
 [ "$RC" -ne 0 ] && ok "other commands still stop without broker/" || bad "other commands still stop without broker/"
 assert_contains "roles.sh says what is missing" "$out" "broker/tools.txt is missing"

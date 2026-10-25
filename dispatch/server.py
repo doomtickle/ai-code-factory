@@ -61,6 +61,14 @@ import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+# The checkout's factory package (the host CLI) holds the one role.conf parser and the one
+# project_repos. The bridge runs from that checkout (start-dispatch.sh), so its parent
+# folder is the checkout root; put it first so nothing installed can stand in for it.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from factory.conf import match_conf_line, parse_conf  # noqa: E402
+from factory.repos import project_repos  # noqa: E402,F401  (also used by the tests)
+from factory.roles import ROLE_OVERRIDE_KEYS, parse_enabled_roles  # noqa: E402
+
 SERVER_NAME = "factory-dispatch"
 SERVER_VERSION = "1.0.0"
 
@@ -154,7 +162,6 @@ def role_system_prompt(role: str, instructions: str) -> str:
 # Roles
 
 _ROLE_NAME = re.compile(r"^[a-z][a-z0-9-]{1,30}$")
-_CONF_LINE = re.compile(r'^([A-Z_]+)="(.*)"\s*$')
 _MODEL_NAME = re.compile(r"^[A-Za-z0-9._-]{1,80}$")
 # claude's --effort levels the Coordinator may pick ("max" is left out: it has no
 # cap on thinking, and not every model supports it).
@@ -166,11 +173,9 @@ _LANE_SUFFIX = re.compile(r"-lane[0-9]+$")
 
 
 # Keys this machine's local override of a role may set (FACTORY_CONFIG/roles/
-# <role>.conf, snapshotted by start-dispatch.sh into STATE/role-overrides): tuning
-# only, nothing that moves the security boundary. Keep in sync with
-# ROLE_OVERRIDE_KEYS in scripts/lib/roles.sh.
-ROLE_OVERRIDE_KEYS = ("MODEL", "MODELS", "EFFORT", "LANES", "MAX_SESSION_TOKENS", "MAX_TURNS",
-                      "MAX_JOB_SECONDS")
+# <role>.conf, snapshotted by start-dispatch.sh into STATE/role-overrides) are
+# ROLE_OVERRIDE_KEYS, from factory/roles.py: tuning only, nothing that moves the
+# security boundary.
 
 
 def role_overrides_dir() -> Path:
@@ -182,16 +187,16 @@ def read_role_override(path: Path) -> dict:
     lines, comments and KEY="value" lines for ROLE_OVERRIDE_KEYS (parsed, never
     executed). Anything else is refused, naming the file and line."""
     values = {}
-    for line in path.read_text().splitlines():
+    for line in path.read_text().split("\n"):
         if not line.strip() or line.lstrip().startswith("#"):
             continue
-        m = _CONF_LINE.match(line)
-        if not m:
+        pair = match_conf_line(line)
+        if not pair:
             raise Denied(f'{path}: not a KEY="value" line: {line[:80]}')
-        if m.group(1) not in ROLE_OVERRIDE_KEYS:
-            raise Denied(f"{path}: {m.group(1)} can't be set in a local override "
+        if pair[0] not in ROLE_OVERRIDE_KEYS:
+            raise Denied(f"{path}: {pair[0]} can't be set in a local override "
                          f"(allowed: {' '.join(ROLE_OVERRIDE_KEYS)})")
-        values[m.group(1)] = m.group(2)
+        values[pair[0]] = pair[1]
     return values
 
 
@@ -203,7 +208,7 @@ def enabled_roles_snapshot() -> set:
         text = (STATE / "enabled-roles").read_text(encoding="utf-8")
     except OSError:
         return set()
-    return {line.strip() for line in text.splitlines() if _ROLE_NAME.match(line.strip())}
+    return set(parse_enabled_roles(text))
 
 
 def load_roles(include_disabled: bool = False) -> dict:
@@ -224,11 +229,7 @@ def load_roles(include_disabled: bool = False) -> dict:
         name = conf.parent.name
         if not _ROLE_NAME.match(name) or name in _RESERVED_ROLE_NAMES or _LANE_SUFFIX.search(name):
             continue
-        values = {}
-        for line in conf.read_text().splitlines():
-            m = _CONF_LINE.match(line)
-            if m:
-                values[m.group(1)] = m.group(2)
+        values = parse_conf(conf.read_text())
         enabled = values.get("OPTIONAL") != "1" or name in enabled_roles_snapshot()
         if not enabled and not include_disabled:
             continue
@@ -266,33 +267,6 @@ def lane_name(role: str, k: int) -> str:
 
 def lane_names(role: str, lanes: int) -> list:
     return [lane_name(role, k) for k in range(1, lanes + 1)]
-
-
-def _has_git(path: Path) -> bool:
-    """A .git directory, or a gitfile (worktrees, submodules)."""
-    return os.path.isdir(path / ".git") or os.path.isfile(path / ".git")
-
-
-def project_repos(project: Path) -> list:
-    """Relative paths of the git repos rw roles clone: "." if the project is a
-    repo, else its non-hidden, non-symlink immediate subfolders that are repos
-    (byte order). Must match project_repos in scripts/lib/common.sh and
-    templates/agent/factory-lane; scripts/test_project_repos.sh runs all three
-    on one fixture and fails if they differ."""
-    if _has_git(project):
-        return ["."]
-    try:
-        entries = os.listdir(project)
-    except OSError:
-        return []
-    repos = []
-    for name in entries:
-        path = project / name
-        if (name.startswith(".") or "\n" in name or path.is_symlink()
-                or not path.is_dir() or not _has_git(path)):
-            continue
-        repos.append(name)
-    return sorted(repos, key=lambda n: n.encode("utf-8", "surrogateescape"))
 
 
 def parse_models(default: str, allowed: str) -> list:
@@ -872,10 +846,10 @@ def lane_identity() -> list:
     for line in text.split("\n"):
         if not line:
             continue
-        m = _CONF_LINE.match(line)
-        if not m or m.group(1) not in ("AUTHOR_NAME", "AUTHOR_EMAIL") or m.group(1) in values:
+        pair = match_conf_line(line)
+        if not pair or pair[0] not in ("AUTHOR_NAME", "AUTHOR_EMAIL") or pair[0] in values:
             raise LaneError(f"{path}: not an AUTHOR_NAME or AUTHOR_EMAIL line: {one_line(line, 80)!r}")
-        values[m.group(1)] = m.group(2)
+        values[pair[0]] = pair[1]
     name, email = values.get("AUTHOR_NAME", ""), values.get("AUTHOR_EMAIL", "")
     if name and (not name.strip() or len(name) > 128 or _IDENTITY_BAD.search(name) or name.startswith("-")):
         raise LaneError(f"{path}: invalid git author name {one_line(name, 80)!r}")
