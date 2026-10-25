@@ -113,14 +113,13 @@
     setText(r.tag, LABEL[lane.state] || lane.state);
     r.key.hidden = i >= 9;
     setText(r.key, i < 9 ? i + 1 : "");
-    const lcdKey = JSON.stringify([lane.state, lane.ended, lane.held_note || "", lane.tail.map(entryKey)]);
+    const lcdKey = JSON.stringify([lane.state, lane.ended, lane.tail.map(entryKey)]);
     if (lcdKey !== r.lcdKey) {
       r.lcdKey = lcdKey;
       if (lane.state === "idle" && !lane.tail.length) {
         r.lcd.replaceChildren(el("div", null, "NO JOBS YET"));
       } else {
         r.lcd.replaceChildren(...lane.tail.map(e => el("div", `ln k-${e.kind}`, lineText(e))));
-        if (lane.state === "held") r.lcd.append(el("div", "ln k-held", lane.held_note ? `⏸ ${lane.held_note}` : "⏸ HELD FOR APPROVAL"));
         if (lane.state === "idle" && lane.ended) r.lcd.append(el("div", "ln k-idle", `-- IDLE SINCE ${lane.ended.slice(0, 5)} --`));
       }
     }
@@ -457,7 +456,6 @@
     setText($("mon-title"), `MONITOR · ${d.name}`);
     setClass($("mon-led"), `led ${LED[d.state] || ""}`);
     const st = $("mon-state"); setClass(st, `state-tag st-${d.state}`); setText(st, LABEL[d.state] || d.state);
-    setText($("mon-note"), d.state === "held" && d.held_note ? d.held_note : "");
     document.querySelectorAll(".tabkey[data-tab]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.tab === monTab)));
     const body = $("mon-body");
     const same = shown.lane === monLane && shown.tab === monTab;

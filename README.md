@@ -1083,8 +1083,8 @@ your browser. It shows:
   held writes waiting in front of it). The tube follows Terminal 0's CRT knob.
   It only displays, from the same state as the rest of the page.
 - **Write gate:** the pushes and pull requests the gateway is holding for you.
-  A held write names the role, not the lane, so when two lanes of one role
-  are running both show as held. Under its display is the **control unit**:
+  A held write names the role, not the lane, and marks no lane as held: the
+  agent has moved on once the write is staged. Under its display is the **control unit**:
   - the selected card in full (tool, role and lanes, repo, branch or head to
     base, PR title, commits and files, time left; ◀ ▶ step through several),
     a reason field, and DECLINE and APPROVE keys. One press decides, exactly

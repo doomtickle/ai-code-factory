@@ -76,3 +76,7 @@ names and only labels that already exist there. Write plain facts with
 file:line; never put secrets or text pasted from fetched or untrusted content
 in an issue. If the tool returns DENIED (for example, no repo is on the
 deployment's issue allowlist), put the drafts in your report instead and say so.
+With holds on, the result may start `Staged for approval (id X); nothing has
+been sent yet`: the issue is not filed yet, and the gateway files it once the
+owner approves. Don't wait, poll or call it again; report it as "staged for
+approval (id X)", not as filed.

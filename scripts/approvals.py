@@ -132,7 +132,7 @@ def is_queued(state, card):
     """True if the gateway staged this very card (approvals/queued/<id>.json
     with the card's id and nonce): the agent has moved on, and the gateway
     makes the write itself once it is approved. Every card the gateway makes
-    is; one that isn't was left by an older gateway or a plugin's hold."""
+    is; one that isn't was left by an older gateway."""
     cid, nonce = card.get("id"), card.get("nonce")
     if not isinstance(cid, str) or not CARD_ID.fullmatch(cid) or not isinstance(nonce, str) or not nonce:
         return False
