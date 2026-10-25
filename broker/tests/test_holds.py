@@ -1,8 +1,9 @@
-"""The hold (core/holds.py): cards, decisions, retries, expiry, notification
-and installation at start-up. Ported from passdesk-pro's tests when the
+"""The hold (core/holds.py): staging, decisions, the gateway making approved
+writes, expiry, notification and installation at start-up. Ported from passdesk-pro's tests when the
 hold moved into core (docs/decisions.md, 2026-10-21)."""
 
 import calendar
+import hashlib
 import io
 import json
 import os
@@ -15,7 +16,7 @@ from unittest import mock
 
 from passdesk.core import approvals as core_approvals
 from passdesk.core import config, holds, notify, plugins, protocol
-from passdesk.core.errors import Denied, Queued
+from passdesk.core.errors import Denied, Made, Staged
 from passdesk.tools import git
 
 from . import test_git
@@ -27,16 +28,15 @@ CARD = {"tool": "git_push", "principal": "developer", "repo": "acme/widgets", "b
 PR_CARD = {"tool": "github_create_pr", "principal": "developer", "repo": "acme/widgets", "head": "factory/x",
            "base": "main", "title": "T", "body": "", "draft": True}
 HELD = ["git_push", "github_create_pr", "gitlab_create_mr"]
+# Any job will do where nothing is ever made from it.
+ANY_JOB = {"repo": "acme/widgets"}
 
 
 class HoldBase(Base):
     def setUp(self):
         super().setUp()
-        self.policy = {"approvals": {"tools": list(HELD), "hold_seconds": 2, "expire_seconds": 60}}
-        self.patches = [
-            mock.patch.object(holds, "load_policy", lambda: self.policy),
-            mock.patch.object(holds, "POLL_SECONDS", 0.05),
-        ]
+        self.policy = {"approvals": {"tools": list(HELD), "expire_seconds": 60}}
+        self.patches = [mock.patch.object(holds, "load_policy", lambda: self.policy)]
         for p in self.patches:
             p.start()
         self.sent = []
@@ -66,6 +66,17 @@ class HoldBase(Base):
 
     def audit_events(self):
         return [r.get("event") for r in self.audit_records()]
+
+    def hook(self, card, job=ANY_JOB):
+        """holds.hook as the approval point runs it for a tool that passed a
+        job; returns the Staged result it raises."""
+        token = core_approvals._JOB.set(job)
+        try:
+            with self.assertRaises(Staged) as cm:
+                holds.hook(card)
+        finally:
+            core_approvals._JOB.reset(token)
+        return cm.exception
 
     def write_pending(self, card, cid, nonce, expires):
         path = config.STATE / "approvals" / "pending" / f"{cid}.json"
@@ -102,77 +113,84 @@ class HoldTests(HoldBase):
         self.assertNotEqual(a, c)
         self.assertEqual(len(a), 16)
 
-    def test_held_call_is_denied_with_the_id_and_a_pending_card(self):
-        with self.assertRaises(Denied) as cm:
-            holds.hook(CARD)
+    def test_a_held_call_is_staged_at_once_with_the_id_a_card_and_its_job(self):
+        with mock.patch.object(holds.time, "sleep", side_effect=AssertionError("a held call waited")):
+            staged = self.hook(CARD)
         cid = holds.card_id(CARD)
-        self.assertIn(cid, str(cm.exception))
-        self.assertIn("retry this exact call", str(cm.exception))
+        self.assertEqual(staged.cid, cid)
+        self.assertTrue(staged.text.startswith(f"Staged for approval (id {cid}); nothing has been sent yet."),
+                        staged.text)
         pending = json.loads((config.STATE / "approvals" / "pending" / f"{cid}.json").read_text())
         self.assertEqual(pending["repo"], "acme/widgets")
+        job = json.loads((config.STATE / "approvals" / "queued" / f"{cid}.json").read_text())
+        self.assertEqual((job["id"], job["nonce"], job["job"]), (cid, pending["nonce"], ANY_JOB))
         self.assertEqual(self.sent, [cid])
         self.assertEqual(self.audit_events(), ["approval-requested"])
-        # A retry while still pending: no second notification, same hold.
-        with self.assertRaises(Denied):
-            holds.hook(CARD)
+        # The same call again while pending: the same card, no second notification.
+        again = self.hook(CARD)
+        self.assertEqual((again.cid, again.text.split(";")[0]), (cid, staged.text.split(";")[0]))
+        self.assertEqual(json.loads((config.STATE / "approvals" / "pending" / f"{cid}.json").read_text())["nonce"],
+                         pending["nonce"])
         self.assertEqual(self.sent, [cid])
 
-    def test_approval_during_the_hold_lets_the_write_proceed(self):
-        cid = holds.card_id(CARD)
-        self.decide(cid, delay=0.3)
-        started = time.monotonic()
-        holds.hook(CARD)  # returns: approved
-        self.assertLess(time.monotonic() - started, 2.0)
-        self.assertEqual(self.audit_events(), ["approval-requested", "approval-granted"])
-        done = json.loads((config.STATE / "approvals" / "done" / f"{cid}.json").read_text())
-        self.assertEqual((done["decision"], done["approver"]), ("approve", "daron"))
-        self.assertFalse((config.STATE / "approvals" / "pending" / f"{cid}.json").exists())
-        self.assertFalse((config.STATE / "approvals" / "decisions" / f"{cid}.json").exists())
-
-    def test_decision_made_between_calls_is_honoured_on_retry(self):
-        with self.assertRaises(Denied):
-            holds.hook(CARD)
+    def test_the_same_call_after_a_decision_is_still_staged_until_the_gateway_acts(self):
+        self.hook(CARD)
         self.decide(holds.card_id(CARD))
-        holds.hook(CARD)  # the retry goes through
-        self.assertEqual(self.audit_events()[-1], "approval-granted")
+        self.assertTrue(self.hook(CARD).text.startswith("Staged for approval"))
+        self.assertEqual(self.audit_events(), ["approval-requested"])
+
+    def test_an_old_hold_seconds_setting_is_ignored(self):
+        self.policy["approvals"]["hold_seconds"] = 45
+        with mock.patch.object(holds.time, "sleep", side_effect=AssertionError("a held call waited")):
+            self.hook(CARD)
+        self.assertEqual(holds.settings(self.policy), (60, HELD))
+
+    def test_a_call_without_a_job_or_completer_is_refused_and_stages_nothing(self):
+        self.policy["approvals"]["tools"].append("status_post")
+        for card, job in ((CARD, None), ({"tool": "status_post", "page": "x"}, ANY_JOB)):
+            token = core_approvals._JOB.set(job)
+            try:
+                with self.assertRaises(Denied) as cm:
+                    holds.hook(card)
+            finally:
+                core_approvals._JOB.reset(token)
+            self.assertIn("the gateway cannot make it itself; nothing was sent", str(cm.exception))
+        self.assertFalse((config.STATE / "approvals" / "pending").exists())
+        self.assertEqual(self.sent, [])
 
     def test_gitlab_merge_requests_are_held_like_pull_requests(self):
         mr = {**PR_CARD, "tool": "gitlab_create_mr", "repo": "gitlab.acme.net/platform/api"}
         self.assertIn("gitlab_create_mr", holds.SUGGESTED_TOOLS)
-        with self.assertRaises(Denied) as cm:
-            holds.hook(mr)
-        self.assertIn("held for approval", str(cm.exception))
-        # The same fields identify it as a PR's do: a retry is the same card,
-        # a different title is a different one.
+        staged = self.hook(mr)
+        self.assertIn("merge request factory/x -> main on gitlab.acme.net/platform/api", staged.text)
+        # The same fields identify it as a PR's do: the same call is the same
+        # card, a different title is a different one.
         self.assertEqual(holds.card_id(mr), holds.card_id(dict(mr)))
         self.assertNotEqual(holds.card_id(mr), holds.card_id({**mr, "title": "other"}))
         self.assertNotEqual(holds.card_id(mr), holds.card_id(PR_CARD))
         self.assertNotEqual(holds.card_id({**mr, "body_sha256": "a" * 64}),
                             holds.card_id({**mr, "body_sha256": "b" * 64}))
-        self.decide(holds.card_id(mr))
-        holds.hook(mr)  # the retry goes through
-        self.assertEqual(self.audit_events()[-1], "approval-granted")
 
-    def test_decline_is_a_denial_with_the_reason(self):
-        cid = holds.card_id(PR_CARD)
-        with self.assertRaises(Denied):
-            holds.hook(PR_CARD)  # held
-        self.decide(cid, "decline", approver="sam", reason="wrong base branch")
-        with self.assertRaises(Denied) as cm:
-            holds.hook(PR_CARD)  # the retry hears the decision
-        self.assertEqual(str(cm.exception), "declined by sam: wrong base branch")
-        self.assertEqual(self.audit_events(), ["approval-requested", "approval-declined"])
+    def test_issues_are_held_and_their_whole_body_identifies_the_card(self):
+        issue = {"tool": "github_create_issue", "principal": "developer", "repo": "acme/ops", "title": "T",
+                 "body": "x", "body_sha256": "a" * 64, "labels": ["bug"]}
+        self.policy["approvals"]["tools"].append("github_create_issue")
+        self.assertIn("issue on acme/ops", self.hook(issue).text)
+        self.assertNotEqual(holds.card_id(issue), holds.card_id({**issue, "body_sha256": "b" * 64}))
+        self.assertNotEqual(holds.card_id(issue), holds.card_id({**issue, "labels": []}))
 
     def test_stale_decision_for_an_earlier_card_is_ignored(self):
+        core_approvals.set_hook(holds.hook)
         cid = holds.card_id(CARD)
         p = config.STATE / "approvals" / "decisions" / f"{cid}.json"
         p.parent.mkdir(parents=True)
         p.write_text(json.dumps({"id": cid, "nonce": "an-earlier-card", "decision": "approve", "approver": "old",
                                  "ts": time.time() + 3600}))  # even a future timestamp does not help
-        with self.assertRaises(Denied) as cm:
-            holds.hook(CARD)
-        self.assertIn("held for approval", str(cm.exception))
+        self.hook(CARD)
+        holds.sweep_idle()
         self.assertFalse(p.exists())
+        self.assertTrue((config.STATE / "approvals" / "pending" / f"{cid}.json").exists())
+        self.assertEqual(self.audit_events(), ["approval-requested"])
 
     def test_expired_card_is_replaced_and_its_decision_voided(self):
         cid = holds.card_id(CARD)
@@ -180,18 +198,15 @@ class HoldTests(HoldBase):
         pend.parent.mkdir(parents=True)
         pend.write_text(json.dumps({**CARD, "id": cid, "created": time.time() - 500, "expires": time.time() - 100}))
         self.decide(cid)  # decided after it expired: void
-        with self.assertRaises(Denied):
-            holds.hook(CARD)
+        self.hook(CARD)
         self.assertEqual(self.audit_events(), ["approval-expired", "approval-requested"])
         self.assertGreater(json.loads(pend.read_text())["expires"], time.time())
 
     def test_expired_card_with_unused_approval_is_recorded(self):
-        self.policy["approvals"]["hold_seconds"] = 0  # no decision will ever arrive for the fresh card
         cid = holds.card_id(CARD)
         pend = self.write_pending(CARD, cid, "n1", time.time() - 100)
         self.decide(cid, "approve", approver="daron", nonce="n1")
-        with self.assertRaises(Denied):
-            holds.hook(CARD)  # the agent never retried before it expired
+        self.hook(CARD)  # the agent never retried before it expired
         expired = next(r for r in self.audit_records() if r["event"] == "approval-expired")
         self.assertEqual(expired["decision"], "approve")
         self.assertEqual(expired["approver"], "daron")
@@ -202,12 +217,10 @@ class HoldTests(HoldBase):
         self.assertEqual(done["approver"], "daron")
 
     def test_expired_card_with_unused_decline_is_recorded(self):
-        self.policy["approvals"]["hold_seconds"] = 0
         cid = holds.card_id(CARD)
         self.write_pending(CARD, cid, "n1", time.time() - 100)
         self.decide(cid, "decline", approver="sam", reason="too risky", nonce="n1")
-        with self.assertRaises(Denied):
-            holds.hook(CARD)
+        self.hook(CARD)
         expired = next(r for r in self.audit_records() if r["event"] == "approval-expired")
         self.assertEqual(expired["decision"], "decline")
         self.assertEqual(expired["approver"], "sam")
@@ -216,11 +229,9 @@ class HoldTests(HoldBase):
         self.assertEqual((done["decision"], done["approver"]), ("expired", "sam"))
 
     def test_expired_card_with_no_decision_has_no_decision_fields(self):
-        self.policy["approvals"]["hold_seconds"] = 0
         cid = holds.card_id(CARD)
         self.write_pending(CARD, cid, "n1", time.time() - 100)
-        with self.assertRaises(Denied):
-            holds.hook(CARD)
+        self.hook(CARD)
         expired = next(r for r in self.audit_records() if r["event"] == "approval-expired")
         for key in ("decision", "approver", "reason", "decided"):
             self.assertNotIn(key, expired)
@@ -229,22 +240,18 @@ class HoldTests(HoldBase):
         self.assertNotIn("approver", done)
 
     def test_expired_card_with_mismatched_nonce_decision_is_not_recorded(self):
-        self.policy["approvals"]["hold_seconds"] = 0
         cid = holds.card_id(CARD)
         self.write_pending(CARD, cid, "n1", time.time() - 100)
         self.decide(cid, "approve", approver="daron", nonce="an-earlier-card")
-        with self.assertRaises(Denied):
-            holds.hook(CARD)
+        self.hook(CARD)
         expired = next(r for r in self.audit_records() if r["event"] == "approval-expired")
         self.assertNotIn("decision", expired)
         self.assertFalse((config.STATE / "approvals" / "decisions" / f"{cid}.json").exists())
 
     def test_sweep_expires_other_pending_cards_exactly_once(self):
-        self.policy["approvals"]["hold_seconds"] = 0
         other_cid = holds.card_id(PR_CARD)
         other_pend = self.write_pending(PR_CARD, other_cid, "n2", time.time() - 100)
-        with self.assertRaises(Denied):
-            holds.hook(CARD)  # a different card's held call; its sweep catches the other one
+        self.hook(CARD)  # a different card's held call; its sweep catches the other one
         events = [r["event"] for r in self.audit_records() if r.get("id") == other_cid]
         self.assertEqual(events, ["approval-expired"])
         self.assertFalse(other_pend.exists())
@@ -255,14 +262,12 @@ class HoldTests(HoldBase):
     def test_sweep_skips_pending_with_malformed_expires(self):
         # A malformed expires value in another pending file must not break
         # the sweep or the held call that runs it.
-        self.policy["approvals"]["hold_seconds"] = 0
         bad_cid = holds.card_id(PR_CARD)
         bad_pend = config.STATE / "approvals" / "pending" / f"{bad_cid}.json"
         bad_pend.parent.mkdir(parents=True, exist_ok=True)
         bad_pend.write_text(json.dumps({**PR_CARD, "id": bad_cid, "nonce": "n-bad", "created": time.time(),
                                         "expires": "x"}))  # invalid: not a number
-        with self.assertRaises(Denied):
-            holds.hook(CARD)  # a different card's held call; its sweep must skip the bad one
+        self.hook(CARD)  # a different card's held call; its sweep must skip the bad one
         self.assertTrue(bad_pend.exists())  # bad file still there, skipped
         self.assertEqual(self.audit_events(), ["approval-requested"])  # no error from bad expires
 
@@ -280,36 +285,31 @@ class HoldTests(HoldBase):
         self.assertEqual(json.loads(pend.read_text())["nonce"], "new-nonce")
         self.assertFalse((config.STATE / "approvals" / "done" / f"{cid}.json").exists())
 
-    def test_consume_after_the_card_expired_meanwhile_is_denied_without_auditing(self):
-        # The decision was read outside the lock; by the time _consume runs
-        # under the lock, the card may have already expired and been filed
-        # (and audited) elsewhere. Applying the decision anyway would grant
-        # or decline a card that no longer exists, and audit it twice.
-        cid = holds.card_id(CARD)
-        nonce = "n1"
-        pend = self.write_pending(CARD, cid, nonce, time.time() + 60)
-        pending_snapshot = json.loads(pend.read_text())
-        decision = {"id": cid, "nonce": nonce, "decision": "approve", "approver": "daron", "reason": "",
-                    "ts": time.time()}
-        pend.unlink()  # expired and filed elsewhere between the read and this call
-        with self.assertRaises(Denied) as cm:
-            holds._consume(decision, pending_snapshot, cid)
-        self.assertIn("retry", str(cm.exception))
-        self.assertEqual(self.audit_events(), [])
-        self.assertFalse((config.STATE / "approvals" / "done" / f"{cid}.json").exists())
-
-    def test_ensure_pending_itself_records_an_expired_card(self):
-        # Single-threaded, direct call: exercises _ensure_pending's own
-        # expiry branch without going through the sweep in hook().
+    def test_stage_itself_records_an_expired_card(self):
+        # Single-threaded, direct call: exercises _stage's own expiry branch
+        # without going through the sweep in hook().
         cid = holds.card_id(CARD)
         self.write_pending(CARD, cid, "n1", time.time() - 100)
         self.decide(cid, "approve", approver="daron", nonce="n1")
-        pending = holds._ensure_pending(CARD, cid, 60, time.time())
+        pending = holds._stage(CARD, cid, ANY_JOB, 60, time.time())
         self.assertGreater(pending["expires"], time.time())
         self.assertNotEqual(pending["nonce"], "n1")
         expired = next(r for r in self.audit_records() if r["event"] == "approval-expired")
         self.assertEqual(expired["decision"], "approve")
         self.assertEqual(expired["approver"], "daron")
+
+    def test_a_pending_card_with_no_staged_job_is_discarded_and_staged_afresh(self):
+        # Left by a gateway that held calls open: nothing this one can make.
+        cid = holds.card_id(CARD)
+        self.write_pending(CARD, cid, "n1", time.time() + 600)
+        self.decide(cid, nonce="n1")
+        staged = self.hook(CARD)
+        self.assertEqual(staged.cid, cid)
+        self.assertEqual(self.audit_events(), ["approval-discarded", "approval-requested"])
+        self.assertEqual(self.audit_records()[0]["reason"], "the pending card has no staged job")
+        self.assertNotEqual(json.loads((config.STATE / "approvals" / "pending" / f"{cid}.json").read_text())["nonce"],
+                            "n1")
+        self.assertFalse((config.STATE / "approvals" / "decisions" / f"{cid}.json").exists())
 
     def test_tools_not_in_policy_are_not_held(self):
         self.policy["approvals"]["tools"] = ["github_create_pr"]
@@ -317,15 +317,12 @@ class HoldTests(HoldBase):
         self.assertEqual(self.audit_events(), [])
 
     def test_a_pending_card_with_an_unreadable_expiry_is_discarded_not_wedged(self):
-        self.policy["approvals"]["hold_seconds"] = 0
         cid = holds.card_id(CARD)
         pend = config.STATE / "approvals" / "pending" / f"{cid}.json"
         pend.parent.mkdir(parents=True)
         pend.write_text(json.dumps({**CARD, "id": cid, "nonce": "n1", "created": time.time(), "expires": None}))
         self.decide(cid, nonce="n1")  # a decision for the broken card is voided with it
-        with self.assertRaises(Denied) as cm:
-            holds.hook(CARD)  # a fresh card, not a crash
-        self.assertIn("held for approval", str(cm.exception))
+        self.assertTrue(self.hook(CARD).text.startswith("Staged for approval"))  # a fresh card, not a crash
         self.assertEqual(self.audit_events(), ["approval-discarded", "approval-requested"])
         fresh = json.loads(pend.read_text())
         self.assertNotEqual(fresh["nonce"], "n1")
@@ -334,20 +331,19 @@ class HoldTests(HoldBase):
 
     def test_odd_seconds_values_fall_back_to_the_defaults(self):
         for bad in ("abc", None, [1], True, {"x": 1}):
-            hold, expire, _ = holds.settings({"approvals": {"hold_seconds": bad, "expire_seconds": bad}})
-            self.assertEqual((hold, expire), (45, 86400), bad)
-        self.assertEqual(holds.settings({"approvals": {"hold_seconds": 7.9, "expire_seconds": 100}})[:2], (7, 100))
+            self.assertEqual(holds.settings({"approvals": {"expire_seconds": bad}})[0], 86400, bad)
+        self.assertEqual(holds.settings({"approvals": {"hold_seconds": 7, "expire_seconds": 100}}), (100, []))
 
     def test_expiry_allows_long_windows_up_to_a_week(self):
         for given, used in ((86400, 86400), (3 * 86400, 3 * 86400), (7 * 86400, 7 * 86400),
                             (30 * 86400, 7 * 86400), (10, 60), (-5, 60)):
-            self.assertEqual(holds.settings({"approvals": {"expire_seconds": given}})[1], used, given)
+            self.assertEqual(holds.settings({"approvals": {"expire_seconds": given}})[0], used, given)
 
     def test_settings_default_to_off(self):
-        self.assertEqual(holds.settings({}), (45, 86400, []))
-        self.assertEqual(holds.settings({"approvals": {"tools": []}})[2], [])
-        self.assertEqual(holds.settings({"approvals": {"tools": "git_push"}})[2], [])  # not a list: off
-        self.assertEqual(holds.settings({"approvals": {"tools": ["git_push", 3, ""]}})[2], ["git_push"])
+        self.assertEqual(holds.settings({}), (86400, []))
+        self.assertEqual(holds.settings({"approvals": {"tools": []}})[1], [])
+        self.assertEqual(holds.settings({"approvals": {"tools": "git_push"}})[1], [])  # not a list: off
+        self.assertEqual(holds.settings({"approvals": {"tools": ["git_push", 3, ""]}})[1], ["git_push"])
         self.assertFalse(holds.enabled({}))
         self.assertTrue(holds.enabled({"approvals": {"tools": ["git_push"]}}))
 
@@ -366,12 +362,12 @@ class InstallTests(HoldBase):
         records = self.audit_records()
         self.assertEqual([r["event"] for r in records], ["approvals-enabled"])
         self.assertEqual(records[0]["tools"], HELD)
-        self.assertEqual((records[0]["hold_seconds"], records[0]["expire_seconds"]), (2, 60))
-        cid = holds.card_id(CARD)
-        self.decide(cid, delay=0.3)
+        self.assertEqual(records[0]["expire_seconds"], 60)
+        self.assertNotIn("hold_seconds", records[0])
         core_approvals.PRINCIPAL.set("developer")
-        core_approvals.require(dict(CARD))  # held, then approved
-        self.assertEqual(self.audit_events(), ["approvals-enabled", "approval-requested", "approval-granted"])
+        with self.assertRaises(Staged):
+            core_approvals.require(dict(CARD), job=ANY_JOB)
+        self.assertEqual(self.audit_events(), ["approvals-enabled", "approval-requested"])
 
     def test_the_server_installs_it_before_plugins(self):
         # protocol.main: the hold goes on first, so a plugin's hook (if any)
@@ -510,11 +506,9 @@ class IdleSweepTests(HoldBase):
         self.assertIn("pruning patches failed: OSError", err.getvalue())
 
     def test_a_held_call_survives_a_failing_sweep(self):
-        self.policy["approvals"]["hold_seconds"] = 0
         with mock.patch.object(holds, "_sweep_expired", side_effect=OSError("disk full")), \
-             mock.patch("sys.stderr", io.StringIO()), self.assertRaises(Denied) as cm:
-            holds.hook(CARD)
-        self.assertIn("held for approval", str(cm.exception))
+             mock.patch("sys.stderr", io.StringIO()):
+            self.assertTrue(self.hook(CARD).text.startswith("Staged for approval"))
         self.assertTrue(self.pending.exists())
 
     def test_the_idle_sweep_prunes_the_patch_only_an_expired_card_named(self):
@@ -555,103 +549,6 @@ class IdleSweepTests(HoldBase):
 ISO_UTC = r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$"
 
 
-class HeldOutcomeTests(HoldBase):
-    """An approved hold tells the tool who approved it and when, so its
-    result can say the write was held (doomtickle/passdesk-ops#141)."""
-
-    def pending(self, cid):
-        return config.STATE / "approvals" / "pending" / f"{cid}.json"
-
-    def test_approval_during_the_hold_returns_the_approver_and_time(self):
-        cid = holds.card_id(CARD)
-        self.decide(cid, approver="daron", delay=0.3)
-        outcome = holds.hook(CARD)
-        self.assertEqual(set(outcome), {"id", "approver", "decided", "waited_seconds"})
-        self.assertEqual((outcome["id"], outcome["approver"]), (cid, "daron"))
-        self.assertRegex(outcome["decided"], ISO_UTC)
-        self.assertIsInstance(outcome["waited_seconds"], int)
-        self.assertLessEqual(outcome["waited_seconds"], 2)
-
-    def test_a_retry_after_the_decision_reports_how_long_the_write_waited(self):
-        cid = holds.card_id(CARD)
-        with self.assertRaises(Denied):
-            holds.hook(CARD)
-        card = json.loads(self.pending(cid).read_text())
-        card["created"] -= 600  # first held ten minutes ago
-        self.pending(cid).write_text(json.dumps(card))
-        p = config.STATE / "approvals" / "decisions" / f"{cid}.json"
-        p.parent.mkdir(parents=True, exist_ok=True)
-        decided = card["created"] + 125
-        p.write_text(json.dumps({"id": cid, "nonce": card["nonce"], "decision": "approve", "approver": "sam",
-                                 "reason": "", "ts": decided}))
-        outcome = holds.hook(CARD)
-        self.assertEqual(outcome["approver"], "sam")
-        self.assertEqual(outcome["waited_seconds"], 125)
-        self.assertEqual(outcome["decided"], time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(decided)))
-
-    def test_an_odd_decision_time_counts_as_now(self):
-        cid = holds.card_id(PR_CARD)
-        with self.assertRaises(Denied):
-            holds.hook(PR_CARD)
-        card = json.loads(self.pending(cid).read_text())
-        p = config.STATE / "approvals" / "decisions" / f"{cid}.json"
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(json.dumps({"id": cid, "nonce": card["nonce"], "decision": "approve", "approver": "",
-                                 "ts": "yesterday"}))
-        before = time.time()
-        outcome = holds.hook(PR_CARD)
-        self.assertEqual(outcome["approver"], "unknown")
-        self.assertRegex(outcome["decided"], ISO_UTC)
-        self.assertGreaterEqual(calendar.timegm(time.strptime(outcome["decided"], "%Y-%m-%dT%H:%M:%SZ")),
-                                int(before) - 1)
-
-    def test_a_non_finite_or_out_of_range_time_counts_as_now(self):
-        # Python's json reads 1e999 as inf and accepts NaN; gmtime raises on
-        # those and on 1e20. The approval is filed and audited by then, so a
-        # crash would lose the write and a retry would need a second approval.
-        for raw in ("1e999", "-1e999", "NaN", "1e20"):
-            for field in ("ts", "created"):
-                with self.subTest(raw=raw, field=field):
-                    cid = holds.card_id(PR_CARD)
-                    with self.assertRaises(Denied):
-                        holds.hook(PR_CARD)
-                    pending = self.pending(cid)
-                    card = json.loads(pending.read_text())
-                    ts = time.time()
-                    if field == "created":
-                        pending.write_text(json.dumps({**card, "created": 0}).replace('"created": 0', f'"created": {raw}'))
-                    p = config.STATE / "approvals" / "decisions" / f"{cid}.json"
-                    p.parent.mkdir(parents=True, exist_ok=True)
-                    p.write_text(json.dumps({"id": cid, "nonce": card["nonce"], "decision": "approve",
-                                             "approver": "daron", "ts": 0}).replace('"ts": 0', f'"ts": {raw if field == "ts" else ts}'))
-                    before = time.time()
-                    outcome = holds.hook(PR_CARD)
-                    self.assertEqual(outcome["approver"], "daron")
-                    self.assertRegex(outcome["decided"], ISO_UTC)
-                    self.assertGreaterEqual(calendar.timegm(time.strptime(outcome["decided"], "%Y-%m-%dT%H:%M:%SZ")),
-                                            int(min(before, ts)) - 1)
-                    self.assertGreaterEqual(outcome["waited_seconds"], 0)
-                    self.assertFalse(pending.exists())
-
-    def test_require_passes_the_outcome_on_and_the_note_names_it(self):
-        core_approvals.set_hook(holds.hook)
-        cid = holds.card_id(CARD)
-        self.decide(cid, approver="daron", delay=0.2)
-        outcome = core_approvals.require(dict(CARD))
-        self.assertEqual(core_approvals.HELD_ID.get(), cid)
-        note = core_approvals.held_note(outcome)
-        self.assertRegex(note, rf"^Held for approval \(id {cid}\), approved by \"daron\" at "
-                               r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ after \d+ s\.$")
-
-    def test_a_write_the_policy_does_not_hold_gets_no_outcome(self):
-        core_approvals.set_hook(holds.hook)
-        core_approvals.HELD_ID.set("")
-        self.policy["approvals"]["tools"] = ["github_create_pr"]
-        self.assertIsNone(core_approvals.require(dict(CARD)))
-        self.assertEqual(core_approvals.HELD_ID.get(), "")
-        self.assertEqual(core_approvals.with_held_note("Pushed.", None), "Pushed.")
-
-
 class CardRedactionTests(HoldBase):
     """A credential-looking string in a card field must not reach the
     webhook summary or the pending card file."""
@@ -667,8 +564,8 @@ class CardRedactionTests(HoldBase):
             captured["cid"] = cid
             captured["text"] = notify.summary(sent_card, cid, minutes)
         self.patches[-1].stop()  # replace the fixture's no-op notifier with this spy
-        with mock.patch.object(notify, "send_async", fake_send_async), self.assertRaises(Denied):
-            core_approvals.require(card)
+        with mock.patch.object(notify, "send_async", fake_send_async), self.assertRaises(Staged):
+            core_approvals.require(card, job=ANY_JOB)
         pending = json.loads(
             (config.STATE / "approvals" / "pending" / f"{captured['cid']}.json").read_text())
         self.assertNotIn(token, pending["title"])
@@ -756,7 +653,7 @@ class NotifyTests(HoldBase):
         self.assertEqual(seen["body"]["text"], seen["body"]["content"])
         self.assertEqual(seen["body"]["text"], seen["body"]["message"])
 
-    def test_a_queued_writes_outcome_is_posted_as_one_line(self):
+    def test_a_staged_writes_outcome_is_posted_as_one_line(self):
         self.write_webhook("https://hooks.example.invalid/abc")
         seen = []
 
@@ -784,11 +681,10 @@ class NotifyTests(HoldBase):
             "(factory approvals show abc)"])
         self.assertLessEqual(len(notify.result_summary("abc", "x", True, "y" * 5000)), notify.MAX_SUMMARY_LEN)
 
-    def test_the_hold_does_not_wait_for_the_webhook(self):
-        # A webhook that hangs for longer than the hold must not stretch
-        # the held call: the POST runs on its own thread.
+    def test_the_held_call_does_not_wait_for_the_webhook(self):
+        # A webhook that hangs must not stretch the held call: the POST runs
+        # on its own thread.
         self.write_webhook("https://hooks.example.invalid/abc")
-        self.policy["approvals"]["hold_seconds"] = 0
         release = threading.Event()
         started = threading.Event()
 
@@ -798,8 +694,7 @@ class NotifyTests(HoldBase):
             raise OSError("gave up")
         with mock.patch.object(notify.NO_REDIRECT_OPENER, "open", slow_open):
             t0 = time.monotonic()
-            with self.assertRaises(Denied):
-                holds.hook(CARD)
+            self.hook(CARD)
             self.assertLess(time.monotonic() - t0, 1.0)
             self.assertTrue(started.wait(2))
             release.set()
@@ -809,23 +704,18 @@ class NotifyTests(HoldBase):
         self.assertEqual(self.audit_events(), ["approval-requested", "approval-notify-failed"])
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
-# --- the approve-later queue (doomtickle/passdesk-ops#91) ----------------------
+# --- staged writes the gateway makes (doomtickle/passdesk-ops#91, #170) -------
 
 JOB = {"repo": "acme/widgets", "branch": "factory/x", "base": "main", "head": "abc123",
        "bundle_sha256": "f" * 64, "commits": 2}
 
 
-class QueueBase(HoldBase):
-    """Core's hook installed, a call that waits no time, and a completer for
-    git_push that records what it is asked to write."""
+class StageBase(HoldBase):
+    """Core's hook installed and a completer for git_push that records what
+    it is asked to write."""
 
     def setUp(self):
         super().setUp()
-        self.policy["approvals"]["hold_seconds"] = 0
         core_approvals.set_hook(holds.hook)
         token = core_approvals.PRINCIPAL.set("developer")
         self.addCleanup(core_approvals.PRINCIPAL.reset, token)
@@ -861,39 +751,37 @@ class QueueBase(HoldBase):
         card = {k: v for k, v in card.items() if k != "principal"}
         return core_approvals.require(card, job=job)
 
-    def queue(self):
-        with self.assertRaises(Queued) as cm:
+    def stage(self):
+        with self.assertRaises(Staged) as cm:
             self.call()
         return cm.exception
 
 
-class QueueTests(QueueBase):
-    def test_undecided_after_the_hold_is_queued_as_a_result_not_a_refusal(self):
-        q = self.queue()
-        self.assertEqual((q.cid, q.state), (self.cid, "queued"))
-        self.assertTrue(q.text.startswith(f"Queued for approval (id {self.cid}); nothing has been sent yet."), q.text)
+class StageTests(StageBase):
+    def test_a_held_call_is_staged_as_a_result_not_a_refusal(self):
+        q = self.stage()
+        self.assertEqual(q.cid, self.cid)
+        self.assertTrue(q.text.startswith(f"Staged for approval (id {self.cid}); nothing has been sent yet."), q.text)
         self.assertIn("push of factory/x to acme/widgets", q.text)
-        self.assertIn("Report it as queued, not done.", q.text)
+        self.assertIn(f"Report it as staged for approval (id {self.cid}), not done.", q.text)
         self.assertIn(f"factory approvals approve {self.cid}", q.text)
+        self.assertNotIn("retry", q.text.lower())
         rec = self.read("queued")
         self.assertEqual((rec["id"], rec["nonce"], rec["tool"], rec["job"]),
                          (self.cid, self.read("pending")["nonce"], "git_push", JOB))
-        self.assertEqual(self.audit_events(), ["approval-requested", "approval-queued"])
+        self.assertEqual(self.audit_events(), ["approval-requested"])
         self.assertEqual(core_approvals.HELD_ID.get(), self.cid)
         self.assertEqual(self.writes, [])
 
-    def test_approval_inside_the_hold_is_unchanged(self):
-        self.policy["approvals"]["hold_seconds"] = 2
-        self.decide(self.cid, delay=0.3)
-        outcome = self.call()
-        self.assertEqual((outcome["id"], outcome["approver"]), (self.cid, "daron"))
-        self.assertEqual(self.writes, [])  # the tool writes, in the call
-        self.assertFalse(self.path("queued").exists())
-        self.assertNotIn("queued", self.read("done"))
-        self.assertEqual(self.audit_events(), ["approval-requested", "approval-granted"])
+    def test_a_write_the_policy_does_not_hold_proceeds_in_the_call(self):
+        core_approvals.HELD_ID.set("")
+        self.policy["approvals"]["tools"] = ["github_create_pr"]
+        self.assertIsNone(self.call())
+        self.assertEqual(core_approvals.HELD_ID.get(), "")
+        self.assertEqual(self.audit_events(), [])
 
-    def test_approval_makes_the_queued_write_once_and_files_the_result(self):
-        self.queue()
+    def test_approval_makes_the_staged_write_once_and_files_the_result(self):
+        self.stage()
         self.decide(self.cid, approver="daron")
         holds.sweep_idle()
         [(job, card)] = self.writes
@@ -906,68 +794,120 @@ class QueueTests(QueueBase):
         self.assertNotIn("job", done)
         for kind in ("pending", "decisions", "queued"):
             self.assertFalse(self.path(kind).exists(), kind)
-        self.assertEqual(self.audit_events(), ["approval-requested", "approval-queued", "approval-granted",
-                                               "approval-write-done"])
-        granted = self.audit_records()[2]
+        self.assertEqual(self.audit_events(), ["approval-requested", "approval-granted", "approval-write-done"])
+        granted = self.audit_records()[1]
         self.assertTrue(granted["queued"])
         self.assertEqual(self.results, [(self.cid, True, self.write_result)])
         holds.sweep_idle()
         holds.run_queued()
         self.assertEqual(len(self.writes), 1)
 
-    def test_a_retry_while_queued_reports_the_same_id_and_queues_nothing_more(self):
-        first = self.queue()
+    def test_an_approval_recorded_twice_makes_the_write_once(self):
+        self.stage()
+        self.decide(self.cid)
+        holds.sweep_idle()
+        self.decide(self.cid, nonce=self.read("done")["nonce"])  # a second decision for the same card
+        holds.sweep_idle()
+        holds.run_queued()
+        self.assertEqual(len(self.writes), 1)
+        self.assertEqual(self.audit_events().count("approval-granted"), 1)
+
+    def test_the_same_call_while_staged_reports_the_same_id_and_stages_nothing_more(self):
+        first = self.stage()
         nonce = self.read("queued")["nonce"]
-        second = self.queue()
-        self.assertEqual((second.cid, second.state), (first.cid, "queued"))
-        self.assertTrue(second.text.startswith(f"Queued for approval (id {self.cid})"))
+        second = self.stage()
+        self.assertEqual(second.cid, first.cid)
+        self.assertTrue(second.text.startswith(f"Staged for approval (id {self.cid})"))
         self.assertEqual(self.read("queued")["nonce"], nonce)
         self.assertEqual(self.sent, [self.cid])  # notified once
-        self.assertEqual(self.audit_events().count("approval-queued"), 1)
+        self.assertEqual(self.audit_events().count("approval-requested"), 1)
         self.assertEqual(self.writes, [])
 
-    def test_a_retry_after_approval_makes_the_write_in_that_call_once(self):
-        self.queue()
-        self.decide(self.cid, approver="daron")
-        with self.assertRaises(Queued) as cm:
-            self.call()
-        self.assertEqual(cm.exception.state, "completed")
-        lines = cm.exception.text.splitlines()
-        self.assertEqual(len(lines), len(self.write_result.splitlines()))
-        self.assertRegex(lines[0], rf'^{re.escape(self.write_result.splitlines()[0].rstrip("."))}; held for approval '
-                                   rf'\(id {self.cid}\), approved by "daron" at '
-                                   r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ after \d+ s; written by the gateway at "
-                                   r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ\.$")
+    def test_the_same_call_never_makes_the_write_itself(self):
+        self.stage()
+        self.decide(self.cid)
+        self.stage()  # approved, not yet made: still staged; the call writes nothing
+        self.assertEqual(self.writes, [])
         holds.sweep_idle()
-        with self.assertRaises(Queued):
-            self.call()
         self.assertEqual(len(self.writes), 1)
 
-    def test_a_retry_after_the_gateway_made_the_write_reports_its_result(self):
-        self.queue()
+    def test_the_same_call_after_the_gateway_made_the_write_returns_its_result(self):
+        self.write_result = "Opened draft PR https://github.com/acme/widgets/pull/7\nsecond line"
+        self.stage()
         self.decide(self.cid)
         holds.sweep_idle()
         for _ in range(2):
-            with self.assertRaises(Queued) as cm:
+            with self.assertRaises(Made) as cm:
                 self.call()
-            self.assertEqual(cm.exception.state, "completed")
-            self.assertTrue(cm.exception.text.startswith(self.write_result.rstrip(".")), cm.exception.text)
-            self.assertIn("written by the gateway", cm.exception.text)
+            self.assertEqual(cm.exception.cid, self.cid)
+            self.assertTrue(cm.exception.text.startswith(f"Made by the gateway at "), cm.exception.text)
+            self.assertIn(f"once approved (approval {self.cid}); this call staged and sent nothing new.",
+                          cm.exception.text)
+            self.assertTrue(cm.exception.text.endswith(f"The write's result:\n{self.write_result}"))
         self.assertEqual(len(self.writes), 1)
         self.assertFalse(self.path("pending").exists())  # no new card
+        self.assertEqual(self.sent, [self.cid])  # no second notification
+        self.assertEqual(self.audit_events().count("approval-requested"), 1)
 
-    def test_after_the_result_window_the_same_call_is_a_new_request(self):
-        self.queue()
+    def test_the_stored_result_is_cleaned_again_before_it_is_returned(self):
+        self.stage()
         self.decide(self.cid)
         holds.sweep_idle()
         done = self.read("done")
-        self.path("done").write_text(json.dumps({**done, "finished": time.time() - 61}))
-        q = self.queue()  # expire_seconds is 60 in this fixture
-        self.assertEqual(q.state, "queued")
+        self.path("done").write_text(json.dumps({**done, "result": "made \x1b[31mred\x1b[0m " + "x" * 5000}))
+        with self.assertRaises(Made) as cm:
+            self.call()
+        self.assertNotIn("\x1b", cm.exception.text)
+        self.assertLess(len(cm.exception.text), 3500)
+
+    def test_a_done_record_for_another_card_is_not_this_writes_result(self):
+        self.stage()
+        self.decide(self.cid)
+        holds.sweep_idle()
+        done = self.read("done")
+        self.path("done").write_text(json.dumps({**done, "id": "0" * 16}))
+        self.stage()  # a fresh card, not the other record's result
         self.assertTrue(self.path("pending").exists())
 
-    def test_a_retry_while_the_gateway_is_writing_says_so(self):
-        self.queue()
+    def test_a_failed_write_lets_the_same_call_stage_a_fresh_card(self):
+        self.stage()
+        self.decide(self.cid)
+        holds.sweep_idle()
+        done = self.read("done")
+        self.path("done").write_text(json.dumps({**done, "write": "failed", "result": "boom"}))
+        self.stage()
+        self.assertTrue(self.path("pending").exists())
+        self.assertEqual(self.sent, [self.cid, self.cid])
+
+    def test_a_made_write_returns_its_result_for_as_long_as_its_record_exists(self):
+        self.stage()
+        self.decide(self.cid)
+        holds.sweep_idle()
+        done = self.read("done")
+        # Long past expire_seconds (60 in this fixture), and with an unusable
+        # finish time: still made, never a card that could make it again.
+        for finished in (time.time() - 30 * 86_400, "soon"):
+            self.path("done").write_text(json.dumps({**done, "finished": finished}))
+            with self.assertRaises(Made):
+                self.call()
+        self.assertFalse(self.path("pending").exists())
+        self.assertEqual(len(self.writes), 1)
+        self.path("done").unlink()  # the record gone, the same call is a new request
+        self.stage()
+        self.assertTrue(self.path("pending").exists())
+
+    def test_after_the_window_a_declined_write_is_a_new_request(self):
+        self.stage()
+        self.decide(self.cid, verdict="decline")
+        holds.sweep_idle()
+        self.assertRaises(Denied, self.call)
+        done = self.read("done")
+        self.path("done").write_text(json.dumps({**done, "finished": time.time() - 61}))
+        self.stage()  # expire_seconds is 60 in this fixture
+        self.assertTrue(self.path("pending").exists())
+
+    def test_the_same_call_while_the_gateway_is_writing_is_refused(self):
+        self.stage()
         self.decide(self.cid)
         self.write_delay = 0.5
         runner = threading.Thread(target=holds.run_queued)
@@ -975,15 +915,14 @@ class QueueTests(QueueBase):
         deadline = time.monotonic() + 5
         while not self.writes and time.monotonic() < deadline:
             time.sleep(0.01)
-        with self.assertRaises(Queued) as cm:
+        with self.assertRaises(Denied) as cm:
             self.call()
         runner.join(5)
-        self.assertEqual(cm.exception.state, "queued")
-        self.assertTrue(cm.exception.text.startswith(f"Approved (id {self.cid}); the gateway is making this write"))
+        self.assertIn(f"approved (approval {self.cid}) and the gateway is making it now", str(cm.exception))
         self.assertEqual(len(self.writes), 1)
 
-    def test_a_decline_is_recorded_nothing_is_written_and_a_retry_hears_it(self):
-        self.queue()
+    def test_a_decline_is_recorded_nothing_is_written_and_the_same_call_hears_it(self):
+        self.stage()
         self.decide(self.cid, verdict="decline", approver="daron", reason="wrong branch")
         holds.sweep_idle()
         self.assertEqual(self.writes, [])
@@ -995,26 +934,25 @@ class QueueTests(QueueBase):
         for _ in range(2):
             with self.assertRaises(Denied) as cm:
                 self.call()
-            self.assertEqual(str(cm.exception), f"declined by daron: wrong branch (approval {self.cid}, queued)")
+            self.assertEqual(str(cm.exception), f"declined by daron: wrong branch (approval {self.cid}); nothing "
+                                                "was written and nothing new was staged.")
         self.assertEqual(self.writes, [])
 
-    def claim_after_first_look(self, claim):
-        """Run claim() right after the hook's first look for a settled
-        outcome, before it ensures a card: the sweeper's race window."""
-        first = holds._report_settled
+    def claim_before_staging(self, claim):
+        """Run claim() just before the hook stages (its sweep runs outside
+        the lock): the sweeper's race window."""
         calls = []
 
-        def look(cid, now, expire):
-            first(cid, now, expire)
+        def sweep(now):
             if not calls:
-                calls.append(cid)
+                calls.append(now)
                 claim()
-        patch = mock.patch.object(holds, "_report_settled", side_effect=look)
+        patch = mock.patch.object(holds, "_sweep_safely", side_effect=sweep)
         patch.start()
         self.addCleanup(patch.stop)
 
-    def test_a_retry_racing_the_claim_reports_the_running_write_and_makes_no_second_card(self):
-        self.queue()
+    def test_the_same_call_racing_the_claim_makes_no_second_card(self):
+        self.stage()
         self.decide(self.cid, approver="daron")
         self.write_delay = 0.5
         runner = threading.Thread(target=holds.run_queued)
@@ -1024,12 +962,11 @@ class QueueTests(QueueBase):
             deadline = time.monotonic() + 5
             while not self.writes and time.monotonic() < deadline:
                 time.sleep(0.01)
-        self.claim_after_first_look(claim)
-        with self.assertRaises(Queued) as cm:
+        self.claim_before_staging(claim)
+        with self.assertRaises(Denied) as cm:
             self.call()
         runner.join(5)
-        self.assertTrue(cm.exception.text.startswith(f"Approved (id {self.cid}); the gateway is making this write"),
-                        cm.exception.text)
+        self.assertIn("the gateway is making it now", str(cm.exception))
         for kind in ("pending", "decisions", "queued"):
             self.assertFalse(self.path(kind).exists(), kind)
         self.assertEqual(self.sent, [self.cid])  # no second webhook
@@ -1038,19 +975,19 @@ class QueueTests(QueueBase):
         holds.sweep_idle()
         self.assertEqual(len(self.writes), 1)
 
-    def test_a_retry_racing_a_declined_claim_reports_the_decline(self):
-        self.queue()
+    def test_the_same_call_racing_a_declined_claim_reports_the_decline(self):
+        self.stage()
         self.decide(self.cid, verdict="decline", approver="daron", reason="wrong branch")
-        self.claim_after_first_look(holds.run_queued)
+        self.claim_before_staging(holds.run_queued)
         with self.assertRaises(Denied) as cm:
             self.call()
-        self.assertEqual(str(cm.exception), f"declined by daron: wrong branch (approval {self.cid}, queued)")
+        self.assertTrue(str(cm.exception).startswith(f"declined by daron: wrong branch (approval {self.cid})"))
         self.assertFalse(self.path("pending").exists())
         self.assertEqual(self.sent, [self.cid])
         self.assertEqual(self.writes, [])
 
     def test_expiry_is_recorded_nothing_is_written_and_a_late_approval_does_nothing(self):
-        self.queue()
+        self.stage()
         holds.sweep_idle(time.time() + 61)
         done = self.read("done")
         self.assertEqual((done["decision"], done["write"], done["queued"]), ("expired", "skipped", True))
@@ -1060,36 +997,15 @@ class QueueTests(QueueBase):
         self.decide(self.cid, nonce=done["nonce"])  # too late: no card to apply it to
         holds.sweep_idle()
         self.assertEqual(self.writes, [])
-        q = self.queue()  # the same call again: a fresh card, queued again
-        self.assertEqual(q.state, "queued")
+        self.stage()  # the same call again: a fresh card, staged again
         self.assertNotEqual(self.read("pending")["nonce"], done["nonce"])
 
-    def test_a_decision_exactly_as_the_hold_ends_is_applied_in_the_call_once(self):
-        real = holds._queue
-
-        def decided_meanwhile(pending, cid, job):
-            self.decide(cid)
-            return real(pending, cid, job)
-        with mock.patch.object(holds, "_queue", decided_meanwhile):
-            outcome = self.call()
-        self.assertEqual(outcome["id"], self.cid)  # approved: the tool writes, in the call
-        self.assertFalse(self.path("queued").exists())
-        holds.sweep_idle()
-        self.assertEqual(self.writes, [])
-        self.assertEqual(self.audit_events(), ["approval-requested", "approval-granted"])
-
-    def test_a_decision_just_after_queueing_is_made_by_the_queue_once(self):
-        real = holds._queue
-
-        def decided_after(pending, cid, job):
-            queued = real(pending, cid, job)
-            self.decide(cid)
-            return queued
-        with mock.patch.object(holds, "_queue", decided_after), self.assertRaises(Queued):
-            self.call()
+    def test_a_decision_just_after_staging_is_made_once_however_many_race(self):
+        self.stage()
+        self.decide(self.cid)
         self.write_delay = 0.2
         racers = [threading.Thread(target=holds.run_queued) for _ in range(3)]
-        racers.append(threading.Thread(target=lambda: self.assertRaises(Queued, self.call)))
+        racers.append(threading.Thread(target=lambda: self.assertRaises((Staged, Denied), self.call)))
         for t in racers:
             t.start()
         for t in racers:
@@ -1097,29 +1013,70 @@ class QueueTests(QueueBase):
         self.assertEqual(len(self.writes), 1)
         self.assertEqual(self.audit_events().count("approval-write-done"), 1)
 
-    def test_a_failed_write_is_recorded_and_reported_once_then_a_new_request(self):
-        self.write_error = Denied("factory/x changed in the broker's mirror after the push was queued")
-        self.queue()
+    def test_a_failed_write_is_recorded_then_the_same_call_stages_afresh(self):
+        self.write_error = Denied("factory/x changed in the broker's mirror after the push was staged")
+        self.stage()
         self.decide(self.cid)
         holds.sweep_idle()
         done = self.read("done")
         self.assertEqual((done["write"], done["result"]),
-                         ("failed", "factory/x changed in the broker's mirror after the push was queued"))
+                         ("failed", "factory/x changed in the broker's mirror after the push was staged"))
         failed = self.audit_records()[-1]
         self.assertEqual((failed["event"], failed["id"]), ("approval-write-failed", self.cid))
         self.assertEqual(self.results, [(self.cid, False, done["result"])])
-        with self.assertRaises(Denied) as cm:
-            self.call()
-        self.assertIn(f"the gateway could not make the approved write (id {self.cid}): factory/x changed",
-                      str(cm.exception))
-        self.assertEqual(self.queue().state, "queued")  # reported once; this call asks again
+        self.stage()  # a new request, for a person to approve again
+        self.assertNotEqual(self.read("pending")["nonce"], done["nonce"])
+        self.assertEqual(len(self.writes), 1)
 
     def test_a_crashing_completer_is_recorded_by_the_runner_not_raised(self):
         self.write_error = RuntimeError("boom")
-        self.queue()
+        self.stage()
         self.decide(self.cid)
         holds.sweep_idle()
         self.assertEqual((self.read("done")["write"], self.read("done")["result"]), ("failed", "RuntimeError: boom"))
+
+    def test_the_done_record_keeps_who_approved_and_how_long_the_write_waited(self):
+        self.stage()
+        card = self.read("pending")
+        card["created"] -= 600  # staged ten minutes ago
+        self.path("pending").write_text(json.dumps(card))
+        decided = card["created"] + 125
+        self.path("decisions").parent.mkdir(parents=True, exist_ok=True)
+        self.path("decisions").write_text(json.dumps({"id": self.cid, "nonce": card["nonce"], "decision": "approve",
+                                                      "approver": "sam", "reason": "", "ts": decided}))
+        holds.sweep_idle()
+        outcome = self.read("done")["outcome"]
+        self.assertEqual((outcome["id"], outcome["approver"], outcome["waited_seconds"]), (self.cid, "sam", 125))
+        self.assertEqual(outcome["decided"], time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(decided)))
+
+    def test_an_odd_or_non_finite_time_counts_as_now(self):
+        # Python's json reads 1e999 as inf and accepts NaN; gmtime raises on
+        # those and on 1e20. The approval is filed and audited by then, so a
+        # crash would lose the write.
+        for raw in ('"yesterday"', "1e999", "-1e999", "NaN", "1e20"):
+            for field in ("ts", "created"):
+                with self.subTest(raw=raw, field=field):
+                    for kind in ("done", "pending", "queued", "decisions"):
+                        self.path(kind).unlink(missing_ok=True)
+                    self.stage()
+                    card = self.read("pending")
+                    ts = time.time()
+                    if field == "created":
+                        self.path("pending").write_text(
+                            json.dumps({**card, "created": 0}).replace('"created": 0', f'"created": {raw}'))
+                    self.path("decisions").parent.mkdir(parents=True, exist_ok=True)
+                    self.path("decisions").write_text(
+                        json.dumps({"id": self.cid, "nonce": card["nonce"], "decision": "approve", "approver": "",
+                                    "ts": 0}).replace('"ts": 0', f'"ts": {raw if field == "ts" else ts}'))
+                    before = time.time()
+                    holds.sweep_idle()
+                    done = self.read("done")
+                    self.assertEqual(done["write"], "done")
+                    outcome = done["outcome"]
+                    self.assertRegex(outcome["decided"], ISO_UTC)
+                    self.assertGreaterEqual(calendar.timegm(time.strptime(outcome["decided"], "%Y-%m-%dT%H:%M:%SZ")),
+                                            int(min(before, ts)) - 1)
+                    self.assertGreaterEqual(outcome["waited_seconds"], 0)
 
     def test_a_tampered_card_or_job_writes_nothing(self):
         cases = {
@@ -1131,7 +1088,7 @@ class QueueTests(QueueBase):
             with self.subTest(name):
                 for kind in ("done", "pending", "queued", "decisions"):
                     self.path(kind).unlink(missing_ok=True)
-                self.queue()
+                self.stage()
                 tamper()
                 self.decide(self.cid)
                 holds.sweep_idle()
@@ -1142,7 +1099,7 @@ class QueueTests(QueueBase):
         self.assertEqual(self.writes, [])
 
     def test_a_job_with_no_matching_card_is_dropped_and_recorded(self):
-        self.queue()
+        self.stage()
         self.path("queued").write_text(json.dumps({**self.read("queued"), "nonce": "other"}))
         self.decide(self.cid)
         holds.sweep_idle()
@@ -1152,7 +1109,7 @@ class QueueTests(QueueBase):
         self.assertEqual(self.writes, [])
 
     def test_a_card_with_an_unreadable_expiry_writes_nothing(self):
-        self.queue()
+        self.stage()
         self.path("pending").write_text(json.dumps({**self.read("pending"), "expires": "soon"}))
         self.decide(self.cid)
         holds.run_queued()
@@ -1161,8 +1118,8 @@ class QueueTests(QueueBase):
         for kind in ("pending", "queued", "decisions"):
             self.assertFalse(self.path(kind).exists(), kind)
 
-    def test_a_restart_while_queued_still_makes_the_write_on_approval(self):
-        self.queue()
+    def test_a_restart_while_staged_still_makes_the_write_on_approval(self):
+        self.stage()
         self.decide(self.cid)
         # A new process: nothing in memory, the files as they were.
         with mock.patch.object(holds, "_running", set()):
@@ -1170,15 +1127,15 @@ class QueueTests(QueueBase):
         self.assertEqual(len(self.writes), 1)
         self.assertEqual(self.read("done")["write"], "done")
 
-    def test_a_restart_past_the_expiry_files_the_queued_card_as_expired(self):
-        self.queue()
+    def test_a_restart_past_the_expiry_files_the_staged_card_as_expired(self):
+        self.stage()
         later = time.time() + 120
         holds.start_sweeper(clock=lambda: later, stop=FakeStop([True])).join(5)
         self.assertEqual(self.writes, [])
         self.assertEqual((self.read("done")["decision"], self.read("done")["write"]), ("expired", "skipped"))
 
     def test_a_write_cut_off_by_a_restart_is_filed_as_failed_never_retried(self):
-        self.queue()
+        self.stage()
         self.decide(self.cid)
         events, work = holds._claim(self.cid, time.time())  # claimed, then the process died
         self.assertIsNotNone(work)
@@ -1189,25 +1146,10 @@ class QueueTests(QueueBase):
         self.assertEqual(done["write"], "failed")
         self.assertIn("may or may not have reached the forge", done["result"])
         self.assertEqual(self.writes, [])
-        with self.assertRaises(Denied) as cm:
-            self.call()
-        self.assertIn("may or may not have reached the forge", str(cm.exception))
+        self.stage()  # a new request: a person decides again, knowing the last one failed
 
-    def test_a_call_without_a_job_keeps_the_retry_hold(self):
-        with self.assertRaises(Denied) as cm:
-            self.call(job=None)
-        self.assertIn("then retry this exact call", str(cm.exception))
-        self.assertFalse(self.path("queued").exists())
-
-    def test_a_tool_with_no_completer_keeps_the_retry_hold(self):
-        issue = {"tool": "github_create_issue", "repo": "acme/widgets", "title": "T", "body": "", "labels": []}
-        self.policy["approvals"]["tools"].append("github_create_issue")
-        with self.assertRaises(Denied) as cm:
-            self.call(card=issue, job={"repo": "acme/widgets"})
-        self.assertIn("then retry this exact call", str(cm.exception))
-
-    def test_nothing_is_queued_or_run_under_a_plugins_hook_or_with_holds_off(self):
-        self.queue()
+    def test_nothing_is_staged_or_run_under_a_plugins_hook_or_with_holds_off(self):
+        self.stage()
         self.decide(self.cid)
         for installed in (None, lambda card: None):
             core_approvals.set_hook(installed)
@@ -1217,22 +1159,22 @@ class QueueTests(QueueBase):
         self.assertEqual(self.writes, [])
         self.assertTrue(self.path("queued").exists())
 
-    def test_the_protocol_returns_a_queued_write_as_a_result(self):
+    def test_the_protocol_returns_a_staged_write_as_a_result(self):
         (config.STATE / "roles.json").write_text(json.dumps({"developer": ["github_create_pr"]}))
         args = {"repo": "acme/widgets", "head": "factory/x", "title": "T", "body": "b"}
         with mock.patch("passdesk.core.protocol.policy.load_policy", return_value=POLICY), \
                 mock.patch("urllib.request.urlopen", side_effect=AssertionError("written before approval")):
             text, is_error = protocol.call_tool("github_create_pr", args, "developer")
         self.assertFalse(is_error, text)
-        self.assertTrue(text.startswith("Queued for approval (id "), text)
+        self.assertTrue(text.startswith("Staged for approval (id "), text)
         last = self.audit_records()[-1]
         cid = text.split("(id ", 1)[1].split(")", 1)[0]
-        self.assertEqual((last["tool"], last["decision"], last["approval"]), ("github_create_pr", "queued", cid))
+        self.assertEqual((last["tool"], last["decision"], last["approval"]), ("github_create_pr", "staged", cid))
 
 
-class QueuedPullRequestTests(QueueBase):
-    """github_create_pr and gitlab_create_mr, queued and opened by the
-    gateway from the arguments they checked."""
+class StagedPullRequestTests(StageBase):
+    """github_create_pr, gitlab_create_mr and github_create_issue, staged and
+    opened by the gateway from the arguments they checked."""
 
     PR = {"repo": "acme/widgets", "head": "factory/x", "title": "Add it", "body": "x" * 3000}
 
@@ -1256,45 +1198,45 @@ class QueuedPullRequestTests(QueueBase):
     def open_pr(self):
         return git.tool_github_create_pr(dict(self.PR), POLICY)
 
-    def queued_pr(self):
-        with self.assertRaises(Queued) as cm:
+    def staged_pr(self):
+        with self.assertRaises(Staged) as cm:
             self.open_pr()
         self.assertEqual(self.posts, [])
         return cm.exception.cid
 
-    def test_an_approved_queued_pr_is_opened_once_with_the_whole_body(self):
-        cid = self.queued_pr()
-        self.assertIn("pull request factory/x -> main on acme/widgets", self.queue_text(cid))
+    def test_an_approved_staged_pr_is_opened_once_with_the_whole_body(self):
+        cid = self.staged_pr()
+        self.assertIn("pull request factory/x -> main on acme/widgets", self.staged_text(cid))
         self.decide(cid)
         holds.sweep_idle()
         [req] = self.posts
         self.assertEqual(json.loads(req.data), {"title": "Add it", "body": "x" * 3000, "head": "factory/x",
                                                 "base": "main", "draft": True})
         self.assertEqual(self.read("done", cid)["result"], "Opened PR #7: https://github.com/acme/widgets/pull/7")
-        with self.assertRaises(Queued) as cm:
-            self.open_pr()  # a retry reports it, never opens a second
-        self.assertTrue(cm.exception.text.startswith("Opened PR #7: https://github.com/acme/widgets/pull/7; held for approval (id "))
+        with self.assertRaises(Made) as cm:
+            self.open_pr()  # the same call again returns the PR, never opens a second
+        self.assertTrue(cm.exception.text.endswith("Opened PR #7: https://github.com/acme/widgets/pull/7"))
         self.assertEqual(len(self.posts), 1)
 
-    def queue_text(self, cid):
-        with self.assertRaises(Queued) as cm:
+    def staged_text(self, cid):
+        with self.assertRaises(Staged) as cm:
             self.open_pr()
         self.assertEqual(cm.exception.cid, cid)
         return cm.exception.text
 
-    def test_a_declined_or_expired_queued_pr_is_never_opened(self):
-        cid = self.queued_pr()
+    def test_a_declined_or_expired_staged_pr_is_never_opened(self):
+        cid = self.staged_pr()
         self.decide(cid, verdict="decline")
         holds.sweep_idle()
         self.assertRaises(Denied, self.open_pr)
         self.path("done", cid).unlink()
-        cid = self.queued_pr()
+        cid = self.staged_pr()
         holds.sweep_idle(time.time() + 61)
         self.assertEqual(self.read("done", cid)["decision"], "expired")
         self.assertEqual(self.posts, [])
 
     def test_a_pr_job_that_does_not_match_its_card_is_never_opened(self):
-        cid = self.queued_pr()
+        cid = self.staged_pr()
         rec = self.read("queued", cid)
         self.path("queued", cid).write_text(json.dumps({**rec, "job": {**rec["job"], "body": "y" * 3000}}))
         self.decide(cid)
@@ -1302,8 +1244,36 @@ class QueuedPullRequestTests(QueueBase):
         self.assertEqual(self.posts, [])
         self.assertIn("body does not match its approval card", self.read("done", cid)["result"])
 
-    def test_github_refusing_the_queued_pr_is_a_recorded_failure(self):
-        cid = self.queued_pr()
+    def test_a_pr_job_whose_body_differs_only_past_the_excerpt_is_never_opened(self):
+        cid = self.staged_pr()
+        rec = self.read("queued", cid)
+        self.path("queued", cid).write_text(json.dumps({**rec, "job": {**rec["job"], "body": "x" * 2999 + "y"}}))
+        self.decide(cid)
+        holds.sweep_idle()
+        self.assertEqual(self.posts, [])
+        self.assertIn("body does not match its approval card", self.read("done", cid)["result"])
+
+    def test_pr_bodies_differing_only_past_the_excerpt_are_different_writes(self):
+        cid = self.staged_pr()
+        card = self.read("pending", cid)
+        self.assertEqual(card["body_sha256"], hashlib.sha256(("x" * 3000).encode()).hexdigest())
+        self.assertEqual(card["body_chars"], 3000)
+        self.PR = {**self.PR, "body": "x" * 2999 + "y"}
+        other = self.staged_pr()  # pending: its own card, not the first one's staged result
+        self.assertNotEqual(other, cid)
+        self.assertEqual(self.read("pending", other)["body"], card["body"])
+        self.PR = {**self.PR, "body": "x" * 3000}
+        self.decide(cid)
+        holds.sweep_idle()
+        self.assertEqual(json.loads(self.posts[0].data)["body"], "x" * 3000)
+        self.PR = {**self.PR, "body": "x" * 2999 + "y"}
+        self.assertEqual(self.staged_text(other).split("(id ", 1)[1][:16], other)  # made: not the first PR's URL
+        self.decide(other)
+        holds.sweep_idle()
+        self.assertEqual(json.loads(self.posts[1].data)["body"], "x" * 2999 + "y")
+
+    def test_github_refusing_the_staged_pr_is_a_recorded_failure(self):
+        cid = self.staged_pr()
         self.status = 422
         self.decide(cid)
         holds.sweep_idle()
@@ -1312,7 +1282,7 @@ class QueuedPullRequestTests(QueueBase):
         self.assertIn("GitHub API returned HTTP 422", done["result"])
         self.assertEqual(len(self.posts), 1)
 
-    def test_a_queued_merge_request_is_opened_once_with_the_gitlab_token(self):
+    def test_a_staged_merge_request_is_opened_once_with_the_gitlab_token(self):
         from . import test_gitlab
         self.policy.update(test_gitlab.GL_POLICY)
         self.addCleanup(setattr, config, "MIRRORS", config.MIRRORS)
@@ -1324,27 +1294,27 @@ class QueuedPullRequestTests(QueueBase):
             return _FakeHTTPResponse(b'{"iid": 12, "web_url": "https://gitlab.acme.net/platform/api/-/merge_requests/12"}')
         mr = dict(test_gitlab.MR_ARGS)
         with mock.patch.object(git.NO_REDIRECT_OPENER, "open", side_effect=fake_open):
-            with self.assertRaises(Queued) as cm:
+            with self.assertRaises(Staged) as cm:
                 git.tool_gitlab_create_mr(mr, test_gitlab.GL_POLICY)
             cid = cm.exception.cid
             self.assertIn("merge request factory/x -> main on gitlab.acme.net/platform/api", cm.exception.text)
             self.decide(cid)
             holds.sweep_idle()
-            with self.assertRaises(Queued) as cm:
+            with self.assertRaises(Made) as again:
                 git.tool_gitlab_create_mr(mr, test_gitlab.GL_POLICY)
-        self.assertEqual(cm.exception.state, "completed")
+            self.assertIn("https://gitlab.acme.net/platform/api/-/merge_requests/12", again.exception.text)
         [req] = sent
         self.assertEqual(req.get_header("Authorization"), f"Bearer {test_gitlab.GL_TOKEN}")
         self.assertEqual(json.loads(req.data)["title"], "Draft: Add the thing")
         self.assertNotIn(test_gitlab.GL_TOKEN, json.dumps(self.read("done", cid)))
 
-    def test_a_queued_merge_request_whose_token_is_gone_is_not_opened(self):
+    def test_a_staged_merge_request_whose_token_is_gone_is_not_opened(self):
         from . import test_gitlab
         self.policy.update(test_gitlab.GL_POLICY)
         secret = config.SECRETS_DIR / "gitlab"
         self.write_secret(secret, test_gitlab.GL_TOKEN + "\n")
         with mock.patch.object(git.NO_REDIRECT_OPENER, "open", side_effect=AssertionError("sent")):
-            with self.assertRaises(Queued) as cm:
+            with self.assertRaises(Staged) as cm:
                 git.tool_gitlab_create_mr(dict(test_gitlab.MR_ARGS), test_gitlab.GL_POLICY)
             secret.unlink()
             self.decide(cm.exception.cid)
@@ -1354,13 +1324,13 @@ class QueuedPullRequestTests(QueueBase):
         self.assertIn("gitlab credential", done["result"])
 
 
-class QueuedPushTests(HoldBase, test_git.GitFlowTests):
-    """git_push queued for real: a local bare repo stands in for GitHub, and
+class StagedPushTests(HoldBase, test_git.GitFlowTests):
+    """git_push staged for real: a local bare repo stands in for GitHub, and
     the gateway pushes the verified ref from its mirror on approval."""
 
     def setUp(self):
         super().setUp()
-        self.policy = {**POLICY, "approvals": {"tools": list(HELD), "hold_seconds": 0, "expire_seconds": 60}}
+        self.policy = {**POLICY, "approvals": {"tools": list(HELD), "expire_seconds": 60}}
         core_approvals.set_hook(holds.hook)
         results = mock.patch.object(notify, "send_result_async", lambda *a: None)
         results.start()
@@ -1385,8 +1355,8 @@ class QueuedPushTests(HoldBase, test_git.GitFlowTests):
     def push(self, branch="factory/feature", fname="f.bundle", policy=POLICY):
         return git.tool_git_push({"repo": "acme/widgets", "branch": branch, "bundle": fname}, policy)
 
-    def queued_push(self, **kw):
-        with self.assertRaises(Queued) as cm:
+    def staged_push(self, **kw):
+        with self.assertRaises(Staged) as cm:
             self.push(**kw)
         return cm.exception
 
@@ -1396,9 +1366,9 @@ class QueuedPushTests(HoldBase, test_git.GitFlowTests):
     def done(self, cid):
         return json.loads((config.STATE / "approvals" / "done" / f"{cid}.json").read_text())
 
-    def test_an_approved_queued_push_goes_out_from_the_mirror_alone(self):
+    def test_an_approved_staged_push_goes_out_from_the_mirror_alone(self):
         head = self.make()
-        q = self.queued_push()
+        q = self.staged_push()
         self.assertIn("push of factory/feature to acme/widgets", q.text)
         self.assertEqual(self.on_origin(), "")
         saved = (self.ws / ".factory/outgoing/f.bundle").read_bytes()
@@ -1411,26 +1381,25 @@ class QueuedPushTests(HoldBase, test_git.GitFlowTests):
         self.assertEqual(done["write"], "done")
         self.assertTrue(done["result"].startswith(f"Pushed 1 commit(s) to acme/widgets:factory/feature ({head})."))
         (self.ws / ".factory/outgoing/f.bundle").write_bytes(saved)
-        with self.assertRaises(Queued) as cm:
-            self.push()  # the retry: the result, not a second push
-        self.assertEqual(cm.exception.state, "completed")
-        self.assertTrue(cm.exception.text.startswith("Pushed 1 commit(s)"))
+        with self.assertRaises(Made) as again:
+            self.push()  # the same call again: the push's result, not a second push
+        self.assertIn(f"Pushed 1 commit(s) to acme/widgets:factory/feature ({head}).", again.exception.text)
 
-    def test_a_queued_push_whose_ref_moved_pushes_nothing(self):
+    def test_a_staged_push_whose_ref_moved_pushes_nothing(self):
         self.make()
-        q = self.queued_push()
+        q = self.staged_push()
         mirror = git.ensure_mirror("acme/widgets")
         git.git("update-ref", f"{config.REF_NAMESPACE}/factory/feature", "refs/remotes/origin/main", cwd=mirror)
         self.decide(q.cid)
         holds.sweep_idle()
         self.assertEqual(self.on_origin(), "")
-        self.assertIn("changed in the broker's mirror after the push was queued", self.done(q.cid)["result"])
+        self.assertIn("changed in the broker's mirror after the push was staged", self.done(q.cid)["result"])
 
-    def test_a_second_push_to_the_branch_while_queued_supersedes_the_first(self):
+    def test_a_second_push_to_the_branch_while_staged_supersedes_the_first(self):
         self.make()
-        first = self.queued_push()
+        first = self.staged_push()
         head2 = self.make(files={"more.txt": "more\n"}, fname="g.bundle")
-        second = self.queued_push(fname="g.bundle")
+        second = self.staged_push(fname="g.bundle")
         self.assertNotEqual(first.cid, second.cid)
         self.decide(first.cid)
         holds.sweep_idle()
@@ -1440,48 +1409,45 @@ class QueuedPushTests(HoldBase, test_git.GitFlowTests):
         holds.sweep_idle()
         self.assertEqual(self.on_origin(), head2)
 
-    def test_a_queued_push_whose_mirror_is_gone_pushes_nothing(self):
+    def test_a_staged_push_whose_mirror_is_gone_pushes_nothing(self):
         import shutil
         self.make()
-        q = self.queued_push()
+        q = self.staged_push()
         shutil.rmtree(config.MIRRORS)
         self.decide(q.cid)
         holds.sweep_idle()
         self.assertIn("mirror of acme/widgets is gone", self.done(q.cid)["result"])
         self.assertFalse(config.MIRRORS.exists())  # not re-created to push from
 
-    def test_a_restart_while_queued_still_pushes_after_approval(self):
+    def test_a_restart_while_staged_still_pushes_after_approval(self):
         head = self.make()
-        q = self.queued_push()
+        q = self.staged_push()
         self.decide(q.cid)
         with mock.patch.object(holds, "_running", set()):
             holds.start_sweeper(stop=FakeStop([True])).join(5)
         self.assertEqual(self.on_origin(), head)
 
-    def test_a_decision_as_the_hold_ends_pushes_exactly_once(self):
+    def test_a_held_push_sends_nothing_in_the_call_and_once_on_approval(self):
         head = self.make()
         pushes = []
-        real_git, real_queue = git.git, holds._queue
+        real_git = git.git
 
         def counting(*args, **kw):
             if args and args[0] == "push":
                 pushes.append(args)
             return real_git(*args, **kw)
-
-        def decided_meanwhile(pending, cid, job):
-            self.decide(cid)
-            return real_queue(pending, cid, job)
-        with mock.patch.object(git, "git", counting), mock.patch.object(holds, "_queue", decided_meanwhile):
-            out = self.push()
+        with mock.patch.object(git, "git", counting):
+            q = self.staged_push()
+            self.assertEqual(pushes, [])
+            self.decide(q.cid)
             holds.sweep_idle()
-        self.assertTrue(out.startswith("Pushed 1 commit(s)"), out)
-        self.assertIn("; held for approval (id", out.splitlines()[0])
+            holds.sweep_idle()
         self.assertEqual(len(pushes), 1)
         self.assertEqual(self.on_origin(), head)
 
-    def test_a_declined_queued_push_never_leaves(self):
+    def test_a_declined_staged_push_never_leaves(self):
         self.make()
-        q = self.queued_push()
+        q = self.staged_push()
         self.decide(q.cid, verdict="decline", reason="no")
         holds.sweep_idle()
         self.assertEqual(self.on_origin(), "")
@@ -1511,7 +1477,11 @@ class QueuedPushTests(HoldBase, test_git.GitFlowTests):
         self.assertNotIn(FAKE_GH, json.dumps(self.done(cid)))
 
 
-# QueuedPushTests borrows GitFlowTests' fixture, not its tests (test_git runs those).
+# StagedPushTests borrows GitFlowTests' fixture, not its tests (test_git runs those).
 for _name in dir(test_git.GitFlowTests):
     if _name.startswith("test_"):
-        setattr(QueuedPushTests, _name, None)
+        setattr(StagedPushTests, _name, None)
+
+
+if __name__ == "__main__":
+    unittest.main()

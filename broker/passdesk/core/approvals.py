@@ -18,13 +18,14 @@ inspect; the card carries only its digest, size and whether it was cut
 (`patch_sha256`, `patch_bytes`, `patch_truncated`). `store_patch` writes it
 and prunes patches no pending card names any more.
 
-A core tool that can have its write completed later by the gateway (the
-approve-later queue, doomtickle/passdesk-ops#91) passes `require` a `job` as
-well: the exact, already-checked arguments of the write, and registers with
+Every core tool that writes (and every plugin tool declared
+writes_externally) passes `require` a `job` as well: the exact,
+already-checked arguments of the write, and registers with
 `register_deferred` the function that performs it from those. Core's hold
-stores the job if nobody decides within `hold_seconds` and raises `Queued`;
-it is the only reader of the job (a plugin's hook is given the card, as
-before), and a call without one keeps the retry-the-call behaviour.
+stages the job with the card and raises `Staged`; once a person approves,
+the gateway makes the write itself from the stored job (core/holds.py). Core's
+hold is the only reader of the job; a plugin's hook is given the card, as
+before.
 """
 
 from __future__ import annotations
@@ -33,7 +34,6 @@ import contextvars
 import errno
 import hashlib
 import json
-import math
 import os
 import stat
 import tempfile
@@ -43,17 +43,16 @@ from pathlib import Path
 from typing import Callable
 
 from . import config, filters
-from .errors import Queued
+from .errors import Staged
 
-# Returns None to allow, or (core/holds.py) the outcome of a hold that was
-# approved; raises Denied to refuse.
-Hook = Callable[[dict], "dict | None"]
+# Returns to allow; raises Denied to refuse, or (core/holds.py) Staged.
+Hook = Callable[[dict], None]
 
 # The principal whose call is running, set by the protocol layer per call so
 # a card can say who asked.
 PRINCIPAL: contextvars.ContextVar[str] = contextvars.ContextVar("passdesk_principal", default="")
-# The id of the hold the running call passed (`require` sets it, the protocol
-# layer resets it per call and puts it on the call's audit record).
+# The id of the approval the running call staged (`require` sets it, the
+# protocol layer resets it per call and puts it on the call's audit record).
 HELD_ID: contextvars.ContextVar[str] = contextvars.ContextVar("passdesk_held_id", default="")
 # The job of the write `require` is holding, while its hook runs (see job()).
 _JOB: contextvars.ContextVar[dict | None] = contextvars.ContextVar("passdesk_job", default=None)
@@ -65,9 +64,9 @@ _deferred: dict[str, Deferred] = {}
 
 
 def register_deferred(tool: str, fn: Deferred) -> None:
-    """Register how the gateway completes a queued `tool` write itself, from
+    """Register how the gateway makes a staged `tool` write itself, from
     the job the tool passed to `require` and the stored card (core tools
-    only: tools/git.py). fn must re-check the job against the policy and
+    only: tools/git.py; plugin tools: core/registry.py). fn must re-check the job against the policy and
     the card, use nothing but them (never the agent's workspace), return the
     result text and raise (Denied, or anything else) if nothing was written."""
     _deferred[tool] = fn
@@ -117,125 +116,56 @@ def _redacted(value):
     return value
 
 
-def require(card: dict, job: dict | None = None) -> dict | None:
-    """Hold here until the write described by `card` may proceed.
+def redacted(value):
+    """_redacted, for a completer to compare its job with the stored card."""
+    return _redacted(value)
 
-    Returns to allow it; raises Denied (from the hook) to refuse it. The
-    return value is the hold's outcome when the write was held and approved
-    (`{"id", "approver", "decided", "waited_seconds"}`, see `held_note`),
-    else None: no hook, a tool the policy doesn't hold, or a hook (a
-    plugin's) that returns None or anything that isn't such an outcome. The
-    card gains the calling principal before the hook sees it, and every
-    string value in the copy the hook sees has gone through
+
+def require(card: dict, job: dict | None = None) -> None:
+    """The approval point for the write described by `card`.
+
+    Returns to let it proceed now: no hook, a tool the policy doesn't hold,
+    or a hook (a plugin's) that allows it. Raises Denied (from the hook) to
+    refuse it, and core's hold raises `Staged`: the write is staged for a
+    person and the gateway makes it itself once approved, so the tool must
+    not write. The card gains the calling principal before the hook sees
+    it, and every string value in the copy the hook sees has gone through
     `filters.redact` - so a leaked credential cannot reach a notification,
     the pending card file or the console through a card field (the title,
-    say). The write itself, which runs only after `require` returns
-    (`passdesk/tools/git.py`), still uses the original arguments; only the
-    copy shown to the hook is scrubbed.
+    say). The write itself still uses the original arguments; only the copy
+    shown to the hook is scrubbed.
 
     `job`, from a tool registered with `register_deferred`, is what the
-    gateway needs to make the write itself later (JSON-serializable, no
-    credential, every field already checked; not redacted, since it is
-    the write). Core's hold may then raise `Queued` instead of returning:
-    the write is queued (or was already completed), not refused.
+    gateway needs to make the write itself (JSON-serializable, no
+    credential, every field already checked; not redacted, since it is the
+    write).
     """
     if _hook is None:
-        return None
+        return
     token = _JOB.set(job)
     try:
-        outcome = _outcome(_hook(_redacted({**card, "principal": PRINCIPAL.get()})))
-    except Queued as e:
+        _hook(_redacted({**card, "principal": PRINCIPAL.get()}))
+    except Staged as e:
         HELD_ID.set(_one_line(e.cid, 64))
         raise
     finally:
         _JOB.reset(token)
-    if outcome is not None:
-        HELD_ID.set(outcome["id"])
-    return outcome
 
 
 def _one_line(value, limit: int) -> str:
     """value as one line of at most limit characters, filtered as anything
-    returned to an agent is (the approver's name comes from a file the
-    deployment's console wrote), and without the format characters
-    (Unicode category Cf: bidi overrides and isolates, zero-width
-    characters) and C1 controls that filters.sanitize leaves, which could
-    make the line read differently from what it holds."""
+    returned to an agent is, and without the format characters (Unicode
+    category Cf: bidi overrides and isolates, zero-width characters) and C1
+    controls that filters.sanitize leaves, which could make the line read
+    differently from what it holds."""
     text = filters.sanitize(str(value), 10 * limit)
     text = "".join(c for c in text if not ("\x80" <= c <= "\x9f" or unicodedata.category(c) == "Cf"))
     return " ".join(text.split())[:limit]
 
 
-def _outcome(value) -> dict | None:
-    """A hook's return value as an outcome, or None if it isn't one: a dict
-    with a non-empty `id`. The other fields are made safe to show. A
-    `completed` time (core's hold, for a write it made itself) is kept."""
-    if not isinstance(value, dict) or not isinstance(value.get("id"), str) or not value["id"].strip():
-        return None
-    waited = value.get("waited_seconds")
-    if isinstance(waited, bool) or not isinstance(waited, (int, float)) or not math.isfinite(waited):
-        waited = None
-    # The note quotes the approver; a double quote in the name would end it early.
-    approver = _one_line(value.get("approver") or "unknown", 100).replace('"', "'")
-    outcome = {"id": _one_line(value["id"], 64), "approver": approver,
-               "decided": _one_line(value.get("decided") or "", 40),
-               "waited_seconds": None if waited is None else max(0, round(waited))}
-    if value.get("completed"):
-        outcome["completed"] = _one_line(value["completed"], 40)
-    return outcome
-
-
-def as_outcome(value) -> dict | None:
-    """_outcome, for core's hold to build the note of a queued write."""
-    return _outcome(value)
-
-
-def _held_clause(outcome: dict) -> str:
-    """'held for approval (id X), approved by "NAME" at T after N s' (no
-    leading capital, no final full stop) plus '; written by the gateway at T'
-    for a write core's hold made itself."""
-    clause = f"held for approval (id {outcome['id']}), approved by \"{outcome['approver']}\""
-    if outcome.get("decided"):
-        clause += f" at {outcome['decided']}"
-    if outcome.get("waited_seconds") is not None:
-        clause += f" after {outcome['waited_seconds']} s"
-    if outcome.get("completed"):
-        clause += f"; written by the gateway at {outcome['completed']}"
-    return clause
-
-
-def held_note(outcome: dict | None) -> str:
-    """The standalone sentence for a held write:
-    'Held for approval (id X), approved by "NAME" at T after N s.' Empty for
-    a write that wasn't held (outcome None). Tools use with_held_note."""
-    if outcome is None:
-        return ""
-    clause = _held_clause(outcome)
-    return f"{clause[0].upper()}{clause[1:]}."
-
-
-def with_held_note(text: str, outcome: dict | None) -> str:
-    """A tool's result with the hold folded into its first line, so the one
-    line says both what happened and that it was held:
-    'Pushed 2 commit(s) to o/r:b (sha); held for approval (id X), approved by
-    "NAME" at T after N s.' A first line that introduces the lines below it
-    ('Push rejected by GitHub:') keeps its colon at the end, after the
-    clause. The rest of the result is unchanged, and so is the whole result
-    when the write wasn't held. A result with no first line gets the
-    standalone sentence in front of it."""
-    if outcome is None:
-        return text
-    if not text.strip():
-        return held_note(outcome)
-    if text.startswith("\n"):
-        return held_note(outcome) + text
-    first, sep, rest = text.partition("\n")
-    end = "."
-    if first.endswith(":"):
-        first, end = first[:-1], ":"
-    elif first.endswith("."):
-        first = first[:-1]
-    return f"{first}; {_held_clause(outcome)}{end}{sep}{rest}"
+def one_line(value, limit: int) -> str:
+    """_one_line, for core's hold (an approver's name in a refusal)."""
+    return _one_line(value, limit)
 
 
 # --- the patch an approver can inspect (doomtickle/passdesk-ops#113) --------
@@ -246,7 +176,7 @@ PATCH_MAX_BYTES = 262_144
 PATCH_MAX_BYTES_MIN = 4_096
 PATCH_MAX_BYTES_MAX = 2_000_000
 # A patch no pending card names is kept this long, so one written for a
-# card the hook has not recorded yet (or a retry of it) is never removed.
+# card the hook has not recorded yet is never removed.
 PATCH_KEEP_SECONDS = 2 * 3600
 _CARD_MAX_BYTES = 1_000_000
 _READ_FLAGS = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC

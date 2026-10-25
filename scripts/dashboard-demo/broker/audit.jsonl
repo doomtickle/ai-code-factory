@@ -1,5 +1,10 @@
-{"ts": "{{iso:-2400}}", "role": "developer", "tool": "github_create_pr", "event": "approval-granted", "id": "demo0000pr", "repo": "example/app", "branch": "factory/greet-readme", "approver": "you"}
+{"ts": "{{iso:-2460}}", "tool": "github_create_pr", "event": "approval-requested", "id": "demo0000pr", "principal": "developer", "repo": "example/app", "branch": "factory/greet-readme"}
+{"ts": "{{iso:-2400}}", "role": "developer", "tool": "github_create_pr", "event": "approval-granted", "id": "demo0000pr", "repo": "example/app", "branch": "factory/greet-readme", "approver": "you", "queued": true}
+{"ts": "{{iso:-2398}}", "tool": "github_create_pr", "event": "approval-write-done", "id": "demo0000pr", "repo": "example/app", "branch": "factory/greet-readme", "result": "Opened PR #41: https://github.com/example/app/pull/41"}
 {"ts": "{{iso:-1500}}", "role": "developer", "tool": "npm_fetch", "decision": "allow", "args": {"path": "."}}
+{"ts": "{{iso:-1000}}", "role": "developer", "tool": "git_push", "event": "approval-granted", "id": "demo0003push", "repo": "example/app", "branch": "factory/changelog-typo", "approver": "you", "queued": true}
+{"ts": "{{iso:-998}}", "tool": "git_push", "event": "approval-write-failed", "id": "demo0003push", "repo": "example/app", "branch": "factory/changelog-typo", "reason": "factory/changelog-typo changed in the broker's mirror after the push was staged; nothing was pushed"}
 {"ts": "{{iso:-700}}", "role": "reviewer", "tool": "git_fetch", "decision": "allow", "args": {"repo": "example/app"}}
 {"ts": "{{iso:-330}}", "role": "developer", "tool": "web_fetch", "decision": "deny", "args": {"url": "https://paste.example.net/raw/x1"}, "reason": "host not on the allow list"}
 {"ts": "{{iso:-225}}", "tool": "git_push", "event": "approval-requested", "id": "demo0001push", "principal": "developer", "repo": "example/app", "branch": "factory/greet-empty-name"}
+{"ts": "{{iso:-4}}", "role": "developer", "tool": "github_create_issue", "event": "approval-granted", "id": "demo0002issue", "repo": "example/app", "approver": "you", "queued": true}

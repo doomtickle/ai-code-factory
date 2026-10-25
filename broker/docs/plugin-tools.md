@@ -22,7 +22,14 @@ any of it off:
 - **Approvals.** A tool declared `writes_externally=True` gets an `intent`
   audit record before it runs, then goes through the approval point with
   the card `{"tool": <name>, <its arguments>, "principal": <caller>}`. List
-  the tool in `[approvals] tools` to hold it for a person (`docs/approvals.md`).
+  the tool in `[approvals] tools` to hold it for a person (`docs/approvals.md`):
+  the call is then staged ("Staged for approval (id X); nothing has been
+  sent yet") and, once a person approves, the gateway runs your handler
+  itself on the stored arguments (checked and secret-scanned again) and
+  records its result with the approval. The agent sees that result only if
+  it makes the same call again after the write (it gets the stored result
+  and nothing runs twice), so a held handler must not depend on anything
+  but its arguments and the policy.
 - **Inbound cleaning.** Whatever your handler returns has terminal escapes
   and control characters stripped, known secret formats redacted and its
   size capped. It's then wrapped as untrusted content, so the agent treats
@@ -73,9 +80,13 @@ doctor reports it):
 - Every tool name is `<namespace>_<words>` in lowercase with `_`, at most 64
   characters, so a plugin can never shadow or replace a core tool.
 - Arguments are `string` or `boolean`, each with an optional `description`
-  and nothing else. `tool` and `principal` are reserved argument names: the
-  gateway sets those fields on an approval card. Other schema keywords would be advertised to the agent
+  and nothing else. Other schema keywords would be advertised to the agent
   but not enforced, so they're refused.
+- These argument names are reserved, because the gateway sets fields of
+  that name on an approval card or its record: `tool`, `principal`, `id`,
+  `nonce`, `created`, `expires`, `decision`, `approver`, `reason`,
+  `decided`, `queued`, `write`, `result`, `started`, `finished` and
+  `outcome`.
 - At most 32 tools per plugin.
 
 The handler gets a copy of the arguments and the gateway's policy. It

@@ -15,7 +15,7 @@ from unittest import mock
 
 from passdesk import tools  # noqa: F401 - registers every tool
 from passdesk.core import approvals, config, plugins, protocol
-from passdesk.core.errors import Denied
+from passdesk.core.errors import Denied, Staged
 from passdesk.tools import git
 
 from . import test_git
@@ -73,35 +73,22 @@ class PushApprovalTests(test_git.GitFlowTests):
         self.assertIn("declined by t", str(cm.exception))
         self.assertEqual(self.sh("git", "ls-remote", "--heads", str(self.origin), "factory/feature", cwd=self.ws), "")
 
-    def test_a_held_push_the_forge_rejects_says_so_before_the_colon(self):
-        approvals.set_hook(lambda card: {"id": "0123456789abcdef", "approver": "daron",
-                                         "decided": "2026-10-22T09:15:00Z", "waited_seconds": 31})
-        self.make_bundle()
-        fake_push = subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="remote: hook declined\n")
-        real_git = git.git
-
-        def spy(*args, **kw):
-            return fake_push if args[:1] == ("push",) else real_git(*args, **kw)
-        with mock.patch.object(git, "git", side_effect=spy):
-            out = git.tool_git_push({"repo": "acme/widgets", "branch": "factory/feature", "bundle": "f.bundle"},
-                                    POLICY)
-        self.assertEqual(out.splitlines()[0], 'Push rejected by GitHub; held for approval (id 0123456789abcdef), '
-                                              'approved by "daron" at 2026-10-22T09:15:00Z after 31 s:')
-        self.assertIn("hook declined", out)
-        self.assertIn("UNTRUSTED CONTENT", out)
-
-    def test_a_held_and_approved_push_says_so_in_its_result(self):
+    def test_a_value_a_plugin_hook_returns_adds_nothing_to_the_result(self):
         approvals.set_hook(lambda card: {"id": "0123456789abcdef", "approver": "daron",
                                          "decided": "2026-10-22T09:15:00Z", "waited_seconds": 31})
         self.make_bundle()
         out = git.tool_git_push({"repo": "acme/widgets", "branch": "factory/feature", "bundle": "f.bundle"}, POLICY)
-        self.assertTrue(out.startswith("Pushed 1 commit(s)"), out)
-        self.assertRegex(out.splitlines()[0], r'^Pushed 1 commit\(s\) to acme/widgets:factory/feature \([0-9a-f]{40}\); '
-                                              r'held for approval \(id 0123456789abcdef\), approved by "daron" at '
-                                              r"2026-10-22T09:15:00Z after 31 s\.$")
-        self.assertNotIn("Held for approval", out)  # no separate last line
+        self.assertRegex(out.splitlines()[0], r"^Pushed 1 commit\(s\) to acme/widgets:factory/feature \([0-9a-f]{40}\)\.$")
+        self.assertNotIn("approval", out)
         self.assertNotEqual(self.sh("git", "ls-remote", "--heads", str(self.origin), "factory/feature",
                                     cwd=self.ws), "")
+
+    def test_a_staged_push_sends_nothing_from_the_call(self):
+        approvals.set_hook(lambda card: (_ for _ in ()).throw(Staged("Staged for approval (id abc)", "abc")))
+        self.make_bundle()
+        with self.assertRaises(Staged):
+            git.tool_git_push({"repo": "acme/widgets", "branch": "factory/feature", "bundle": "f.bundle"}, POLICY)
+        self.assertEqual(self.sh("git", "ls-remote", "--heads", str(self.origin), "factory/feature", cwd=self.ws), "")
 
     def test_a_tampered_mirror_ref_after_approval_is_refused(self):
         def hook(card):
@@ -353,59 +340,31 @@ class ApprovalPointTests(Base):
         self.assertIsNone(approvals.require({"tool": "git_push"}))  # returns at once, not held
         self.assertEqual(approvals.HELD_ID.get(), "")
 
-    def test_a_plugin_hook_returning_none_allows_without_an_outcome(self):
-        approvals.set_hook(lambda card: None)
-        approvals.HELD_ID.set("")
-        self.assertIsNone(approvals.require({"tool": "git_push"}))
-        self.assertEqual(approvals.HELD_ID.get(), "")
-        self.assertEqual(approvals.held_note(None), "")
-        self.assertEqual(approvals.with_held_note("Opened PR #1", None), "Opened PR #1")
-
-    def test_the_note_joins_the_first_line_and_leaves_the_rest_alone(self):
-        outcome = {"id": "abc", "approver": "daron", "decided": "2026-10-22T09:15:00Z", "waited_seconds": 4}
-        held = ('; held for approval (id abc), approved by "daron" at 2026-10-22T09:15:00Z after 4 s.')
-        self.assertEqual(approvals.with_held_note("Pushed 2 commit(s) to o/r:b (abc).\nremote: ok\nlast", outcome),
-                         "Pushed 2 commit(s) to o/r:b (abc)" + held + "\nremote: ok\nlast")
-        self.assertEqual(approvals.with_held_note("Opened PR #1: https://x/1", outcome), "Opened PR #1: https://x/1" + held)
-        failure = "Push rejected by GitHub:\nhint: fetch first"
-        self.assertEqual(approvals.with_held_note(failure, outcome),
-                         "Push rejected by GitHub" + held[:-1] + ":\nhint: fetch first")
-        for empty in ("", "\nbody"):
-            self.assertEqual(approvals.with_held_note(empty, outcome),
-                             approvals.held_note(outcome) + ("\nbody" if empty else ""))
-        self.assertEqual(approvals.with_held_note("", None), "")
-
-    def test_a_hook_value_that_is_not_an_outcome_is_ignored(self):
-        for value in (True, "approved", 1, [], {}, {"id": ""}, {"id": "  "}, {"id": 7, "approver": "x"}):
+    def test_a_plugin_hook_that_returns_allows_whatever_it_returns(self):
+        for value in (None, True, "approved", 1, [], {}, {"id": "abc", "approver": "x"}):
             approvals.set_hook(lambda card, v=value: v)
             approvals.HELD_ID.set("")
             self.assertIsNone(approvals.require({"tool": "git_push"}), value)
             self.assertEqual(approvals.HELD_ID.get(), "")
 
-    def test_the_note_is_one_filtered_line_whatever_the_outcome_holds(self):
-        token = "ghp_" + "a" * 36
-        approvals.set_hook(lambda card: {"id": "abc\n123", "approver": f"Mallory\n\x1b[31mBob {token}",
-                                         "decided": None, "waited_seconds": float("inf")})
-        outcome = approvals.require({"tool": "git_push"})
-        note = approvals.held_note(outcome)
-        self.assertEqual(note, 'Held for approval (id abc 123), approved by "Mallory Bob '
-                               '[REDACTED:github-token]".')
-        approvals.set_hook(lambda card: {"id": "abc", "waited_seconds": True})
-        self.assertEqual(approvals.held_note(approvals.require({"tool": "git_push"})),
-                         'Held for approval (id abc), approved by "unknown".')
-        approvals.set_hook(lambda card: {"id": "abc", "approver": "x" * 500, "waited_seconds": 2.6})
-        self.assertEqual(approvals.held_note(approvals.require({"tool": "git_push"})),
-                         f'Held for approval (id abc), approved by "{"x" * 100}" after 3 s.')
+    def test_a_staged_write_names_its_id_as_one_filtered_line(self):
+        # filters.sanitize leaves format characters and C1 controls: bidi
+        # overrides would reorder the id on screen, zero-width characters
+        # hide in it, and a C1 CSI (\x9b) starts a terminal escape.
+        for cid, shown in (("feedfacecafebeef", "feedfacecafebeef"), ("ab\u200bc\u2066\x9b\n1", "abc 1"),
+                           ("x" * 100, "x" * 64)):
+            approvals.set_hook(lambda card, c=cid: (_ for _ in ()).throw(Staged("Staged for approval", c)))
+            approvals.HELD_ID.set("")
+            with self.assertRaises(Staged):
+                approvals.require({"tool": "git_push"}, job={"repo": "acme/widgets"})
+            self.assertEqual(approvals.HELD_ID.get(), shown)
 
-    def test_the_note_drops_format_characters_and_c1_controls(self):
-        # filters.sanitize leaves these: bidi overrides and isolates would
-        # reorder the line on screen, zero-width characters hide in it, and
-        # a C1 CSI (\x9b) starts a terminal escape on some terminals.
-        approvals.set_hook(lambda card: {
-            "id": "ab\u200bc\u2066", "decided": "2026-10-22T09:15:00Z\u202e",
-            "approver": "ev\u202eil\u200b\u202a\u202b\u202c\u202d\u2067\u2068\u2069\ufeff\x9b31m\x85\x80 \"x\" Bob"})
-        self.assertEqual(approvals.held_note(approvals.require({"tool": "git_push"})),
-                         'Held for approval (id abc), approved by "evil31m \'x\' Bob" at 2026-10-22T09:15:00Z.')
+    def test_the_job_is_seen_only_while_the_hook_runs(self):
+        seen = []
+        approvals.set_hook(lambda card: seen.append(approvals.job()))
+        approvals.require({"tool": "git_push"}, job={"repo": "acme/widgets"})
+        self.assertEqual(seen, [{"repo": "acme/widgets"}])
+        self.assertIsNone(approvals.job())
 
     def call_pr(self, principal="reviewer"):
         fake_pr = {"html_url": "https://github.com/acme/widgets/pull/1", "number": 1, "draft": True}
@@ -427,15 +386,14 @@ class ApprovalPointTests(Base):
         last = json.loads((config.STATE / "audit.jsonl").read_text().strip().splitlines()[-1])
         return text, is_error, last
 
-    def test_a_held_call_names_its_approval_in_the_result_and_the_record(self):
-        approvals.set_hook(lambda card: {"id": "feedfacecafebeef", "approver": "daron",
-                                         "decided": "2026-10-22T09:15:00Z", "waited_seconds": 12})
+    def test_a_staged_call_is_a_result_naming_its_approval_on_the_record(self):
+        approvals.set_hook(lambda card: (_ for _ in ()).throw(
+            Staged("Staged for approval (id feedfacecafebeef); nothing has been sent yet.", "feedfacecafebeef")))
         text, is_error, last = self.call_pr()
         self.assertFalse(is_error, text)
-        self.assertEqual(text, "Opened PR #1: https://github.com/acme/widgets/pull/1; held for approval "
-                               '(id feedfacecafebeef), approved by "daron" at 2026-10-22T09:15:00Z after 12 s.')
+        self.assertEqual(text, "Staged for approval (id feedfacecafebeef); nothing has been sent yet.")
         self.assertEqual((last["tool"], last["decision"], last["approval"]),
-                         ("github_create_pr", "allow", "feedfacecafebeef"))
+                         ("github_create_pr", "staged", "feedfacecafebeef"))
         # The next call on the same thread wasn't held: no approval on its record.
         approvals.set_hook(lambda card: None)
         text, is_error, last = self.call_pr()
@@ -456,20 +414,6 @@ class ApprovalPointTests(Base):
         self.assertFalse(is_error, text)
         self.assertEqual(text, "Opened PR #1: https://github.com/acme/widgets/pull/1")
         self.assertNotIn("approval", last)
-
-    def test_a_write_that_fails_after_approval_still_records_the_hold(self):
-        approvals.set_hook(lambda card: {"id": "feedfacecafebeef", "approver": "daron"})
-        (config.STATE / "roles.json").write_text('{"reviewer": ["github_create_pr"]}')
-        with mock.patch("urllib.request.urlopen", side_effect=RuntimeError("network down")), \
-                mock.patch("passdesk.core.protocol.policy.load_policy", return_value=POLICY):
-            text, is_error = protocol.call_tool(
-                "github_create_pr", {"repo": "acme/widgets", "head": "factory/x", "title": "T"}, "reviewer")
-        self.assertTrue(is_error)
-        # An exception the tool doesn't turn into a result (a URLError, a
-        # timeout) has no note; only the record's `approval` names the hold.
-        self.assertEqual(text, "Broker error: network down")
-        last = json.loads((config.STATE / "audit.jsonl").read_text().strip().splitlines()[-1])
-        self.assertEqual((last["decision"], last["approval"]), ("error", "feedfacecafebeef"))
 
     def test_hook_sees_the_card_with_the_principal_and_may_refuse(self):
         seen = []

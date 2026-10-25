@@ -604,9 +604,11 @@ npm_private_registry_needs_token() {
   [ -n "$(policy_string packages npm_private_registry)" ]
 }
 
-# approvals_summary -> prints "pending oldest_min expired_unhandled decided" from
-# scripts/approvals.py summary (see its --help): pending counts only cards no
-# one has decided; decided ones wait for the agent's retry, not for a person.
+# approvals_summary -> prints "pending oldest_min expired_unhandled approved
+# running made failed" from scripts/approvals.py summary (see its --help):
+# pending counts only staged cards no one has decided; approved ones wait for
+# the gateway, not for a person (declined ones aren't counted); the last
+# three count its deferred writes.
 # Fails with nothing printed
 # when holds aren't in use (no approvals dir yet, or ever) or python3
 # isn't available; never dies, so callers stay inert rather than erroring.
@@ -618,22 +620,27 @@ approvals_summary() {
 }
 
 # approvals_status_line -> for `factory status`: one line when there is at
-# least one undecided or decided-but-not-yet-retried card, nothing otherwise
-# (holds off, or no cards).
+# least one staged card, approved card or recent deferred write, nothing
+# otherwise (holds off, or nothing to show).
 approvals_status_line() {
-  local out pending oldest decided line
+  local out pending oldest approved running made failed line
   out="$(approvals_summary)" || return 0
   set -- $out
   pending="${1:-0}"
   oldest="${2:-0}"
-  decided="${4:-0}"
-  [ "${pending:-0}" -gt 0 ] || [ "${decided:-0}" -gt 0 ] || return 0
+  approved="${4:-0}"
+  running="${5:-0}"
+  made="${6:-0}"
+  failed="${7:-0}"
+  [ $((pending + approved + running + made + failed)) -gt 0 ] || return 0
   if [ "${pending:-0}" -gt 0 ]; then
-    line="$pending pending (oldest $oldest min)"
+    line="$pending staged (oldest $oldest min)"
   else
-    line="none pending"
+    line="none staged"
   fi
-  [ "${decided:-0}" -gt 0 ] && line="$line; $decided decided, waiting for the agent's retry"
+  [ $((approved + running)) -gt 0 ] && line="$line; $((approved + running)) approved, being written"
+  [ "${made:-0}" -gt 0 ] && line="$line; $made done"
+  [ "${failed:-0}" -gt 0 ] && line="$line; $failed failed"
   say "${B}Approvals:${N} $line - factory approvals"
 }
 
@@ -646,7 +653,7 @@ approvals_doctor_check() {
   set -- $out
   expired="${3:-0}"
   [ "${expired:-0}" -gt 0 ] || return 0
-  warn "$expired expired approval(s) with no decision: run 'factory approvals' (the agent's retry makes a fresh card)"
+  warn "$expired expired approval(s) with no decision: nothing was written for them; run 'factory approvals' (the agent's next call of each stages a fresh card)"
 }
 
 onboarding_hints() {

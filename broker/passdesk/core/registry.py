@@ -37,6 +37,19 @@ def register(tools: dict) -> None:
         TOOLS[name] = entry
 
 
+def type_ok(expected: object, value: object) -> bool:
+    """Whether value has the declared JSON-schema type: the one check of an
+    argument's type, at the call (core/protocol.py) and again before a staged
+    plugin call runs. A bool is never an integer or number; a type this map
+    doesn't know is not checked (no tool declares one)."""
+    py = _JSON_TYPES.get(expected) if isinstance(expected, str) else None
+    if py is None:
+        return True
+    if isinstance(value, bool) and expected != "boolean":
+        return False
+    return isinstance(value, py)
+
+
 def tool_list() -> list[dict]:
     return [{"name": name, "description": desc,
              "inputSchema": {"type": "object", "properties": props, "required": req}}
@@ -79,8 +92,18 @@ _MAX_NAME = 64
 _MAX_TOOLS = 32
 _MAX_DESCRIPTION = 1000
 _ARG_TYPES = {"string", "boolean"}
-# Card fields the gateway sets on an approval card; an argument can't take their place.
-_RESERVED_ARGS = {"tool", "principal"}
+# Fields the gateway sets on an approval card (core/holds.py: the tool and
+# principal, then the hold's id, nonce, created and expires); never a plugin
+# tool's argument.
+_CARD_OWN_FIELDS = {"tool", "principal", "id", "nonce", "created", "expires"}
+# An argument can't take the place of a card field, nor of one the hold adds
+# to the card's done/ record (an argument named approver would read as the
+# approver of a card that expired undecided).
+_RESERVED_ARGS = _CARD_OWN_FIELDS | {"decision", "approver", "reason", "decided", "queued", "write", "result",
+                                     "started", "finished", "outcome"}
+# Each JSON-schema type as the Python values json.loads makes for it.
+_JSON_TYPES = {"string": str, "boolean": bool, "integer": int, "number": (int, float), "object": dict,
+               "array": list}
 # Namespaces a plugin may not use: the prefixes of core tools (and any core
 # tool registered later), plus names that read as the gateway itself.
 _RESERVED = {"git", "github", "web", "gemini", "jira", "npm", "pip",
@@ -140,7 +163,8 @@ def _check_tool(where: str, namespace: str, name: object, spec: object) -> None:
         if not isinstance(arg, str) or not _ARG_RE.fullmatch(arg):
             raise PluginToolError(f"{where}: argument name {arg!r} must be lowercase letters, digits and _")
         if arg in _RESERVED_ARGS:
-            raise PluginToolError(f"{where}: argument name {arg!r} is reserved (the approval card sets it)")
+            raise PluginToolError(f"{where}: argument name {arg!r} is reserved (the gateway sets it on the "
+                                  "approval card)")
         if not isinstance(schema, dict) or schema.get("type") not in _ARG_TYPES \
                 or set(schema) - {"type", "description"} \
                 or not isinstance(schema.get("description", ""), str):
@@ -175,19 +199,17 @@ def register_plugin_tools(module_name: str, namespace: str, tools: dict[str, Plu
         PLUGIN_TOOLS[name] = module_name
         if spec.writes_externally:
             WRITES_EXTERNALLY.add(name)
+            approvals.register_deferred(name, entries[name][0].complete)
 
 
 def guard(name: str, spec: PluginTool) -> Handler:
     """The handler registered for a plugin tool: the gateway's own checks
-    around the plugin's handler, which a plugin cannot skip."""
+    around the plugin's handler, which a plugin cannot skip. A tool declared
+    writes_externally passes the approval point its arguments as the job, so
+    a held call is staged and the gateway runs the handler itself once it
+    is approved (complete(), registered by register_plugin_tools)."""
 
-    def run(args: dict, policy: dict) -> str:
-        for key, val in args.items():
-            if isinstance(val, str):
-                filters.block_outbound_secrets(f"argument {key!r}", val)
-        if spec.writes_externally:
-            # The gateway's own fields last, so no argument can stand in for them.
-            approvals.require({**args, "tool": name})
+    def call(args: dict, policy: dict) -> str:
         try:
             out = spec.handler(dict(args), policy)
         except Denied as e:
@@ -198,4 +220,32 @@ def guard(name: str, spec: PluginTool) -> Handler:
             raise TypeError(f"plugin tool {name} returned {type(out).__name__}, not text")
         return filters.untrusted(f"plugin tool {name}", filters.sanitize(out))
 
+    def scan(args: dict) -> None:
+        for key, val in args.items():
+            if isinstance(val, str):
+                filters.block_outbound_secrets(f"argument {key!r}", val)
+
+    def run(args: dict, policy: dict) -> str:
+        scan(args)
+        if spec.writes_externally:
+            # The gateway's own fields last, so no argument can stand in for them.
+            approvals.require({**args, "tool": name}, job={"args": dict(args)})
+        return call(args, policy)
+
+    def complete(job: dict, card: dict, policy: dict) -> str:
+        """Run a staged call the person approved, from the stored arguments
+        only: they must still be what the tool declares, pass the secret
+        scan again and be exactly what the card shows."""
+        args = job.get("args")
+        if not isinstance(args, dict) or not set(spec.required) <= set(args) \
+                or not set(args) <= set(spec.properties) \
+                or any(not type_ok(spec.properties[k].get("type"), v) for k, v in args.items()):
+            raise Denied(f"the staged {name} call's arguments are not ones the tool takes; nothing was run")
+        scan(args)
+        shown = {k: v for k, v in card.items() if k not in _CARD_OWN_FIELDS}
+        if card.get("tool") != name or shown != approvals.redacted(args):
+            raise Denied(f"the staged {name} call's arguments do not match its approval card; nothing was run")
+        return call(args, policy)
+
+    run.complete = complete  # type: ignore[attr-defined]
     return run

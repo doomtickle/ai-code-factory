@@ -23,14 +23,14 @@ It is handled exactly like a gateway-held GitHub token, scoped to the
 only, gitlab_create_mr as a Bearer header through NO_REDIRECT_OPENER, and it
 is redacted everywhere. Neither forge's token is ever sent to the other.
 
-Approve later (doomtickle/passdesk-ops#91): git_push, github_create_pr and
-gitlab_create_mr pass the approval point a job (the checked arguments of
-their write) and register a completer (complete_*), so a write still
-undecided when the hold runs out is queued and, on approval, made by the
-gateway itself from that job: never from the agent's workspace, and only
-after the job is checked again against the policy and the stored card (and,
-for a push, the mirror's ref and a fresh secret scan of what it would push).
-github_create_issue keeps the retry-the-call hold.
+Held writes (doomtickle/passdesk-ops#170): git_push, github_create_pr,
+gitlab_create_mr and github_create_issue pass the approval point a job (the
+checked arguments of their write) and register a completer (complete_*). A
+held write is staged at once and, on approval, made by the gateway itself
+from that job: never from the agent's workspace, and only after the job is
+checked again against the policy and the stored card (and, for a push, the
+mirror's ref and a fresh secret scan of what it would push). An unheld write
+is made in the call, as before.
 """
 
 from __future__ import annotations
@@ -50,7 +50,6 @@ from pathlib import Path
 
 from ..core import approvals, config, credentials, filters
 from ..core.approvals import require as require_approval
-from ..core.approvals import with_held_note
 from ..core.errors import Denied
 from ..core.filters import block_outbound_secrets, find_secrets, sanitize, untrusted
 from ..core.net import NO_REDIRECT_OPENER
@@ -502,10 +501,10 @@ def tool_git_push(args: dict, policy: dict) -> str:
         files = [f for f in names.split("\n") if f]
         with open(bundle, "rb") as fh:
             bundle_digest = hashlib.file_digest(fh, "sha256").hexdigest()
-    # Outside the tool lock: a pending approval must not block other git calls.
-    # The job is what the gateway pushes itself if the write is queued
+    # Outside the tool lock. A held push is staged here (core/holds.py raises
+    # Staged); the job is what the gateway pushes itself once it is approved
     # (complete_git_push): the verified ref, pinned by head and bundle digest.
-    held = require_approval({"tool": "git_push", "repo": repo, "branch": branch, "base": base, "head": sha,
+    require_approval({"tool": "git_push", "repo": repo, "branch": branch, "base": base, "head": sha,
                              "commits": count, "shortstat": shortstat, "file_count": len(files),
                              "files": files[:50], "bundle_sha256": bundle_digest, "secret_scan": "clean",
                              **patch_fields},
@@ -514,13 +513,13 @@ def tool_git_push(args: dict, policy: dict) -> str:
     with tool_lock:
         mirror = ensure_mirror(repo, remote)
         if _mirror_ref(mirror, incoming) != sha:
-            raise Denied(f"{branch} changed in the broker's mirror while awaiting approval; retry the push")
+            raise Denied(f"{branch} changed in the broker's mirror during the push (another push to the same "
+                         "branch?); nothing was pushed, push again")
         push = git("push", "--porcelain", "origin", f"{incoming}:refs/heads/{branch}", cwd=mirror, check=False,
                    auth=remote)
     if push.returncode != 0:
-        return with_held_note(_push_failure(push, remote, repo, branch), held)
-    return with_held_note(f"Pushed {count} commit(s) to {repo}:{branch} ({sha}).\n{sanitize(push.stdout, 2000)}",
-                          held)
+        return _push_failure(push, remote, repo, branch)
+    return f"Pushed {count} commit(s) to {repo}:{branch} ({sha}).\n{sanitize(push.stdout, 2000)}"
 
 
 _SHA_RE = re.compile(r"[0-9a-f]{40}(?:[0-9a-f]{24})?")
@@ -529,19 +528,19 @@ _SHA_RE = re.compile(r"[0-9a-f]{40}(?:[0-9a-f]{24})?")
 def _job_str(job: dict, key: str) -> str:
     value = job.get(key)
     if not isinstance(value, str):
-        raise Denied(f"the queued write's {key} is missing or not text; nothing was written")
+        raise Denied(f"the staged write's {key} is missing or not text; nothing was written")
     return value
 
 
 def _job_matches(job: dict, card: dict, keys: tuple[str, ...]) -> None:
-    """The job a queued write runs from must say what its card says."""
+    """The job a staged write runs from must say what its card says."""
     for key in keys:
         if job.get(key) != card.get(key):
-            raise Denied(f"the queued write's {key} does not match its approval card; nothing was written")
+            raise Denied(f"the staged write's {key} does not match its approval card; nothing was written")
 
 
 def complete_git_push(job: dict, card: dict, policy: dict) -> str:
-    """Make a queued push the person approved (core/holds.py runs it): the
+    """Make a staged push the person approved (core/holds.py runs it): the
     ref git_push verified, still in the broker's mirror, with nothing read
     from the workspace. Every argument is checked again against the policy
     and must match the card; the mirror must still exist and its ref still
@@ -555,7 +554,7 @@ def complete_git_push(job: dict, card: dict, policy: dict) -> str:
     base = check_branch_name(_job_str(job, "base"))
     sha = _job_str(job, "head")
     if not _SHA_RE.fullmatch(sha):
-        raise Denied("the queued push's head is not a commit id; nothing was pushed")
+        raise Denied("the staged push's head is not a commit id; nothing was pushed")
     _job_matches(job, card, ("repo", "branch", "base", "head", "bundle_sha256"))
     if not (config.MIRRORS / mirror_name(remote)).is_dir():
         raise Denied(f"the broker's mirror of {repo} is gone; nothing was pushed")
@@ -565,7 +564,7 @@ def complete_git_push(job: dict, card: dict, policy: dict) -> str:
     with tool_lock:
         mirror = ensure_mirror(repo, remote)
         if _mirror_ref(mirror, incoming) != sha:
-            raise Denied(f"{branch} changed in the broker's mirror after the push was queued (another push to the "
+            raise Denied(f"{branch} changed in the broker's mirror after the push was staged (another push to the "
                          "same branch?); nothing was pushed")
         count = check_range(f"refs/remotes/origin/{base}..{incoming}", mirror, branch, base,
                             policy.get("filters", {}))
@@ -586,12 +585,14 @@ def tool_github_create_pr(args: dict, policy: dict) -> str:
     block_outbound_secrets("PR title", title)
     block_outbound_secrets("PR body", body)
     draft = bool(args.get("draft", True))
-    held = require_approval({"tool": "github_create_pr", "repo": repo, "head": head, "base": base,
-                             "title": title, "body": body[:2000], "draft": draft},
-                            job={"repo": repo, "head": head, "base": base, "title": title, "body": body,
-                                 "draft": draft})
-    _, text = _open_pr(repo, head, base, title, body, draft)
-    return with_held_note(text, held)
+    # The card shows the body's start, and carries its digest so two pull
+    # requests whose bodies differ only past the excerpt never share a card.
+    require_approval({"tool": "github_create_pr", "repo": repo, "head": head, "base": base,
+                      "title": title, "body": body[:2000],
+                      "body_sha256": hashlib.sha256(body.encode()).hexdigest(), "body_chars": len(body),
+                      "draft": draft},
+                     job={"repo": repo, "head": head, "base": base, "title": title, "body": body, "draft": draft})
+    return _open_pr(repo, head, base, title, body, draft)[1]
 
 
 def _open_pr(repo: str, head: str, base: str, title: str, body: str, draft: bool) -> tuple[bool, str]:
@@ -600,7 +601,7 @@ def _open_pr(repo: str, head: str, base: str, title: str, body: str, draft: bool
     payload = json.dumps({"title": title, "body": body, "head": head, "base": base, "draft": draft}).encode()
     headers = {"Accept": "application/vnd.github+json", "Content-Type": "application/json",
                "X-GitHub-Api-Version": "2022-11-28", "User-Agent": config.USER_AGENT}
-    # Read after approval, so a long wait still uses the current token.
+    # Read at the write, so one made after approval uses the current token.
     token = github_token()
     if token is not None:
         headers["Authorization"] = f"Bearer {token}"
@@ -624,30 +625,30 @@ def _open_pr(repo: str, head: str, base: str, title: str, body: str, draft: bool
     return True, f"Opened PR #{pr['number']}: {pr['html_url']}"
 
 
-def _queued_pr_args(job: dict, card: dict, policy: dict, forge: str) -> tuple[str, str, str, str, str, bool]:
-    """A queued PR/MR job's (repo, head, base, title, body, draft), checked
+def _staged_pr_args(job: dict, card: dict, policy: dict, forge: str) -> tuple[str, str, str, str, str, bool]:
+    """A staged PR/MR job's (repo, head, base, title, body, draft), checked
     again as the tool checked them and against the card."""
     repo = check_repo(_job_str(job, "repo"), policy)
     if remote_of(repo, policy).forge != forge:
-        raise Denied(f"{repo} is not on the forge this queued write is for; nothing was written")
+        raise Denied(f"{repo} is not on the forge this staged write is for; nothing was written")
     head = check_push_branch(_job_str(job, "head"), policy)
     base = check_branch_name(_job_str(job, "base"))
     title, body, draft = _job_str(job, "title"), _job_str(job, "body"), job.get("draft")
     if not isinstance(draft, bool):
-        raise Denied("the queued write's draft flag is not true or false; nothing was written")
+        raise Denied("the staged write's draft flag is not true or false; nothing was written")
     block_outbound_secrets("title", title)
     block_outbound_secrets("body", body)
     _job_matches(job, card, ("repo", "head", "base", "title", "draft"))
-    if card.get("body") != body[:2000]:
-        raise Denied("the queued write's body does not match its approval card; nothing was written")
+    if card.get("body") != body[:2000] or card.get("body_sha256") != hashlib.sha256(body.encode()).hexdigest():
+        raise Denied("the staged write's body does not match its approval card; nothing was written")
     return repo, head, base, title, body, draft
 
 
 def complete_github_create_pr(job: dict, card: dict, policy: dict) -> str:
-    """Open a queued pull request the person approved (core/holds.py runs
+    """Open a staged pull request the person approved (core/holds.py runs
     it) from the arguments github_create_pr checked and stored. Raises
     Denied if a check fails or GitHub refuses it."""
-    ok, text = _open_pr(*_queued_pr_args(job, card, policy, "github"))
+    ok, text = _open_pr(*_staged_pr_args(job, card, policy, "github"))
     if not ok:
         raise Denied(text)
     return text
@@ -694,24 +695,22 @@ def tool_gitlab_create_mr(args: dict, policy: dict) -> str:
                      "(README, Configuring credentials)")
     # The card shows the body's start, and carries its digest so two merge
     # requests whose bodies differ only past the excerpt never share a card.
-    held = require_approval({"tool": "gitlab_create_mr", "repo": repo, "head": head, "base": base,
-                             "title": title, "body": body[:2000],
-                             "body_sha256": hashlib.sha256(body.encode()).hexdigest(), "body_chars": len(body),
-                             "draft": draft},
-                            job={"repo": repo, "head": head, "base": base, "title": title, "body": body,
-                                 "draft": draft})
-    _, text = _open_mr(repo, remote, head, base, title, body)
-    return with_held_note(text, held)
+    require_approval({"tool": "gitlab_create_mr", "repo": repo, "head": head, "base": base,
+                      "title": title, "body": body[:2000],
+                      "body_sha256": hashlib.sha256(body.encode()).hexdigest(), "body_chars": len(body),
+                      "draft": draft},
+                     job={"repo": repo, "head": head, "base": base, "title": title, "body": body, "draft": draft})
+    return _open_mr(repo, remote, head, base, title, body)[1]
 
 
 def _open_mr(repo: str, remote: Remote, head: str, base: str, title: str, body: str) -> tuple[bool, str]:
     """POST the merge request: (True, "Opened MR ...") or, for an HTTP
     error, (False, the error with a hint). Raises Denied with no token or
     an unexpected answer, and anything else it meets."""
-    # Read after approval, so a long wait still uses the current token.
+    # Read at the write, so one made after approval uses the current token.
     token = gitlab_token()
     if token is None:
-        raise Denied("the gateway's gitlab credential was removed while the call awaited approval")
+        raise Denied("the gateway's gitlab credential was removed before the write could be made")
     payload = json.dumps({"source_branch": head, "target_branch": base, "title": title,
                           "description": body}).encode()
     headers = {"Accept": "application/json", "Content-Type": "application/json",
@@ -730,15 +729,13 @@ def _open_mr(repo: str, remote: Remote, head: str, base: str, title: str, body: 
 
 
 def complete_gitlab_create_mr(job: dict, card: dict, policy: dict) -> str:
-    """Open a queued merge request the person approved (core/holds.py runs
+    """Open a staged merge request the person approved (core/holds.py runs
     it) from the arguments gitlab_create_mr checked and stored (its title
     already as sent, "Draft: " included). Raises Denied if a check fails, the
     gitlab credential is gone or GitLab refuses it."""
-    repo, head, base, title, body, _ = _queued_pr_args(job, card, policy, "gitlab")
-    if card.get("body_sha256") != hashlib.sha256(body.encode()).hexdigest():
-        raise Denied("the queued write's body does not match its approval card; nothing was written")
+    repo, head, base, title, body, _ = _staged_pr_args(job, card, policy, "gitlab")
     if _TITLE_BAD_RE.search(title) or len(title) > _MR_TITLE_MAX or len(body) > _MR_BODY_MAX:
-        raise Denied("the queued merge request's title or body is not one GitLab takes; nothing was written")
+        raise Denied("the staged merge request's title or body is not one GitLab takes; nothing was written")
     ok, text = _open_mr(repo, remote_of(repo, policy), head, base, title, body)
     if not ok:
         raise Denied(text)
@@ -849,33 +846,68 @@ def tool_github_create_issue(args: dict, policy: dict) -> str:
     # The card carries the body's digest, so two issues whose bodies differ
     # only past the excerpt never share a card, and the labels as the agent
     # named them (scanned above), not as the label lookup returned them:
-    # nothing on a card comes from the network.
-    held = require_approval({"tool": "github_create_issue", "repo": repo, "title": title, "body": body[:2000],
-                             "body_sha256": hashlib.sha256(body.encode()).hexdigest(), "labels": wanted})
+    # nothing on a card comes from the network. The job carries them as
+    # GitHub spells them, which is what gets sent.
+    require_approval({"tool": "github_create_issue", "repo": repo, "title": title, "body": body[:2000],
+                      "body_sha256": hashlib.sha256(body.encode()).hexdigest(), "labels": wanted},
+                     job={"repo": repo, "title": title, "body": body, "labels": labels})
+    return _open_issue(repo, title, body, labels)[1]
+
+
+def _open_issue(repo: str, title: str, body: str, labels: list[str]) -> tuple[bool, str]:
+    """POST the issue: (True, "Opened issue ...") or, for an HTTP error,
+    (False, the error with a hint). Raises Denied for an unexpected answer."""
     payload: dict = {"title": title, "body": body}
     if labels:
         payload["labels"] = labels
-    # Read after approval, so a long wait still uses the current token.
+    # Read at the write, so one made after approval uses the current token.
     token = github_token()
     try:
         issue = _github_api("POST", f"/repos/{repo}/issues", token, payload)
     except urllib.error.HTTPError as e:
-        return with_held_note(_github_api_failure(e, repo, token is not None, "Issues read/write"), held)
+        return False, _github_api_failure(e, repo, token is not None, "Issues read/write")
     if not isinstance(issue, dict) or not isinstance(issue.get("number"), int):
         raise Denied(f"GitHub returned an unexpected response for the new issue in {repo}")
-    return with_held_note(f"Opened issue #{issue['number']} in {repo}: "
-                          f"{sanitize(str(issue.get('html_url', '')), 300)}", held)
+    return True, f"Opened issue #{issue['number']} in {repo}: {sanitize(str(issue.get('html_url', '')), 300)}"
+
+
+def complete_github_create_issue(job: dict, card: dict, policy: dict) -> str:
+    """File a staged issue the person approved (core/holds.py runs it) from
+    the arguments github_create_issue checked and stored, checked again
+    against the policy and the card. Raises Denied if a check fails or
+    GitHub refuses it."""
+    repo = check_issue_repo(_job_str(job, "repo"), policy)
+    title, body, labels = _job_str(job, "title"), _job_str(job, "body"), job.get("labels")
+    if not isinstance(labels, list) or not all(isinstance(n, str) for n in labels) \
+            or len(labels) > _ISSUE_LABELS_MAX:
+        raise Denied("the staged write's labels are not a list of names; nothing was written")
+    if not title or len(title) > _ISSUE_TITLE_MAX or _TITLE_BAD_RE.search(title) or len(body) > _ISSUE_BODY_MAX:
+        raise Denied("the staged issue's title or body is not one this tool files; nothing was written")
+    block_outbound_secrets("issue title", title)
+    block_outbound_secrets("issue body", body)
+    for name in labels:
+        block_outbound_secrets("label", name)
+    _job_matches(job, card, ("repo", "title"))
+    wanted = card.get("labels") if isinstance(card.get("labels"), list) else None
+    if card.get("body") != body[:2000] or card.get("body_sha256") != hashlib.sha256(body.encode()).hexdigest() \
+            or wanted is None or [str(n).lower() for n in wanted] != [n.lower() for n in labels]:
+        raise Denied("the staged write's body or labels do not match its approval card; nothing was written")
+    ok, text = _open_issue(repo, title, body, labels)
+    if not ok:
+        raise Denied(text)
+    return text
 
 
 _REPO_DESCRIPTION = "owner/name on GitHub, or <gitlab host>/<group>/<project> on the configured GitLab"
-_QUEUED_NOTE = (" If the deployment holds it for approval, the result may say it is queued: the gateway makes "
-                "the write itself once approved, so report it as queued, not done. A result whose first line "
-                "says \"held for approval ... approved by\" and the approver's name is finished, not queued: its "
-                "first words say whether the write succeeded or was refused.")
+_STAGED_NOTE = (" If the deployment holds it for approval, the result starts \"Staged for approval (id X); "
+                "nothing has been sent yet\": the gateway makes the write itself once a person approves it, so "
+                "report it as staged for approval, not done. The same call again once it is made returns the write's "
+                "result and sends nothing new.")
 
 approvals.register_deferred("git_push", complete_git_push)
 approvals.register_deferred("github_create_pr", complete_github_create_pr)
 approvals.register_deferred("gitlab_create_mr", complete_gitlab_create_mr)
+approvals.register_deferred("github_create_issue", complete_github_create_issue)
 
 register({
     "git_fetch": (tool_git_fetch, f"Fetch a branch of an allowlisted GitHub repo or GitLab project. Writes a "
@@ -885,20 +917,20 @@ register({
     "git_push": (tool_git_push, "Push a branch to an allowlisted GitHub repo or GitLab project. First run "
                  f"`git bundle create {config.EXCHANGE_DIR}/outgoing/<name>.bundle origin/<base>..<branch>` "
                  "(or the whole branch). Diff, commit messages and the branch name are secret-scanned; "
-                 "protected branches are refused and force-pushes are impossible." + _QUEUED_NOTE,
+                 "protected branches are refused and force-pushes are impossible." + _STAGED_NOTE,
                  {"repo": {"type": "string", "description": _REPO_DESCRIPTION},
                   "branch": {"type": "string", "description": "branch to push; must use the allowed prefix"},
                   "bundle": {"type": "string", "description": f"file name inside {config.EXCHANGE_DIR}/outgoing/"},
                   "base": {"type": "string", "description": "branch the work is based on (default from policy)"}},
                  ["repo", "branch", "bundle"]),
     "github_create_pr": (tool_github_create_pr, "Open a pull request on an allowlisted GitHub repo. "
-                         "Title, body and branch names are secret-scanned. Draft by default." + _QUEUED_NOTE,
+                         "Title, body and branch names are secret-scanned. Draft by default." + _STAGED_NOTE,
                          {"repo": {"type": "string"}, "head": {"type": "string"}, "base": {"type": "string"},
                           "title": {"type": "string"}, "body": {"type": "string"},
                           "draft": {"type": "boolean"}}, ["repo", "head", "title"]),
     "gitlab_create_mr": (tool_gitlab_create_mr, "Open a merge request on an allowlisted GitLab project "
                          "(<gitlab host>/<group>/<project>). Title, body and branch names are secret-scanned. "
-                         "Draft by default (the title gets GitLab's \"Draft: \" prefix)." + _QUEUED_NOTE,
+                         "Draft by default (the title gets GitLab's \"Draft: \" prefix)." + _STAGED_NOTE,
                          {"repo": {"type": "string", "description": "<gitlab host>/<group>/<project>"},
                           "head": {"type": "string", "description": "source branch; must use the allowed prefix"},
                           "base": {"type": "string", "description": "target branch (default from policy)"},
@@ -906,7 +938,7 @@ register({
                           "draft": {"type": "boolean"}}, ["repo", "head", "title"]),
     "github_create_issue": (tool_github_create_issue, "File an issue in a GitHub repo on the broker's issue "
                             "allowlist. Title and body are secret-scanned; labels must already exist in "
-                            "the repo. No assignees; issues can't be edited or closed with this tool.",
+                            "the repo. No assignees; issues can't be edited or closed with this tool." + _STAGED_NOTE,
                             {"repo": {"type": "string", "description": "owner/name"},
                              "title": {"type": "string", "description": "one line, at most 256 characters"},
                              "body": {"type": "string", "description": "Markdown"},

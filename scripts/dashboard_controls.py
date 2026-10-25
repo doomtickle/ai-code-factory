@@ -10,14 +10,14 @@ X-Factory-Control header (dashboard_term.control_refusal). This module is what
 those requests reach:
 
   state    the held writes (with each card's fingerprint, and whether the
-           gateway has queued it), the recent deferred writes the gateway made
+           gateway has staged it), the recent deferred writes the gateway made
            on approval (display only: made, failed, running), the bound
            project and the current service action
   decide   approve or decline one held write: one press, a file write through
            approvals.write_decision(), the same record `factory approvals`
            writes. Exact id, and the card's fingerprint must still match.
            One decision per card: a card already decided (it stays pending
-           until the agent retries) is a 409 "decided" with the verdict that
+           until the gateway acts on it) is a 409 "decided" with the verdict that
            stands.
   prepare  the confirm step for RESTART, UPDATE or DIAG: what the action would
            do (jobs it cancels, held writes it drops; for UPDATE, the output
@@ -263,8 +263,8 @@ class Controls:
         if verdict == "decline" and not reason:
             raise Refused(400, "give the agent a reason for declining")
         card = self.held_card(cid, fp)
-        # One decision per card: the first stands until the agent's retry
-        # picks it up (checked again, race-free, by write_decision).
+        # One decision per card: the first stands until the gateway acts on
+        # it (checked again, race-free, by write_decision).
         self.refuse_if_decided(approvals.read_decision(self.state / "broker", card))
         try:
             expired = float(card.get("expires", 0)) < self.clock()

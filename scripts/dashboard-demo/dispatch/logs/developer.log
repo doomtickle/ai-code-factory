@@ -10,3 +10,5 @@
 {{clock:-235}}  🔧 Bash: {"command": "git commit -am 'Make greet() reject empty names'"}
 {{clock:-230}}  ⎇ branch factory/greet-empty-name
 {{clock:-225}}  🔧 mcp__mcp-gateway__git_push: {"repo": "example/app", "branch": "factory/greet-empty-name"}
+{{clock:-224}}     ↳ Staged for approval (id demo0001push); nothing has been sent yet. The gateway has verified this push of factory/greet-empty-name to example/app and will make it itself once a person approves it
+{{clock:-200}}     The push is staged for approval (id demo0001push), not done. Writing the report.

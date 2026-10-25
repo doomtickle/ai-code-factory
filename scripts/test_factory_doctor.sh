@@ -243,19 +243,25 @@ fn "run_or_die 'could not do it' '$loud/succeed'"
 [ "$RC" -eq 0 ] && [ ! -s "$tmp/out" ] && ok "run_or_die is silent on success" || bad "run_or_die is silent on success"
 
 # --- Part 7: approval counts in status and doctor -------------------------------
-# approvals_summary prints "pending oldest expired_unhandled decided"; pending
-# counts only undecided cards, so a decided card waiting for the agent's retry
-# is reported apart, never as needing the owner.
-fn "approvals_summary() { echo '2 7 0 1'; }; approvals_status_line"
-assert_contains "status counts undecided cards as pending" "$(cat "$tmp/out")" "2 pending (oldest 7 min); 1 decided, waiting for the agent's retry"
-fn "approvals_summary() { echo '0 -1 0 1'; }; approvals_status_line"
+# approvals_summary prints "pending oldest expired_unhandled approved running
+# made failed"; pending counts only undecided staged cards, so an approved card
+# (the gateway acts on it) is reported apart, never as needing the owner.
+# Declined cards are in neither count (scripts/test_approvals.py).
+fn "approvals_summary() { echo '2 7 0 1 0 0 0'; }; approvals_status_line"
+assert_contains "status counts undecided cards as staged" "$(cat "$tmp/out")" "2 staged (oldest 7 min); 1 approved, being written"
+fn "approvals_summary() { echo '0 -1 0 1 1 3 2'; }; approvals_status_line"
 out="$(cat "$tmp/out")"
-assert_contains "a decided card alone is not pending" "$out" "none pending; 1 decided, waiting for the agent's retry"
-assert_not_contains "a decided card alone has no oldest age" "$out" "oldest"
-fn "approvals_summary() { echo '0 -1 0 0'; }; approvals_status_line"
+assert_contains "approved and running writes, done and failed ones" "$out" "none staged; 2 approved, being written; 3 done; 2 failed - factory approvals"
+assert_not_contains "an approved card alone has no oldest age" "$out" "oldest"
+assert_not_contains "no retry wording" "$out" "retry"
+fn "approvals_summary() { echo '0 -1 0 0 0 0 1'; }; approvals_status_line"
+assert_contains "a failed write alone is shown" "$(cat "$tmp/out")" "none staged; 1 failed"
+fn "approvals_summary() { echo '0 -1 0 0 0 0 0'; }; approvals_status_line"
 [ "$RC" -eq 0 ] && [ ! -s "$tmp/out" ] && ok "no line when nothing is held" || bad "no line when nothing is held"
 fn "approvals_summary() { echo '1 3 0'; }; approvals_status_line"
-assert_contains "a three-field summary still reads" "$(cat "$tmp/out")" "1 pending (oldest 3 min) - factory approvals"
+assert_contains "a three-field summary still reads" "$(cat "$tmp/out")" "1 staged (oldest 3 min) - factory approvals"
+fn "approvals_summary() { echo '0 -1 0 1'; }; approvals_status_line"
+assert_contains "a four-field summary still reads" "$(cat "$tmp/out")" "none staged; 1 approved, being written - factory approvals"
 fn "approvals_summary() { echo '0 -1 0 3'; }; approvals_doctor_check"
 [ "$RC" -eq 0 ] && [ ! -s "$tmp/out" ] && ok "doctor doesn't warn about decided cards" || bad "doctor doesn't warn about decided cards"
 fn "approvals_summary() { echo '1 40 1 0'; }; approvals_doctor_check"

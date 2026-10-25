@@ -52,17 +52,16 @@ repos = []
 # [github]
 # issue_repos = ["my-org/tracker"]
 
-# Hold writes for a person. Each tool named here waits for your decision
-# (the dashboard's control unit, or `factory approvals`) before it leaves the
-# machine; a call waits hold_seconds, then a push, pull request or merge
-# request is queued (the gateway makes it once you approve), and a pending
-# card can be decided for expire_seconds (default 86400, a day). Other held
-# tools ask the agent to retry instead. Leave the table out (or
+# Hold writes for a person. Each tool named here is staged for your decision
+# (the dashboard's control unit, or `factory approvals`) instead of leaving
+# the machine: the agent's call returns at once, the gateway makes the write
+# itself once you approve, and a pending card can be decided for
+# expire_seconds (default 86400, a day). hold_seconds is no longer read;
+# delete it from your copy. Leave the table out (or
 # tools = []) and nothing is held. Name every tool you want held: leaving
 # gitlab_create_mr out lets merge requests open unheld (factory status warns).
 # To be told when something is waiting, save a Slack, Discord or ntfy webhook
 # URL with `factory secret save approvals-webhook`.
 # [approvals]
 # tools = ["git_push", "github_create_pr", "gitlab_create_mr"]
-# hold_seconds = 45
 # expire_seconds = 86400

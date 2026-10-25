@@ -305,6 +305,10 @@ a.tabkey { display: inline-block; text-decoration: none; }
 .rail.has-cu > .gate-mod { display: flex; flex-direction: column; gap: 6px; }
 .rail.has-cu .gate-lcd { flex: none; padding: 5px 10px; }
 .gate-lcd .one { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-transform: uppercase; }
+.gate-lcd .states .st-staged { color: var(--lcd-amber); font-weight: 700; animation: lcdblink 1.2s steps(1) infinite; }
+.gate-lcd .states .st-writing { color: var(--lcd-amber); }
+.gate-lcd .states .st-done { color: var(--lcd-green); }
+.gate-lcd .states .st-failed { background: var(--lcd-red); color: var(--lcd-bg); padding: 0 3px; font-weight: 700; }
 .rail.has-cu .gate-hint { display: none; }
 .gate-to-cu { margin-left: 6px; color: var(--silk); }
 .gate-writes { padding: 5px 10px; font-family: var(--f-crt); font-size: 1.05rem; line-height: 1.1; display: grid; gap: 1px; margin-top: 6px; }
@@ -397,7 +401,7 @@ html.cu-open, html.cu-open body { overflow: hidden; }
 .tabkey[aria-pressed="true"] { transform: translateY(2px); box-shadow: 0 1px 0 var(--key-lo); background: linear-gradient(180deg, #ffb35c, var(--stripe-1)); }
 
 @media (prefers-reduced-motion: reduce) {
-  .led.blink, .lcd-text .k-held, .crt::after, .pl.new { animation: none !important; }
+  .led.blink, .lcd-text .k-held, .gate-lcd .states .st-staged, .crt::after, .pl.new { animation: none !important; }
   .lane.entering, .lane.entering .lcd-text, .lane.leaving, .standby.entering, .chip.entering, .chip.entering .led { animation: none !important; }
   .crt::before { display: none; }
   .crt-roll.rolling { animation: none; transform: translateY(var(--roll-still, 0)); }

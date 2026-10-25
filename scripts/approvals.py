@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """factory approvals: decide what the gateway is holding for a person.
 
-The gateway records each held push or pull request as a card under the
-broker state directory (approvals/pending/<id>.json) and waits for a
-decision file (approvals/decisions/<id>.json) that this console writes. It
+The gateway stages each held write (a push, pull or merge request, an
+issue, a plugin tool's call) as a card under the broker state directory
+(approvals/pending/<id>.json, with its job in approvals/queued/<id>.json)
+and acts on the decision file (approvals/decisions/<id>.json) that this
+console writes. It
 runs on the host with the system Python (3.9 on macOS), standard library
 only, and touches nothing but those files. The dashboard's control unit
 (scripts/dashboard_controls.py) writes decisions through write_decision()
@@ -13,19 +15,16 @@ here, so both write the same record.
     factory approvals show <id>            a pending card, or a finished deferred write
     factory approvals approve <id> [--as NAME] [--reason TEXT]
     factory approvals decline <id> [--as NAME] [--reason TEXT]
-    factory approvals watch                print cards, queued cards and deferred writes as they arrive
-    factory approvals summary              one line for scripts: "pending oldest_min expired_unhandled decided"
+    factory approvals watch                print cards and deferred writes as they arrive and change
+    factory approvals summary              one line for scripts: "pending oldest_min expired_unhandled approved running made failed"
 
-A decision is final for its card: the gateway keeps the card in pending/
-until the agent retries the held call (the retry picks the decision up), and
-a second approve or decline of the same card is refused, here and in the
-dashboard, rather than overwriting the first.
-
-A card still undecided after the gateway's hold is queued (approvals/queued/
-<id>.json): the agent has moved on, and once the card is approved the gateway
-makes the write itself within seconds and files the outcome under
-approvals/done/<id>.json (write: running, done, failed). Lists mark queued
-cards and show those outcomes, failures first. Every field read from these
+A decision is final for its card: a second approve or decline of the same
+card is refused, here and in the dashboard, rather than overwriting the
+first. The agent's call returned as soon as the write was staged; once the
+card is approved the gateway makes the write itself within seconds and
+files the outcome under approvals/done/<id>.json (write: running, done,
+failed). Lists mark staged cards and show those outcomes (deferred writes),
+failures first. Every field read from these
 files is untrusted text: clean() makes it one line with control and format
 characters removed and a length cap.
 """
@@ -58,9 +57,6 @@ WRITES_LIMIT = 8      # deferred writes listed
 WRITES_SCAN = 60      # newest done/ files looked at for them
 MADE_WINDOW = 24 * 3600     # a write made is listed for a day
 FAILED_WINDOW = 3 * 24 * 3600  # a failure for three days
-# Tools whose hold, if it runs out, becomes a queue job the gateway carries out itself;
-# any other held tool returns to the agent, which retries the call.
-DEFERRED_TOOLS = ("git_push", "github_create_pr", "gitlab_create_mr")
 WRITE_STATES = {"running": "running", "done": "made", "failed": "failed"}  # done/ `write` -> shown
 
 
@@ -133,9 +129,10 @@ def read_json(path):
 
 
 def is_queued(state, card):
-    """True if the gateway queued this very card (approvals/queued/<id>.json
-    with the card's id and nonce): undecided after its hold, the agent has
-    moved on, and the gateway makes the write itself once it is approved."""
+    """True if the gateway staged this very card (approvals/queued/<id>.json
+    with the card's id and nonce): the agent has moved on, and the gateway
+    makes the write itself once it is approved. Every card the gateway makes
+    is; one that isn't was left by an older gateway or a plugin's hold."""
     cid, nonce = card.get("id"), card.get("nonce")
     if not isinstance(cid, str) or not CARD_ID.fullmatch(cid) or not isinstance(nonce, str) or not nonce:
         return False
@@ -265,19 +262,21 @@ def one_line(card):
     return "{}  {:<10} {}  ({} min left)".format(clean(card["id"], 64), who, what, minutes_left(card))
 
 
-QUEUED_NOTE = "queued: the agent has moved on; the gateway makes the write when it is approved"
+QUEUED_NOTE = "staged: the agent has moved on; the gateway makes the write when it is approved"
+UNSTAGED_NOTE = "not staged (an older gateway's card): approving it makes nothing; the agent's next call stages it"
+EXPIRED_NOTE = "expired; nothing is written (the agent's next call of it stages a fresh card)"
 
 
 def status_note(state, card, now=None):
-    """What the card is waiting for, if not for a decision: "" while it is.
-    A queued card says so (the gateway, not the agent, makes the write)."""
+    """What the card is waiting for: a decision (staged), the gateway (once
+    decided), or nothing (expired, or not staged)."""
     queued = is_queued(state, card)
     info = decided(state, card)
     if info["decided"]:
         return info, decided_text(info, queued)
     if minutes_left(card, now) < 0:
-        return info, "expired; the agent's retry will make a fresh card"
-    return info, QUEUED_NOTE if queued else ""
+        return info, EXPIRED_NOTE
+    return info, QUEUED_NOTE if queued else UNSTAGED_NOTE
 
 
 def print_writes(writes):
@@ -395,14 +394,16 @@ def when(ts):
         return "?"
 
 
-def decided_text(info, queued=False):
-    """ "approved by X at T; waiting for the agent to retry" (or declined). A
-    queued card waits for the gateway instead: an approved one is written
-    within seconds, a declined one never."""
-    wait = "waiting for the agent to retry"
-    if queued:
-        wait = ("the gateway makes the write within seconds" if info["decided"] == "approve"
-                else "the gateway files it; nothing is written")
+def decided_text(info, queued=True):
+    """ "approved by X at T; the gateway makes the write within seconds" (or
+    declined: it files it and writes nothing). A card that isn't staged has
+    nothing for the gateway to make."""
+    if not queued:
+        wait = "not staged, so nothing is made from it"
+    elif info["decided"] == "approve":
+        wait = "the gateway makes the write within seconds"
+    else:
+        wait = "the gateway files it; nothing is written"
     return "{} by {} at {}; {}".format(
         "approved" if info["decided"] == "approve" else "declined", clean(info["decided_by"], 60),
         when(info["decided_at"]), wait)
@@ -528,7 +529,8 @@ def decide(state, args, verdict):
         print("approval {} is already {}".format(clean(card["id"], 64), decided_text(info, queued)), file=sys.stderr)
         return 1
     if minutes_left(card) < 0:
-        print("approval {} has expired; the agent's retry will make a fresh one".format(clean(card["id"], 64)), file=sys.stderr)
+        print("approval {} has expired; nothing will be written (the agent's next call of it stages a fresh "
+              "one)".format(clean(card["id"], 64)), file=sys.stderr)
         return 1
     if verdict == "decline" and not args.reason:
         print("give the agent a reason: --reason \"...\"", file=sys.stderr)
@@ -545,16 +547,14 @@ def decide(state, args, verdict):
         return 1
     print("{} {} as {}: {}".format("approved" if verdict == "approve" else "declined", card["id"], approver,
                                    one_line(card)))
-    if verdict == "approve":
-        if queued:
-            print("This write is queued: the gateway will make it within seconds (it checks every 5 s); the agent "
-                  "need not retry. See the result with: factory approvals")
-        elif card.get("tool") in DEFERRED_TOOLS:  # a hold that runs out becomes a queue job
-            print("The call proceeds if it is still waiting; otherwise the gateway makes it within seconds.")
-        else:
-            print("The agent's call proceeds if it is still waiting; otherwise its retry will.")
-    elif queued:
-        print("This write is queued: the gateway files the decline and nothing is written.")
+    if not queued:
+        print("This card was not staged (an older gateway's card), so nothing is made from it; the agent's next "
+              "call stages it afresh.")
+    elif verdict == "approve":
+        print("This write is staged: the gateway will make it within seconds (it checks every 5 s) and record the "
+              "outcome. See it with: factory approvals")
+    else:
+        print("This write is staged: the gateway files the decline and nothing is written.")
     return 0
 
 
@@ -565,8 +565,9 @@ def is_expired_unhandled(state, card, now=None):
     while the broker is actively handling hook() calls; one left behind
     (broker idle, agent gone) is still expired and still unhandled. A
     decision file whose nonce doesn't match the card's nonce belongs to an
-    earlier card with the same id (a retry after expiry mints a fresh
-    nonce), so it doesn't count as having handled this one.
+    earlier card with the same id (staging the same write again after
+    expiry mints a fresh nonce), so it doesn't count as having handled this
+    one.
     """
     if minutes_left(card, now) >= 0:
         return False
@@ -574,35 +575,44 @@ def is_expired_unhandled(state, card, now=None):
 
 
 def summarize(state, now=None):
-    """pending: cards still waiting for a person (no decision of their own);
-    oldest_minutes: the oldest of those, in minutes (None if none);
-    expired_unhandled: expired cards with no decision; decided: cards decided
-    and waiting for the agent's retry (they need no one)."""
+    """pending: staged cards still waiting for a person (no decision of their
+    own); oldest_minutes: the oldest of those, in minutes (None if none);
+    expired_unhandled: expired cards with no decision; approved: cards
+    approved and waiting for the gateway to make the write (they need no
+    one; a declined card is just filed, so it isn't counted); running, made,
+    failed: deferred writes as `factory approvals` lists them (being made,
+    made in the last day, failed in the last three)."""
     cards = read_cards(state)
-    undecided = [c for c in cards if read_decision(state, c) is None]
+    decisions = [read_decision(state, c) for c in cards]
+    undecided = [c for c, d in zip(cards, decisions) if d is None]
     oldest_minutes = None
     if undecided:
         now_ts = time.time() if now is None else now
         oldest_minutes = int((now_ts - min(float(c.get("created", 0)) for c in undecided)) // 60)
     expired_unhandled = sum(1 for c in undecided if minutes_left(c, now) < 0)
+    states = [w["state"] for w in read_writes(state, now, limit=WRITES_SCAN)]
     return {"pending": len(undecided), "oldest_minutes": oldest_minutes, "expired_unhandled": expired_unhandled,
-            "decided": len(cards) - len(undecided)}
+            "approved": sum(1 for d in decisions if d is not None and d.get("decision") == "approve"),
+            "running": states.count("running"),
+            "made": states.count("made"), "failed": states.count("failed")}
 
 
 def cmd_summary(state, _args):
-    # One line, four whitespace-separated fields, for a caller (bin/factory)
+    # One line, seven whitespace-separated fields, for a caller (bin/factory)
     # to read with `set --` rather than parsing JSON: undecided pending count,
     # the oldest undecided card's age in minutes (-1 if none), expired-unhandled
-    # count, and decided cards waiting for the agent's retry.
+    # count, approved cards whose write the gateway has yet to start, then deferred writes
+    # being made, made (last day) and failed (last three days).
     s = summarize(state)
     oldest = -1 if s["oldest_minutes"] is None else s["oldest_minutes"]
-    print("{} {} {} {}".format(s["pending"], oldest, s["expired_unhandled"], s["decided"]))
+    print("{} {} {} {} {} {} {}".format(s["pending"], oldest, s["expired_unhandled"], s["approved"], s["running"],
+                                        s["made"], s["failed"]))
     return 0
 
 
 def watch_once(state, seen, queued, writes, out=print):
     """One pass of watch: print each new card, each card that has become
-    queued and each deferred write that is new or has changed state. seen,
+    staged and each deferred write that is new or has changed state. seen,
     queued and writes (id -> state) carry what was printed between passes."""
     stamp = time.strftime("%H:%M:%S")
     for card in read_cards(state):

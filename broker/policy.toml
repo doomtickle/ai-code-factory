@@ -101,15 +101,13 @@ max_diff_bytes = 2_000_000
 max_bundle_bytes = 100_000_000
 
 # [approvals]
-# The hold (docs/approvals.md): each tool named in `tools` waits for a
-# person's decision before its write leaves the machine. Off until `tools`
-# names something. A call waits hold_seconds for the decision; still
-# undecided, git_push, github_create_pr and gitlab_create_mr are queued (the
-# gateway makes the write itself once approved) and any other tool asks the
-# agent to retry. A pending card can be decided for expire_seconds (60 to
-# 604_800, a week; default a day).
+# The hold (docs/approvals.md): each tool named in `tools` is staged for a
+# person's decision instead of writing; the call returns at once ("Staged
+# for approval (id X)") and the gateway makes the write itself once
+# approved. Off until `tools` names something. A pending card can be
+# decided for expire_seconds (60 to 604_800, a week; default a day).
+# hold_seconds is no longer read (the doctor warns; delete it).
 # tools = ["git_push", "github_create_pr", "gitlab_create_mr"]
-# hold_seconds = 45
 # expire_seconds = 86_400
 # With holds on, git_push also stores the
 # pushed commits' patch (oldest first, with --stat, binary files as one line)

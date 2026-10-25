@@ -112,8 +112,8 @@
   const running = () => act().phase === "running";
   const secondsLeft = c => (c.seconds_left == null ? null : Math.max(0, Math.round(Number(c.seconds_left) - (Date.now() - polledAt) / 1000)));
   const expired = c => { const s = secondsLeft(c); return s != null && s <= 0; };
-  // A decided card stays held until the agent retries the call (the retry picks
-  // the decision up); one decision per card, so its keys stay dark meanwhile.
+  // A decided card stays listed until the gateway acts on it (within seconds);
+  // one decision per card, so its keys stay dark meanwhile.
   const VERDICTS = { approve: "approved", decline: "declined" };
   const decidedOf = c => (c && VERDICTS[c.decided] ? c.decided : null);
   const closed = c => !!c && (!!decidedOf(c) || expired(c));
@@ -123,14 +123,15 @@
     const d = new Date(n * 1000);
     return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
   };
-  // "Approved by sam at 14:02; waiting for the agent to retry" (d: the card, or a 409's body).
-  // A queued card waits for the gateway, not the agent: it writes an approved one within seconds.
-  const waitText = d => (d.queued ? (d.decided === "approve" ? "the gateway makes the write within seconds" : "the gateway files it; nothing is written") : "waiting for the agent to retry");
+  // "Approved by sam at 14:02; the gateway makes the write within seconds" (d: the card, or a 409's body).
+  // A card that isn't staged (an older gateway's) has nothing for the gateway to make;
+  // a 409's body doesn't say, and every card the gateway makes now is staged.
+  const waitText = d => (d.queued === false ? "not staged, so nothing is made from it" : d.decided === "approve" ? "the gateway makes the write within seconds" : "the gateway files it; nothing is written");
   const decidedText = d => `${VERDICTS[d.decided] === "approved" ? "Approved" : "Declined"} by ${str(d.decided_by) || "?"} at ${clock(d.decided_at)}; ${waitText(d)}`;
   // What the keys' strip says when they are dark for a reason other than a new card.
   function shutText(c) {
     const v = decidedOf(c);
-    if (v === "approve") return c.queued ? "Approved · the gateway writes it" : "Approved · waiting for the agent's retry";
+    if (v === "approve") return c.queued ? "Approved · the gateway writes it" : "Approved · not staged, nothing to write";
     if (v === "decline") return "Declined";
     return expired(c) ? "Expired" : "";
   }
@@ -191,13 +192,13 @@
     const out = [];
     const v = decidedOf(c);
     if (v) {
-      out.push(line(`ln big ${v === "approve" ? "st-ok" : "st-no"}`, v === "approve" ? (c.queued ? "APPROVED, the gateway writes it within seconds" : "APPROVED, waiting for the agent's retry") : "DECLINED"));
+      out.push(line(`ln big ${v === "approve" ? "st-ok" : "st-no"}`, v === "approve" ? (c.queued ? "APPROVED, the gateway writes it within seconds" : "APPROVED, but not staged: nothing to write") : "DECLINED"));
       out.push(line("ln dim", `by ${str(c.decided_by) || "?"} at ${clock(c.decided_at)}`));
     } else if (expired(c)) {
-      out.push(line("ln big st-no", "EXPIRED"), line("ln dim", "the agent's retry makes a fresh card"));
+      out.push(line("ln big st-no", "EXPIRED"), line("ln dim", "nothing is written; the agent's next call stages a fresh card"));
     }
     out.push(line("ln big", `${str(c.tool) || "write"} · ${str(c.role) || "?"}`));
-    if (c.queued && !v && !expired(c)) out.push(line("ln warn", "QUEUED: the agent has moved on; the gateway writes it when approved"));
+    if (c.queued && !v && !expired(c)) out.push(line("ln warn", "STAGED: the agent has moved on; the gateway writes it when approved"));
     if (c.title) out.push(line("ln title", `“${str(c.title)}”${c.draft ? " (draft)" : ""}`));
     out.push(line("ln lane", lanesLine(c)));
     if (c.repo) out.push(line("ln", `→ ${str(c.repo)}`));
@@ -215,12 +216,12 @@
 
   // The gateway's recent deferred writes (display only; text from the state
   // files, already one clean line each, inserted as text). Failures first, loud.
-  const WRITE_LABEL = { failed: "FAILED", running: "RUNNING", made: "MADE" };
+  const WRITE_LABEL = { failed: "FAILED", running: "APPROVED · WRITING", made: "DONE" };
   const writes = () => (st ? list(st.writes).filter(w => w && typeof w === "object" && WRITE_LABEL[w.state]) : []);
   function writeLines() {
     const ws = writes();
     if (!ws.length) return [];
-    const out = [line("ln dim", "deferred writes")];
+    const out = [line("ln dim", "the gateway's writes")];
     for (const w of ws) {
       const what = `${str(w.tool)}${w.target ? ` ${str(w.target)}` : ""}${w.repo ? ` → ${str(w.repo)}` : ""}`;
       out.push(line(`ln ${w.state === "failed" ? "big st-no" : w.state === "made" ? "st-ok" : ""}`, `${WRITE_LABEL[w.state]} ${what}`));
@@ -276,7 +277,7 @@
     const k = JSON.stringify([c ? Object.assign({}, c, { seconds_left: c.seconds_left == null, expired: expired(c) }) : "empty", writes()]);
     if (k !== shownKey) {
       shownKey = k;
-      body.replaceChildren(...(c ? cardLines(c) : [el("div", "ln idle", "No writes held")]), ...writeLines());
+      body.replaceChildren(...(c ? cardLines(c) : [el("div", "ln idle", "No writes staged")]), ...writeLines());
       body.scrollTop = 0;
     }
     moreCue();
@@ -451,7 +452,7 @@
         expectGone = c.id;
         reasonEl.value = "";
         if (fromViewer) closeInspect();
-        flash(`${verdict === "approve" ? "APPROVED" : "DECLINED"} · ${str(res.data.text)} · waiting for the agent's retry`, "ok");
+        flash(`${verdict === "approve" ? "APPROVED" : "DECLINED"} · ${str(res.data.text)} · ${verdict === "approve" ? "the gateway makes the write within seconds" : "nothing is written"}`, "ok");
       } else {
         say(refusalText(res), "err");
       }
@@ -577,7 +578,7 @@
     }
     const queued = list(d.queued);
     if (queued.length) {
-      out.push(P("k-ok", `✓ ${queued.length} queued write${queued.length > 1 ? "s are" : " is"} kept; the gateway makes ${queued.length > 1 ? "each" : "it"} once approved:`));
+      out.push(P("k-ok", `✓ ${queued.length} staged write${queued.length > 1 ? "s are" : " is"} kept; the gateway makes ${queued.length > 1 ? "each" : "it"} once approved:`));
       for (const h of queued) out.push(P("ind k-dim", `  ${str(h && h.text) || str(h && h.id)}`));
     }
 

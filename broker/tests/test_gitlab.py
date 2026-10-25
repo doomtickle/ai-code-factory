@@ -236,13 +236,11 @@ class MergeRequestTests(GitLabBase):
                            "body_sha256": __import__("hashlib").sha256(b"b").hexdigest(), "body_chars": 1,
                            "draft": True}])
 
-    def test_a_held_and_approved_mr_says_so_in_its_result(self):
-        approvals.set_hook(lambda card: {"id": "0123456789abcdef", "approver": "daron",
-                                         "decided": "2026-10-22T09:15:00Z", "waited_seconds": 31})
+    def test_a_value_a_plugin_hook_returns_adds_nothing_to_the_result(self):
+        approvals.set_hook(lambda card: {"id": "0123456789abcdef", "approver": "daron"})
         self.addCleanup(approvals.set_hook, None)
         out, _ = self.open_mr()
-        self.assertEqual(out, "Opened MR !12: https://gitlab.acme.net/platform/api/-/merge_requests/12; held for "
-                              'approval (id 0123456789abcdef), approved by "daron" at 2026-10-22T09:15:00Z after 31 s.')
+        self.assertEqual(out, "Opened MR !12: https://gitlab.acme.net/platform/api/-/merge_requests/12")
 
     def test_bodies_differing_past_the_excerpt_get_different_cards(self):
         cards = self.cards()

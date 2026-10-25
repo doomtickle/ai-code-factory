@@ -275,13 +275,15 @@ def call_target(rec: dict) -> str:
 def broker_event(rec: dict) -> dict | None:
     """A broker audit record as a printer line, or None for records not worth one."""
     event, decision = rec.get("event"), rec.get("decision")
-    kind = {"approval-requested": "HELD", "approval-granted": "OK", "approval-declined": "NO",
-            "approval-queued": "QUEUED", "approval-write-done": "WRITTEN", "approval-write-failed": "FAILED"}.get(event)
+    # approval-requested is the staging; approval-queued only appears in logs
+    # from gateways before staging (doomtickle/passdesk-ops#170).
+    kind = {"approval-requested": "STAGED", "approval-granted": "OK", "approval-declined": "NO",
+            "approval-queued": "STAGED", "approval-write-done": "WRITTEN", "approval-write-failed": "FAILED"}.get(event)
     if kind is None and decision in ("allow", "deny"):
         kind = "ALLOW" if decision == "allow" else "DENY"
     if kind is None:
         # An "intent" record (its allow/deny record follows), or the call that
-        # was queued (decision "queued"; its approval-queued event is the line).
+        # was staged (decision "staged"; its approval-requested event is the line).
         return None
     who = rec.get("role") or rec.get("principal") or ""
     bits = [str(rec["tool"]), str(who), call_target(rec)]
@@ -293,7 +295,7 @@ def broker_event(rec: dict) -> dict | None:
         bits.append("· " + approvals.clean(rec["reason"]))
     if kind == "WRITTEN" and rec.get("result"):
         bits.append("· " + approvals.clean(next((ln for ln in str(rec["result"]).splitlines() if ln.strip()), "")))
-    return {"t": utc_ts(rec.get("ts")), "kind": kind, "red": kind in ("DENY", "HELD", "NO", "QUEUED", "FAILED"),
+    return {"t": utc_ts(rec.get("ts")), "kind": kind, "red": kind in ("DENY", "STAGED", "NO", "FAILED"),
             "text": " ".join(b for b in bits if b)}
 
 
@@ -349,11 +351,12 @@ class Dashboard:
         so "lanes" lists every running lane of that role: any of them may be
         the one waiting. With fp (the control unit only, never the main
         page's /api/state), each card also carries approvals.card_fingerprint.
-        A card someone has decided stays pending until the agent retries the
-        call: "decided" is then "approve" or "decline", with "decided_by"
-        and "decided_at" (else all three are None). "queued" is true for a
-        card the gateway queued (undecided past its hold): the agent has moved
-        on and the gateway makes the write once it is approved."""
+        A card someone has decided stays pending until the gateway acts on
+        it (within seconds): "decided" is then "approve" or "decline", with
+        "decided_by" and "decided_at" (else all three are None). "queued" is
+        true for a card the gateway staged (every card it makes now): the
+        agent has moved on and the gateway makes the write once it is
+        approved."""
         running = self.running()
         out = []
         for card in approvals.read_cards(self.state / "broker"):
@@ -385,8 +388,8 @@ class Dashboard:
         """Lane name -> note for each running lane whose role has a write held.
         With one running lane the hold is surely its own (note ""); with several
         the card can't say which, so each is marked held and the note says so.
-        A decided, expired or queued card holds nothing: the broker's hook waits
-        only hold_seconds, so by then the agent's call has returned."""
+        A decided, expired or staged card holds nothing: the agent's call
+        returned as soon as the write was staged."""
         out: dict = {}
         for card in cards:
             if card["decided"] or card.get("queued") or (card["seconds_left"] is not None and card["seconds_left"] < 0):

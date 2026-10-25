@@ -562,24 +562,22 @@ issue data the tools ask for.
 
 ### Enabling approvals
 
-With holds on, every `git_push`, `github_create_pr` and `gitlab_create_mr`
-waits for a person: the broker records a card (what, who, how many commits
-and files, the secret-scan result) and the agent's call proceeds once you
-approve it, or hears your reason if you decline. A call that waits longer
-than `[approvals].hold_seconds` (45 by default) is **queued** (a push, PR or
-MR): the agent hears "Queued for approval (id X); nothing has been sent yet"
-and reports it as queued, not done. Once you approve it the gateway makes
-the write itself within seconds (it checks every 5 s) and files the outcome;
-nobody retries it, and an unapproved card expires after a day by default
-(`expire_seconds`). While the gateway is making the write, the result's first
-line is "Approved (id X); the gateway is making this write now", and the agent
-reports it as under way. A call you approve within the wait completes as
-usual: its result is one first line stating the write and the approval (for
-example "Pushed 2 commit(s) to repo:branch (sha); held for approval (id X),
-approved by ..."); older brokers print the approval on a separate last line
-instead ("Held for approval (id X); approved by ..."). `github_create_issue`
-and plugin tools keep the older flow: the call returns the approval id and
-asks the agent to retry the same call later. Holds are part of the gateway;
+With holds on, every held write (`git_push`, `github_create_pr`,
+`gitlab_create_mr`, and `github_create_issue` or a plugin tool if you list
+them) is **staged** for a person: the broker records a card (what, who, how
+many commits and files, the secret-scan result) and the exact write it
+verified, and the agent's call returns at once with "Staged for approval
+(id X); nothing has been sent yet". The agent reports it as staged, not done,
+and moves on. Once you approve it the gateway makes that write itself within
+seconds (it checks every 5 s), from what it stored, never the agent's
+workspace, and files the outcome; if you decline, nothing is written and the
+outcome records your reason. An undecided card expires after a day by default
+(`expire_seconds`). The same call again while its card is pending gets the
+same result; once the write is made it returns that write's result (the PR
+URL, say) and sends nothing new; while it is being made, or once declined, it
+is refused. Nothing is written twice. (Until 24 Oct 2026 a call first waited `hold_seconds` for a
+decision; that setting is gone, and `factory doctor` says to delete it.)
+Holds are part of the gateway;
 nothing is installed and there is no licence. They are off until you list the
 tools to hold.
 
@@ -599,24 +597,21 @@ tools to hold.
    reason), or with `factory approvals` (list), `factory approvals show <id>`
    (one card in full; an id prefix works), `factory approvals approve <id>`
    or `factory approvals decline <id> --reason "..."`; `factory approvals
-   watch` prints cards as they arrive (and queued cards and deferred writes
-   as they change), and `factory approvals summary` prints
-   one line for scripts (undecided count, the oldest undecided card's age,
-   expired cards with no decision, and decided cards waiting for a retry).
+   watch` prints cards as they arrive (and deferred writes as they change),
+   and `factory approvals summary` prints one line for scripts (undecided
+   count, the oldest undecided card's age, expired cards with no decision,
+   decided cards the gateway has yet to act on, then deferred writes running,
+   made and failed).
    Decisions are plain files in the broker state folder, so nothing new
    listens on the network.
-   A decision is final for its card. For a push, pull request or merge
-   request the call picks it up if it is still waiting, and otherwise the
-   gateway makes the write itself. For any other held tool the card stays
-   listed until the agent retries the held call (the retry picks the
-   decision up, or the broker files the card away once it expires), and
-   meanwhile `factory approvals` marks it "approved by X at T; waiting for
-   the agent to retry" (or declined). Approving or declining it again is
-   refused, here and on the dashboard, rather than changing the first
-   decision; of two people deciding at once, exactly one decision is written.
-   A queued card is marked "queued: the agent has moved on; the gateway makes
-   the write when it is approved"; after `approve` the command says the
-   gateway will make the write within seconds. `factory approvals` then lists
+   A decision is final for its card: the gateway makes (or files) the write
+   within seconds, and until then `factory approvals` marks the card
+   "approved by X at T; the gateway makes the write within seconds" (or
+   declined). Approving or declining it again is refused, here and on the
+   dashboard, rather than changing the first decision; of two people deciding
+   at once, exactly one decision is written. An undecided card is marked
+   "staged: the agent has moved on; the gateway makes the write when it is
+   approved". `factory approvals` then lists
    **deferred writes**, failures first (`!! FAILED` with the reason, kept three
    days), running ones, and those made in the last day (with the first line
    of the result, such as a PR's address); `factory approvals show <id>` shows
@@ -626,9 +621,10 @@ tools to hold.
    `gitlab_create_mr` for GitLab merge requests to wait for you.
    `factory status` and `factory doctor` warn (without failing) if merge
    requests would open unheld while other writes are held.
-5. `factory status` shows a line with the pending count (cards no one has
-   decided) and the oldest one's age, plus how many decided cards are waiting
-   for the agent's retry, once there is at least one card; `factory doctor`
+5. `factory status` shows one line with the staged count (cards no one has
+   decided) and the oldest one's age, how many approved writes are being
+   written, and how many deferred writes were done (last day) or failed (last
+   three days), whenever any of those is non-zero; `factory doctor`
    warns (without failing) about any card that expired with no decision,
    pointing back at `factory approvals`. Both are silent when holds aren't in
    use.
@@ -1093,14 +1089,11 @@ your browser. It shows:
     base, PR title, commits and files, time left; ◀ ▶ step through several),
     a reason field, and DECLINE and APPROVE keys. One press decides, exactly
     as `factory approvals approve <id>` does (the same decision file);
-    declining needs a reason, which the agent reads. For a push, PR or MR the
-    gateway makes an approved write itself if the call has moved on; any other
-    held tool's decided card stays on the gate until the agent retries the
-    call, shown as "APPROVED, waiting
-    for the agent's retry" or "DECLINED" with who decided and when, and both
-    keys dark: one decision per card. A card the gateway queued (undecided
-    past its hold; the agent has moved on) is marked QUEUED, reads "APPROVED,
-    the gateway writes it within seconds" once approved, and the unit lists
+    declining needs a reason, which the recorded outcome keeps. Every held
+    write is staged (the agent has moved on) and marked STAGED; once decided
+    it reads "APPROVED, the gateway writes it within seconds" or "DECLINED"
+    with who decided and when, and both keys dark (one decision per card)
+    until the gateway acts on it, and the unit lists
     the recent deferred writes under it (FAILED in red with the reason, RUNNING,
     MADE with the first line of the result): display only, with no keys. An expired card shows EXPIRED with its
     keys dark. If the card expired, was decided elsewhere, or a new one
@@ -1144,9 +1137,9 @@ your browser. It shows:
     indented under it). It runs one at a time with RESTART and UPDATE.
   - a blanking plate marked SETUP, where settings will go.
 - **Spend:** today's cost per hour and per role, from `dispatch/audit.jsonl`.
-- **Event printer:** today's broker calls (allowed, denied, held, decided) and
-  finished jobs, with QUEUED, WRITTEN and FAILED lines for the gateway's queued
-  writes.
+- **Event printer:** today's broker calls (allowed, denied, staged, decided) and
+  finished jobs, with STAGED, WRITTEN and FAILED lines for the gateway's
+  staged writes.
 - **Front-panel knobs** under the Coordinator's screen: BRIGHT and CONTRAST
   adjust it; V-HOLD, turned off centre, makes the picture roll like an old
   set; and CRT goes from 0, a flat screen, to 10, a full tube (scanlines,
