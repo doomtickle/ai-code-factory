@@ -1,6 +1,7 @@
 """Tests for factory/policy.py. Ported from policy_value (scripts/lib/common.sh) and
-gitlab_needs_token / gitlab_mr_unheld (bin/factory); the bash copies stay until `start` and
-`status` are ported. Each check runs both on the same policy files and requires the same answer.
+gitlab_needs_token / gitlab_mr_unheld / jira_cloud_id_set / any_jira_tool_granted /
+npm_private_registry_needs_token (bin/factory), policy_string (common.sh); the bash copies stay until
+`start` is ported. Each check runs both on the same policy files and requires the same answer.
 """
 
 import os
@@ -45,7 +46,8 @@ class PolicyTest(CommandTest):
     def bash(self, snippet):
         env = dict(self.environ, XDG_CONFIG_HOME=os.path.dirname(self.config), XDG_STATE_HOME=os.path.dirname(self.state), LC_ALL="C")
         cp = subprocess.run(["bash", "-c", 'ROOT="$1"; . "$2/scripts/lib/common.sh"; . "$2/scripts/lib/roles.sh"; '
-                             'eval "$(sed -n \'/^gitlab_needs_token() {/,/^}/p;/^gitlab_mr_unheld() {/,/^}/p\' "$2/bin/factory")"; '
+                             'eval "$(sed -n \'/^gitlab_needs_token() {/,/^}/p;/^gitlab_mr_unheld() {/,/^}/p;/^jira_cloud_id_set() {/,/^}/p;'
+                             '/^any_jira_tool_granted() {/,/^}/p;/^npm_private_registry_needs_token() {/,/^}/p\' "$2/bin/factory")"; '
                              + snippet, "_", self.root, REPO],
                             env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL, cwd=self.tmp)
         return cp.returncode, cp.stdout.decode(), cp.stderr.decode()
@@ -112,6 +114,42 @@ class GitlabTest(PolicyTest):
         self.assertEqual(policy.gitlab_mr_unheld(self.paths), '[approvals].tools is set without "gitlab_create_mr"')
         self.write("repo/roles/developer/role.conf", 'TEMPLATE="developer"\nWORKSPACE="rw"\nBROKER_TOOLS="git_fetch"\n')
         self.assertIsNone(policy.gitlab_mr_unheld(self.paths))
+
+
+class JiraAndNpmTest(PolicyTest):
+    def test_policy_string_jira_and_npm_agree_with_bash(self):
+        os.makedirs(self.config)
+        extra = ['[jira]\ncloud_id = "5c1f"\n', '[jira]\ncloud_id = "00000000-0000-0000-0000-000000000000"\n',
+                 '[jira]\ncloud_id = "0-0"\n', '[jira]\ncloud_id = ""\n', "[jira]\ncloud_id = 'single'\n",
+                 '[jira]\ncloud_id = unquoted\n', '[jira]\ncloud_id = "a" "b"\n', '[jira]\ncloud_id = "0a"\n',
+                 '[packages]\nnpm_private_registry = "https://r.example"\n', '[packages]\nnpm_private_registry = ""\n']
+        grants = ("git_fetch", "npm_fetch", "jira_my_issues npm_fetch", "web_fetch xnpm_fetch", "xjira_a")
+        for text in POLICIES + extra:
+            for base, local in ((text, None), (None, text)):
+                self.write_policy(base, local)
+                for section, key in (("jira", "cloud_id"), ("packages", "npm_private_registry"), ("gitlab", "url")):
+                    _, out, _ = self.bash("policy_string %s %s" % (section, key))
+                    self.assertEqual(policy.policy_string(self.paths, section, key), out.rstrip("\n"), (text, key))
+                status, _, _ = self.bash("jira_cloud_id_set")
+                self.assertEqual(policy.jira_cloud_id_set(self.paths), status == 0, text)
+                for tools in grants:
+                    self.write("repo/roles/developer/role.conf", 'TEMPLATE="developer"\nWORKSPACE="rw"\nBROKER_TOOLS="%s"\n' % tools)
+                    status, _, _ = self.bash("npm_private_registry_needs_token")
+                    self.assertEqual(policy.npm_private_registry_needs_token(self.paths), status == 0, (text, tools))
+
+    def test_any_jira_tool_granted_agrees_with_bash(self):
+        for coordinator in ("", "web_fetch", "jira_my_issues", "xjira_a jira", "git_fetch jira_x"):
+            for role in ("git_fetch", "jira_get_issue", "xjira_a"):
+                self.write("repo/kits/coordinator/broker.conf", 'BROKER_TOOLS="%s"\n' % coordinator)
+                self.write("repo/roles/developer/role.conf", 'TEMPLATE="developer"\nWORKSPACE="rw"\nBROKER_TOOLS="%s"\n' % role)
+                status, _, _ = self.bash("any_jira_tool_granted")
+                self.assertEqual(policy.any_jira_tool_granted(self.paths), status == 0, (coordinator, role))
+
+    def test_the_all_zero_placeholder_is_not_a_cloud_id(self):
+        self.write_policy('[jira]\ncloud_id = "00000000-0000-0000-0000-000000000000"\n', None)
+        self.assertFalse(policy.jira_cloud_id_set(self.paths))
+        self.write_policy('[jira]\ncloud_id = "00000000-0000-0000-0000-000000000001"\n', None)
+        self.assertTrue(policy.jira_cloud_id_set(self.paths))
 
 
 if __name__ == "__main__":

@@ -52,10 +52,14 @@ class PreflightTest(CommandTest):
         self.platform = name
         self.tool("uname", 'case "$1" in -m) echo x86_64 ;; *) echo %s ;; esac\n' % name)
 
+    proc_version = "Linux version 6.8.0 generic\n"
+
     def ctx(self, tty=False):
         ctx = super().ctx(tty)
         if self.platform:
             ctx.uname = (self.platform, "x86_64")
+        # Never the host's own /proc/version: what the Python sees is the test's to say.
+        ctx.host_files["proc_version"] = self.write("proc-version", self.proc_version)
         return ctx
 
     def release(self, text):
@@ -226,11 +230,16 @@ class KeychainBackendTest(PreflightTest):
         self.private_path()
 
     def both(self, **env):
+        """The backend the Python picks on the stubbed host; the bash must agree, except where
+        it reads this machine's own /proc/version (which a test cannot stub) and that says something else."""
         self.environ.update(env)
-        status, out, err = self.bash("keychain_backend", path=self.environ["PATH"], env=env)
-        self.assertEqual((status, err), (0, ""))
-        self.assertEqual(preflight.keychain_backend(self.ctx()), out)
-        return out
+        ctx = self.ctx()
+        picked = preflight.keychain_backend(ctx)
+        if preflight.is_wsl() == preflight.is_wsl(ctx.host_files["proc_version"]) or env.get("FACTORY_POWERSHELL") or env.get("FACTORY_KEYCHAIN"):
+            status, out, err = self.bash("keychain_backend", path=self.environ["PATH"], env=env)
+            self.assertEqual((status, err), (0, ""))
+            self.assertEqual(picked, out)
+        return picked
 
     def test_the_override_wins(self):
         self.assertEqual(self.both(FACTORY_KEYCHAIN="wincred"), "wincred")
@@ -248,8 +257,15 @@ class KeychainBackendTest(PreflightTest):
         self.assertEqual(self.both(FACTORY_POWERSHELL="/some/powershell.exe"), "macos")
 
     def test_none_without_any(self):
-        if os.path.exists("/proc/version") and preflight.is_wsl():
-            self.skipTest("this machine is WSL")
+        self.assertEqual(self.both(), "none")
+
+    def test_wincred_under_wsl_when_powershell_is_on_the_path(self):
+        self.proc_version = "Linux version 5.15 microsoft-standard-WSL2\n"
+        self.tool("powershell.exe", "exit 0\n")
+        self.assertEqual(self.both(), "wincred")
+
+    def test_powershell_on_the_path_means_nothing_outside_wsl(self):
+        self.tool("powershell.exe", "exit 0\n")
         self.assertEqual(self.both(), "none")
 
 

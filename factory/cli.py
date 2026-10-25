@@ -3,7 +3,7 @@
 import os
 import sys
 
-from factory.commands import config, docs, doctor, logs, packet, role, roles, secret, wrappers
+from factory.commands import config, docs, doctor, logs, packet, role, roles, secret, status, wrappers
 from factory.context import Context, FactoryError, Paths
 
 # Command name -> run(ctx, args). bin/factory's PORTED_COMMANDS lists these
@@ -24,6 +24,7 @@ COMMANDS = {
     "role": role.run,
     "roles": roles.run,
     "secret": secret.run,
+    "status": status.run,
     "watch": wrappers.watch,
 }
 

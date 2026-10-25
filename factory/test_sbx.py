@@ -1,7 +1,7 @@
 """Tests for factory/sbx.py. Ported from sbx_installed_version, sandbox_exists, sandbox_running,
 claude_login_stored and sbx_reference_problem (scripts/lib/common.sh) and setup_done
 (bin/factory); the bash copies stay until their callers are ported. Each check runs both on the
-same `sbx` stub and requires the same answer.
+same `sbx` stub and requires the same answer. require_sbx (common.sh) is compared on whether it dies and what it says.
 """
 
 import os
@@ -10,6 +10,7 @@ import subprocess
 import unittest
 
 from factory import sbx
+from factory.context import FactoryError
 from factory.fixtures import REPO, CommandTest
 
 
@@ -52,6 +53,36 @@ class InstalledVersionTest(SbxTest):
         self.assertEqual(self.bash("sbx_installed_version")[1], "")
         self.sbx_stub("echo boom >&2; exit 1\n")
         self.assertEqual(sbx.installed_version(self.ctx()), "")
+
+
+class RequireSbxTest(SbxTest):
+    def both(self):
+        status, _, err = self.bash("require_sbx")
+        try:
+            sbx.require_sbx(self.ctx())
+            problem = None
+        except FactoryError as e:
+            problem = str(e)
+        self.assertEqual(status != 0, problem is not None, err)
+        if problem:
+            self.assertIn(problem, err)
+        return problem
+
+    def test_the_pinned_version_passes(self):
+        self.sbx_stub('echo "sbx version: v%s (abc)"\n' % sbx.SBX_VERSION)
+        self.assertIsNone(self.both())
+
+    def test_a_missing_sbx_and_a_wrong_version_stop_with_the_bash_messages(self):
+        self.assertEqual(self.both(), "'sbx' not found in PATH (see README.md)")
+        self.sbx_stub('echo "sbx version: v0.1.0"\n')
+        self.assertEqual(self.both(), "sbx %s required, found '0.1.0' (see README.md)" % sbx.SBX_VERSION)
+
+    def test_an_sbx_that_cannot_say_its_version_is_named_unknown(self):
+        # bash exits silently here (set -e inside sbx_installed_version's pipeline); the Python says why.
+        self.sbx_stub("exit 1\n")
+        with self.assertRaises(FactoryError) as caught:
+            sbx.require_sbx(self.ctx())
+        self.assertEqual(str(caught.exception), "sbx %s required, found 'unknown' (see README.md)" % sbx.SBX_VERSION)
 
 
 class SandboxStateTest(SbxTest):

@@ -8,7 +8,7 @@ indented fix text, problem count and exit status. `factory setup` runs it first.
 import os
 import re
 
-from factory import policy, preflight, roles, sbx
+from factory import approvals, policy, preflight, roles, sbx
 from factory.context import FactoryError
 
 # A read-only lookup of a name nothing stores, to see whether secret-tool can answer.
@@ -297,19 +297,11 @@ class Doctor:
     def approvals(self):
         """Warn (not fail) about any expired card with no decision that still matches it;
         nothing printed when there are none, or when holds aren't in use."""
-        ctx, paths = self.ctx, self.paths
-        if not os.path.isdir(os.path.join(paths.broker_state, "approvals", "pending")):
-            return
-        try:
-            python = preflight.resolve_python(ctx)
-        except FactoryError:
-            return
-        summary = ctx.capture([python, os.path.join(paths.root, "scripts", "approvals.py"), "--state",
-                               paths.broker_state, "summary"])
-        if summary.status != 0:
-            return
+        ctx = self.ctx
         # "pending oldest_min expired_unhandled approved running made failed"
-        fields = summary.out.split()
+        fields = approvals.summary(ctx)
+        if fields is None:
+            return
         try:
             expired = int(fields[2]) if len(fields) > 2 else 0
         except ValueError:
