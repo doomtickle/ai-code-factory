@@ -20,6 +20,10 @@ credentials, a live probe, GitHub or GitLab access per repo, and whether every h
 policy can reach is in a broker kit. Each problem comes with its fix. It changes
 nothing.
 
+It also warns if your host-wide `sbx` network policy allows any host besides
+`api.anthropic.com` (see "The doctor warns that the global sbx policy allows a host"
+below).
+
 ### Read the logs
 
 ```bash
@@ -226,6 +230,25 @@ configured. Other ones:
 | `'.factory/outgoing/x.bundle' does not exist in the workspace` or `factory/x has no commits beyond origin/main` | The developer bundled by hand, into the wrong folder or with the wrong range. It should run `factory-lane bundle "$FACTORY_PROJECT" "$FACTORY_LANE" <rel> factory/x` and pass the printed name to `git_push`. |
 | `commit 3f9c2ab01d4e appears to contain secrets (...)` | Remove the secret from the branch's history (the developer can rewrite its `factory/*` branch), then push again. |
 | `no Gemini API key found for the broker sandbox; ...` | Opt-in tool (the researcher, itself optional, is granted it only if you add it to its `BROKER_TOOLS`): see [Enabling Gemini Flash queries](../../README.md#enabling-gemini-flash-queries). |
+
+### The doctor warns that the global sbx policy allows a host
+
+`factory doctor` lists any extra network allow in the host's global `sbx` policy
+(`sbx policy ls --wide`, source `local`, applies to `all`) next to its rule ID. The
+factory adds only `api.anthropic.com`; every other host should come from a kit, for one
+sandbox, and through the broker. A global allow such as `github.com` or `*.npmjs.org`
+lets every sandbox reach that host directly, without the broker. Remove it with the
+command the warning prints:
+
+```bash
+sbx policy rm network --id <RULE_ID>
+```
+
+If the broker needs the host, add it to `kits/broker/spec.yaml` (or your local
+`broker-kit/`) and `[web].allow_hosts` instead ([Make it yours](04-customize.md)). It is
+a warning, not a failure, because the global policy is shared with any other sandboxes
+you run, and `factory setup` stops on failures. If doctor says it could not read the
+policy, run `sbx policy ls --wide` yourself.
 
 ### npm_fetch errors
 

@@ -32,6 +32,7 @@ bash and Python side by side, and `main` works after every one.
 | Role validation core (`validate_role`, `validate_role_overrides`, `validate_enabled_roles`, `role_lane_names`, `coordinator_broker_tools`; no new command; `role new` uses it) | 3 |
 | `factory logs` (and `log`), `packet` (and `packets`): step 4, part 2 | 4 (part) |
 | Bash `in_list` takes one exact word, as Python's `_in_list` (no new command) | done |
+| `factory doctor`: `factory/commands/doctor.py`, with the helpers it uses in `factory/preflight.py` (`scripts/lib/preflight.sh` ported, the bash stays for `install-prereqs.sh`), `factory/sbx.py` and `factory/policy.py`; `disabled_role_sandboxes` in `factory/roles.py` | 4 (part 1) |
 
 ## Remaining, in order
 
@@ -42,18 +43,23 @@ bash and Python side by side, and `main` works after every one.
    copies in `scripts/lib/roles.sh` stay until steps 4, 6 and 7 port their callers
    (`start-broker.sh`, `start-dispatch.sh`, `02-launch-factory.sh`, and `bin/factory`'s
    `doctor`, `start`, `status` and `logs`); `factory/test_roles_validation.py` runs both on the same fixtures
-   and requires the same refusals and messages. It replaced `test_factory_role_overrides.sh`;
-   its `disabled_role_sandboxes` check stays there, against the bash, until `doctor` is ported
-   (step 4).
+   and requires the same refusals and messages. It replaced `test_factory_role_overrides.sh`.
+   `disabled_role_sandboxes` moved to Python with `doctor` (step 4) and has no bash copy.
 3. **Tighten bash `in_list`**: done. It returns false when `$1` is empty or holds a space, tab
    or newline, so `EFFORT="low medium"`, `WORKSPACE="rw ro"`, `TEMPLATE="developer reviewer"` and
    `OPTIONAL="0 1"` fail in bash as they do in Python, and `factory/test_roles_validation.py`
    requires the same refusal and message from both. This did not move the security boundary:
    those keys are not overridable.
-4. **Read-only inspection**: `doctor` (with `scripts/lib/preflight.sh`), `status`,
-   `logs`, `packet`. `logs` and `packet` are done (`factory/commands/logs.py`, `packet.py`);
-   `logs` hands following to `tail -F` (it already survives rotation and heads each file)
-   and formats the audit lines in Python, so it no longer needs `jq`. `status` waits for #170.
+4. **Read-only inspection**: `doctor`, `logs` and `packet` are done. `factory/test_command_doctor.py`
+   replaces the doctor half of `test_factory_doctor.sh`; what tests bash helpers still in `bin/factory`
+   (`require_project_commits`, `sbx_not_signed_in`, `run_or_die`, `approvals_status_line`)
+   stays shell as `scripts/test_factory_helpers.sh` until `status`/`start` are ported.
+   `logs` and `packet` live in `factory/commands/logs.py` and `packet.py`; `logs` hands following
+   to `tail -F` (it already survives rotation and heads each file) and formats the audit lines in
+   Python, so it no longer needs `jq`. `status` remains, and waits for #170. The bash `policy_value`,
+   `gitlab_*`, `setup_done` and `approvals_summary` stay while `start`/`status` call them;
+   `factory/test_policy.py` and `factory/test_preflight.py` run bash and Python on the same
+   fixtures.
 5. **`secret`** (`save`, `forget`, `set`, `rm`, `ls`, with `scripts/lib/secrets.sh`);
    `test_factory_secret.sh` is the biggest test to port, so it is a pull request by itself.
 6. **Run state**: sandbox fingerprints and `stale_sandboxes` (`common.sh`), then

@@ -3,7 +3,7 @@
 import os
 import sys
 
-from factory.commands import config, docs, logs, packet, role, roles, wrappers
+from factory.commands import config, docs, doctor, logs, packet, role, roles, wrappers
 from factory.context import Context, FactoryError, Paths
 
 # Command name -> run(ctx, args). bin/factory's PORTED_COMMANDS lists these
@@ -15,6 +15,7 @@ COMMANDS = {
     "config": config.run,
     "dashboard": wrappers.dashboard,
     "docs": docs.run,
+    "doctor": doctor.run,
     "gui": wrappers.dashboard,
     "log": logs.run,
     "logs": logs.run,

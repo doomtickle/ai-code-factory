@@ -8,7 +8,8 @@ set -euo pipefail
 #    subcommands the factory uses.
 # 2. It exits 1 (after writing the file) when a help command fails, and writes
 #    nothing when sbx is missing.
-# 3. sbx_reference_problem (scripts/lib/common.sh, used by `factory doctor`)
+# 3. sbx_reference_problem (scripts/lib/common.sh; `factory doctor` uses the Python copy,
+#    factory/sbx.py, tested in factory/test_sbx.py)
 #    reports the committed placeholder, a missing file, a missing stamp and a
 #    version that differs from SBX_VERSION, and is silent when current.
 #
@@ -120,9 +121,9 @@ assert_contains "missing file reported" "$(sbx_reference_problem "$tmp/absent.md
 printf '# no stamp\n' > "$tmp/nostamp.md"
 assert_contains "missing stamp reported" "$(sbx_reference_problem "$tmp/nostamp.md")" "no version stamp"
 
-# doctor: the warning, not a failure, is wired into cmd_doctor
-grep -q 'sbx_reference_problem' "$REPO_ROOT/bin/factory" && ok "factory doctor calls the check" || bad "factory doctor does not call the check"
-assert_not_contains "doctor treats it as a warning" "$(grep -A2 'sbx_reference_problem' "$REPO_ROOT/bin/factory")" "fail "
+# doctor: the warning, not a failure, is wired into factory/commands/doctor.py
+grep -q 'sbx.reference_problem' "$REPO_ROOT/factory/commands/doctor.py" && ok "factory doctor calls the check" || bad "factory doctor does not call the check"
+assert_not_contains "doctor treats it as a warning" "$(grep -A2 'sbx.reference_problem' "$REPO_ROOT/factory/commands/doctor.py")" "fail("
 
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

@@ -623,25 +623,18 @@ class CoordinatorToolsTest(Fixture):
         self.assertEqual(cp.stdout.decode().rstrip("\n"), roles.coordinator_broker_tools(real))
 
 
-class BashOnlyHelpersTest(Fixture):
-    """disabled_role_sandboxes is only used by `factory doctor` (bin/factory) and has no Python
-    counterpart until doctor is ported (docs/py-cli-migration.md, step 4); it is checked here, in
-    bash, so the shell test it came from can go."""
-
-    def disabled(self, existing):
-        snippet = ('sbx() { [ "$1 $2" = "ls -q" ] || { echo "unexpected sbx $*" >&2; return 1; }; '
-                   "printf '%s\\n' " + existing + "; }; disabled_role_sandboxes")
-        status, out, err = self.bash(snippet)
-        self.assertEqual((status, err), (0, ""))
-        return out
+class DisabledRoleSandboxesTest(Fixture):
+    """disabled_role_sandboxes is used only by `factory doctor`, so it has no bash counterpart
+    (it was ported from scripts/lib/roles.sh when doctor moved to Python)."""
 
     def test_a_disabled_roles_existing_sandbox_is_reported_never_removed(self):
-        both = "factory-developer factory-researcher"
-        self.assertEqual(self.disabled(both), "factory-researcher")
+        both = ["factory-developer", "factory-researcher", ""]
+        self.assertEqual(roles.disabled_role_sandboxes(self.paths, both), ["factory-researcher"])
         self.write(self.enabled, "researcher\n")
-        self.assertEqual(self.disabled(both), "")
+        self.assertEqual(roles.disabled_role_sandboxes(self.paths, both), [])
         os.remove(self.enabled)
-        self.assertEqual(self.disabled("factory-developer"), "")
+        self.assertEqual(roles.disabled_role_sandboxes(self.paths, ["factory-developer"]), [])
+        self.assertEqual(roles.disabled_role_sandboxes(self.paths, []), [])
 
 
 if __name__ == "__main__":
