@@ -175,6 +175,17 @@ class BashParityTest(Fixture):
                 self.assertEqual(self.bash('role_get "%s" %s' % (role, key)).rstrip("\n"),
                                  roles.role_get(self.paths, role, key), (role, key))
 
+    def test_valid_role_name_and_the_reserved_names_match(self):
+        with open(os.path.join(REPO, "scripts", "lib", "roles.sh")) as f:
+            m = re.search(r'^readonly RESERVED_ROLE_NAMES="([^"]*)"', f.read(), re.M)
+        self.assertEqual(tuple(m.group(1).split()), roles.RESERVED_ROLE_NAMES)
+        names = ["", "a", "ab", "reviewer", "my-role", "r2-d2", "A", "1a", "a_b", "a b", "-ab", "a" * 31, "a" * 32,
+                 "broker", "coordinator", "dispatch", "broker2", "x-lane2", "x-lane12", "x-lane", "x-lane2a", "lane2",
+                 "ab-", "a--b", "é1", "a.b"]
+        for name in names:
+            self.assertEqual(self.bash("valid_role_name '%s' && echo y || echo n" % name).strip() == "y",
+                             roles.valid_role_name(name), repr(name))
+
     def test_roles_output_matches_the_old_bash_command(self):
         # bash's cmd_roles, kept here verbatim as the reference until bash stops using these helpers.
         reference = r'''

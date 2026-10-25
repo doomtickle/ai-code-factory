@@ -1347,16 +1347,17 @@ hasn't dispatched any jobs yet just shows an empty report.
   - Python CLI (`factory/`): `python3 -m unittest discover -s factory -t . -p 'test_*.py' -v`
   - host scripts: `python3 -m unittest discover -s scripts -p 'test_*.py' -v`
   - shell tests: `bash scripts/test_factory_update.sh`, and likewise
-    `test_factory_secret.sh`, `test_factory_docs.sh` and `test_factory_lane.sh`
+    `test_factory_secret.sh` and `test_factory_lane.sh`
   - images, without sbx: `scripts/00-build-templates.sh --build-only`
   - broker: `docker run --rm --network none -v "$PWD/broker:/b:ro" -w /b factory-broker:v3 python3 -B -m unittest discover -s tests -t .`
 - **Docs site:** `.github/workflows/docs.yml` publishes the `factory docs` page
   to GitHub Pages whenever the docs change on main, with links to repo files
   pointing at that commit on GitHub (`scripts/docs.py --link-base`).
-- **Under the hood:** `factory` wraps the scripts in `scripts/`:
+- **Under the hood:** `factory` runs the scripts in `scripts/` (the Python wrappers for
+  `analytics`, `watch`, `docs` and `dashboard` are in `factory/commands/`):
   - `install-prereqs.sh`, `00-build-templates.sh` and `01-init-security.sh` (setup)
   - `02-launch-factory.sh <dir>`, which calls `start-broker.sh` and `start-dispatch.sh`
-  - `03-stop-factory.sh` and `new-role.sh`
+  - `03-stop-factory.sh`
 
   They can still be run directly.
 
@@ -1403,7 +1404,6 @@ scripts/00-build-templates.sh
 scripts/01-init-security.sh
 scripts/02-launch-factory.sh <project-dir>
 scripts/03-stop-factory.sh
-scripts/new-role.sh <name> [<role-to-copy>]
 scripts/start-broker.sh, scripts/start-dispatch.sh   (called by the launch script)
 scripts/analytics.py, scripts/test_analytics.py      Cost/performance report (factory analytics)
 scripts/approvals.py         Approval cards (factory approvals)

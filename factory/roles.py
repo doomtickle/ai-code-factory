@@ -5,6 +5,7 @@ validation stays in bash until `factory start` is ported.
 """
 
 import os
+import re
 
 from factory.conf import read_conf, read_text
 
@@ -14,7 +15,18 @@ from factory.conf import read_conf, read_text
 ROLE_OVERRIDE_KEYS = ("MODEL", "MODELS", "EFFORT", "LANES", "MAX_SESSION_TOKENS", "MAX_TURNS",
                       "MAX_JOB_SECONDS")
 
+# Keep in sync with RESERVED_ROLE_NAMES in scripts/lib/roles.sh (a test compares them).
+RESERVED_ROLE_NAMES = ("broker", "coordinator", "dispatch")
+
 _SPACE = " \t\n\v\f\r"
+
+
+def valid_role_name(name):
+    """Lowercase letters, digits and dashes, 2 to 31 characters, starting with a letter;
+    not reserved, and not ending in -lane<N>: that is how a role's extra lanes are
+    named, so such a role would collide with another's lane."""
+    return (re.fullmatch(r"[a-z][a-z0-9-]{1,30}", name) is not None and name not in RESERVED_ROLE_NAMES
+            and re.search(r"-lane[0-9]+$", name) is None)
 
 
 def role_conf_path(paths, role):

@@ -22,7 +22,7 @@ set -euo pipefail
 #    name is refused, naming the file; it grants nothing (BROKER_TOOLS stays
 #    role.conf's) and a local override can't set OPTIONAL; a leftover sandbox of
 #    a disabled role is reported, never removed.
-# 8. new-role.sh copying an optional role makes an ordinary (enabled) one.
+# (`factory role new` copying an optional role is tested in factory/test_command_role.py.)
 #
 # Uses a fixture repo (roles/, broker/tools.txt) rather than this checkout, so
 # it needs neither the real broker/ nor this repo's role.conf values.
@@ -227,21 +227,6 @@ rm -f "$enabled"
 sbx() { [ "$1 $2" = "ls -q" ] || { echo "unexpected sbx $*" >&2; return 1; }; printf 'factory-developer\n'; }
 assert_eq "no leftover, nothing to report" "$(disabled_role_sandboxes)" ""
 unset -f sbx
-
-# 8. new-role.sh copies an optional role as an ordinary one. Runs in a scratch
-# copy of the scripts (it works on the repo it lives in) with a stub sbx.
-nr="$tmp/nr"
-mkdir -p "$nr/scripts" "$nr/roles" "$nr/broker" "$nr/stubs"
-cp -R "$REPO_ROOT/scripts/new-role.sh" "$REPO_ROOT/scripts/lib" "$nr/scripts/"
-cp -R "$ROOT/roles/researcher" "$nr/roles/researcher"
-cp "$ROOT/broker/tools.txt" "$nr/broker/tools.txt"
-printf '#!/bin/sh\nexit 0\n' > "$nr/stubs/sbx"
-chmod +x "$nr/stubs/sbx"
-run env PATH="$nr/stubs:$PATH" "$nr/scripts/new-role.sh" designer researcher
-assert_eq "new-role.sh copies an optional role" "$R_RC" "0"
-assert_eq "the copy is not optional" "$(grep -c OPTIONAL "$nr/roles/designer/role.conf" || true)" "0"
-assert_eq "the copy keeps the other settings" "$(conf_get "$nr/roles/designer/role.conf" WORKSPACE)" "ro"
-assert_eq "the original is untouched" "$(conf_get "$nr/roles/researcher/role.conf" OPTIONAL)" "1"
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
