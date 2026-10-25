@@ -19,6 +19,8 @@ UBUNTU = 'ID=ubuntu\nVERSION_ID="%s"\nPRETTY_NAME="Ubuntu %s LTS"\n'
 
 
 class PreflightTest(CommandTest):
+    platform = None
+
     def bash(self, snippet, path=None, env=None):
         """(status, stdout, stderr) of the bash helpers; PATH is the fixture's unless given."""
         e = dict(self.environ, LC_ALL="C", **(env or {}))
@@ -31,16 +33,30 @@ class PreflightTest(CommandTest):
 
     def private_path(self):
         """PATH = an empty folder for stubs, then a folder linking only what the bash helpers need
-        (so no python3, secret-tool or powershell.exe of this machine shows through)."""
+        (so no python3, secret-tool or powershell.exe of this machine shows through). `uname` is
+        a stub too, Linux until set_platform says otherwise, so the answer does not depend on
+        the host the tests run on."""
         self.bindir = os.path.join(self.tmp, "bin")
         sysdir = os.path.join(self.tmp, "sys")
         os.makedirs(self.bindir, exist_ok=True)
         os.makedirs(sysdir, exist_ok=True)
-        for name in ("bash", "uname", "grep", "cat", "sed", "head", "tr", "id"):
+        for name in ("bash", "grep", "cat", "sed", "head", "tr", "id"):
             found = shutil.which(name)
             if found and not os.path.exists(os.path.join(sysdir, name)):
                 os.symlink(found, os.path.join(sysdir, name))
         self.environ["PATH"] = self.bindir + os.pathsep + sysdir
+        self.set_platform("Linux")
+
+    def set_platform(self, name):
+        """Make `uname -s` (the stub on the PATH) and the Python's ctx.uname both say NAME."""
+        self.platform = name
+        self.tool("uname", 'case "$1" in -m) echo x86_64 ;; *) echo %s ;; esac\n' % name)
+
+    def ctx(self, tty=False):
+        ctx = super().ctx(tty)
+        if self.platform:
+            ctx.uname = (self.platform, "x86_64")
+        return ctx
 
     def release(self, text):
         return self.write("os-release", text)
@@ -194,15 +210,14 @@ class ResolvePythonTest(PreflightTest):
         self.tool("python3", "exit 1\n")
         self.assertEqual(self.both(), "%s/python3 3.9+ is required (install python3 3.9+ (e.g. `sudo apt install python3`))" % self.bindir)
 
-    def test_macos_uses_the_system_python(self):
-        ctx = self.ctx()
-        ctx.uname = ("Darwin", "arm64")
+    def test_macos_ignores_the_path_and_uses_the_system_python(self):
+        self.set_platform("Darwin")
+        os.symlink(sys.executable, os.path.join(self.bindir, "python3"))
+        found = self.both()
         if os.access("/usr/bin/python3", os.X_OK):
-            self.assertEqual(preflight.resolve_python(ctx), "/usr/bin/python3")
+            self.assertEqual(found, "/usr/bin/python3")
         else:
-            with self.assertRaises(FactoryError) as caught:
-                preflight.resolve_python(ctx)
-            self.assertEqual(str(caught.exception), "python3 not found in PATH (install the Xcode Command Line Tools: xcode-select --install)")
+            self.assertEqual(found, "python3 not found in PATH (install the Xcode Command Line Tools: xcode-select --install)")
 
 
 class KeychainBackendTest(PreflightTest):
@@ -214,9 +229,7 @@ class KeychainBackendTest(PreflightTest):
         self.environ.update(env)
         status, out, err = self.bash("keychain_backend", path=self.environ["PATH"], env=env)
         self.assertEqual((status, err), (0, ""))
-        ctx = self.ctx()
-        ctx.uname = (os.uname().sysname, os.uname().machine)
-        self.assertEqual(preflight.keychain_backend(ctx), out)
+        self.assertEqual(preflight.keychain_backend(self.ctx()), out)
         return out
 
     def test_the_override_wins(self):
@@ -228,6 +241,11 @@ class KeychainBackendTest(PreflightTest):
 
     def test_wincred_through_the_powershell_override(self):
         self.assertEqual(self.both(FACTORY_POWERSHELL="/some/powershell.exe"), "wincred")
+
+    def test_macos_uses_its_keychain_whatever_else_is_installed(self):
+        self.set_platform("Darwin")
+        self.tool("secret-tool", "exit 1\n")
+        self.assertEqual(self.both(FACTORY_POWERSHELL="/some/powershell.exe"), "macos")
 
     def test_none_without_any(self):
         if os.path.exists("/proc/version") and preflight.is_wsl():
