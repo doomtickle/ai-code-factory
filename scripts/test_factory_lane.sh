@@ -44,6 +44,8 @@ tmp="$(cd "$tmp" && pwd -P)"
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 export HOME="$tmp/home" FACTORY_LANES_ROOT="$tmp/lanes"
 export GIT_CONFIG_NOSYSTEM=1
+# Role sandboxes set these (e.g. FACTORY_LANE=reviewer); each case passes what it needs.
+unset FACTORY_LANE FACTORY_PROJECT FACTORY_LANE_ROOT FACTORY_TEST_MODE FACTORY_TEST_ROOT
 mkdir -p "$HOME"
 git config --global init.defaultBranch main
 
