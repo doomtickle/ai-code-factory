@@ -1,5 +1,5 @@
 """Factory docs: renders the factory's markdown docs into one themed,
-self-contained HTML page for `factory docs` (bin/factory).
+self-contained HTML page for `factory docs` (factory/commands/docs.py).
 
 Sources, read-only, from the factory checkout (--root):
   docs/guides/*.md   task-oriented guides, in file-name order (optional)

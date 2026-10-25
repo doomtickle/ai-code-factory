@@ -12,7 +12,7 @@ set -euo pipefail
 # FACTORY_NO_UI=1 (factory start --no-ui) only changes the closing message.
 #
 # Safe to re-run: existing sandboxes are reused and missing ones are created
-# (e.g. after adding a role with new-role.sh).
+# (e.g. after adding a role with `factory role new`).
 
 # shellcheck source=lib/common.sh
 . "$(dirname "$0")/lib/common.sh"

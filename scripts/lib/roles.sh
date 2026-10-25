@@ -13,7 +13,7 @@ readonly RESERVED_ROLE_NAMES="broker coordinator dispatch"
 
 # list_all_roles -> every role in roles/, enabled or not
 list_all_roles() {
-  local d
+  local d LC_ALL=C # byte order, as factory/roles.py sorts; a locale puts dev-ops after developer
   for d in "$ROOT"/roles/*/; do
     [ -f "$d/role.conf" ] && basename "$d"
   done
@@ -54,7 +54,7 @@ enabled_roles_file() { printf '%s/enabled-roles' "$FACTORY_CONFIG"; }
 # enabled_roles_listed -> the names in enabled-roles, one per line (lines that
 # aren't plain role names are skipped here; validate_enabled_roles reports them)
 enabled_roles_listed() {
-  local f
+  local f LC_ALL=C # byte order: in a locale [a-z] also matches letters like é
   f="$(enabled_roles_file)"
   [ -f "$f" ] || return 0
   sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' "$f" | grep -E '^[a-z][a-z0-9-]*$' || true
@@ -83,7 +83,7 @@ disabled_role_sandboxes() {
 # validate_enabled_roles -> dies unless enabled-roles holds only blank lines,
 # comments and names of roles in roles/ (a typo would silently enable nothing).
 validate_enabled_roles() {
-  local f line trimmed
+  local f line trimmed LC_ALL=C # byte order, as in enabled_roles_listed
   f="$(enabled_roles_file)"
   [ -e "$f" ] || return 0
   [ -f "$f" ] || die "$f: not a regular file"
@@ -189,6 +189,7 @@ in_list() {
 # Role names must not end in -lane<N>: that is how a role's extra lanes are
 # named (role_lane_names), so such a role would collide with another's lane.
 valid_role_name() {
+  local LC_ALL=C # byte order: in a locale [a-z] also matches letters like é (macOS)
   printf '%s' "$1" | grep -Eq '^[a-z][a-z0-9-]{1,30}$' && ! in_list "$1" "$RESERVED_ROLE_NAMES" \
     && ! printf '%s' "$1" | grep -Eq -- '-lane[0-9]+$'
 }
@@ -217,7 +218,7 @@ role_lane_names() {
 }
 
 validate_role() {
-  local r="$1" t m
+  local r="$1" t m LC_ALL=C # byte order for the [A-Za-z0-9] / [0-9] checks below
   valid_role_name "$r" || die "invalid role name '$r' (lowercase letters, digits, dashes; not ending in -lane<N>; not: $RESERVED_ROLE_NAMES)"
   [ -f "$ROOT/roles/$r/kit/spec.yaml" ] || die "role $r: missing roles/$r/kit/spec.yaml"
   [ -s "$ROOT/roles/$r/instructions.md" ] || die "role $r: missing or empty roles/$r/instructions.md"

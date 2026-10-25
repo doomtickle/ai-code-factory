@@ -28,13 +28,14 @@ bash and Python side by side, and `main` works after every one.
 | Command | Pull request |
 |---|---|
 | `factory roles` | 1 (foundation) |
+| `factory analytics`, `approvals` (and `approve`), `watch`, `docs`, `dashboard`/`gui`, `config init`, `role new` | 2 |
 
 ## Remaining, in order
 
-1. **Wrappers of Python scripts and small commands**: `analytics`, `approvals` (wrapper
-   only, after #170 changes its held-write wording), `docs`, `dashboard`/`gui`, `watch`,
-   `config init`, `role new` (`new-role.sh`). They only locate a script or write files;
-   the existing Python scripts (`scripts/*.py`) keep their own tests.
+1. **Wrappers of Python scripts and small commands**: done (PR 2). The wrappers `exec`
+   their script, so signals reach it, and `role new` still calls the bash `validate_role`
+   until step 2 replaces it (`factory/roles.py` already has `valid_role_name`, checked
+   against it by a test).
 2. **Role validation** (`validate_role`, `validate_role_overrides`,
    `validate_enabled_roles`, `role_lane_names`, `coordinator_broker_tools` from
    `scripts/lib/roles.sh`) into `factory/roles.py`, with the shell tests that cover them

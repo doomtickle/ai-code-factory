@@ -146,12 +146,22 @@ class RolesTest(Fixture):
         self.assertEqual(tuple(m.group(1).split()), roles.ROLE_OVERRIDE_KEYS)
 
 
+def locales_installed():
+    try:
+        out = subprocess.run(["locale", "-a"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL).stdout
+    except OSError:
+        return []
+    return out.decode(errors="replace").split()
+
+
 class BashParityTest(Fixture):
     """The bash helpers (scripts/lib/roles.sh) still serve every other command; both
     sides must answer alike on one fixture, edge cases included."""
 
-    def bash(self, snippet):
+    def bash(self, snippet, locale=None):
         env = dict(os.environ, XDG_CONFIG_HOME=os.path.dirname(self.config), XDG_STATE_HOME=self.state)
+        if locale:
+            env["LC_ALL"] = locale
         cp = subprocess.run(
             ["bash", "-c", 'ROOT="$1"; . "$2/scripts/lib/common.sh"; . "$2/scripts/lib/roles.sh"; ' + snippet,
              "_", self.root, REPO],
@@ -174,6 +184,30 @@ class BashParityTest(Fixture):
             for key in ("DESCRIPTION", "WORKSPACE", "BROKER_TOOLS", "MODEL", "MODELS", "EFFORT", "LANES", "OPTIONAL"):
                 self.assertEqual(self.bash('role_get "%s" %s' % (role, key)).rstrip("\n"),
                                  roles.role_get(self.paths, role, key), (role, key))
+
+    def test_list_all_roles_is_in_byte_order_under_any_locale(self):
+        # In en_US.UTF-8 "developer" sorts before "dev-ops" (the dash is ignored); bytes put the dash first.
+        for name in ("dev-ops", "Zed", "alpha"):
+            self.write_role(name, 'WORKSPACE="ro"\n')
+        expected = roles.list_all_roles(self.paths)
+        self.assertEqual(expected[:2], ["Zed", "alpha"])
+        self.assertLess(expected.index("dev-ops"), expected.index("developer"))
+        other = [l for l in locales_installed() if not re.match(r"(c|posix)(\.|$)", l, re.I)]
+        if not other:
+            self.skipTest("no locale other than C is installed")
+        for locale in ["C"] + other[:3]:
+            self.assertEqual(self.bash("list_all_roles", locale).split(), expected, locale)
+
+    def test_valid_role_name_and_the_reserved_names_match(self):
+        with open(os.path.join(REPO, "scripts", "lib", "roles.sh")) as f:
+            m = re.search(r'^readonly RESERVED_ROLE_NAMES="([^"]*)"', f.read(), re.M)
+        self.assertEqual(tuple(m.group(1).split()), roles.RESERVED_ROLE_NAMES)
+        names = ["", "a", "ab", "reviewer", "my-role", "r2-d2", "A", "1a", "a_b", "a b", "-ab", "a" * 31, "a" * 32,
+                 "broker", "coordinator", "dispatch", "broker2", "x-lane2", "x-lane12", "x-lane", "x-lane2a", "lane2",
+                 "ab-", "a--b", "é1", "a.b"]
+        for name in names:
+            self.assertEqual(self.bash("valid_role_name '%s' && echo y || echo n" % name).strip() == "y",
+                             roles.valid_role_name(name), repr(name))
 
     def test_roles_output_matches_the_old_bash_command(self):
         # bash's cmd_roles, kept here verbatim as the reference until bash stops using these helpers.

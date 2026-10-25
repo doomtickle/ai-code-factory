@@ -125,9 +125,12 @@ rm -f "$layout_file"
 # ===========================================================================
 # Part 5: bin/factory ends a start in the dashboard.
 # ===========================================================================
-grep -q -- '--coordinator "$COORDINATOR_SANDBOX"' "$REPO_ROOT/bin/factory" \
-  && ok "bin/factory: the dashboard gets the Coordinator's name" \
-  || bad "bin/factory: the dashboard gets the Coordinator's name"
+awk '/^cmd_start\(\)/,/^}/' "$REPO_ROOT/bin/factory" | grep -q '"\$ROOT/factory" dashboard$' \
+  && ok "bin/factory: cmd_start ends in factory dashboard (the Python command, which names the Coordinator)" \
+  || bad "bin/factory: cmd_start ends in factory dashboard (the Python command, which names the Coordinator)"
+grep -q "^COORDINATOR_SANDBOX = \"$COORDINATOR_SANDBOX\"\$" "$REPO_ROOT/factory/context.py" \
+  && ok "factory/context.py: the Coordinator's sandbox name matches common.sh" \
+  || bad "factory/context.py: the Coordinator's sandbox name matches common.sh"
 
 # ===========================================================================
 # Part 6: coordinator_attached matches `sbx run --name factory-coordinator` only.

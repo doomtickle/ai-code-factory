@@ -6,8 +6,9 @@ set -euo pipefail
 # bridge, dispatch/server.py, imports) and templates/agent/factory-lane (inside
 # the sandboxes). Each lists the git repos of a project; if they disagreed, a role
 # could be offered a repo the bridge won't import, or the reverse. All of them run
-# on the same fixtures and must print the same sorted list (factory/test_repos.py
-# has the Python side's own cases):
+# on the same fixtures and must print the same list in the same (byte) order, also
+# under a non-C locale when the machine has one (factory/test_repos.py has the Python
+# side's own cases):
 # - a repo, a folder whose .git is a file (worktree/submodule style), a repo
 #   named with a leading capital (byte order, not locale order)
 # - skipped: a hidden folder with a .git, a symlink to a repo, a folder with no
@@ -44,11 +45,20 @@ for r in project_repos(sys.argv[1]):
 }
 via_lane() { "$REPO_ROOT/templates/agent/factory-lane" repos "$1"; }
 
-# check LABEL PROJECT EXPECTED: each implementation, sorted, must equal EXPECTED.
+# A locale other than C, if installed: a locale-sorting implementation would then order
+# "Capital" and "gitfile" differently.
+other_locale="$(locale -a 2>/dev/null | grep -viE '^(c|posix)(\.|$)' | head -n1 || true)"
+locales="C"
+[ -z "$other_locale" ] || locales="C $other_locale"
+
+# check LABEL PROJECT EXPECTED: each implementation's output, unsorted, must equal EXPECTED
+# (which is in byte order) under every locale.
 check() {
-  local label="$1" project="$2" expected="$3" impl
-  for impl in via_common via_package via_server via_lane; do
-    assert_eq "$label: $impl" "$("$impl" "$project" | LC_ALL=C sort)" "$expected"
+  local label="$1" project="$2" expected="$3" impl loc
+  for loc in $locales; do
+    for impl in via_common via_package via_server via_lane; do
+      assert_eq "$label: $impl ($loc)" "$(LC_ALL="$loc" "$impl" "$project")" "$expected"
+    done
   done
 }
 
@@ -64,10 +74,6 @@ check "folder of repos" "$folder" "Capital
 gitfile
 normal
 real-repo"
-
-# Same order from each, not just the same set.
-assert_eq "folder of repos: common.sh and the package agree on the order" \
-  "$(via_common "$folder")" "$(via_package "$folder")"
 
 # --- a project that is itself a repo ----------------------------------------
 mkdir -p "$tmp/repo-dir/.git" "$tmp/repo-dir/sub/.git"

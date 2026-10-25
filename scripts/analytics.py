@@ -11,7 +11,7 @@ dir (<state>, outside the repo; see FACTORY_STATE in scripts/lib/common.sh):
 (overwriting any previous report there) and opens it with the stdlib `webbrowser`
 module; piped or redirected, it prints the HTML to stdout instead and writes nothing.
 
-Run directly, or via `factory analytics` (bin/factory).
+Run directly, or via `factory analytics`.
 
 Standard library only; compatible with the macOS system Python (3.9).
 """

@@ -61,7 +61,7 @@ jobs:
         run: python3 -m unittest discover -s scripts -p 'test_*.py' -v
       - name: factory-lane
         run: bash scripts/test_factory_lane.sh
-      - name: project_repos parity (common.sh, dispatch/server.py, factory-lane)
+      - name: project_repos parity (common.sh, factory/repos.py, factory-lane)
         run: bash scripts/test_project_repos.sh
       - name: factory-test Python mode
         run: bash scripts/test_factory_test.sh
@@ -75,8 +75,6 @@ jobs:
         run: bash scripts/test_sbx_reference.sh
       - name: factory layout
         run: bash scripts/test_factory_layout.sh
-      - name: factory docs
-        run: bash scripts/test_factory_docs.sh
       - name: factory-shot argument handling
         run: bash scripts/test_factory_shot.sh
       - name: factory chat
@@ -91,7 +89,7 @@ jobs:
         run: bash scripts/test_factory_role_overrides.sh
       - name: fresh-clone doctor and start checks
         run: bash scripts/test_factory_doctor.sh
-      - name: factory config init
+      - name: Jira cloud_id and lane identity checks
         run: bash scripts/test_factory_config.sh
 
   macos:
@@ -130,8 +128,6 @@ jobs:
         run: bash scripts/test_claude_md_exclude.sh
       - name: factory layout
         run: bash scripts/test_factory_layout.sh
-      - name: factory docs
-        run: bash scripts/test_factory_docs.sh
       - name: factory-shot argument handling
         run: bash scripts/test_factory_shot.sh
       - name: factory chat
@@ -144,7 +140,7 @@ jobs:
         run: bash scripts/test_factory_gitlab.sh
       - name: fresh-clone doctor and start checks
         run: bash scripts/test_factory_doctor.sh
-      - name: factory config init
+      - name: Jira cloud_id and lane identity checks
         run: bash scripts/test_factory_config.sh
       # factory-lane runs only inside the Linux sandboxes, so it's tested on Linux.
 

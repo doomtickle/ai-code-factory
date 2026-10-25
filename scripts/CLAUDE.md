@@ -31,7 +31,7 @@ authorize an action. The main page only displays: it reaches no endpoint that ac
 holds no key. Its actions are Terminal 0 and the control unit.
 
 Terminal 0 is the Coordinator's terminal (`scripts/dashboard_term.py`, enabled by
-`--coordinator NAME`, which bin/factory passes): it runs exactly the fixed argv
+`--coordinator NAME`, which `factory dashboard` passes: `factory/commands/wrappers.py`): it runs exactly the fixed argv
 `sbx run --name <NAME>` (NAME matches `[a-z0-9][a-z0-9-]*`) in a PTY, no shell and
 never a shell fallback, only when a page explicitly asks (`{"type":"power","on":true}`;
 attaching a page starts nothing), only after `sbx ls -q` lists the sandbox and
@@ -141,7 +141,7 @@ Lane state is read-only display derived from transcripts. A lane shows RUN only 
 Demo mode (`factory dashboard --demo`, `scripts/dashboard_demo.py`) is the same server
 on a throwaway copy of the committed fixture `scripts/dashboard-demo/` and meets every
 rule above. It reads no `FACTORY_STATE` or broker state and refuses `--state`,
-`--project`, `--coordinator` and `--factory` (`bin/factory` passes none of them and
+`--project`, `--coordinator` and `--factory` (`factory dashboard --demo` passes none of them and
 `exec`s Python so a signal reaches it). The copy is a fresh 0700 `mkdtemp` folder, never
 inside the checkout, removed when the dashboard exits; the ticker appends audit records
 only there. There is no Terminal 0. Its control unit is `DemoControls`: `decide`,

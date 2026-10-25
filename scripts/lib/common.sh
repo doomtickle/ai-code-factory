@@ -153,7 +153,7 @@ migrate_state() {
 # (a directory, or a gitfile), else every immediate subdirectory that isn't
 # hidden or a symlink, has no newline in its name, and has a .git (directory
 # or gitfile) of its own, in byte order. Empty when PROJECT is neither a repo
-# nor a folder of repos. Keep identical to project_repos() in dispatch/server.py
+# nor a folder of repos. Keep identical to project_repos() in factory/repos.py
 # and templates/agent/factory-lane; scripts/test_project_repos.sh runs all three
 # on one fixture and fails if they differ.
 project_repos() {
