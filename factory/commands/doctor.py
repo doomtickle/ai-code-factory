@@ -178,10 +178,27 @@ class Doctor:
                 ctx.ok("Claude login stored")
             else:
                 ctx.warn("no Claude login yet: 'factory start' walks you through it")
+            self.global_policy()
         if self.wsl:
             d, n = ctx.style.D, ctx.style.N
             ctx.say("  %sKeep projects in the Linux filesystem (e.g. ~/code), not under /mnt/c: sandboxes mount%s" % (d, n))
             ctx.say("  %sthe project folder, and Windows drives are slow and lose file permissions there.%s" % (d, n))
+
+    def global_policy(self):
+        """A warning, not a problem: the global sbx policy is shared by every sandbox on the
+        host, including ones that aren't the factory's, so a failing doctor would make
+        `factory setup` (which aborts on problems) demand their rules be deleted first."""
+        ctx, st = self.ctx, self.ctx.style
+        extra = sbx.extra_global_allows(ctx)
+        if extra is None:
+            ctx.warn("could not read the global sbx network policy; extra-host check skipped")
+        elif not extra:
+            ctx.ok("global sbx network policy allows only " + sbx.GLOBAL_ALLOW)
+        else:
+            for resource, rule_id in extra:
+                ctx.warn("the global sbx policy allows %s (rule %s): every sandbox reaches it without the broker; "
+                         "remove it with: sbx policy rm network --id %s" % (resource, rule_id, rule_id))
+            ctx.say("  %sA host the broker needs belongs in kits/broker/spec.yaml, not in the global policy.%s" % (st.D, st.N))
 
     def gateway(self):
         """The gateway's own checks run in the broker sandbox. Its hosts-vs-kit check needs the

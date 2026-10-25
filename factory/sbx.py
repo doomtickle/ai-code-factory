@@ -90,3 +90,47 @@ def reference_problem(path):
                 "scripts/gen-sbx-reference.sh" % (m.group(1), SBX_VERSION))
     return None
 
+
+
+# The one network allow the factory adds to the global policy (scripts/01-init-security.sh).
+GLOBAL_ALLOW = "api.anthropic.com"
+_COLUMN = re.compile(r"CREATED VIA|APPLIES TO|\S+")
+_NEEDED = ("SOURCE", "APPLIES TO", "RULE_ID", "TYPE", "DECISION", "RESOURCES")
+
+
+def extra_global_allows(ctx):
+    """The network allows in the host's global sbx policy (local scope, applies to all)
+    other than GLOBAL_ALLOW, as [(resource, rule_id)]; [] when there are none, None when
+    `sbx policy ls` fails or its table can't be read. Read from the --wide table (the JSON
+    layout isn't in docs/reference/sbx-cli.md): columns are cut at the header's offsets, and
+    a row with an empty SOURCE continues the RESOURCES of the one above."""
+    got = ctx.capture(["sbx", "policy", "ls", "--wide", "--source", "local", "--type", "network", "--decision", "allow"])
+    if got.status != 0:
+        return None
+    lines = got.out.split("\n")
+    header = next((i for i, line in enumerate(lines) if line.startswith("SOURCE")), None)
+    if header is None:
+        return None
+    cols = [(m.group(0), m.start()) for m in _COLUMN.finditer(lines[header])]
+    if any(name not in dict(cols) for name in _NEEDED):
+        return None
+    ends = [start for _, start in cols[1:]] + [None]
+    spans = {name: (start, end) for (name, start), end in zip(cols, ends)}
+    rules = []
+    for line in lines[header + 1:]:
+        if not line.strip():
+            continue
+        cell = {name: line[a:b].strip() for name, (a, b) in spans.items()}
+        if cell["SOURCE"] == "":
+            if rules:
+                rules[-1]["RESOURCES"] += " " + cell["RESOURCES"]
+            continue
+        rules.append(cell)
+    found = []
+    for rule in rules:
+        if (rule["SOURCE"], rule["APPLIES TO"], rule["TYPE"], rule["DECISION"]) != ("local", "all", "network", "allow"):
+            continue
+        for resource in re.split(r"[,\s]+", rule["RESOURCES"]):
+            if resource and resource not in ("-", GLOBAL_ALLOW, GLOBAL_ALLOW + ":443"):
+                found.append((resource, rule["RULE_ID"]))
+    return found

@@ -2,6 +2,19 @@
 
 Dated entries, for the user to review. Newest first.
 
+## 2026-10-25
+
+- **`factory doctor` warns about extra global sbx network allows; it does not fail.**
+  An owner's machine had local-scope allows for `*.npmjs.org` and `github.com`
+  that let every sandbox reach those hosts without the broker; nothing checked
+  for them. Doctor now reads `sbx policy ls --wide --source local --type network
+  --decision allow` and warns for each host other than `api.anthropic.com`, with
+  its rule ID and `sbx policy rm network --id`. A warning, not a problem: the
+  global policy is shared by all sbx sandboxes on the host, and `factory setup`
+  aborts on problems, so a failure would make setup demand deleting rules that
+  other work may use. The table is parsed (columns cut at the header offsets)
+  because the `--json` layout is not in `docs/reference/sbx-cli.md`.
+
 ## 2026-10-24
 
 - **Every held write is staged; the gateway makes it; one result shape**

@@ -16,7 +16,7 @@ import tempfile
 import unittest
 from unittest import mock
 
-from factory import preflight, sbx
+from factory import context, preflight, sbx
 from factory.commands import doctor
 from factory.fixtures import REPO, CommandTest
 
@@ -25,6 +25,20 @@ STAMP = "# sbx CLI\n<!-- sbx-reference: version=%s generated=2026-10-14 -->\n" %
 KIT = "network:\n  allowedDomains:\n    - github.com\n    - \"api.github.com\"  # comment\n    -   registry.npmjs.org\n"
 RESEARCHER = 'OPTIONAL="1"\nTEMPLATE="developer"\nWORKSPACE="ro"\n'
 HEAD = "\n==> %s\n"
+
+
+def policy_table(*rows):
+    """What `sbx policy ls --wide` prints: left-aligned columns, a continuation line for a
+    rule's extra resources (rows: (source, applies_to, rule_id, decision, resources))."""
+    head = ["SOURCE", "CREATED VIA", "APPLIES TO", "POLICY", "POLICY_ID", "RULE", "RULE_ID", "TYPE", "STATUS", "DECISION",
+            "PROTOCOLS", "RESOURCES"]
+    table = [head] + [[src, "added", to, "-", "local-policy", "-", rid, "network", "active", dec, "tcp", res]
+                      for src, to, rid, dec, res in rows]
+    widths = [max(len(r[i]) for r in table) + 2 for i in range(len(head))]
+    return "".join("".join(c.ljust(w) for c, w in zip(r, widths)).rstrip() + "\n" for r in table)
+
+
+CLEAN_POLICY = policy_table(("local", "all", "a1413895-0000", "allow", "api.anthropic.com"))
 
 
 class DoctorTest(CommandTest):
@@ -59,7 +73,8 @@ class DoctorTest(CommandTest):
 
     def sbx_stub(self, running=True, hosts="github.com api.github.com *.npmjs.org", gateway='echo "==> Policy"; echo "  fine"; echo "No problems found."',
                  setup="true", templates="factory-developer:v3 factory-reviewer:v3 factory-broker:v3", login="global anthropic x",
-                 sandboxes="factory-broker"):
+                 sandboxes="factory-broker", policy=None):
+        table = self.write("policy-ls.txt", CLEAN_POLICY if policy is None else policy)
         if not os.path.exists(os.path.join(self.root, "kits", "broker", "spec.yaml")):
             self.write("repo/kits/broker/spec.yaml", KIT + "    - \"*.npmjs.org\"\n")
         self.tool("sbx", '''case "$1 $2" in
@@ -69,9 +84,11 @@ class DoctorTest(CommandTest):
 "settings get") echo %s;;
 "template ls") for t in %s; do echo $t; done;;
 "secret ls") echo "%s";;
+"policy ls") if [ "$3 $4" = "--wide --source" ]; then cat "%s"; fi; test -s "%s";;
 "exec factory-broker") case "$*" in *--egress-hosts*) echo "%s";; *) %s;; esac;;
 esac
-''' % (sbx.SBX_VERSION, sandboxes, "running" if running else "stopped", setup, templates, login, hosts, gateway))
+''' % (sbx.SBX_VERSION, sandboxes, "running" if running else "stopped", setup, templates, login,
+           table, table, hosts, gateway))
 
     def ready_machine(self):
         self.docker()
@@ -252,6 +269,85 @@ class FactoryToolsTest(DoctorTest):
         self.docker()
         self.tool("sbx", 'echo "sbx version: v0.1.0"\n')
         self.assertIn("  ! sbx 0.45.1 not installed yet", self.run_doctor()[1])
+
+
+class GlobalPolicyTest(DoctorTest):
+    FIX = "sbx policy rm network --id %s"
+
+    def policy_lines(self, **kw):
+        self.docker()
+        self.sbx_stub(**kw)
+        rc, out, err = self.run_doctor()
+        self.assertEqual((rc, err), (0, ""))
+        return out
+
+    def test_only_the_anthropic_allow_is_clean(self):
+        self.assertIn("  \u2713 Claude login stored\n  \u2713 global sbx network policy allows only api.anthropic.com\n",
+                      self.policy_lines())
+
+    def test_the_anthropic_allow_with_its_port_is_clean(self):
+        out = self.policy_lines(policy=policy_table(("local", "all", "id-1", "allow", "api.anthropic.com:443")))
+        self.assertIn("allows only api.anthropic.com\n", out)
+
+    def test_extra_hosts_are_warned_about_with_their_rule_ids_and_the_fix(self):
+        table = policy_table(("local", "all", "a1413895-0000", "allow", "api.anthropic.com"),
+                             ("local", "all", "72d6f7e9-1111", "allow", "*.npmjs.org"),
+                             ("local", "all", "fd5d5a7b-2222", "allow", "github.com"))
+        out = self.policy_lines(policy=table)
+        for host, rule in (("*.npmjs.org", "72d6f7e9-1111"), ("github.com", "fd5d5a7b-2222")):
+            self.assertIn("  ! the global sbx policy allows %s (rule %s): every sandbox reaches it without the broker; "
+                          "remove it with: %s\n" % (host, rule, self.FIX % rule), out)
+        self.assertIn("  A host the broker needs belongs in kits/broker/spec.yaml, not in the global policy.\n", out)
+        self.assertNotIn("allows only", out)
+        self.assertNotIn("a1413895", out)
+        self.assertTrue(out.endswith("\nNo problems found.\n"))
+
+    def test_other_scopes_sandbox_rules_and_denies_are_not_flagged(self):
+        table = policy_table(("kit", "sandbox:factory-reviewer", "kit-1", "allow", "registry.npmjs.org"),
+                             ("local", "sandbox:other", "loc-2", "allow", "example.com"),
+                             ("local", "all", "deny-3", "deny", "evil.example"),
+                             ("local", "all", "a1413895-0000", "allow", "api.anthropic.com"))
+        self.assertIn("allows only api.anthropic.com\n", self.policy_lines(policy=table))
+
+    def test_a_rule_with_several_resources_names_each(self):
+        table = policy_table(("local", "all", "multi-1", "allow", "a.example,b.example"))
+        out = self.policy_lines(policy=table)
+        self.assertIn("allows a.example (rule multi-1)", out)
+        self.assertIn("allows b.example (rule multi-1)", out)
+
+    def test_a_continuation_line_adds_resources_to_the_rule_above(self):
+        table = policy_table(("local", "all", "multi-1", "allow", "a.example"))
+        table += " " * table.index("RESOURCES") + "b.example\n"
+        out = self.policy_lines(policy=table)
+        self.assertIn("allows a.example (rule multi-1)", out)
+        self.assertIn("allows b.example (rule multi-1)", out)
+
+    def test_filesystem_rules_are_not_in_the_table_read(self):
+        table = policy_table(("local", "all", "a1413895-0000", "allow", "api.anthropic.com"))
+        table += "local  default  all  -  local-policy  -  default-fs-read-allow-all  filesystem:read  allow  -  **\n"
+        self.assertIn("allows only api.anthropic.com\n", self.policy_lines(policy=table))
+
+    def test_a_failing_sbx_skips_the_check_without_a_problem(self):
+        out = self.policy_lines(policy="")
+        self.assertIn("  ! could not read the global sbx network policy; extra-host check skipped\n", out)
+        self.assertTrue(out.endswith("\nNo problems found.\n"))
+
+    def test_a_table_that_cannot_be_read_skips_the_check(self):
+        out = self.policy_lines(policy="something else entirely\n")
+        self.assertIn("extra-host check skipped\n", out)
+
+    def test_it_asks_sbx_with_a_read_only_argv_list(self):
+        asked = []
+        ctx = mock.Mock()
+        ctx.capture = lambda argv, **kw: asked.append(argv) or context.Captured(1, "", "")
+        self.assertIsNone(sbx.extra_global_allows(ctx))
+        self.assertEqual(asked, [["sbx", "policy", "ls", "--wide", "--source", "local", "--type", "network",
+                                  "--decision", "allow"]])
+
+    def test_without_sbx_nothing_is_checked(self):
+        self.docker()
+        out = self.run_doctor()[1]
+        self.assertNotIn("global sbx", out)
 
 
 class GatewayTest(DoctorTest):
