@@ -1,7 +1,8 @@
-"""Reading policy.toml the way the bash checks do: policy_value, gitlab_needs_token and
-gitlab_mr_unheld (scripts/lib/common.sh and bin/factory). Not a TOML parser: a line scan
-good enough for the values these checks read. The bash copies stay until `start` and
-`status` are ported; factory/test_policy.py runs both on the same fixtures.
+"""Reading policy.toml the way the bash checks do: policy_value, policy_string,
+gitlab_needs_token, gitlab_mr_unheld, jira_cloud_id_set, any_jira_tool_granted and
+npm_private_registry_needs_token (scripts/lib/common.sh and bin/factory). Not a TOML parser:
+a line scan good enough for the values these checks read. The bash copies stay until `start`
+and `setup` are ported; factory/test_policy.py runs both on the same fixtures.
 """
 
 import os
@@ -56,6 +57,34 @@ def policy_value(paths, section, key):
             if value is not None:
                 return value
     return None
+
+
+def policy_string(paths, section, key):
+    """The text between the first pair of double quotes of KEY in [SECTION] ("" if unset
+    or not a quoted string)."""
+    parts = (policy_value(paths, section, key) or "").split('"')
+    return parts[1] if len(parts) > 1 else ""
+
+
+def jira_cloud_id_set(paths):
+    """True if [jira].cloud_id is set to something other than empty or the all-zero
+    placeholder UUID from config.example/."""
+    return policy_string(paths, "jira", "cloud_id").translate({ord("0"): None, ord("-"): None}) != ""
+
+
+def any_jira_tool_granted(paths):
+    """True if the Coordinator or any role is granted a jira_* broker tool. Other broker
+    tools (web_fetch, npm_fetch, ...) need no Jira token."""
+    if " jira_" in " %s " % roles.coordinator_broker_tools(paths):
+        return True
+    return any(" jira_" in " %s " % roles.role_get(paths, r, "BROKER_TOOLS") for r in roles.list_roles(paths))
+
+
+def npm_private_registry_needs_token(paths):
+    """True if a role is granted npm_fetch and the policy names a private npm registry
+    (which needs the keychain credential)."""
+    granted = any(" npm_fetch " in " %s " % roles.role_get(paths, r, "BROKER_TOOLS") for r in roles.list_roles(paths))
+    return granted and policy_string(paths, "packages", "npm_private_registry") != ""
 
 
 def gitlab_needs_token(paths):

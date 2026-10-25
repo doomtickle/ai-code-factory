@@ -26,7 +26,7 @@ ROOT="$(dirname "$SCRIPTS")"
 # run there; factory/cli.py's COMMANDS lists the same names (a test keeps them equal).
 # Everything else falls through to the bash below until it is ported. Only when run
 # directly: a test that sources this file still gets the bash functions.
-PORTED_COMMANDS="analytics approvals approve config dashboard docs doctor gui log logs packet packets role roles watch"
+PORTED_COMMANDS="analytics approvals approve config dashboard docs doctor gui log logs packet packets role roles status watch"
 if [ "${BASH_SOURCE[0]}" = "$0" ] && [ -n "${1:-}" ]; then
   case " $PORTED_COMMANDS " in
     *" $1 "*)
@@ -50,8 +50,8 @@ esac
 . "$SCRIPTS/lib/secrets.sh"
 
 
-if [ -t 1 ]; then B=$'\033[1m' D=$'\033[2m' G=$'\033[32m' Y=$'\033[33m' R=$'\033[31m' N=$'\033[0m'
-else B="" D="" G="" Y="" R="" N=""; fi
+if [ -t 1 ]; then B=$'\033[1m' G=$'\033[32m' Y=$'\033[33m' R=$'\033[31m' N=$'\033[0m'
+else B="" G="" Y="" R="" N=""; fi
 
 say() { printf '%s\n' "$*"; }
 step() { printf '\n%s==> %s%s\n' "$B" "$*" "$N"; }
@@ -374,46 +374,6 @@ npm_private_registry_needs_token() {
   [ -n "$(policy_string packages npm_private_registry)" ]
 }
 
-# approvals_summary -> prints "pending oldest_min expired_unhandled approved
-# running made failed" from scripts/approvals.py summary (see its --help):
-# pending counts only staged cards no one has decided; approved ones wait for
-# the gateway, not for a person (declined ones aren't counted); the last
-# three count its deferred writes.
-# Fails with nothing printed
-# when holds aren't in use (no approvals dir yet, or ever) or python3
-# isn't available; never dies, so callers stay inert rather than erroring.
-approvals_summary() {
-  local python
-  [ -d "$FACTORY_BROKER_STATE/approvals/pending" ] || return 1
-  python="$(resolve_python 2>/dev/null)" || return 1
-  "$python" "$SCRIPTS/approvals.py" --state "$FACTORY_BROKER_STATE" summary 2>/dev/null
-}
-
-# approvals_status_line -> for `factory status`: one line when there is at
-# least one staged card, approved card or recent deferred write, nothing
-# otherwise (holds off, or nothing to show).
-approvals_status_line() {
-  local out pending oldest approved running made failed line
-  out="$(approvals_summary)" || return 0
-  set -- $out
-  pending="${1:-0}"
-  oldest="${2:-0}"
-  approved="${4:-0}"
-  running="${5:-0}"
-  made="${6:-0}"
-  failed="${7:-0}"
-  [ $((pending + approved + running + made + failed)) -gt 0 ] || return 0
-  if [ "${pending:-0}" -gt 0 ]; then
-    line="$pending staged (oldest $oldest min)"
-  else
-    line="none staged"
-  fi
-  [ $((approved + running)) -gt 0 ] && line="$line; $((approved + running)) approved, being written"
-  [ "${made:-0}" -gt 0 ] && line="$line; $made done"
-  [ "${failed:-0}" -gt 0 ] && line="$line; $failed failed"
-  say "${B}Approvals:${N} $line - factory approvals"
-}
-
 onboarding_hints() {
   local stale
   if [ -z "${FACTORY_UPDATING:-}" ]; then
@@ -459,63 +419,6 @@ cmd_chat() {
   ! coordinator_attached \
     || die "the Coordinator is already open elsewhere (the dashboard or another 'factory chat'); close it there first"
   exec sbx run --name "$COORDINATOR_SANDBOX" "$@"
-}
-
-# --- status ------------------------------------------------------------------------
-cmd_status() {
-  require_sbx
-  local project code pid
-  project="$(bound_project)"
-  say "${B}Project${N}   ${project:-${D}none yet (run factory start)${N}}"
-  if local_settings_present; then
-    say "${B}Local settings${N} $FACTORY_CONFIG"
-  else
-    say "${B}Local settings${N} ${D}none (see config.example/)${N}"
-  fi
-  if [ -d "$ROOT/.broker" ] || [ -d "$ROOT/.dispatch" ] || [ -d "$ROOT/.roles" ]; then
-    warn "state is still inside the repo; factory start moves it to $FACTORY_STATE"
-  fi
-
-  code="$(curl -s -o /dev/null -w '%{http_code}' -m 2 -X POST -d '{}' "http://127.0.0.1:$BROKER_PORT/mcp" || true)"
-  if [ "$code" = "401" ]; then ok "broker running (127.0.0.1:$BROKER_PORT)"; else bad "broker not running"; fi
-  pid="$(cat "$FACTORY_DISPATCH_STATE/pid" 2>/dev/null || true)"
-  if [ -n "$pid" ] && ps -p "$pid" -o command= 2>/dev/null | grep -qF "$ROOT/dispatch/server.py"; then
-    ok "dispatch bridge running (pid $pid)"
-  else
-    bad "dispatch bridge not running"
-  fi
-  if claude_login_stored; then ok "Claude login stored"
-  else warn "no Claude login yet: type /login in the Coordinator (POWER ON on the dashboard), then run 'factory start' again"; fi
-
-  local coord_tools
-  coord_tools="$(coordinator_broker_tools)"
-  say "${B}Coordinator broker tools${N} ${coord_tools:-none}"
-  if any_jira_tool_granted; then
-    keychain_warn_missing factory-jira "Jira keychain entry (\"factory-jira\") not found"
-    jira_cloud_id_set || warn "[jira].cloud_id is not set (see README: Enabling Jira)"
-  fi
-  if npm_private_registry_needs_token; then
-    keychain_warn_missing factory-npm-registry "private npm registry keychain entry (\"factory-npm-registry\") not found"
-  fi
-  if gitlab_needs_token; then
-    keychain_warn_missing factory-gitlab "GitLab keychain entry (\"factory-gitlab\") not found"
-  fi
-  local why
-  if why="$(gitlab_mr_unheld)"; then
-    warn "GitLab merge requests open without approval: $why"
-  fi
-  approvals_status_line
-
-  local r role_list=""
-  for r in $(list_roles); do role_list="$role_list${role_list:+, }$r ($(lanes_label "$r"))"; done
-  say "${B}Roles${N} ${role_list:-none}"
-
-  say ""
-  say "${B}Sandboxes${N}"
-  sbx ls --json | jq -r '.sandboxes[] | select(.name | startswith("factory-")) | "  \(.name)\t\(.status)"' \
-    | column -t -s "$(printf '\t')" | sed "s/running/${G}running${N}/; s/stopped/${D}stopped${N}/"
-  say ""
-  say "${D}Follow a role: factory logs <role>   Roles: factory roles${N}"
 }
 
 # --- stop / reset ------------------------------------------------------------------
@@ -573,14 +476,6 @@ cmd_reset() {
   rm -f "$FACTORY_BROKER_STATE/project" "$FACTORY_DISPATCH_STATE/project"
   rm -f "$FACTORY_DISPATCH_STATE"/sessions/* 2>/dev/null || true
   ok "factory is no longer bound to a project"
-}
-
-# --- roles ------------------------------------------------------------------
-# lanes_label ROLE -> "1 lane" / "3 lanes": how many jobs ROLE runs at once
-lanes_label() {
-  local n
-  n="$(role_lanes "$1")"
-  if [ "$n" = 1 ]; then echo "1 lane"; else echo "$n lanes"; fi
 }
 
 # --- secret --------------------------------------------------------------------------
@@ -982,7 +877,6 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
     update|upgrade) cmd_update "$@" ;;
     start|up) cmd_start "$@" ;;
     chat|coordinator) cmd_chat "$@" ;;
-    status) cmd_status "$@" ;;
     stop|down) cmd_stop "$@" ;;
     restart) cmd_restart "$@" ;;
     reset) cmd_reset "$@" ;;

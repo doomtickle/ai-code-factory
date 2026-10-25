@@ -20,7 +20,6 @@ set -euo pipefail
 #    positional NAME, global flags before `run`) and nothing else.
 # 7. `factory update` never ends in the foreground dashboard: it passes
 #    --no-dashboard to cmd_start, which then prints how to open it.
-# 8. local_settings_present ignores a lone layout file.
 #
 # Sources scripts/lib/common.sh directly (not bin/factory): bin/factory
 # itself sources scripts/lib/roles.sh for every command but "docs"/"help",
@@ -170,24 +169,6 @@ grep -q -- '--no-dashboard) no_dashboard=1' "$tmp/cmd_start" \
   && grep -q 'Run ${B}factory dashboard${N} to open it.' "$tmp/cmd_start" \
   && ok "bin/factory: cmd_start --no-dashboard prints how to open the dashboard instead" \
   || bad "bin/factory: cmd_start --no-dashboard prints how to open the dashboard instead"
-
-# ===========================================================================
-# Part 8: local_settings_present (what `factory status` reports as "Local settings").
-# ===========================================================================
-rm -rf "$FACTORY_CONFIG"
-mkdir -p "$FACTORY_CONFIG"
-printf 'web\n' > "$layout_file"
-local_settings_present && bad "local settings: a lone layout file doesn't count" \
-  || ok "local settings: a lone layout file doesn't count"
-for item in policy.toml broker-kit roles projects plugins; do
-  rm -rf "${FACTORY_CONFIG:?}/$item"
-  case "$item" in
-    *.toml) : > "$FACTORY_CONFIG/$item" ;;
-    *) mkdir "$FACTORY_CONFIG/$item" ;;
-  esac
-  local_settings_present && ok "local settings: $item counts" || bad "local settings: $item counts"
-  rm -rf "${FACTORY_CONFIG:?}/$item"
-done
 
 echo "---"
 echo "$pass passed, $fail failed"
