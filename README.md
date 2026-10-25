@@ -1347,7 +1347,7 @@ hasn't dispatched any jobs yet just shows an empty report.
   - Python CLI (`factory/`): `python3 -m unittest discover -s factory -t . -p 'test_*.py' -v`
   - host scripts: `python3 -m unittest discover -s scripts -p 'test_*.py' -v`
   - shell tests: `bash scripts/test_factory_update.sh`, and likewise
-    `test_factory_secret.sh` and `test_factory_lane.sh`
+    `test_factory_lane.sh`
   - images, without sbx: `scripts/00-build-templates.sh --build-only`
   - broker: `docker run --rm --network none -v "$PWD/broker:/b:ro" -w /b factory-broker:v3 python3 -B -m unittest discover -s tests -t .`
 - **Docs site:** `.github/workflows/docs.yml` publishes the `factory docs` page
