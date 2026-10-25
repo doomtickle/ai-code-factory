@@ -13,7 +13,7 @@ its argv and environment and keeps what it reads on stdin in a file of its own.
 import os
 import subprocess
 
-from factory import secrets
+from factory import keychain, secrets
 from factory.fixtures import REPO, CommandTest
 
 # Records "$*" (one line a call) and the exact argv (NUL after each argument, \1 after each
@@ -231,15 +231,15 @@ class Parity(SecretFakes):
 class ConstantsTest(Parity):
     def test_the_names_match_secrets_sh(self):
         (status, out, _), _ = self.bash('printf "%s\\n" "$FACTORY_SECRET_NAMES" "$FACTORY_KEYCHAIN_NAMES"')
-        self.assertEqual(out, "%s\n%s\n" % (" ".join(secrets.SECRET_NAMES), " ".join(secrets.KEYCHAIN_NAMES)))
+        self.assertEqual(out, "%s\n%s\n" % (" ".join(secrets.SECRET_NAMES), " ".join(keychain.KEYCHAIN_NAMES)))
 
     def test_names_are_matched_whole(self):
         for name in ("jira", "github"):
-            self.assertTrue(secrets.keychain_name_valid(name))
+            self.assertTrue(keychain.name_valid(name))
         self.assertFalse(secrets.secret_name_valid("github"))
         for bad in ("", "jira gemini", " jira", "jira ", "../jira", "jira/x", "JIRA", "passdesk-license", "factory-jira"):
             self.assertFalse(secrets.secret_name_valid(bad), bad)
-            self.assertFalse(secrets.keychain_name_valid(bad), bad)
+            self.assertFalse(keychain.name_valid(bad), bad)
             (status, _, _), _ = self.bash('secret_name_valid "$X" || keychain_name_valid "$X"', {"X": bad})
             self.assertEqual(status, 1, bad)
 
@@ -356,9 +356,9 @@ class SyncTest(Parity):
 
 class LookupTest(Parity):
     def lookup(self, env, service="factory-jira"):
-        bash, py = self.same('keychain_lookup "$S"', lambda c: secrets.keychain_lookup(c, service),
+        bash, py = self.same('keychain_lookup "$S"', lambda c: keychain.lookup(c, service),
                              dict(env, S=service))
-        has_bash, has_py = self.same('keychain_has "$S"', lambda c: secrets.keychain_has(c, service),
+        has_bash, has_py = self.same('keychain_has "$S"', lambda c: keychain.has(c, service),
                                      dict(env, S=service))
         self.assertEqual(py[0][0], bash[0])
         self.assertEqual(py[0][1].decode(), bash[1])
@@ -397,7 +397,7 @@ class LookupTest(Parity):
             with self.subTest(service=service):
                 self.assertEqual(self.lookup({"FACTORY_KEYCHAIN": "wincred"}, service), (2, ""))
                 self.assertEqual(self.logged("ps-argv.bin"), b"")
-                self.assertIsNone(secrets.wincred_script("store", service))
+                self.assertIsNone(keychain.wincred_script("store", service))
 
     def test_none_has_nothing(self):
         self.assertEqual(self.lookup({"FACTORY_KEYCHAIN": "none"}), (1, ""))
@@ -409,7 +409,7 @@ class StoreDeleteTest(Parity):
             with self.subTest(backend=backend):
                 env = {"FACTORY_KEYCHAIN": backend, "V": "wc-secret-1"}
                 bash, bash_calls = self.bash('printf %s "$V" | keychain_store factory-jira', env)
-                py, py_calls = self.py(lambda c: secrets.keychain_store(c, "factory-jira", b"wc-secret-1"), env)
+                py, py_calls = self.py(lambda c: keychain.store(c, "factory-jira", b"wc-secret-1"), env)
                 self.assertEqual(py_calls, bash_calls)
                 self.assertEqual((py[0], bash[0]), (True, 0))
                 stdin = "keyring-stdin" if backend == "secret-tool" else "ps-stdin"
@@ -421,16 +421,16 @@ class StoreDeleteTest(Parity):
     def test_a_failed_store_is_false(self):
         ctx = self.ctx()
         self.environ.update(FACTORY_KEYCHAIN="secret-tool", FAKE_STORE_STATUS="1")
-        self.assertFalse(secrets.keychain_store(ctx, "factory-jira", b"x"))
+        self.assertFalse(keychain.store(ctx, "factory-jira", b"x"))
         for backend in ("macos", "none"):
             self.environ["FACTORY_KEYCHAIN"] = backend
-            self.assertFalse(secrets.keychain_store(ctx, "factory-jira", b"x"))
+            self.assertFalse(keychain.store(ctx, "factory-jira", b"x"))
 
     def test_delete(self):
         self.store_wincred("factory-jira", "x")
         for backend in ("secret-tool", "macos", "wincred", "none"):
             with self.subTest(backend=backend):
-                bash, py = self.same("keychain_delete factory-jira", lambda c: secrets.keychain_delete(c, "factory-jira"),
+                bash, py = self.same("keychain_delete factory-jira", lambda c: keychain.delete(c, "factory-jira"),
                                      {"FACTORY_KEYCHAIN": backend})
                 self.assertEqual(bash, (0, "", ""))
                 self.assertEqual(py[1:], bash[1:])

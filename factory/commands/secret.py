@@ -10,13 +10,14 @@ proxy-inject, and the GitHub token (CLAUDE.md, "Credentials").
   delivered is marked, so the next `factory start` leaves it alone.
 
 Port of cmd_secret in bin/factory, with the output unchanged. The value is read from a
-hidden prompt or stdin and goes only to a program's stdin (factory/secrets.py).
+hidden prompt or stdin and goes only to a program's stdin (factory/secrets.py, factory/keychain.py).
 """
 
 import os
 import sys
 
-from factory import preflight, sbx, secrets
+from factory import keychain, preflight, sbx, secrets
+from factory.programs import DROP, KEEP, run_tool
 from factory.context import FactoryError
 
 USAGE = "usage: factory secret <save|forget|set|rm|ls> <name>"
@@ -88,17 +89,13 @@ def _check_secret_name(name):
 
 
 def _check_keychain_name(name):
-    if not secrets.keychain_name_valid(name):
-        raise FactoryError("unknown secret '%s' (one of: %s)" % (name, " ".join(secrets.KEYCHAIN_NAMES)))
+    if not keychain.name_valid(name):
+        raise FactoryError("unknown secret '%s' (one of: %s)" % (name, " ".join(keychain.KEYCHAIN_NAMES)))
 
 
 def _require_broker_running(ctx):
-    """bash's require_sbx, then the broker sandbox must be running."""
-    if not preflight.which(ctx, "sbx"):
-        raise FactoryError("'sbx' not found in PATH (see README.md)")
-    got = sbx.installed_version(ctx)
-    if got != preflight.SBX_VERSION:
-        raise FactoryError("sbx %s required, found '%s' (see README.md)" % (preflight.SBX_VERSION, got or "unknown"))
+    """The pinned sbx (sbx.require_sbx), and the broker sandbox must be running."""
+    sbx.require_sbx(ctx)
     if not sbx.sandbox_running(ctx, sbx.BROKER_SANDBOX):
         raise FactoryError("the broker sandbox is not running; run 'factory start' first")
 
@@ -137,14 +134,14 @@ def secret_save(ctx, args):
             raise FactoryError("could not save %s in the Keychain" % service)
     elif backend in ("secret-tool", "wincred"):
         value = read_value(ctx, name)
-        if not secrets.keychain_store(ctx, service, value):
+        if not keychain.store(ctx, service, value):
             raise FactoryError("could not save %s in the keychain (%s)" % (service, backend))
         del value
     else:
         raise FactoryError("this machine has no keychain the factory can use (macOS Keychain, secret-tool, or "
                            "Windows Credential Manager on WSL2); use 'factory secret set %s' after each broker "
                            "start instead" % name)
-    if secrets.keychain_has(ctx, service) != secrets.FOUND:
+    if keychain.has(ctx, service) != keychain.FOUND:
         raise FactoryError("saved %s, but reading it back failed" % service)
     ctx.ok("saved %s in the keychain (%s); every broker start delivers it from now on" % (service, backend))
 
@@ -172,9 +169,9 @@ def _forget_broker_copy(ctx, name):
         return UNTOUCHED
     if name == "github":
         argv = ["sbx", "secret", "rm", "github", "--sandbox", sbx.BROKER_SANDBOX, "-f"]
-        if secrets.run_tool(ctx, argv, out=secrets.DROP, err=secrets.DROP)[0] != 0:
+        if run_tool(ctx, argv, out=DROP, err=DROP)[0] != 0:
             # sbx may refuse because there is nothing to remove; trust only a listing.
-            status, listing, _ = secrets.run_tool(ctx, ["sbx", "secret", "ls"], out=secrets.KEEP, err=secrets.DROP)
+            status, listing, _ = run_tool(ctx, ["sbx", "secret", "ls"], out=KEEP, err=DROP)
             if status != 0:
                 return FAILED
             for line in listing.decode("utf-8", "replace").split("\n"):
@@ -183,7 +180,7 @@ def _forget_broker_copy(ctx, name):
                     return FAILED
         ctx.ok("removed the broker's GitHub token")
     else:
-        if not secrets.revoke_file(ctx, name, out=secrets.DROP, err=secrets.DROP):
+        if not secrets.revoke_file(ctx, name, out=DROP, err=DROP):
             return FAILED
         secrets.unmark_manual(ctx.paths, name)
         ctx.ok("removed '%s' from the broker sandbox" % name)
@@ -216,13 +213,13 @@ def secret_forget(ctx, args):
     name = _one_name(args, "forget")
     _check_keychain_name(name)
     service = "factory-" + name
-    secrets.keychain_delete(ctx, service)
-    status = secrets.keychain_has(ctx, service)
-    if status == secrets.FOUND:
+    keychain.delete(ctx, service)
+    status = keychain.has(ctx, service)
+    if status == keychain.FOUND:
         broker = _forget_broker_copy(ctx, name)
         raise _forget_failed(name, broker, "the delete failed, so the next 'factory start' would deliver it again",
                              "Delete it by hand (e.g. in your keychain app)")
-    if status != secrets.NOT_STORED:
+    if status != keychain.NOT_STORED:
         broker = _forget_broker_copy(ctx, name)
         raise _forget_failed(name, broker, "the keychain is locked or unavailable", "Unlock it")
     ctx.ok("deleted %s from the keychain" % service)
@@ -244,7 +241,7 @@ def secret_rm(ctx, args):
         raise FactoryError("could not remove '%s' from the broker sandbox; it may still be active" % name)
     secrets.unmark_manual(ctx.paths, name)
     ctx.ok("removed '%s' from the broker sandbox" % name)
-    if secrets.keychain_has(ctx, "factory-" + name) == secrets.FOUND:
+    if keychain.has(ctx, "factory-" + name) == keychain.FOUND:
         ctx.warn("a keychain entry for 'factory-%s' still exists; the next 'factory start' will deliver it again. "
                  "To prevent that: factory secret forget %s" % (name, name))
     return 0

@@ -9,12 +9,14 @@ over a value checks that it reached the right program's stdin and nothing else: 
 environment, no output, no file under the scratch folder.
 """
 
+import fcntl
 import os
 import pty
 import select
 import shutil
 import subprocess
 import sys
+import termios
 import time
 
 from factory.fixtures import REPO
@@ -42,7 +44,7 @@ class SecretTest(SecretFakes):
 class NamesTest(SecretTest):
     def test_a_bad_name_is_refused_before_sbx_or_a_keychain_is_asked(self):
         for verb in ("set", "rm", "save", "forget"):
-            for name in ("../etc-passwd", "not-a-real-secret", "jira gemini", "passdesk-license", ""):
+            for name in ("../etc-passwd", "not-a-real-secret", "jira gemini", "passdesk-license", "", "-x", "--help"):
                 with self.subTest(verb=verb, name=name):
                     status, out, err = self.factory(verb, name, stdin="lic-key-xyz\n", FACTORY_KEYCHAIN="wincred")
                     names = NAMES + (" github" if verb in ("save", "forget") else "")
@@ -182,6 +184,35 @@ class TerminalTest(SecretTest):
         self.assertNotIn(b"typed-secret-7", echoed)
         self.assertEqual(self.logged("sbx-stdin"), b"typed-secret-7")
         self.assert_not_leaked("typed-secret-7")
+
+    def test_ctrl_c_at_the_prompt_restores_echo_and_exits_130(self):
+        """Ctrl-C typed at the hidden prompt (the pty is the command's controlling terminal, so
+        the terminal driver sends SIGINT): echo is on again, the status is 130, the prompt line
+        is ended, and nothing is delivered."""
+        master, slave = pty.openpty()
+        self.assertTrue(termios.tcgetattr(slave)[3] & termios.ECHO)
+        self.reset()
+        proc = subprocess.Popen(FACTORY + ["secret", "set", "jira"], stdin=slave, stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE, env=dict(self.environ), cwd=self.tmp, start_new_session=True,
+                                preexec_fn=lambda: fcntl.ioctl(0, termios.TIOCSCTTY, 0))
+        prompt = b"Value for jira (input hidden): "
+        got = b""
+        deadline = time.time() + 20
+        while not got.endswith(prompt) and time.time() < deadline:
+            ready, _, _ = select.select([proc.stderr], [], [], 1)
+            if ready:
+                got += os.read(proc.stderr.fileno(), 1)
+        self.assertEqual(got, prompt)
+        self.assertFalse(termios.tcgetattr(slave)[3] & termios.ECHO)  # off while it waits
+        os.write(master, b"half-typed\x03")
+        out, err = proc.communicate(timeout=20)
+        restored = termios.tcgetattr(slave)[3] & termios.ECHO
+        os.close(slave)
+        os.close(master)
+        self.assertTrue(restored)
+        self.assertEqual((proc.returncode, out, err), (130, b"", b"\n"))
+        self.assertNotIn("exec", self.sbx_calls())
+        self.assert_not_leaked("half-typed")
 
 
 class SaveTest(SecretTest):

@@ -34,7 +34,7 @@ bash and Python side by side, and `main` works after every one.
 | Bash `in_list` takes one exact word, as Python's `_in_list` (no new command) | done |
 | `factory doctor`: `factory/commands/doctor.py`, with the helpers it uses in `factory/preflight.py` (`scripts/lib/preflight.sh` ported, the bash stays for `install-prereqs.sh`), `factory/sbx.py` and `factory/policy.py`; `disabled_role_sandboxes` in `factory/roles.py` | 4 (part 1) |
 | `factory status`: `factory/commands/status.py`, with `factory/keychain.py` (`keychain_has` and the lookups it uses), `factory/approvals.py` (the approvals summary and status line, shared with `doctor`), `require_sbx` in `factory/sbx.py` and the Jira/npm token checks in `factory/policy.py`; tests in `factory/test_command_status.py` | 4 (part 3) |
-| `factory secret` (`save`, `forget`, `set`, `rm`, `ls`): `factory/commands/secret.py`, with the `scripts/lib/secrets.sh` helpers it uses in `factory/secrets.py` (the bash stays for `start-broker.sh` and `keychain_warn_missing`) | 5 |
+| `factory secret` (`save`, `forget`, `set`, `rm`, `ls`): `factory/commands/secret.py`, with the `scripts/lib/secrets.sh` helpers it uses in `factory/secrets.py` and the keychain ones in `factory/keychain.py` (shared with `status`; the bash stays for `start-broker.sh` and `keychain_warn_missing`) | 5 |
 
 ## Remaining, in order
 
@@ -75,14 +75,16 @@ bash and Python side by side, and `main` works after every one.
    (`common.sh`) are deleted, since nothing else in bash called them. The bash `policy_value`,
    `policy_string`, `gitlab_*`, `jira_cloud_id_set`, `any_jira_tool_granted`,
    `npm_private_registry_needs_token`, `setup_done`, `require_sbx` and the `secrets.sh` keychain
-   helpers stay while `start` and `secret` call them; `factory/test_policy.py`,
+   helpers stay while `start` calls them; `factory/test_policy.py`,
    `test_sbx.py`, `test_keychain.py` and `test_preflight.py` run bash and Python on the same
    fixtures.
 5. **`secret`**: done. `factory/commands/secret.py` holds `save`, `forget`, `set`, `rm` and `ls`;
-   `factory/secrets.py` the helpers they use (names, the keychain backends, the Credential Manager
-   script, delivery and revocation over `sbx exec`, the `factory secret set` markers, the per-name
-   and GitHub keychain sync). `keychain_backend` and `wincred_powershell` were already in
-   `factory/preflight.py`. A value is bytes and goes only to a program's stdin; the hidden prompt
+   `factory/secrets.py` the helpers they use (names, delivery and revocation over `sbx exec`, the
+   `factory secret set` markers, the per-name and GitHub keychain sync). The keychain itself
+   (lookup, has, store, delete and the Credential Manager scripts) is one copy in
+   `factory/keychain.py`, which `status` also uses; running a program with a value on its stdin is
+   `factory/programs.py`. `keychain_backend` and `wincred_powershell` were already in
+   `factory/preflight.py`, and the version check is `sbx.require_sbx`. A value is bytes and goes only to a program's stdin; the hidden prompt
    turns echo off before it prints. `scripts/lib/secrets.sh` stays: `start-broker.sh` calls
    `secret_sync_from_keychain`, `github_sync_from_keychain` and `secret_clear_all_manual` on every
    start, and `bin/factory`'s `keychain_warn_missing` (for `start`/`status`) calls `keychain_has`.

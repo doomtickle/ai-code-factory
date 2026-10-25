@@ -1,6 +1,7 @@
 """Tests for factory/keychain.py. Ported from keychain_has, keychain_lookup and
-keychain_search_empty (scripts/lib/secrets.sh); the bash stays until `secret` and `start` are
-ported. Each check runs both on the same tool stubs (secret-tool, security, powershell.exe on a
+keychain_search_empty (scripts/lib/secrets.sh); the bash stays until `start` is ported.
+lookup, store, delete and the Credential Manager scripts are checked against the bash in
+factory/test_secrets.py. Each check runs both on the same tool stubs (secret-tool, security, powershell.exe on a
 private PATH) and requires the same status. The value a stub returns is never printed.
 """
 
