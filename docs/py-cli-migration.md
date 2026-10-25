@@ -33,6 +33,7 @@ bash and Python side by side, and `main` works after every one.
 | `factory logs` (and `log`), `packet` (and `packets`): step 4, part 2 | 4 (part) |
 | Bash `in_list` takes one exact word, as Python's `_in_list` (no new command) | done |
 | `factory doctor`: `factory/commands/doctor.py`, with the helpers it uses in `factory/preflight.py` (`scripts/lib/preflight.sh` ported, the bash stays for `install-prereqs.sh`), `factory/sbx.py` and `factory/policy.py`; `disabled_role_sandboxes` in `factory/roles.py` | 4 (part 1) |
+| `factory status`: `factory/commands/status.py`, with `factory/keychain.py` (`keychain_has` and the lookups it uses), `factory/approvals.py` (the approvals summary and status line, shared with `doctor`), `require_sbx` in `factory/sbx.py` and the Jira/npm token checks in `factory/policy.py`; tests in `factory/test_command_status.py` | 4 (part 3) |
 
 ## Remaining, in order
 
@@ -50,15 +51,27 @@ bash and Python side by side, and `main` works after every one.
    `OPTIONAL="0 1"` fail in bash as they do in Python, and `factory/test_roles_validation.py`
    requires the same refusal and message from both. This did not move the security boundary:
    those keys are not overridable.
-4. **Read-only inspection**: `doctor`, `logs` and `packet` are done. `factory/test_command_doctor.py`
-   replaces the doctor half of `test_factory_doctor.sh`; what tests bash helpers still in `bin/factory`
-   (`require_project_commits`, `sbx_not_signed_in`, `run_or_die`, `approvals_status_line`)
-   stays shell as `scripts/test_factory_helpers.sh` until `status`/`start` are ported.
+4. **Read-only inspection**: `doctor`, `logs`, `packet` and `status` are done.
+   `factory/test_command_doctor.py` replaces the doctor half of `test_factory_doctor.sh`, and
+   `factory/test_command_status.py` replaces the status parts of `test_factory_helpers.sh`
+   (the approvals line) and `test_factory_layout.sh` (the local-settings line). What tests bash
+   helpers `start` still calls (`require_project_commits`, `sbx_not_signed_in`, `run_or_die`)
+   stays shell as `scripts/test_factory_helpers.sh` until `start` is ported.
    `logs` and `packet` live in `factory/commands/logs.py` and `packet.py`; `logs` hands following
    to `tail -F` (it already survives rotation and heads each file) and formats the audit lines in
-   Python, so it no longer needs `jq`. `status` remains, and waits for #170. The bash `policy_value`,
-   `gitlab_*`, `setup_done` and `approvals_summary` stay while `start`/`status` call them;
-   `factory/test_policy.py` and `factory/test_preflight.py` run bash and Python on the same
+   Python, so it no longer needs `jq`.
+   `status` keeps the bash output byte for byte (checked against the bash it replaced on about 30
+   fixtures, plain and on a terminal, including exit codes and stderr), with these deliberate
+   differences: `sbx version` failing outright is reported as "sbx 0.45.1 required, found
+   'unknown'" where bash exited silently (`require_sbx`), and the approvals line now only knows
+   the staged-only flow of #170 (staged, approved/being written, done, failed; no held or waiting
+   lane state, no `hold_seconds`). Its helpers went with it: `cmd_status`, `lanes_label`,
+   `approvals_summary`, `approvals_status_line` (bin/factory) and `local_settings_present`
+   (`common.sh`) are deleted, since nothing else in bash called them. The bash `policy_value`,
+   `policy_string`, `gitlab_*`, `jira_cloud_id_set`, `any_jira_tool_granted`,
+   `npm_private_registry_needs_token`, `setup_done`, `require_sbx` and the `secrets.sh` keychain
+   helpers stay while `start` and `secret` call them; `factory/test_policy.py`,
+   `test_sbx.py`, `test_keychain.py` and `test_preflight.py` run bash and Python on the same
    fixtures.
 5. **`secret`** (`save`, `forget`, `set`, `rm`, `ls`, with `scripts/lib/secrets.sh`);
    `test_factory_secret.sh` is the biggest test to port, so it is a pull request by itself.

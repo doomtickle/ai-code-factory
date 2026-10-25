@@ -295,19 +295,6 @@ sandbox_running() {
   [ "$(sbx ls 2>/dev/null | awk -v s="$1" '$1 == s { print $3 }')" = running ]
 }
 
-# local_settings_present -> success if the config folder holds any local
-# settings: policy.toml or enabled-roles, or a broker-kit/, roles/, projects/ or
-# plugins/ folder.
-local_settings_present() {
-  local d
-  [ -f "$FACTORY_CONFIG/policy.toml" ] && return 0
-  [ -f "$FACTORY_CONFIG/enabled-roles" ] && return 0
-  for d in broker-kit roles projects plugins; do
-    [ -d "$FACTORY_CONFIG/$d" ] && return 0
-  done
-  return 1
-}
-
 # policy_value SECTION KEY -> the raw value of KEY = ... in [SECTION], from this
 # machine's overlay ($FACTORY_CONFIG/policy.toml) if it sets KEY, else from
 # broker/policy.toml - the same precedence as the broker's load_policy().

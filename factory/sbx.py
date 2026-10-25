@@ -8,6 +8,8 @@ stubs. Every query is read-only, and an sbx that is missing or fails reads as "n
 import os
 import re
 
+from factory import preflight
+from factory.context import FactoryError
 from factory.preflight import SBX_VERSION
 
 # Keep in sync with scripts/lib/common.sh (a test compares them).
@@ -25,6 +27,15 @@ def installed_version(ctx):
         if m:
             found.append(m.group(1))
     return "\n".join(found).rstrip("\n")
+
+
+def require_sbx(ctx):
+    """Raise FactoryError (bash dies) unless the pinned sbx is installed."""
+    if not preflight.which(ctx, "sbx"):
+        raise FactoryError("'sbx' not found in PATH (see README.md)")
+    got = installed_version(ctx)
+    if got != SBX_VERSION:
+        raise FactoryError("sbx %s required, found '%s' (see README.md)" % (SBX_VERSION, got or "unknown"))
 
 
 def sandbox_names(ctx):
