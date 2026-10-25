@@ -122,9 +122,9 @@ def _words(value):
 
 
 def _in_list(word, listing):
-    """True if `word` is one of the space-separated words of `listing`. Bash's in_list
-    also matches several adjacent words ("low medium" is in "low medium high"); this
-    does not, which only makes the check stricter."""
+    """True if `word` is one of the space-separated words of `listing`; an empty word
+    never is, and neither is one holding a space ("low medium" is not in "low medium high").
+    Bash's in_list (scripts/lib/roles.sh) answers the same."""
     return word != "" and word in listing.split(" ")
 
 
