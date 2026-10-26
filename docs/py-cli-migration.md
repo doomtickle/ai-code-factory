@@ -43,16 +43,18 @@ bash and Python side by side, and `main` works after every one.
 | `factory _start-dispatch` (step 7, part A): `factory/dispatch_start.py`, with `migrate_state` in `factory/state.py` and `policy_toml_string` and `lane_identity_problem` in `factory/policy.py`; `scripts/start-dispatch.sh` is a shim that runs it; tests in `factory/test_dispatch_start.py` and `factory/test_state.py` | 7 (part A) |
 | `scripts/start-broker.sh` (step 7, part B): `factory/broker_start.py` as `factory _start-broker` (`INTERNAL`), the script a shim; the broker's sandbox fingerprint and `broker_plugins` in `factory/fingerprints.py`; `clear_all_manual` and the `sync_from_keychain` statuses (#179) in `factory/secrets.py`; tests in `factory/test_broker_start.py` | 7 (part B) |
 | The Coordinator's and roles' sandbox fingerprints, `record_sandbox_fingerprint` for any sandbox and `stale_sandboxes` (step 7, part C1): `factory/fingerprints.py` (`sandbox_fingerprint`, `record_sandbox_fingerprint`, `stale_sandboxes`); the bash copies in `scripts/lib/roles.sh` stay for their callers; tests in `factory/test_fingerprints.py` | 7 (part C1) |
+| `factory start` (and `up`) and `scripts/02-launch-factory.sh` (step 7, part C2): `factory/commands/start.py` (`cmd_start`, `require_project_commits`, `onboarding_hints`, `resolve_layout`; `factory _onboarding-hints` for bash `setup`) and `factory/launch.py` (`factory _launch`, the script a shim; the Coordinator's `claudeMdExcludes` with it); `git_push_enabled` and `github_repos_listed` in `factory/policy.py`; `restart` calls `start` directly; tests in `factory/test_command_start.py` and `factory/test_launch.py` | 7 (part C2) |
 ## Remaining, in order
 
 1. **Wrappers of Python scripts and small commands**: done (PR 2).
 2. **Role validation**: done (PR 3). `validate_role`, `validate_role_overrides`,
    `validate_enabled_roles`, `role_lane_names` and `coordinator_broker_tools` are in
    `factory/roles.py` (with `known_broker_tools`), and `role new` calls them. The bash
-   copies in `scripts/lib/roles.sh` stay until steps 4, 6 and 7 port their callers
+   copies in `scripts/lib/roles.sh` stayed until steps 4, 6 and 7 ported their callers
    (`start-broker.sh`, `start-dispatch.sh`, `02-launch-factory.sh`, and `bin/factory`'s
-   `doctor`, `start`, `status` and `logs`); `factory/test_roles_validation.py` runs both on the same fixtures
-   and requires the same refusals and messages. It replaced `test_factory_role_overrides.sh`.
+   `doctor`, `start`, `status` and `logs`) and were deleted with the last of them (step 7, part
+   C2); `factory/test_roles_validation.py`, which ran both on the same fixtures, now requires the
+   refusals and messages the bash gave. It replaced `test_factory_role_overrides.sh`.
    `disabled_role_sandboxes` moved to Python with `doctor` (step 4) and has no bash copy.
 3. **Tighten bash `in_list`**: done. It returns false when `$1` is empty or holds a space, tab
    or newline, so `EFFORT="low medium"`, `WORKSPACE="rw ro"`, `TEMPLATE="developer reviewer"` and
@@ -62,9 +64,11 @@ bash and Python side by side, and `main` works after every one.
 4. **Read-only inspection**: `doctor`, `logs`, `packet` and `status` are done.
    `factory/test_command_doctor.py` replaces the doctor half of `test_factory_doctor.sh`, and
    `factory/test_command_status.py` replaces the status parts of `test_factory_helpers.sh`
-   (the approvals line) and `test_factory_layout.sh` (the local-settings line). What tests bash
-   helpers `start` still calls (`require_project_commits`, `sbx_not_signed_in`, `run_or_die`)
-   stays shell as `scripts/test_factory_helpers.sh` until `start` is ported.
+   (the approvals line) and `test_factory_layout.sh` (the local-settings line). The bash helpers
+   `start` called are tested in Python since it was ported (step 7, part C2:
+   `require_project_commits` in `factory/test_command_start.py`, `run_or_die` in
+   `factory/test_broker_start.py`); `sbx_not_signed_in`, which `setup` calls, stays shell in
+   `scripts/test_factory_helpers.sh`.
    `logs` and `packet` live in `factory/commands/logs.py` and `packet.py`; `logs` hands following
    to `tail -F` (it already survives rotation and heads each file) and formats the audit lines in
    Python, so it no longer needs `jq`.
@@ -81,10 +85,9 @@ bash and Python side by side, and `main` works after every one.
    `approvals_summary`, `approvals_status_line` (bin/factory) and `local_settings_present`
    (`common.sh`) are deleted, since nothing else in bash called them. The bash `policy_value`,
    `policy_string`, `gitlab_*`, `jira_cloud_id_set`, `any_jira_tool_granted`,
-   `npm_private_registry_needs_token`, `setup_done`, `require_sbx` and the `secrets.sh` keychain
-   helpers stay while `start` calls them; `factory/test_policy.py`,
-   `test_sbx.py`, `test_keychain.py` and `test_preflight.py` run bash and Python on the same
-   fixtures.
+   `npm_private_registry_needs_token`, `setup_done` and the `secrets.sh` keychain helpers stayed
+   while `start` called them and went with it (step 7, part C2), their parity tests becoming
+   Python-only tests of what the bash gave; `require_sbx` stays for `03-stop-factory.sh`.
 5. **`secret`**: done. `factory/commands/secret.py` holds `save`, `forget`, `set`, `rm` and `ls`;
    `factory/secrets.py` the helpers they use (names, delivery and revocation over `sbx exec`, the
    `factory secret set` markers, the per-name and GitHub keychain sync). The keychain itself
@@ -94,7 +97,8 @@ bash and Python side by side, and `main` works after every one.
    `factory/preflight.py`, and the version check is `sbx.require_sbx`. A value is bytes and goes only to a program's stdin; the hidden prompt
    turns echo off before it prints. `scripts/lib/secrets.sh` stayed for `start-broker.sh` (which
    step 7 part B ported) and for `bin/factory`'s `keychain_warn_missing` (for `start`), which
-   calls `keychain_has`: since part B only that and what it calls are left.
+   called `keychain_has`; the file went with `start` (step 7, part C2), and `status.warn_missing`
+   is the Python `keychain_warn_missing`.
    `factory/test_secrets.py` runs the bash and the Python helpers on the same fakes and requires the
    same statuses, values, messages and argv (the delivery and PowerShell scripts byte for byte);
    it also tests `keychain_warn_missing`, which has no Python copy yet, and that the bash
@@ -121,11 +125,11 @@ bash and Python side by side, and `main` works after every one.
      tell people to run it by hand, it runs `migrate_state` and needs `jq`, and a port would
      only move its `ps` and `sbx stop` lines without removing any bash. Python takes only its exit
      status. It goes with `common.sh` in step 9.
-   - `restart` runs the stop script, then the bash `start` as the fixed argv
-     `[<checkout>/bin/factory, start, <project>, --no-dashboard]` (no shell). It moves to a direct
-     call when `start` is ported (step 7).
-   - `reset` asks through `Context.confirm` (a tty on stdin; `y`, `yes`, any case), as bash did. Bash's
-     project switch in `cmd_start` now runs `python3 factory reset --yes`.
+   - `restart` runs the stop script, then `start` for the bound project with `--no-dashboard`: at
+     first the bash one as a fixed argv, and since step 7 part C2 `start.run`, called directly.
+   - `reset` asks through `Context.confirm` (a tty on stdin; `y`, `yes`, any case), as bash did. The
+     project switch in `start` runs `reset --yes` (as a program while `start` was bash; called
+     directly since step 7 part C2).
    - The bash `rm_failed_after_stop` stays for `cmd_update` (step 8); the Python copy is
      `runstate.rm_failed_after_stop`, and `factory/test_command_runstate.py` compares the two
      messages (reset and update wording, including the trailing space after each name).
@@ -133,10 +137,9 @@ bash and Python side by side, and `main` works after every one.
      use them, so they go with steps 7 and 8.
    - Tests: the usage and no-project parts of `test_factory_restart.sh`, the reset parts of
      `test_factory_state.sh`, `test_factory_chat.sh` and Part 6 of `test_factory_layout.sh`
-     (`coordinator_attached`) are now Python and deleted. What stays shell: the restart that runs the
-     real bash `start` and the real stop script against real sleeping processes
-     (`test_factory_restart.sh`), the stale saved layout, and the `cmd_start` project switch calling
-     Python `reset --yes` (`test_factory_state.sh` 2c), because they test bash that is not ported.
+     (`coordinator_attached`) are now Python and deleted. What stayed shell (the restart through the
+     shim, the real stop script against real sleeping processes, the stale saved layout, the project
+     switch) followed with `start` in step 7 part C2, into `factory/test_command_start.py`.
    - Output is byte-identical (16 scenarios compared old against new: status, stdout, stderr,
      sbx calls and state). One difference, on a failure path: if removing a `project` file fails for a
      reason other than "not there" (a directory in its place, a permission error), Python stops with
@@ -145,7 +148,7 @@ bash and Python side by side, and `main` works after every one.
      files are best effort in both.
 7. **`start`**, with `start-broker.sh`, `start-dispatch.sh` and `02-launch-factory.sh`
    (the riskiest: it creates sandboxes and delivers credentials; the credential rules in
-   `CLAUDE.md` apply unchanged, argv lists only). In three parts: A and B are done, C remains.
+   `CLAUDE.md` apply unchanged, argv lists only). **Done**, in three parts (C in two).
    - **Part A, done: `start-dispatch.sh`.** `factory/dispatch_start.py` (`main(ctx, argv)`) does
      the validation, the lane identity check and snapshot, the snapshots into `FACTORY_STATE`
      (role instructions plus project notes, role overrides, enabled-roles, the docs), `running_pid`
@@ -222,12 +225,97 @@ bash and Python side by side, and `main` works after every one.
      bash copies in `scripts/lib/roles.sh` stay: `onboarding_hints`, `cmd_update_plan`, `cmd_update`
      and `02-launch-factory.sh` still call them. Like bash, an `sbx ls -q` that fails reads as no
      sandboxes (what it printed is kept); `broker_start.py` records through `record_sandbox_fingerprint`.
-   - **Part C, remaining: `02-launch-factory.sh`, `cmd_start`, `onboarding_hints`**, which use the
-     Python functions; then the bash fingerprint helpers (`sandbox_fingerprint`,
-     `record_sandbox_fingerprint`, `stale_sandboxes`, `image_build_id`, `dir_hash`, `yes_no`,
-     `RW_LAYOUT`) go once `update` (step 8) no longer needs them.
+   - **Part C2 (done): `factory start`, `onboarding_hints` and `02-launch-factory.sh`.**
+     `factory/commands/start.py` is `cmd_start` (`start` and `up` in `COMMANDS` and
+     `PORTED_COMMANDS`), `require_project_commits` (the same hook- and fsmonitor-free
+     `git rev-parse`), `resolve_layout` and `onboarding_hints` (`hints`; `keychain_warn_missing` is
+     `status.warn_missing`, the policy checks are `factory/policy.py`'s, with `git_push_enabled`
+     and `github_repos_listed` added). `factory/launch.py` is the launch: validation, the preflight
+     refusals, `.factory/outgoing` (still refusing a symlinked `.factory`, `outgoing` or
+     `.gitignore`; the folders are made one at a time and checked again, the file `O_EXCL |
+     O_NOFOLLOW`), the broker and dispatch starts (`broker_start.main` and `dispatch_start.main`,
+     called in-process rather than through their shims), `create_sandbox` (the same `sbx create`
+     argv lists, the fingerprint recorded with `fingerprints.record_sandbox_fingerprint`), role
+     sandboxes only once the Claude login is stored, the Coordinator's `claudeMdExcludes` (the
+     settings cross only on the stdin of the same fixed in-sandbox `sh -c` script, as before) and the
+     closing notes. `scripts/02-launch-factory.sh` keeps its path and usage check and runs
+     `factory _launch "$@"`. Bash reaches it so: `factory setup` ends with `factory
+     _onboarding-hints` (`INTERNAL`); `factory update` runs `FACTORY_UPDATING=1 cmd_setup` as before
+     (bash exports the variable to the Python for that call, so its hints leave out the
+     out-of-date warning) and then `factory start <project> --no-dashboard`; `factory restart`
+     calls `start.run` directly. The project switch asks through `Context.confirm` and calls
+     `runstate.reset` with `--yes`.
+   - Compared with the bash on 83 scenarios (fresh with and without a login, plain and on a
+     terminal, rerun, partial, `--no-ui`, `FACTORY_NO_UI`, `--no-dashboard`, `up`, project switch
+     yes/no/no tty, not set up, an old image tag, wrong or missing sbx, repos with no commits, a
+     project that is not a repo, usage errors, every `--layout`/`FACTORY_LAYOUT`/saved layout case,
+     sandboxes of another project, the old rw layout, old state locations, the pre-roles broker,
+     state inside the project, each symlink refusal, a kept `.gitignore`, bad overrides, the
+     researcher enabled, a removed role, the briefing note with an odd project path, managed settings
+     missing, already excluded, out of order or not JSON, failing `create`, broker and dispatch
+     starts, each onboarding hint on and off, a locked keychain, the hints entry point with and
+     without `FACTORY_UPDATING`, the script's usage, `restart`, and no `broker/tools.txt`): the same
+     status, stdout, stderr, sbx calls with their stdin, and files with their modes, except for
+     the failure paths below. The WSL `/mnt/<drive>` warning was checked in the tests only (the bash
+     read the real `/proc/version`).
+   - Deliberate differences, all on failure paths: (1) `jq` is no longer needed, so there is no
+     "'jq' not found" error, and managed settings that are not JSON print only the `error:` line,
+     not jq's parse error before it; (2) an `sbx ls --json` that fails or gives no sandbox list
+     (or a factory sandbox with no workspace list) stops with `error: could not list the sandboxes
+     ('sbx ls --json' failed: ...)` and exit 1, where bash exited with sbx's or jq's status after
+     their own messages; (3) a folder or file that can't be made (`.factory`, `outgoing`, a scratch
+     folder, `.gitignore`, a fingerprint) stops with `error: <path>: <reason>` and exit 1, where
+     bash printed `mkdir`'s or the shell's message (also exit 1); (4) a `.factory` or `outgoing`
+     that becomes a symlink between the check and the `mkdir` is refused, where `mkdir -p` would
+     have followed it. Two more, not failures: the briefing note names the script by its path in
+     the checkout (`<checkout>/scripts/02-launch-factory.sh`), where bash printed `$0` as typed
+     when the script was run by hand (from `factory start` they are the same), and quotes the
+     project as bash 5's `printf %q` does (macOS's bash 3.2 may quote unusual characters
+     differently; unverified); and the managed settings are written as Python's compact JSON,
+     the same bytes as `jq -c` for what the kit writes (objects, arrays, strings, booleans,
+     integers), where a float, a DEL character or a file holding several JSON values would differ
+     (the last is refused).
+   - Deleted, since nothing in bash calls them any more: in `bin/factory`, `cmd_start`,
+     `setup_done`, `require_project_commits`, `onboarding_hints`, `keychain_warn_missing`,
+     `git_push_enabled`, `github_repos_listed`, `any_jira_tool_granted`, `gitlab_needs_token`,
+     `gitlab_mr_unheld`, `npm_private_registry_needs_token` and `jira_cloud_id_set` (and its
+     sourcing of `preflight.sh` and `secrets.sh`); all of
+     `scripts/lib/secrets.sh`; in `common.sh`, `run_or_die` (unused since part B), `resolve_layout`
+     with `FACTORY_LAYOUT_FILE`, `require_state_outside`, `project_repos` (`factory/repos.py` and
+     `factory-lane` are the two copies `scripts/test_project_repos.sh` compares now),
+     `template_claude_md`, `with_claude_md_exclude`, `exclude_template_claude_md`,
+     `sandbox_exists`, `policy_value`, `policy_string` and `claude_login_stored`; in `roles.sh`,
+     `KNOWN_BROKER_TOOLS`, `KNOWN_TEMPLATES`, `RESERVED_ROLE_NAMES` (the `broker/tools.txt` guard
+     stays), `validate_enabled_roles`, `validate_role_override(s)`, `override_note`,
+     `validate_role`, `valid_role_name`, `role_broker_mcp`, `role_lanes`, `role_lane_names` and
+     `record_sandbox_fingerprint`. Their parity tests (`factory/test_policy.py`, `test_secrets.py`,
+     `test_keychain.py`, `test_preflight.py`, `test_roles_validation.py`, `test_roles.py`,
+     `test_repos.py`, `test_sbx.py`, `test_fingerprints.py`, and `scripts/test_factory_gitlab.sh`
+     and `test_factory_config.sh`, deleted) are now Python-only tests of the outputs the bash gave,
+     captured from it before it was deleted; what bash stays is still compared. (Its locale loops
+     went: only the bash depended on the locale.) `sbx_reference_problem` and `sandbox_running`
+     were already uncalled before this step and are left for step 9.
+   - Tests: `scripts/test_factory_layout.sh`, `test_factory_restart.sh` and
+     `test_claude_md_exclude.sh` are now `factory/test_command_start.py` and
+     `factory/test_launch.py` (the real `03-stop-factory.sh` against real sleeping processes
+     included), as are the project switch of `test_factory_state.sh` (2c) and
+     `require_project_commits` of `test_factory_helpers.sh`; `run_or_die` is tested in
+     `factory/test_broker_start.py`. What stays shell, as it tests bash that stays for step 8:
+     `test_factory_state.sh` (the broker token minting and `update`'s failed `sbx rm`; its restart
+     now checks the Python `start --no-dashboard` call) and `test_factory_helpers.sh` (the
+     incomplete-checkout refusal, now through `update --plan`, and `sbx_not_signed_in`).
 8. **`setup` and `update`**, with `00-build-templates.sh`, `01-init-security.sh`,
-   `install-prereqs.sh`.
+   `install-prereqs.sh`. What is left in `bin/factory` after step 7: `cmd_setup` (with
+   `sbx_not_signed_in`; it already ends in `factory _onboarding-hints`), `cmd_update` (with
+   `pull_factory`, `describe_loss`, `forget_role_sessions`, `rm_failed_after_stop`, `confirm`,
+   `bound_project`; it already restarts through Python `factory start --no-dashboard`),
+   `cmd_update_plan` (with `plan_maybe_sandboxes`) and `usage`. They still use the bash
+   `stale_sandboxes` and the fingerprint helpers under it in `scripts/lib/roles.sh`
+   (`sandbox_fingerprint`, `image_build_id`, `dir_hash`, `yes_no`, `RW_LAYOUT`, `broker_plugins`
+   in `common.sh`), and its role lookups (`list_roles`, `role_get`, `role_sandbox`,
+   `coordinator_broker_tools`); `factory/fingerprints.py` and `factory/roles.py` are their Python
+   copies, so the port calls those and deletes the bash. Its tests: `test_factory_update.sh`, and
+   what is left of `test_factory_state.sh` and `test_factory_helpers.sh`.
 9. **Finish**: delete `scripts/lib/*.sh` and the bash tests, leave `bin/factory` as a shim
    with no `PORTED_COMMANDS` list (it always runs Python), drop the parity tests, update
    `scripts/lint.sh`. `templates/agent/factory-lane` and `factory-test` stay bash: they run

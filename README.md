@@ -1331,7 +1331,7 @@ hasn't dispatched any jobs yet just shows an empty report.
   (shell persistence, network troubleshooting, port publishing), which sbx
   writes in the project's parent folder, above the Coordinator's working
   directory: every `factory start` adds that path to `claudeMdExcludes` in the
-  Coordinator's managed settings (`exclude_template_claude_md`). Roles never
+  Coordinator's managed settings (`exclude_template_claude_md` in `factory/launch.py`). Roles never
   load their copy, since no role works under the folder it lands in.
 - **After a reboot:** `factory start`.
 - **One checkout at a time:** every copy of this repo uses the same ports, sandbox
@@ -1359,10 +1359,13 @@ hasn't dispatched any jobs yet just shows an empty report.
 - **Docs site:** `.github/workflows/docs.yml` publishes the `factory docs` page
   to GitHub Pages whenever the docs change on main, with links to repo files
   pointing at that commit on GitHub (`scripts/docs.py --link-base`).
-- **Under the hood:** `factory` runs the scripts in `scripts/` (the Python wrappers for
-  `analytics`, `approvals`, `watch`, `docs` and `dashboard` are in `factory/commands/`):
+- **Under the hood:** most commands are Python (`factory/`; `factory start` is
+  `factory/commands/start.py`, the launch itself `factory/launch.py`); `factory` runs
+  the scripts in `scripts/` for the rest:
   - `install-prereqs.sh`, `00-build-templates.sh` and `01-init-security.sh` (setup)
-  - `02-launch-factory.sh <dir>`, which calls `start-broker.sh` and `start-dispatch.sh`
+  - `02-launch-factory.sh <dir>`, the launch without the dashboard, and
+    `start-broker.sh` and `start-dispatch.sh`, its broker and bridge steps (shims
+    that run the Python)
   - `03-stop-factory.sh`
 
   They can still be run directly.
@@ -1403,15 +1406,14 @@ factory/                     The host CLI in Python, being ported from bin/facto
                              (docs/py-cli-migration.md); shares its role.conf parser and project_repos
                              with the dispatch bridge
 scripts/lib/common.sh        Pinned versions, checksums, names, shared checks
-scripts/lib/roles.sh         Role parsing and validation
-scripts/lib/secrets.sh       the keychain lookups bin/factory still uses (the rest is factory/secrets.py, factory/keychain.py)
-scripts/lib/preflight.sh     Platform checks shared by the installer and factory doctor
+scripts/lib/roles.sh         Role lookups and sandbox fingerprints for factory update (validation is factory/roles.py)
+scripts/lib/preflight.sh     Platform checks for the installer (factory doctor has them in factory/preflight.py)
 scripts/install-prereqs.sh   Install the pinned sbx
 scripts/00-build-templates.sh
 scripts/01-init-security.sh
 scripts/02-launch-factory.sh <project-dir>
 scripts/03-stop-factory.sh
-scripts/start-broker.sh, scripts/start-dispatch.sh   (called by the launch script)
+scripts/start-broker.sh, scripts/start-dispatch.sh   (shims; the launch calls their Python directly)
 scripts/analytics.py, scripts/test_analytics.py      Cost/performance report (factory analytics)
 scripts/approvals.py         Approval cards (factory approvals)
 scripts/docs.py              Builds the docs site (factory docs)

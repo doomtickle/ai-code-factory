@@ -3,8 +3,8 @@
 Ports of cmd_chat, cmd_stop, cmd_restart and cmd_reset in bin/factory, with the output
 unchanged. Stopping stays scripts/03-stop-factory.sh, which these run: it is also the script
 README.md and start-dispatch.sh name for stopping a copy of the factory by hand, and `update`
-(still bash) calls it. `restart` starts the factory again by running `bin/factory start`, since
-`start` is not ported yet.
+(still bash) calls it. `restart` starts the factory again with `factory start`
+(factory/commands/start.py), called directly.
 """
 
 import os
@@ -52,7 +52,8 @@ def restart(ctx, args):
     if status != 0:
         return status
     ctx.step("Starting it again for %s" % project)
-    return ctx.run([os.path.join(ctx.paths.root, "bin", "factory"), "start", project, "--no-dashboard"])
+    from factory.commands import start  # start imports this module (for reset)
+    return start.run(ctx, [project, "--no-dashboard"])
 
 
 def rm_failed_after_stop(ctx, command, sandboxes, retry):

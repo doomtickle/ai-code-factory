@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Parity test for project_repos, which exists in three copies that must agree:
-# scripts/lib/common.sh (host shell), factory/repos.py (the Python CLI, which the
-# bridge, dispatch/server.py, imports) and templates/agent/factory-lane (inside
-# the sandboxes). Each lists the git repos of a project; if they disagreed, a role
-# could be offered a repo the bridge won't import, or the reverse. All of them run
-# on the same fixtures and must print the same list in the same (byte) order, also
-# under a non-C locale when the machine has one (factory/test_repos.py has the Python
+# Parity test for project_repos, which exists in two copies that must agree:
+# factory/repos.py (the Python CLI, which the bridge, dispatch/server.py, imports)
+# and templates/agent/factory-lane (inside the sandboxes). Each lists the git repos
+# of a project; if they disagreed, a role could be offered a repo the bridge won't
+# import, or the reverse. Both (and the bridge's import of the first) run on the
+# same fixtures and must print the same list in the same (byte) order, also under a
+# non-C locale when the machine has one (factory/test_repos.py has the Python
 # side's own cases):
 # - a repo, a folder whose .git is a file (worktree/submodule style), a repo
 #   named with a leading capital (byte order, not locale order)
@@ -27,7 +27,6 @@ ok() { pass=$((pass + 1)); printf 'ok - %s\n' "$1"; }
 bad() { fail=$((fail + 1)); printf 'FAIL - %s\n' "$1"; }
 assert_eq() { [ "$2" = "$3" ] && ok "$1" || bad "$1 (expected '$3', got '$2')"; }
 
-via_common() { bash -c '. "$1/scripts/lib/common.sh"; project_repos "$2"' _ "$REPO_ROOT" "$1"; }
 via_server() {
   PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$REPO_ROOT/dispatch" python3 -c '
 import sys
@@ -56,7 +55,7 @@ locales="C"
 check() {
   local label="$1" project="$2" expected="$3" impl loc
   for loc in $locales; do
-    for impl in via_common via_package via_server via_lane; do
+    for impl in via_package via_server via_lane; do
       assert_eq "$label: $impl ($loc)" "$(LC_ALL="$loc" "$impl" "$project")" "$expected"
     done
   done

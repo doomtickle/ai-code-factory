@@ -48,26 +48,6 @@ die() {
   exit 1
 }
 
-# run_or_die MESSAGE COMMAND... -> run COMMAND with its output held back. If it
-# fails, die with MESSAGE and the last 20 lines of what it printed (stdout and
-# stderr), so the reason isn't lost; if it succeeds, print nothing.
-run_or_die() {
-  local msg="$1" log status=0
-  shift
-  log="$(mktemp)"
-  "$@" >"$log" 2>&1 || status=$?
-  if [ "$status" -ne 0 ]; then
-    echo "error: $msg (exit status $status)" >&2
-    if [ -s "$log" ]; then
-      echo "last output of '$*' (up to 20 lines):" >&2
-      tail -n 20 "$log" | sed 's/^/  /' >&2
-    fi
-    rm -f "$log"
-    exit 1
-  fi
-  rm -f "$log"
-}
-
 # Runtime state: audit logs, transcripts, sessions, token hashes, per-role tool
 # grants, and roles' scratch dirs. It lives outside the repo so no
 # agent workspace can reach it, even when the factory works on its own repo
@@ -94,41 +74,6 @@ case "${XDG_CONFIG_HOME:-}" in
 esac
 readonly FACTORY_CONFIG
 
-# Older versions remembered a `factory start --layout` choice here ("watch",
-# "tabs" or "web"). The dashboard ("web") is the only layout left;
-# resolve_layout still reads the file so a stale value can't break a start.
-readonly FACTORY_LAYOUT_FILE="$FACTORY_CONFIG/layout"
-
-# resolve_layout FLAG ENV -> "web", the only layout. A FLAG (factory start's
-# --layout value), ENV (FACTORY_LAYOUT) or saved FACTORY_LAYOUT_FILE naming a
-# layout that no longer exists ("watch", "tabs") gets a one-line warning on
-# stderr and "web"; the stale file is removed so the warning shows once. Any
-# other FLAG or ENV value dies with the command's usage; any other saved value
-# is ignored. Nothing is saved.
-resolve_layout() {
-  local chosen="${1:-$2}" saved
-  case "$chosen" in
-    ""|web) ;;
-    watch|tabs) echo "warning: the '$chosen' layout is gone; using the dashboard (web)" >&2 ;;
-    *) die "usage: factory start [dir] [--no-ui] [--layout web]" ;;
-  esac
-  saved="$(cat "$FACTORY_LAYOUT_FILE" 2>/dev/null || true)"
-  case "$saved" in
-    watch|tabs)
-      echo "warning: your saved '$saved' layout is gone; using the dashboard (web)" >&2
-      rm -f "$FACTORY_LAYOUT_FILE" 2>/dev/null || true ;;
-  esac
-  printf '%s' "web"
-}
-
-# require_state_outside PROJECT -> die if the state dir is inside PROJECT
-# (e.g. XDG_STATE_HOME pointed into it), where agents could edit it.
-require_state_outside() {
-  case "$FACTORY_STATE/" in
-    "$1"/*) die "factory state ($FACTORY_STATE) is inside the project $1, where agents could edit it; set XDG_STATE_HOME elsewhere" ;;
-  esac
-}
-
 # migrate_state ROOT -> one-time move of state from its old in-repo location
 # (ROOT/.broker, ROOT/.dispatch, ROOT/.roles) to FACTORY_STATE. Stops a bridge
 # still running from the old location first, since it writes to the old paths.
@@ -150,29 +95,6 @@ migrate_state() {
     echo "Moving $root/.$old to $new..."
     mv "$root/.$old" "$new"
   done
-}
-
-# project_repos PROJECT -> the git repositories roles with WORKSPACE="rw" work
-# on, as paths relative to PROJECT, one per line: "." if PROJECT/.git exists
-# (a directory, or a gitfile), else every immediate subdirectory that isn't
-# hidden or a symlink, has no newline in its name, and has a .git (directory
-# or gitfile) of its own, in byte order. Empty when PROJECT is neither a repo
-# nor a folder of repos. Keep identical to project_repos() in factory/repos.py
-# and templates/agent/factory-lane; scripts/test_project_repos.sh runs all three
-# on one fixture and fails if they differ.
-project_repos() {
-  local project="$1" d name
-  if [ -d "$project/.git" ] || [ -f "$project/.git" ]; then
-    printf '.\n'
-    return 0
-  fi
-  for d in "$project"/*; do
-    name="${d##*/}"
-    case "$name" in .*|*$'\n'*) continue ;; esac
-    [ -d "$d" ] && [ ! -L "$d" ] || continue
-    [ -d "$d/.git" ] || [ -f "$d/.git" ] || continue
-    printf '%s\n' "$name"
-  done | LC_ALL=C sort
 }
 
 sbx_installed_version() {
@@ -208,36 +130,6 @@ sbx_reference_problem() {
   return 1
 }
 
-# template_claude_md WORKSPACE -> where the sbx base template writes its own
-# CLAUDE.md for a sandbox whose primary workspace is WORKSPACE: the workspace's
-# parent (sbx mounts it at its host path, so this is the path inside too).
-template_claude_md() { printf '%s/CLAUDE.md\n' "$(dirname "$1")"; }
-
-# with_claude_md_exclude PATH: managed-settings JSON on stdin -> the same with
-# PATH in claudeMdExcludes (added once, other keys and entries kept), compact.
-with_claude_md_exclude() {
-  jq -c --arg p "$1" '.claudeMdExcludes = (((.claudeMdExcludes // []) - [$p]) + [$p])'
-}
-
-# exclude_template_claude_md SANDBOX WORKSPACE: keep Claude Code in SANDBOX
-# from loading the base template's CLAUDE.md (shell persistence, network
-# troubleshooting, port publishing: ~2,750 words that don't apply to a factory
-# agent). Only the Coordinator needs it: its cwd is the project, under that
-# file's folder; roles' cwds (lanes, review checkouts, the :ro project) aren't.
-# Adds the path to the root-owned managed settings the kit wrote, and leaves
-# them 0444. Idempotent, so it runs on every launch and fixes an existing
-# sandbox without recreating it. The path only crosses as a jq argument and
-# the JSON over stdin, never inside a command line.
-exclude_template_claude_md() {
-  local name="$1" path current merged
-  path="$(template_claude_md "$2")"
-  current="$(sbx exec -u 0 "$name" cat /etc/claude-code/managed-settings.json)" || return 1
-  merged="$(printf '%s' "$current" | with_claude_md_exclude "$path")" || return 1
-  [ "$merged" != "$(printf '%s' "$current" | jq -c .)" ] || return 0
-  printf '%s\n' "$merged" | sbx exec -u 0 -i "$name" sh -c \
-    'f=/etc/claude-code/managed-settings.json; cat > "$f.tmp" && chmod 0444 "$f.tmp" && mv -f "$f.tmp" "$f"'
-}
-
 require_bin() {
   command -v "$1" >/dev/null 2>&1 || die "'$1' not found in PATH (see README.md)"
 }
@@ -268,45 +160,9 @@ require_sbx() {
   [ "$got" = "$SBX_VERSION" ] || die "sbx $SBX_VERSION required, found '${got:-unknown}' (see README.md)"
 }
 
-sandbox_exists() {
-  sbx ls -q 2>/dev/null | grep -qx "$1"
-}
-
 # sandbox_running NAME -> success if NAME exists and sbx reports it running
 sandbox_running() {
   [ "$(sbx ls 2>/dev/null | awk -v s="$1" '$1 == s { print $3 }')" = running ]
-}
-
-# policy_value SECTION KEY -> the raw value of KEY = ... in [SECTION], from this
-# machine's overlay ($FACTORY_CONFIG/policy.toml) if it sets KEY, else from
-# broker/policy.toml - the same precedence as the broker's load_policy().
-# Best-effort awk, not a TOML parser: good enough for the values these checks
-# read. An array spread over several lines comes back joined on one line (up
-# to its closing "]", comments dropped), so a check never mistakes
-# `tools = [` for an empty list.
-policy_value() {
-  local f v
-  for f in "$FACTORY_CONFIG/policy.toml" "$ROOT/broker/policy.toml"; do
-    [ -f "$f" ] || continue
-    if v="$(awk -v s="[$1]" -v k="$2" '
-        more { sub(/#.*/, ""); v = v " " $0; if (index($0, "]")) { print v; found = 1; exit } next }
-        index($0, s) == 1 { f = 1; next }
-        /^\[/ { f = 0 }
-        f && $0 ~ "^[[:space:]]*"k"[[:space:]]*=" {
-          sub(/^[^=]*=[[:space:]]*/, "")
-          if (substr($0, 1, 1) == "[" && !index($0, "]")) { sub(/#.*/, ""); v = $0; more = 1; next }
-          print; found = 1; exit
-        }
-        END { exit !found }' "$f")"; then
-      printf '%s\n' "$v"
-      return 0
-    fi
-  done
-}
-
-# policy_string SECTION KEY -> the string value of KEY = "..." in [SECTION]
-policy_string() {
-  policy_value "$1" "$2" | awk -F'"' '{ print $2 }'
 }
 
 # sbx_not_signed_in -> success only when sbx itself says it is not signed in
@@ -319,18 +175,13 @@ sbx_not_signed_in() {
   printf '%s\n' "$out" | grep -qi "not authenticated"
 }
 
-# claude_login_stored -> success if sbx holds the global Claude login (the first
-# /login in a factory sandbox, or an API key from `sbx secret set anthropic`).
-claude_login_stored() {
-  sbx secret ls 2>/dev/null | grep -q " anthropic "
-}
-
 # broker_plugins -> comma-separated module names of the broker plugins in
 # the local config folder (FACTORY_CONFIG/plugins/<module>/); empty when
 # there are none. 00-build-templates.sh bakes the directory into the broker
 # image; factory/fingerprints.py has the Python copy, which the broker start
 # passes as PASSDESK_PLUGINS and records in the broker's fingerprint. This one
-# is for that fingerprint in sandbox_fingerprint (roles.sh), until part C.
+# is for that fingerprint in sandbox_fingerprint (roles.sh), which `factory
+# update` (stale_sandboxes) still computes in bash.
 broker_plugins() {
   local d names="" LC_ALL=C # byte order, as factory/fingerprints.py sorts; glibc's en_US.UTF-8 puts Zed after alpha
   for d in "$FACTORY_CONFIG"/plugins/*/; do

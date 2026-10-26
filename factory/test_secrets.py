@@ -1,11 +1,9 @@
 """Tests for factory/secrets.py, the helpers `factory secret` and the broker start
-(factory/broker_start.py) use, and for the keychain lookups. Their bash copies in
-scripts/lib/secrets.sh went with start-broker.sh, except keychain_has and what it calls
-(bin/factory's keychain_warn_missing still uses them until `start` is ported): those run in bash
-and in Python against the same fake sbx, secret-tool, security and powershell.exe, and must give
-the same status, value, messages and the same argv, byte for byte. The rest are tested in Python
-alone, against the outputs the bash gave. Ported from parts 4c, 5, 8 and 9 of
-scripts/test_factory_secret.sh.
+(factory/broker_start.py) use, for the keychain lookups and for the missing-token warning of
+`status` and `start`. Their bash copies (scripts/lib/secrets.sh, and bin/factory's
+keychain_warn_missing) are gone; these are tests of the Python alone, against the outputs the bash
+gave: the same statuses, values, messages and argv, byte for byte. Ported from parts 4c, 5, 8 and
+9 of scripts/test_factory_secret.sh.
 
 Nothing here needs sbx, a keychain or a network: every program is a fake on the PATH that logs
 its argv and environment and keeps what it reads on stdin in a file of its own.
@@ -17,6 +15,7 @@ import subprocess
 import tempfile
 
 from factory import keychain, secrets
+from factory.commands import status
 from factory.context import FactoryError
 from factory.fixtures import REPO, CommandTest
 
@@ -201,18 +200,18 @@ class SecretFakes(CommandTest):
         self.assertEqual(hits, [])
 
 
-class Parity(SecretFakes):
-    """Runs a helper in Python against the fakes, and the bash keychain lookups that remain
-    (keychain_has and what it calls) against the same fakes."""
+# The Credential Manager lookup script the bash wincred_run ran for SERVICE, byte for byte.
+LOOKUP_SCRIPT = ("# factory-keychain op=lookup\n$ErrorActionPreference = 'Stop'\n"
+                 "[Console]::OutputEncoding = New-Object Text.UTF8Encoding $false\n"
+                 "[void][Windows.Security.Credentials.PasswordVault, Windows.Security.Credentials, "
+                 "ContentType = WindowsRuntime]\n$v = New-Object Windows.Security.Credentials.PasswordVault\n"
+                 "try { $c = $v.Retrieve('%s', 'factory') } catch { exit 0 }\n"
+                 "$c.RetrievePassword(); [Console]::Out.Write($c.Password)")
 
-    def bash(self, snippet, env=None, stdin=b""):
-        """(status, stdout, stderr) of SNIPPET with secrets.sh sourced, and the calls the fakes
-        logged; the logs are cleared first."""
-        self.reset()
-        cp = subprocess.run(["bash", "-c", 'ROOT="$1"; . "$1/scripts/lib/common.sh"; . "$1/scripts/lib/secrets.sh"; '
-                             + snippet, "_", REPO], input=stdin, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                            env=dict(self.environ, **(env or {})), cwd=self.tmp)
-        return (cp.returncode, cp.stdout.decode(), cp.stderr.decode()), self.calls()
+
+class Parity(SecretFakes):
+    """Runs a helper in Python against the fakes and returns what it answered and printed, and
+    the calls the fakes logged (the bash helpers it was compared with are gone)."""
 
     def py(self, fn, env=None):
         """(fn's answer, stdout, stderr) of FN(ctx), and the calls the fakes logged."""
@@ -235,18 +234,17 @@ class Parity(SecretFakes):
         return {name: self.logged(name) for name in ("sbx-argv.bin", "sbx-stdin", "sbx-secret-stdin", "keyring-argv.bin",
                                                        "keyring-stdin", "ps-argv.bin", "ps-stdin")}
 
-    def same(self, snippet, fn, env=None, stdin=None):
-        """Run both; require the same calls, and return (bash's, Python's) results."""
-        bash, bash_calls = self.bash(snippet, env)
-        py, py_calls = self.py(fn, env)
-        self.assertEqual(py_calls, bash_calls)
-        return bash, py
+    @staticmethod
+    def argv_log(*calls):
+        """The bytes a fake logs for CALLS (argv lists): NUL after each argument, \\1 after each call."""
+        return b"".join(b"".join(a.encode() + b"\0" for a in call) + b"\1" for call in calls)
 
 
 class ConstantsTest(Parity):
-    def test_the_names_match_secrets_sh(self):
-        (status, out, _), _ = self.bash('printf "%s\\n" "$FACTORY_SECRET_NAMES" "$FACTORY_KEYCHAIN_NAMES"')
-        self.assertEqual(out, "%s\n%s\n" % (" ".join(secrets.SECRET_NAMES), " ".join(keychain.KEYCHAIN_NAMES)))
+    def test_the_names_are_the_bash_ones(self):
+        # FACTORY_SECRET_NAMES and FACTORY_KEYCHAIN_NAMES of the deleted secrets.sh, in their order.
+        self.assertEqual(secrets.SECRET_NAMES, ("jira", "gemini", "npm-registry", "gitlab", "approvals-webhook"))
+        self.assertEqual(keychain.KEYCHAIN_NAMES, ("jira", "gemini", "npm-registry", "gitlab", "approvals-webhook", "github"))
 
     def test_names_are_matched_whole(self):
         for name in ("jira", "github"):
@@ -254,23 +252,11 @@ class ConstantsTest(Parity):
         self.assertFalse(secrets.secret_name_valid("github"))
         for bad in ("", "jira gemini", " jira", "jira ", "../jira", "jira/x", "JIRA", "passdesk-license", "factory-jira"):
             self.assertFalse(secrets.secret_name_valid(bad), bad)
-            self.assertFalse(keychain.name_valid(bad), bad)
-            (status, _, _), _ = self.bash('keychain_name_valid "$X"', {"X": bad})
-            self.assertEqual(status, 1, bad)
+            self.assertFalse(keychain.name_valid(bad), bad)  # as the bash keychain_name_valid refused them
 
-    def test_the_bash_left_is_only_what_keychain_has_needs(self):
-        # The rest went with start-broker.sh (factory/broker_start.py); bin/factory's
-        # keychain_warn_missing calls keychain_has until `start` is ported.
-        (status, out, _), _ = self.bash("declare -F | awk '{print $3}'")
-        defined = set(out.split())
-        for gone in ("secret_name_valid", "keychain_unavailable_warning", "keychain_store", "keychain_delete",
-                     "github_sync_from_keychain", "secret_deliver_file", "secret_revoke_file", "secret_manual_dir",
-                     "secret_is_manual", "secret_mark_manual", "secret_unmark_manual", "secret_clear_all_manual",
-                     "secret_sync_from_keychain"):
-            self.assertNotIn(gone, defined)
-        for kept in ("keychain_has", "keychain_lookup", "keychain_search_empty", "keychain_backend", "wincred_run",
-                     "wincred_powershell", "keychain_name_valid"):
-            self.assertIn(kept, defined)
+    def test_the_bash_is_gone(self):
+        # The last of scripts/lib/secrets.sh (keychain_has and what it called) went with `start`.
+        self.assertFalse(os.path.exists(os.path.join(REPO, "scripts", "lib", "secrets.sh")))
 
 
 class DeliverTest(Parity):
@@ -387,41 +373,52 @@ class SyncTest(Parity):
 
 
 class LookupTest(Parity):
-    def lookup(self, env, service="factory-jira"):
-        bash, py = self.same('keychain_lookup "$S"', lambda c: keychain.lookup(c, service),
-                             dict(env, S=service))
-        has_bash, has_py = self.same('keychain_has "$S"', lambda c: keychain.has(c, service),
-                                     dict(env, S=service))
-        self.assertEqual(py[0][0], bash[0])
-        self.assertEqual(py[0][1].decode(), bash[1])
-        self.assertEqual(has_py[0], has_bash[0])
-        self.assertEqual(has_bash[0], bash[0])
-        self.assertEqual((py[1], py[2], bash[2], has_bash[1], has_bash[2]), ("", "", "", "", ""))
-        return bash[0], bash[1]
+    def lookup(self, env, service="factory-jira", lookup_calls=(), has_calls=None):
+        """lookup and has of SERVICE: (status, value), as the bash keychain_lookup gave them (has
+        must give the same status). The fakes must see exactly the calls the bash made: LOOKUP_CALLS
+        for lookup and HAS_CALLS (the same unless given) for has, nothing on any stdin."""
+        log = "ps-argv.bin" if env.get("FACTORY_KEYCHAIN") == "wincred" else "keyring-argv.bin"
+        py, calls = self.py(lambda c: keychain.lookup(c, service), env)
+        self.assertEqual(calls, dict(dict.fromkeys(calls, b""), **{log: self.argv_log(*lookup_calls)}))
+        has, has_log = self.py(lambda c: keychain.has(c, service), env)
+        self.assertEqual(has_log, dict(dict.fromkeys(calls, b""),
+                                       **{log: self.argv_log(*(lookup_calls if has_calls is None else has_calls))}))
+        self.assertEqual(has[0], py[0][0])
+        self.assertEqual((py[1], py[2], has[1], has[2]), ("", "", "", ""))
+        return py[0][0], py[0][1].decode()
 
     def test_secret_tool_and_macos(self):
-        expected = {"found": (0, VALUE), "absent": (1, ""), "locked": (2, ""), "locked-silent": (2, ""),
-                    "search-error": (2, ""), "search-silent": (2, "")}
-        for backend in ("secret-tool", "macos"):
-            for mode, want in expected.items():
-                if backend == "macos" and mode not in ("found", "absent", "locked"):
-                    continue
-                with self.subTest(backend=backend, mode=mode):
-                    self.assertEqual(self.lookup({"FACTORY_KEYCHAIN": backend, "FAKE_KEYRING": mode}), want)
+        lookup = ["lookup", "service", "factory-jira"]
+        search = ["search", "service", "factory-jira"]
+        expected = {"found": (0, VALUE, [lookup]), "absent": (1, "", [lookup, search]), "locked": (2, "", [lookup]),
+                    "locked-silent": (2, "", [lookup, search]), "search-error": (2, "", [lookup, search]),
+                    "search-silent": (2, "", [lookup, search])}
+        for mode, (status, value, calls) in expected.items():
+            with self.subTest(backend="secret-tool", mode=mode):
+                self.assertEqual(self.lookup({"FACTORY_KEYCHAIN": "secret-tool", "FAKE_KEYRING": mode}, lookup_calls=calls),
+                                 (status, value))
+        for mode, want in (("found", (0, VALUE)), ("absent", (1, "")), ("locked", (2, ""))):
+            with self.subTest(backend="macos", mode=mode):
+                # has asks only whether it exists (no -w: the value is not read)
+                self.assertEqual(self.lookup({"FACTORY_KEYCHAIN": "macos", "FAKE_KEYRING": mode},
+                                             lookup_calls=[["find-generic-password", "-s", "factory-jira", "-w"]],
+                                             has_calls=[["find-generic-password", "-s", "factory-jira"]]), want)
 
     def test_every_trailing_newline_is_dropped_as_a_shell_does(self):
         env = {"FACTORY_KEYCHAIN": "secret-tool", "FAKE_KEYRING": "found"}
+        calls = [["lookup", "service", "factory-jira"]]
         self.keyring_value("a\nb\n\n")
-        self.assertEqual(self.lookup(env), (0, "a\nb"))
+        self.assertEqual(self.lookup(env, lookup_calls=calls), (0, "a\nb"))
         self.keyring_value("\n")
-        self.assertEqual(self.lookup(env), (2, ""))
+        self.assertEqual(self.lookup(env, lookup_calls=calls), (2, ""))
 
     def test_wincred(self):
         env = {"FACTORY_KEYCHAIN": "wincred"}
-        self.assertEqual(self.lookup(env, "factory-gemini"), (1, ""))
+        calls = [["-NoProfile", "-NonInteractive", "-Command", LOOKUP_SCRIPT % "factory-gemini"]]
+        self.assertEqual(self.lookup(env, "factory-gemini", calls), (1, ""))
         self.store_wincred("factory-gemini", "wc-secret-2")
-        self.assertEqual(self.lookup(env, "factory-gemini"), (0, "wc-secret-2"))
-        self.assertEqual(self.lookup(dict(env, FAKE_PS_FAIL="1"), "factory-gemini"), (2, ""))
+        self.assertEqual(self.lookup(env, "factory-gemini", calls), (0, "wc-secret-2"))
+        self.assertEqual(self.lookup(dict(env, FAKE_PS_FAIL="1"), "factory-gemini", calls), (2, ""))
 
     def test_a_service_that_is_not_ours_never_reaches_powershell(self):
         self.store_wincred("factory-jira", "x")
@@ -542,18 +539,19 @@ class ManualMarkersTest(Parity):
 
 
 class WarnMissingTest(SecretFakes):
-    """keychain_warn_missing stays in bin/factory for `status` and `start`: a locked keychain
-    is reported as locked, not as a missing token."""
+    """status.warn_missing, for `status` and `start` (bin/factory's keychain_warn_missing before):
+    a locked keychain is reported as locked, not as a missing token. The expected lines are the
+    ones the bash printed (no colour: not a terminal)."""
 
     def warn_missing(self, mode):
-        cp = subprocess.run(["bash", "-c", '. "$1"; keychain_warn_missing factory-jira "no token is stored"', "_",
-                             os.path.join(REPO, "bin", "factory")], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                            env=dict(self.environ, FACTORY_KEYCHAIN="secret-tool", FAKE_KEYRING=mode), cwd=self.tmp)
-        return cp.stdout.decode()
+        self.environ.update(FACTORY_KEYCHAIN="secret-tool", FAKE_KEYRING=mode)
+        ctx = self.ctx()
+        self.assertIsNone(status.warn_missing(ctx, "factory-jira", "no token is stored"))
+        self.assertEqual(self.err.getvalue(), "")
+        return self.out.getvalue()
 
     def test_warn_missing(self):
-        self.assertIn("no token is stored", self.warn_missing("absent"))
-        locked = self.warn_missing("locked")
-        self.assertIn("keychain is locked or unavailable, so factory-jira couldn't be checked", locked)
-        self.assertNotIn("no token is stored", locked)
+        self.assertEqual(self.warn_missing("absent"), "  ! no token is stored\n")
+        self.assertEqual(self.warn_missing("locked"), "  ! the keychain is locked or unavailable, so factory-jira couldn't "
+                                                      "be checked; unlock it and run this again\n")
         self.assertEqual(self.warn_missing("found"), "")

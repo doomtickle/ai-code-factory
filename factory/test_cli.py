@@ -36,15 +36,18 @@ class ShimTest(unittest.TestCase):
         self.assertEqual(sorted(shim_ported_commands()), sorted(cli.COMMANDS))
 
     def test_internal_entry_points_are_not_commands(self):
-        # Run by the host scripts that are shims now (scripts/start-broker.sh,
-        # scripts/start-dispatch.sh), never by a user.
-        self.assertEqual(list(cli.INTERNAL), ["_start-broker", "_start-dispatch"])  # alphabetical
+        # Run by the host scripts that are shims now (scripts/02-launch-factory.sh,
+        # scripts/start-broker.sh, scripts/start-dispatch.sh) and by bash `factory setup`
+        # (_onboarding-hints), never by a user.
+        self.assertEqual(list(cli.INTERNAL),
+                         ["_launch", "_onboarding-hints", "_start-broker", "_start-dispatch"])  # alphabetical
         for name in cli.INTERNAL:
             self.assertTrue(name.startswith("_"))
             self.assertNotIn(name, cli.COMMANDS)
             self.assertNotIn(name, shim_ported_commands())
         out = self.run_shim("help").stdout.decode()
-        self.assertNotIn("_start", out)
+        for name in cli.INTERNAL:
+            self.assertNotIn(name, out)
         cp = self.run_shim("_start-broker")
         self.assertEqual(cp.returncode, 1)
         self.assertIn(b"unknown command: _start-broker", cp.stderr)
@@ -93,9 +96,9 @@ class MainTest(unittest.TestCase):
         return rc, out.getvalue(), err.getvalue()
 
     def test_a_command_not_ported_yet_is_an_error(self):
-        rc, out, err = self.run_main("start")
+        rc, out, err = self.run_main("update")
         self.assertEqual((rc, out), (1, ""))
-        self.assertEqual(err, "error: 'start' is not ported to the Python CLI yet; run it through bin/factory\n")
+        self.assertEqual(err, "error: 'update' is not ported to the Python CLI yet; run it through bin/factory\n")
 
     def test_no_command_is_an_error(self):
         self.assertEqual(self.run_main()[0], 1)

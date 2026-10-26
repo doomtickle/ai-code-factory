@@ -1,9 +1,9 @@
 """Tests for the Coordinator's and the roles' sandbox fingerprints and stale_sandboxes in
 factory/fingerprints.py (the broker's case is also in factory/test_broker_start.py). Each check
-runs the bash (sandbox_fingerprint, record_sandbox_fingerprint, stale_sandboxes in
-scripts/lib/roles.sh) and the Python on the same fixtures and requires the same digest, the same
-file and the same list of stale sandboxes: bash `start` and `update` compare against what the
-Python records, and the other way round, until they are ported.
+runs the bash (sandbox_fingerprint and stale_sandboxes in scripts/lib/roles.sh) and the Python on
+the same fixtures and requires the same digest, the same file and the same list of stale
+sandboxes: bash `update` compares against what the Python records until it is ported. The bash
+record_sandbox_fingerprint is gone; RECORD_SH is what it did, for files it recorded before.
 """
 
 import os
@@ -15,6 +15,9 @@ from factory.fixtures import REPO, CommandTest
 
 BROKER, COORDINATOR = "factory-broker", "factory-coordinator"
 SANDBOXES = [BROKER, COORDINATOR, "factory-dev", "factory-rev", "factory-opt"]
+
+# The body of the deleted bash record_sandbox_fingerprint, for sandbox "$3".
+RECORD_SH = 'mkdir -p "$FACTORY_STATE/sandboxes"; sandbox_fingerprint "$3" > "$(sandbox_fingerprint_file "$3")"'
 
 # Lists the sandboxes in $FAKE_SANDBOXES; FAKE_FAIL makes `ls -q` print what it has and fail.
 FAKE_SBX = """#!/bin/sh
@@ -143,13 +146,17 @@ class FingerprintTest(FingerprintFixture):
 
 
 class RecordTest(FingerprintFixture):
-    def test_the_file_is_the_one_bash_writes(self):
+    def test_the_file_is_the_one_bash_wrote(self):
         for name in SANDBOXES:
             fingerprints.record_sandbox_fingerprint(self.paths, name)
             with open(fingerprints.fingerprint_file(self.paths, name), "rb") as f:
                 ours = f.read()
+            self.assertEqual(self.bash('printf %s "$(sandbox_fingerprint_file "$3")"', name),
+                             fingerprints.fingerprint_file(self.paths, name))
+            self.assertEqual(ours.decode(), self.bash('sandbox_fingerprint "$3"', name), name)
+            self.assertRegex(ours.decode(), "^[0-9a-f]{64}\n$")
             os.remove(fingerprints.fingerprint_file(self.paths, name))
-            self.bash('record_sandbox_fingerprint "$3"', name)
+            self.bash(RECORD_SH, name)
             with open(fingerprints.fingerprint_file(self.paths, name), "rb") as f:
                 self.assertEqual(ours, f.read(), name)
         self.assertEqual(sorted(os.listdir(os.path.join(self.state, "sandboxes"))), sorted(SANDBOXES))
@@ -164,10 +171,10 @@ class StaleSandboxesTest(FingerprintFixture):
         self.record_all()
         self.assertEqual(self.stale(), [])
 
-    def test_recorded_by_bash_is_up_to_date_for_python(self):
+    def test_recorded_by_the_old_bash_is_up_to_date_for_python(self):
         self.exist(*SANDBOXES)
         for name in SANDBOXES:
-            self.bash('record_sandbox_fingerprint "$3"', name)
+            self.bash(RECORD_SH, name)
         self.assertEqual(self.stale(), [])
 
     def test_a_missing_fingerprint_file_is_stale(self):

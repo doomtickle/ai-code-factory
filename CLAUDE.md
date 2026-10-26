@@ -61,10 +61,10 @@ socket, or host credentials. Full picture: README.md.
   the host (a writable `.git` would let hooks/fsmonitor run host commands on the next
   git run). rw roles work in lane clones; work reaches the host only as `factory/*`
   branches the bridge imports with hooks/fsmonitor forced off. The only writable
-  project path any role mounts is `.factory/outgoing` (`02-launch-factory.sh` creates
-  it, git-ignored, refuses symlinks). The project must be a git repo or folder of git
-  repos (`project_repos` in `scripts/lib/common.sh`, `factory/repos.py` (which
-  `dispatch/server.py` imports), `factory-lane` — kept identical, `scripts/test_project_repos.sh`
+  project path any role mounts is `.factory/outgoing` (`factory start`'s launch,
+  `factory/launch.py`, creates it, git-ignored, refuses symlinks). The project must be a git repo or folder of git
+  repos (`project_repos` in `factory/repos.py` (which
+  `dispatch/server.py` imports) and `factory-lane` — kept identical, `scripts/test_project_repos.sh`
   checks it) for rw roles to run.
 - Developer/reviewer images carry a pinned headless Chrome (`chrome-headless-shell`,
   via `templates/agent/factory-shot`/DevTools) for rendering and screenshotting work —
@@ -144,7 +144,7 @@ socket, or host credentials. Full picture: README.md.
 - Claude authentication: agents use a Claude Pro/Max subscription. The first `/login`
   in any factory sandbox is stored by sbx as the global `anthropic` secret; every
   sandbox created after uses it (sbx adds the login only at creation, so
-  `02-launch-factory.sh` creates role sandboxes only once it's stored). The sandbox
+  `factory/launch.py` creates role sandboxes only once it's stored). The sandbox
   credentials file isn't verified as a placeholder — treat it as a usable login:
   never copy anything out of `~/.claude` in a sandbox or into the repo. API-key auth
   via `sbx secret set anthropic` remains the proxy-injected alternative.

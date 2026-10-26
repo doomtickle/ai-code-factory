@@ -2,8 +2,9 @@
 sbx_installed_version, sandbox_exists, sandbox_running, claude_login_stored and
 sbx_reference_problem (scripts/lib/common.sh), of coordinator_attached (its bash copy is gone with
 `factory chat`; the rule is the dashboard's `runs_sandbox`) and of setup_done (bin/factory). The bash
-copies stay until their callers are ported; factory/test_sbx.py compares both on the same
-stubs. Every query is read-only, and an sbx that is missing or fails reads as "nothing".
+sandbox_exists, claude_login_stored and setup_done are gone; the other bash copies stay until
+their callers are ported, and factory/test_sbx.py compares both on the same stubs. Every query
+is read-only, and an sbx that is missing or fails reads as "nothing".
 """
 
 import os

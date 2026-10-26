@@ -61,30 +61,20 @@ jobs:
         run: python3 -m unittest discover -s scripts -p 'test_*.py' -v
       - name: factory-lane
         run: bash scripts/test_factory_lane.sh
-      - name: project_repos parity (common.sh, factory/repos.py, factory-lane)
+      - name: project_repos parity (factory/repos.py, dispatch/server.py, factory-lane)
         run: bash scripts/test_project_repos.sh
       - name: factory-test Python mode
         run: bash scripts/test_factory_test.sh
       - name: factory update
         run: bash scripts/test_factory_update.sh
-      - name: Coordinator claudeMdExcludes
-        run: bash scripts/test_claude_md_exclude.sh
       - name: sbx CLI reference
         run: bash scripts/test_sbx_reference.sh
-      - name: factory layout
-        run: bash scripts/test_factory_layout.sh
       - name: factory-shot argument handling
         run: bash scripts/test_factory_shot.sh
-      - name: factory restart (the Python command driving the bash start, and the stop script)
-        run: bash scripts/test_factory_restart.sh
-      - name: factory state (token minting, failed rm, image tag)
+      - name: factory state (token minting, update's failed rm)
         run: bash scripts/test_factory_state.sh
-      - name: factory GitLab checks
-        run: bash scripts/test_factory_gitlab.sh
-      - name: fresh-clone start and helper checks
+      - name: fresh-clone and setup helper checks
         run: bash scripts/test_factory_helpers.sh
-      - name: Jira cloud_id and lane identity checks
-        run: bash scripts/test_factory_config.sh
       - name: lint.sh shellcheck selection checks
         run: bash scripts/test_lint.sh
 
@@ -118,22 +108,12 @@ jobs:
         run: python3 -m unittest discover -s scripts -p 'test_*.py' -v
       - name: factory update
         run: bash scripts/test_factory_update.sh
-      - name: Coordinator claudeMdExcludes
-        run: bash scripts/test_claude_md_exclude.sh
-      - name: factory layout
-        run: bash scripts/test_factory_layout.sh
       - name: factory-shot argument handling
         run: bash scripts/test_factory_shot.sh
-      - name: factory restart (the Python command driving the bash start, and the stop script)
-        run: bash scripts/test_factory_restart.sh
-      - name: factory state (token minting, failed rm, image tag)
+      - name: factory state (token minting, update's failed rm)
         run: bash scripts/test_factory_state.sh
-      - name: factory GitLab checks
-        run: bash scripts/test_factory_gitlab.sh
-      - name: fresh-clone start and helper checks
+      - name: fresh-clone and setup helper checks
         run: bash scripts/test_factory_helpers.sh
-      - name: Jira cloud_id and lane identity checks
-        run: bash scripts/test_factory_config.sh
       - name: lint.sh shellcheck selection checks
         run: bash scripts/test_lint.sh
       # factory-lane runs only inside the Linux sandboxes, so it's tested on Linux.

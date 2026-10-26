@@ -217,7 +217,7 @@ class RoleTests(Base):
 
     def test_load_roles_rejects_reserved_names(self):
         # roles/coordinator/role.conf exists (see setUp) but "coordinator" is
-        # reserved (scripts/lib/roles.sh RESERVED_ROLE_NAMES) -- the Coordinator
+        # reserved (factory/roles.py RESERVED_ROLE_NAMES) -- the Coordinator
         # is a broker pseudo-role driven via kits/coordinator/broker.conf, not
         # a dispatchable role, so it must never be loadable as one.
         roles = d.load_roles()

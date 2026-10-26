@@ -1,10 +1,11 @@
 """Tests for factory/commands/runstate.py (factory chat, stop, restart, reset). Ported from
 scripts/test_factory_chat.sh, the reset parts of scripts/test_factory_state.sh and the usage and
-ordering parts of scripts/test_factory_restart.sh; what stays shell is the real
-03-stop-factory.sh and `restart` driving the real bash `start` (scripts/test_factory_restart.sh).
-The output was also compared with the bash these replaced, on the same stubs, before that was deleted.
+ordering parts of scripts/test_factory_restart.sh (the rest of it, the restart through bin/factory
+and the real 03-stop-factory.sh, is in factory/test_command_start.py). The output was also
+compared with the bash these replaced, on the same stubs, before that was deleted.
 
-sbx, ps and the stop script are stubs, so nothing here touches a real sandbox or process.
+sbx, ps, the stop script and (for restart) `factory start` are stubs, so nothing here touches a
+real sandbox or process.
 """
 
 import io
@@ -12,10 +13,11 @@ import os
 import subprocess
 import sys
 import unittest
+from unittest import mock
 
 from factory import sbx
 from factory.cli import COMMANDS, main
-from factory.commands import runstate
+from factory.commands import runstate, start
 from factory.context import COORDINATOR_SANDBOX, FactoryError
 from factory.fixtures import REPO, CommandTest, Tty
 
@@ -35,7 +37,6 @@ class RunStateTest(CommandTest):
         self.write("repo/scripts/03-stop-factory.sh",
                    '#!/bin/sh\necho stop >> "%s"\necho "Factory stopped."\necho "stop-err" >&2\nexit $(cat "%s")\n'
                    % (self.calls, self.stop_status), 0o755)
-        self.write("repo/bin/factory", '#!/bin/sh\necho "factory $*" >> "%s"\nexit ${FAKE_START_STATUS:-0}\n' % self.calls, 0o755)
 
     def sbx_stub(self, version=sbx.SBX_VERSION):
         self.tool("sbx", '''echo "sbx $*" >> "%s"
@@ -137,6 +138,15 @@ class RestartTest(RunStateTest):
         self.project = os.path.join(self.tmp, "project")
         os.makedirs(self.project)
         self.bind(self.project)
+        patcher = mock.patch.object(start, "run", self.start)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def start(self, ctx, args):
+        """`factory start`, which restart calls directly: recorded, with FAKE_START_STATUS."""
+        with open(self.calls, "a") as f:
+            f.write("factory start %s\n" % " ".join(args))
+        return int(self.environ.get("FAKE_START_STATUS", "0"))
 
     def test_it_takes_no_arguments(self):
         rc = main(["restart", "now"], root=self.root, environ=self.environ, stdout=self.ctx().stdout, stderr=self.err)

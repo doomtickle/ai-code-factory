@@ -1,7 +1,7 @@
 """Starts the dispatch bridge on the host for a project (if it is not already running for that
 project) and registers it with the sbx MCP gateway, for use by the Coordinator sandbox. Port of
 scripts/start-dispatch.sh, which is now a shim running this as `factory _start-dispatch`;
-`02-launch-factory.sh` calls it.
+the launch (factory/launch.py) calls main directly.
 
 The bridge listens on 127.0.0.1 only and authenticates the gateway with a token minted once: the
 value is kept in the sbx secret store, the bridge sees only its SHA-256 (token.sha256 in the

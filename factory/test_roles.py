@@ -155,8 +155,9 @@ def locales_installed():
 
 
 class BashParityTest(Fixture):
-    """The bash helpers (scripts/lib/roles.sh) still serve every other command; both
-    sides must answer alike on one fixture, edge cases included."""
+    """The bash lookups (scripts/lib/roles.sh) still serve `factory update`; both sides must
+    answer alike on one fixture, edge cases included. The bash role_lanes, valid_role_name and
+    RESERVED_ROLE_NAMES are gone: those checks assert the answers the bash gave."""
 
     def bash(self, snippet, locale=None):
         env = dict(os.environ, XDG_CONFIG_HOME=os.path.dirname(self.config), XDG_STATE_HOME=self.state)
@@ -177,10 +178,12 @@ class BashParityTest(Fixture):
         self.assertEqual(self.bash("list_all_roles").split(), roles.list_all_roles(self.paths))
         self.assertEqual(self.bash("list_roles").split(), roles.list_roles(self.paths))
         self.assertEqual(self.bash("enabled_roles_listed").split(), roles.enabled_roles_listed(self.paths))
+        lanes = {"developer": "5", "odd": "x", "researcher": "1", "reviewer": "1"}  # what bash role_lanes gave
+        self.assertEqual(roles.list_all_roles(self.paths), sorted(lanes))
         for role in roles.list_all_roles(self.paths):
             self.assertEqual(self.bash('role_optional "%s" && echo y || echo n' % role).strip() == "y",
                              roles.role_optional(self.paths, role), role)
-            self.assertEqual(self.bash('role_lanes "%s"' % role), roles.role_lanes(self.paths, role), role)
+            self.assertEqual(roles.role_lanes(self.paths, role), lanes[role], role)
             for key in ("DESCRIPTION", "WORKSPACE", "BROKER_TOOLS", "MODEL", "MODELS", "EFFORT", "LANES", "OPTIONAL"):
                 self.assertEqual(self.bash('role_get "%s" %s' % (role, key)).rstrip("\n"),
                                  roles.role_get(self.paths, role, key), (role, key))
@@ -198,20 +201,20 @@ class BashParityTest(Fixture):
         for locale in ["C"] + other[:3]:
             self.assertEqual(self.bash("list_all_roles", locale).split(), expected, locale)
 
-    def test_valid_role_name_and_the_reserved_names_match(self):
-        with open(os.path.join(REPO, "scripts", "lib", "roles.sh")) as f:
-            m = re.search(r'^readonly RESERVED_ROLE_NAMES="([^"]*)"', f.read(), re.M)
-        self.assertEqual(tuple(m.group(1).split()), roles.RESERVED_ROLE_NAMES)
+    def test_valid_role_name_and_the_reserved_names_are_bash_s(self):
+        self.assertEqual(roles.RESERVED_ROLE_NAMES, ("broker", "coordinator", "dispatch"))
         names = ["", "a", "ab", "reviewer", "my-role", "r2-d2", "A", "1a", "a_b", "a b", "-ab", "a" * 31, "a" * 32,
                  "broker", "coordinator", "dispatch", "broker2", "x-lane2", "x-lane12", "x-lane", "x-lane2a", "lane2",
                  "ab-", "a--b", "é1", "a.b"]
+        valid = {"ab", "reviewer", "my-role", "r2-d2", "a" * 31, "broker2", "x-lane", "x-lane2a", "lane2", "ab-", "a--b"}
         for name in names:
-            self.assertEqual(self.bash("valid_role_name '%s' && echo y || echo n" % name).strip() == "y",
-                             roles.valid_role_name(name), repr(name))
+            self.assertEqual(roles.valid_role_name(name), name in valid, repr(name))
 
     def test_roles_output_matches_the_old_bash_command(self):
-        # bash's cmd_roles, kept here verbatim as the reference until bash stops using these helpers.
+        # bash's cmd_roles, kept here verbatim as the reference until bash stops using these helpers,
+        # with the bash role_lanes it called (deleted from roles.sh).
         reference = r'''
+role_lanes() { local n; n="$(role_get "$1" LANES)"; printf '%s' "${n:-1}"; }
 lanes_label() { local n; n="$(role_lanes "$1")"; if [ "$n" = 1 ]; then echo "1 lane"; else echo "$n lanes"; fi; }
 B="" D="" N=""
 for r in $(list_roles); do

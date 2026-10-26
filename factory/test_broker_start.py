@@ -577,3 +577,27 @@ class StateWriteFailureTest(BrokerFakes):
         self.assertEqual((status, out), (1, ""))
         self.assertTrue(err.startswith("error: %s: " % os.path.join(self.broker, "grants.json.tmp")), err)
         self.assertEqual(err.count("\n"), 1)
+
+
+class RunOrDieTest(CommandTest):
+    """run_or_die: silent on success; on failure the message, the exit status and the last 20
+    lines the program printed (from scripts/test_factory_helpers.sh part 4, whose bash copy is gone)."""
+
+    def test_silent_on_success(self):
+        self.tool("succeed", "echo noisy\n")
+        broker_start.run_or_die(self.ctx(), "could not do it", ["succeed"])
+        self.assertEqual((self.out.getvalue(), self.err.getvalue()), ("", ""))
+
+    def test_the_last_20_lines_on_failure(self):
+        self.tool("fail", 'for i in $(seq 1 25); do echo "line $i" >&2; done\nexit 3\n')
+        with self.assertRaises(broker_start.Exit) as caught:
+            broker_start.run_or_die(self.ctx(), "could not do it", ["fail", "a", "b"])
+        self.assertEqual(caught.exception.status, 1)
+        self.assertEqual(self.err.getvalue(), "error: could not do it (exit status 3)\nlast output of 'fail a b' (up to "
+                                              "20 lines):\n" + "".join("  line %d\n" % i for i in range(6, 26)))
+
+    def test_a_failure_that_printed_nothing(self):
+        self.tool("quiet", "exit 2\n")
+        with self.assertRaises(broker_start.Exit):
+            broker_start.run_or_die(self.ctx(), "could not do it", ["quiet"])
+        self.assertEqual(self.err.getvalue(), "error: could not do it (exit status 2)\n")

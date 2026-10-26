@@ -2,9 +2,11 @@
 optional roles are switched on. Port of scripts/lib/roles.sh: the lookups
 (list_all_roles, list_roles, role_get, role_lanes, role_optional, ...) and the
 validation (validate_role, validate_role_overrides, validate_enabled_roles,
-role_lane_names, coordinator_broker_tools). The bash copies stay until the
-commands that still call them are ported; tests run both on the same fixtures.
-(disabled_role_sandboxes, used only by `factory doctor`, has no bash copy any more.)
+role_lane_names, coordinator_broker_tools). The bash validation, role_lanes,
+role_lane_names and valid_role_name are gone (their tests assert the answers the
+bash gave); the bash lookups stay for `factory update`, and tests run both on the
+same fixtures. (disabled_role_sandboxes, used only by `factory doctor`, has no bash
+copy any more.)
 
 Every config file read here is data: parsed line by line, never sourced or run.
 A failed check raises FactoryError with the message bash's `die` prints.
@@ -22,10 +24,10 @@ from factory.context import FactoryError
 ROLE_OVERRIDE_KEYS = ("MODEL", "MODELS", "EFFORT", "LANES", "MAX_SESSION_TOKENS", "MAX_TURNS",
                       "MAX_JOB_SECONDS")
 
-# Keep in sync with RESERVED_ROLE_NAMES in scripts/lib/roles.sh (a test compares them).
+# Names no role may take; dispatch/server.py has the same list (_RESERVED_ROLE_NAMES).
 RESERVED_ROLE_NAMES = ("broker", "coordinator", "dispatch")
 
-# Keep in sync with KNOWN_TEMPLATES in scripts/lib/roles.sh (a test compares them).
+# The images a role's TEMPLATE may name.
 KNOWN_TEMPLATES = ("developer", "reviewer")
 
 _SPACE = " \t\n\v\f\r"
@@ -144,7 +146,7 @@ def _in_list(word, listing):
 
 
 def known_broker_tools(paths):
-    """The broker tool names in broker/tools.txt, joined by spaces: what bash calls
+    """The broker tool names in broker/tools.txt, joined by spaces: what bash called
     KNOWN_BROKER_TOOLS (comment lines and blank lines dropped, nothing else trimmed)."""
     path = os.path.join(paths.root, "broker", "tools.txt")
     if not os.path.isfile(path):
@@ -226,9 +228,9 @@ def coordinator_broker_tools(paths):
 
 
 def _lane_count(value):
-    """How many lanes bash's role_lane_names counts up to for `value`: an integer with optional
+    """How many lanes bash's role_lane_names counted up to for `value`: an integer with optional
     sign and surrounding spaces or tabs (only those: \\v, \\f and \\r are trimmed by some bash
-    versions' `[ -le ]` and not others, so bash spells the pattern out); anything else (and
+    versions' `[ -le ]` and not others, so bash spelled the pattern out); anything else (and
     anything past a 64-bit integer) leaves the role just its first lane."""
     m = re.fullmatch(r"[ \t]*([+-]?[0-9]+)[ \t]*", value)
     if m is None or abs(int(m.group(1))) >= 2 ** 63:

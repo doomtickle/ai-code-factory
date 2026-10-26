@@ -143,9 +143,15 @@ roles_co="$(fresh_checkout roles-co)"
   ROOT="$roles_co"
   # shellcheck disable=SC1091
   . "$REPO_ROOT/scripts/lib/roles.sh"
-  [ "$KNOWN_BROKER_TOOLS" = "git_fetch" ] || { echo "KNOWN_BROKER_TOOLS is '$KNOWN_BROKER_TOOLS'" >&2; exit 1; }
-) && ok "sourcing roles.sh reads the tool names from broker/tools.txt" \
-  || bad "sourcing roles.sh reads the tool names from broker/tools.txt"
+) && ok "sourcing roles.sh succeeds with broker/tools.txt" \
+  || bad "sourcing roles.sh succeeds with broker/tools.txt"
+# The tool names themselves are read by factory/roles.py (role validation).
+assert_eq "the tool names come from broker/tools.txt (factory/roles.py known_broker_tools)" \
+  "$(PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$REPO_ROOT" python3 -c '
+import sys
+from factory import roles
+from factory.context import Paths
+print(roles.known_broker_tools(Paths(sys.argv[1], "", "")))' "$roles_co")" "git_fetch"
 
 rm "$roles_co/broker/tools.txt"
 set +e
@@ -417,7 +423,9 @@ planco="$(fresh_checkout plan)"
   # shellcheck disable=SC1091
   . "$FACTORY_SRC/bin/factory"
   ROOT="$planco"
-  record_sandbox_fingerprint "$COORDINATOR_SANDBOX"
+  # What factory/fingerprints.py record_sandbox_fingerprint writes (the bash copy is gone).
+  mkdir -p "$FACTORY_STATE/sandboxes"
+  sandbox_fingerprint "$COORDINATOR_SANDBOX" > "$(sandbox_fingerprint_file "$COORDINATOR_SANDBOX")"
 )
 run_plan "$planco"
 assert_eq "update --plan, nothing incoming: exits 0" "$P_RC" "0"
