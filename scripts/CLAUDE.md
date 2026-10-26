@@ -7,7 +7,7 @@ they serve. Read this before changing any of those files.
 Other files in `scripts/` (e.g. `analytics.py`, `watch.py`, `start-broker.sh`,
 `lib/`) are not dashboard code and aren't covered here, except where the rules below
 name them directly: `approvals.py` (`write_decision`), `docs.py` (`build_served()`),
-and `factory chat` (`coordinator_attached`) must match the forms those rules name.
+and `factory chat` (`coordinator_attached` in `factory/sbx.py`) must match the forms those rules name.
 
 ## Dashboard rules
 
@@ -38,8 +38,8 @@ attaching a page starts nothing), only after `sbx ls -q` lists the sandbox and
 `ps -axo pid=,ppid=,args=` shows no other `sbx run` naming it (`--name NAME`,
 `--name=NAME` or positional; one attachment: a second would start a second Coordinator
 in the same VM; `factory chat` refuses
-likewise via `coordinator_attached`, which must match the same forms as
-`runs_sandbox`), and never once shutdown has begun. It fans that one PTY out to every
+likewise via `coordinator_attached` (`factory/sbx.py`), whose `runs_sandbox` must match the same forms as
+the dashboard's, `factory/test_sbx.py` runs both on the same fixtures), and never once shutdown has begun. It fans that one PTY out to every
 tab; a tab that attaches late gets the ring buffer as a `{"type":"replay"}` text frame
 followed by exactly one binary frame, during which the page mutes its input so
 terminal query replies in old output aren't sent to the Coordinator again.

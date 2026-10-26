@@ -4,6 +4,16 @@ Dated entries, for the user to review. Newest first.
 
 ## 2026-10-25
 
+- **`stop`, `restart`, `reset` and `chat` are Python; `03-stop-factory.sh` stays shell.**
+  Step 6 of `docs/py-cli-migration.md` (doomtickle/passdesk-ops#169). The stop script is also
+  run by `update` and by hand (the troubleshooting docs), so the Python commands run it as a
+  fixed argv and take its exit status rather than copy its `ps` and `sbx stop` logic; it goes
+  with `common.sh` at the end. `restart` runs bash `start` as the fixed argv
+  `[bin/factory, start, <project>, --no-dashboard]` until `start` is ported. `chat`'s
+  attached check is the dashboard's `runs_sandbox` rule in `factory/sbx.py`, with a test that
+  runs both on the same fixtures (the dashboard-security rule in `scripts/CLAUDE.md`).
+  Sandbox fingerprints and `stale_sandboxes` wait for `start`/`update`, their only callers.
+
 - **`factory doctor` warns about extra global sbx network allows; it does not fail.**
   An owner's machine had local-scope allows for `*.npmjs.org` and `github.com`
   that let every sandbox reach those hosts without the broker; nothing checked

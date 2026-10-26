@@ -1,30 +1,28 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Regression tests for "factory restart" (cmd_restart in bin/factory), which
-# the dashboard's RESTART key runs:
+# Tests for "factory restart" that need the real bash around the Python command
+# (factory/commands/runstate.py; its own tests are factory/test_command_runstate.py),
+# which the dashboard's RESTART key runs:
 #
-# 1. With no bound project it dies with a "factory start" hint and stops
-#    nothing.
-# 2. With one, it runs 03-stop-factory.sh, then starts the factory again for
-#    that project (02-launch-factory.sh), in that order, and with the web
-#    layout (the default) it doesn't run the dashboard in the foreground: it
-#    prints how to open it and returns.
-# 3. A bound project folder that no longer exists dies before stopping
-#    anything.
-# 4. A stale saved layout ("watch", from an older version) falls back to the
+# 1. `factory restart` through the bin/factory shim runs 03-stop-factory.sh, then
+#    the real bash `start` for the bound project (02-launch-factory.sh), in that
+#    order, and with the web layout (the default) it doesn't run the dashboard in
+#    the foreground: it prints how to open it and returns.
+# 2. A stale saved layout ("watch", from an older version) falls back to the
 #    dashboard layout with a warning and doesn't stop the restart.
-# 5. The real 03-stop-factory.sh kills only the dispatch bridge's pid (a
-#    process running "$ROOT/dispatch/server.py") and stops the factory-*
-#    sandboxes; a running dashboard survives it, so the control unit that
-#    ran the restart is still there to show its log.
-# 6. `factory help` lists restart.
+# 3. The real 03-stop-factory.sh (which `factory stop`, `restart`, `reset` and
+#    `update` run, and README.md names for stopping a copy by hand) kills only
+#    the dispatch bridge's pid (a process running "$ROOT/dispatch/server.py") and
+#    stops the factory-* sandboxes; a running dashboard survives it, so the control
+#    unit that ran the restart is still there to show its log.
+# 4. `factory help` lists restart.
 #
-# Drives a fixture checkout (bin/factory + scripts/lib, stub
-# 02-launch-factory.sh and 03-stop-factory.sh that record their calls, a
-# stub broker/tools.txt) against a fake sbx and ps. Part 5 runs the
-# real 03-stop-factory.sh against real (sleeping) processes and a fake sbx.
-# No real sbx, docker or network access needed.
+# This stays shell until `start` is ported (docs/py-cli-migration.md): it drives a
+# fixture checkout (bin/factory + factory/ + scripts/lib, stub 02-launch-factory.sh
+# and 03-stop-factory.sh that record their calls, a stub broker/tools.txt) against a
+# fake sbx and ps. Part 3 runs the real 03-stop-factory.sh against real (sleeping)
+# processes and a fake sbx. No real sbx, docker or network access needed.
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
@@ -53,6 +51,8 @@ assert_not_contains() {
 fx="$tmp/checkout"
 mkdir -p "$fx/bin" "$fx/scripts/lib" "$fx/broker" "$fx/roles"
 cp "$REPO_ROOT/bin/factory" "$fx/bin/factory"
+cp -R "$REPO_ROOT/factory" "$fx/factory"
+find "$fx/factory" -name __pycache__ -prune -exec rm -rf {} +
 cp "$REPO_ROOT"/scripts/lib/*.sh "$fx/scripts/lib/"
 echo "git_fetch" > "$fx/broker/tools.txt"
 # Stubs that record each call in $CALLS.
@@ -111,18 +111,7 @@ run_fixture() {
 }
 
 # ===========================================================================
-# Part 1: no bound project -> dies, nothing stopped.
-# ===========================================================================
-reset_run
-rm -f "$bound"
-run_fixture restart
-[ "$F_RC" -ne 0 ] && ok "no project: factory restart exits non-zero" \
-  || bad "no project: factory restart exits non-zero (got 0)"
-assert_contains "no project: hints at 'factory start'" "$F_OUT" "factory start"
-assert_eq "no project: nothing was stopped or started" "$(cat "$CALLS")" ""
-
-# ===========================================================================
-# Part 2: a bound project -> stop, then start it again; no foreground dashboard.
+# Part 1: a bound project -> stop, then start it again; no foreground dashboard.
 # ===========================================================================
 reset_run
 printf '%s\n' "$project" > "$bound"
@@ -135,22 +124,8 @@ assert_contains "bound project: says how to open the dashboard instead of runnin
   "$F_OUT" "factory dashboard"
 assert_not_contains "bound project: the dashboard isn't run in the foreground" "$(cat "$CALLS")" "dashboard"
 
-run_fixture restart now
-[ "$F_RC" -ne 0 ] && ok "restart takes no arguments" || bad "restart takes no arguments (got 0)"
-
 # ===========================================================================
-# Part 3: the bound project folder is gone -> dies before stopping anything.
-# ===========================================================================
-reset_run
-printf '%s\n' "$tmp/gone" > "$bound"
-run_fixture restart
-[ "$F_RC" -ne 0 ] && ok "missing project folder: exits non-zero" \
-  || bad "missing project folder: exits non-zero (got 0)"
-assert_contains "missing project folder: names it" "$F_OUT" "$tmp/gone"
-assert_eq "missing project folder: nothing was stopped" "$(cat "$CALLS")" ""
-
-# ===========================================================================
-# Part 4: a stale saved layout falls back to the dashboard, with a warning.
+# Part 2: a stale saved layout falls back to the dashboard, with a warning.
 # ===========================================================================
 reset_run
 printf '%s\n' "$project" > "$bound"
@@ -164,7 +139,7 @@ launch $project no_ui="
 rm -f "$tmp/config/ai-code-factory/layout"
 
 # ===========================================================================
-# Part 5: the real 03-stop-factory.sh kills only the dispatch bridge.
+# Part 3: the real 03-stop-factory.sh kills only the dispatch bridge.
 # ===========================================================================
 real="$tmp/real"
 mkdir -p "$real/scripts/lib" "$real/dispatch"
@@ -203,7 +178,7 @@ if kill -0 "$dash" 2>/dev/null; then ok "a pid file naming the dashboard doesn't
 else bad "a pid file naming the dashboard doesn't kill it"; fi
 
 # ===========================================================================
-# Part 6: usage.
+# Part 4: usage.
 # ===========================================================================
 assert_contains "factory help lists restart" "$("$fx/bin/factory" help 2>&1)" "factory restart"
 

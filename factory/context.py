@@ -76,7 +76,8 @@ def _call(argv, **kw):
 
 
 def _exec(argv, env):
-    os.execve(argv[0], argv, env)
+    # Searches env's PATH for a bare name such as "sbx"; argv[0] stays as given.
+    os.execvpe(argv[0], argv, env)
 
 
 Captured = collections.namedtuple("Captured", "status out err")
@@ -146,7 +147,7 @@ class Context:
     argv list, never a shell); a test passes its own `runner` and `execer` to
     capture or fake them."""
 
-    def __init__(self, paths, environ=None, stdout=None, stderr=None, runner=None, execer=None):
+    def __init__(self, paths, environ=None, stdout=None, stderr=None, runner=None, execer=None, stdin=None):
         self.paths = paths
         # What `uname -s` and `uname -m` say, and the files that describe the host; a
         # test replaces them to stand in for another machine.
@@ -155,6 +156,7 @@ class Context:
         self.environ = os.environ if environ is None else environ
         self.stdout = sys.stdout if stdout is None else stdout
         self.stderr = sys.stderr if stderr is None else stderr
+        self.stdin = sys.stdin if stdin is None else stdin
         self.style = Style(self.stdout.isatty())
         self._runner = runner or _call
         self._execer = execer or _exec
@@ -173,6 +175,22 @@ class Context:
 
     def bad(self, text):
         self.say("  %s\u2717%s %s" % (self.style.R, self.style.N, text))
+
+    def confirm(self, question):
+        """Ask QUESTION [y/N] and read one answer; True on y/Y/yes/YES. False without asking when
+        stdin is not a terminal (bash's `confirm`)."""
+        try:
+            if not self.stdin.isatty():
+                return False
+        except (AttributeError, ValueError):
+            return False
+        self.stdout.write("%s [y/N] " % question)
+        self._flush()
+        try:
+            answer = self.stdin.readline()
+        except (OSError, ValueError):
+            return False
+        return answer.strip(" \t\n") in ("y", "Y", "yes", "YES")
 
     def _flush(self):
         for stream in (self.stdout, self.stderr):

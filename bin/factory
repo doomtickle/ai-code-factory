@@ -26,7 +26,7 @@ ROOT="$(dirname "$SCRIPTS")"
 # run there; factory/cli.py's COMMANDS lists the same names (a test keeps them equal).
 # Everything else falls through to the bash below until it is ported. Only when run
 # directly: a test that sources this file still gets the bash functions.
-PORTED_COMMANDS="analytics approvals approve config dashboard docs doctor gui log logs packet packets role roles secret status watch"
+PORTED_COMMANDS="analytics approvals approve chat config coordinator dashboard docs doctor down gui log logs packet packets reset restart role roles secret status stop watch"
 if [ "${BASH_SOURCE[0]}" = "$0" ] && [ -n "${1:-}" ]; then
   case " $PORTED_COMMANDS " in
     *" $1 "*)
@@ -226,9 +226,9 @@ cmd_start() {
   # --layout (or FACTORY_LAYOUT) is kept only so old habits and saved choices
   # don't break: "web" is the one layout, and resolve_layout warns about the
   # removed "watch" and "tabs".
-  # --no-dashboard (internal, from cmd_update and cmd_restart): finish instead
-  # of running the dashboard in the foreground, so `factory update --yes` and
-  # `factory restart` return.
+  # --no-dashboard (internal, from cmd_update and `factory restart`, which is
+  # Python): finish instead of running the dashboard in the foreground, so
+  # `factory update --yes` and `factory restart` return.
   local target="" project current no_ui="${FACTORY_NO_UI:-}" layout_flag="" no_dashboard=""
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -258,7 +258,7 @@ cmd_start() {
   if [ -n "$current" ] && [ "$current" != "$project" ] && sbx ls -q | grep -q '^factory-'; then
     say "The factory is currently set up for ${B}$current${N}."
     if confirm "Switch to $project? This removes the agent sandboxes (your Claude login is kept)."; then
-      cmd_reset --yes
+      "$(resolve_python)" "$ROOT/factory" reset --yes
     else
       die "not switching. Run 'factory start $current' to open the current project."
     fi
@@ -408,42 +408,9 @@ onboarding_hints() {
   fi
 }
 
-# --- chat --------------------------------------------------------------------------
-# cmd_chat -> open the Coordinator sandbox in this terminal, the same thing
-# 'sbx run --name factory-coordinator' does; 'factory start' creates it.
-cmd_chat() {
-  require_sbx
-  sandbox_exists "$COORDINATOR_SANDBOX" \
-    || die "the coordinator sandbox doesn't exist yet; run 'factory start' first"
-  # A second 'sbx run' would start a second Coordinator in the same VM.
-  ! coordinator_attached \
-    || die "the Coordinator is already open elsewhere (the dashboard or another 'factory chat'); close it there first"
-  exec sbx run --name "$COORDINATOR_SANDBOX" "$@"
-}
-
-# --- stop / reset ------------------------------------------------------------------
-cmd_stop() {
-  "$SCRIPTS/03-stop-factory.sh"
-}
-
-# cmd_restart -> stop the factory (03-stop-factory.sh: the dispatch bridge and
-# every factory-* sandbox; never the dashboard), then start it again for the
-# project it is bound to. It doesn't open a dashboard
-# (one may be open already: the control unit's RESTART key runs this).
-cmd_restart() {
-  local project
-  [ $# -eq 0 ] || die "usage: factory restart"
-  project="$(bound_project)"
-  [ -n "$project" ] || die "the factory isn't bound to a project yet: run 'factory start' in one"
-  [ -d "$project" ] || die "the factory's project $project no longer exists: run 'factory start' in another"
-  require_sbx
-  step "Stopping the factory"
-  "$SCRIPTS/03-stop-factory.sh"
-  step "Starting it again for $project"
-  cmd_start "$project" --no-dashboard
-}
-
-# rm_failed_after_stop COMMAND SANDBOXES RETRY -> `sbx rm` failed after COMMAND
+# --- stop / reset: ported to Python (factory/commands/runstate.py) ------------------
+# rm_failed_after_stop (the Python copy is runstate.rm_failed_after_stop; a test compares them)
+# COMMAND SANDBOXES RETRY -> `sbx rm` failed after COMMAND
 # had already stopped the factory: say what is left stopped and how to recover,
 # then exit. The project stays bound, so `factory start` brings it back.
 rm_failed_after_stop() {
@@ -455,27 +422,6 @@ rm_failed_after_stop() {
   say "  To bring the factory back up: ${B}factory start${N} (in your project)."
   say "  To retry the removal: ${B}$retry${N}."
   exit 1
-}
-
-cmd_reset() {
-  local sandboxes
-  require_sbx
-  sandboxes="$(sbx ls -q | grep '^factory-' || true)"
-  if [ "${1:-}" != "--yes" ]; then
-    say "This removes these sandboxes: $(printf '%s ' $sandboxes)"
-    say "Your Claude login, roles and settings are kept."
-    confirm "Continue?" || die "cancelled"
-  fi
-  "$SCRIPTS/03-stop-factory.sh" >/dev/null
-  if [ -n "$sandboxes" ]; then
-    # shellcheck disable=SC2086 # one argument per sandbox
-    sbx rm --force $sandboxes >/dev/null \
-      || rm_failed_after_stop "reset" "$sandboxes" "factory reset"
-    ok "removed $(printf '%s ' $sandboxes)"
-  fi
-  rm -f "$FACTORY_BROKER_STATE/project" "$FACTORY_DISPATCH_STATE/project"
-  rm -f "$FACTORY_DISPATCH_STATE"/sessions/* 2>/dev/null || true
-  ok "factory is no longer bound to a project"
 }
 
 # --- update --------------------------------------------------------------------------
@@ -676,10 +622,6 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
     setup) cmd_setup "$@" ;;
     update|upgrade) cmd_update "$@" ;;
     start|up) cmd_start "$@" ;;
-    chat|coordinator) cmd_chat "$@" ;;
-    stop|down) cmd_stop "$@" ;;
-    restart) cmd_restart "$@" ;;
-    reset) cmd_reset "$@" ;;
     help|-h|--help) usage ;;
     *) usage; die "unknown command: $command" ;;
   esac

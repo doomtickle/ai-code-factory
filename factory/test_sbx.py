@@ -7,6 +7,7 @@ same `sbx` stub and requires the same answer. require_sbx (common.sh) is compare
 import os
 import shutil
 import subprocess
+import sys
 import unittest
 
 from factory import sbx
@@ -112,6 +113,70 @@ class SandboxStateTest(SbxTest):
     def test_names_lists_what_sbx_prints(self):
         self.stub_listing()
         self.assertEqual(sbx.sandbox_names(self.ctx()), ["factory-broker", "factory-developer", "factory-broker-2", ""])
+
+
+class CoordinatorAttachedTest(SbxTest):
+    """The security rule of scripts/CLAUDE.md: `factory chat` (sbx.runs_sandbox) and the dashboard's
+    Terminal 0 (dashboard_term.runs_sandbox) must see the same `sbx run` command lines as naming the
+    Coordinator. The fixtures are the forms the bash coordinator_attached (deleted with `cmd_chat`)
+    was checked on, plus odd ones; both answers are required on every one."""
+
+    NAME = "factory-coordinator"
+    LINES = [
+        ("sbx run --name factory-coordinator", True),
+        ("/usr/local/bin/sbx run --name factory-coordinator --resume", True),
+        ("sbx run --name=factory-coordinator", True),
+        ("sbx run factory-coordinator", True),
+        ("sbx run claude --name factory-coordinator", True),
+        ("sbx -D run --name factory-coordinator", True),
+        ("sbx --debug run --name factory-coordinator", True),
+        ("/opt/bin/sbx run -e X=1 factory-coordinator", True),
+        ("sbx run -- --name factory-coordinator", False),
+        ("sbx run claude -- factory-coordinator", False),
+        ("sbx ls factory-coordinator", False),
+        ("sbx --debug run factory-coordinator-old", False),
+        ("sbx run --name factory-coordinator-old", False),
+        ("sbx run --name= factory-coordinator-old", False),
+        ("grep sbx run --name factory-coordinator", False),
+        ("sbx exec factory-coordinator true", False),
+        ("/usr/bin/sbx daemon start", False),
+        ("sbx/ run factory-coordinator", False),
+        ("mysbx run factory-coordinator", False),
+        ("sbx run", False),
+        ("sbx -", False),
+        ("sbx", False),
+        ("", False),
+    ]
+
+    @classmethod
+    def dashboard_term(cls):
+        sys.path.insert(0, os.path.join(REPO, "scripts"))
+        try:
+            import dashboard_term
+        finally:
+            sys.path.remove(os.path.join(REPO, "scripts"))
+        return dashboard_term
+
+    def test_both_rules_agree_on_every_command_line(self):
+        dt = self.dashboard_term()
+        for line, want in self.LINES:
+            self.assertEqual(sbx.runs_sandbox(line.split(), self.NAME), want, line)
+            self.assertEqual(dt.runs_sandbox(line.split(), self.NAME), want, line)
+
+    def test_both_rules_agree_on_a_name_of_another_sandbox(self):
+        dt = self.dashboard_term()
+        for line, _ in self.LINES:
+            for name in ("factory-developer", "factory-coordinator-old", "run"):
+                self.assertEqual(sbx.runs_sandbox(line.split(), name), dt.runs_sandbox(line.split(), name), (line, name))
+
+    def test_attached_reads_ps_and_ignores_a_ps_that_fails(self):
+        for line, want in self.LINES:
+            self.tool("ps", "cat <<'EOF'\n/sbin/init\n%s\nEOF\n" % line)
+            self.assertEqual(sbx.coordinator_attached(self.ctx(), self.NAME), want, line)
+        self.tool("ps", "exit 1\n")
+        self.assertFalse(sbx.coordinator_attached(self.ctx(), self.NAME))
+        os.remove(os.path.join(self.tmp, "bin", "ps"))
+        self.assertFalse(sbx.coordinator_attached(self.ctx(), self.NAME))
 
 
 class LoginTest(SbxTest):
