@@ -36,7 +36,7 @@ bash and Python side by side, and `main` works after every one.
 | Role validation core (`validate_role`, `validate_role_overrides`, `validate_enabled_roles`, `role_lane_names`, `coordinator_broker_tools`; no new command; `role new` uses it) | 3 |
 | `factory logs` (and `log`), `packet` (and `packets`): step 4, part 2 | 4 (part) |
 | Bash `in_list` takes one exact word, as Python's `_in_list` (no new command) | done |
-| `factory doctor`: `factory/commands/doctor.py`, with the helpers it uses in `factory/preflight.py` (`scripts/lib/preflight.sh` ported, the bash stays for `install-prereqs.sh`), `factory/sbx.py` and `factory/policy.py`; `disabled_role_sandboxes` in `factory/roles.py` | 4 (part 1) |
+| `factory doctor`: `factory/commands/doctor.py`, with the helpers it uses in `factory/preflight.py` (`scripts/lib/preflight.sh` ported; deleted in step 8 part A), `factory/sbx.py` and `factory/policy.py`; `disabled_role_sandboxes` in `factory/roles.py` | 4 (part 1) |
 | `factory status`: `factory/commands/status.py`, with `factory/keychain.py` (`keychain_has` and the lookups it uses), `factory/approvals.py` (the approvals summary and status line, shared with `doctor`), `require_sbx` in `factory/sbx.py` and the Jira/npm token checks in `factory/policy.py`; tests in `factory/test_command_status.py` | 4 (part 3) |
 | `factory secret` (`save`, `forget`, `set`, `rm`, `ls`): `factory/commands/secret.py`, with the `scripts/lib/secrets.sh` helpers it uses in `factory/secrets.py` and the keychain ones in `factory/keychain.py` (shared with `status`; the bash stays for `keychain_warn_missing`) | 5 |
 | `factory chat` (and `coordinator`), `stop` (and `down`), `restart`, `reset`: `factory/commands/runstate.py`, with `runs_sandbox` and `coordinator_attached` in `factory/sbx.py`, `Context.confirm` and an `exec` that replaces the process (`os.execvpe`); `03-stop-factory.sh` stays shell; tests in `factory/test_command_runstate.py` and `factory/test_sbx.py` | 6 |
@@ -44,6 +44,7 @@ bash and Python side by side, and `main` works after every one.
 | `scripts/start-broker.sh` (step 7, part B): `factory/broker_start.py` as `factory _start-broker` (`INTERNAL`), the script a shim; the broker's sandbox fingerprint and `broker_plugins` in `factory/fingerprints.py`; `clear_all_manual` and the `sync_from_keychain` statuses (#179) in `factory/secrets.py`; tests in `factory/test_broker_start.py` | 7 (part B) |
 | The Coordinator's and roles' sandbox fingerprints, `record_sandbox_fingerprint` for any sandbox and `stale_sandboxes` (step 7, part C1): `factory/fingerprints.py` (`sandbox_fingerprint`, `record_sandbox_fingerprint`, `stale_sandboxes`); the bash copies in `scripts/lib/roles.sh` stay for their callers; tests in `factory/test_fingerprints.py` | 7 (part C1) |
 | `factory start` (and `up`) and `scripts/02-launch-factory.sh` (step 7, part C2): `factory/commands/start.py` (`cmd_start`, `require_project_commits`, `onboarding_hints`, `resolve_layout`; `factory _onboarding-hints` for bash `setup`) and `factory/launch.py` (`factory _launch`, the script a shim; the Coordinator's `claudeMdExcludes` with it); `git_push_enabled` and `github_repos_listed` in `factory/policy.py`; `restart` calls `start` directly; tests in `factory/test_command_start.py` and `factory/test_launch.py` | 7 (part C2) |
+| The three setup scripts (step 8, part A): `factory/build_templates.py` (`factory _build-templates`, from `00-build-templates.sh`), `factory/security_init.py` (`factory _init-security`, from `01-init-security.sh`) and `factory/prereqs.py` (`factory _install-prereqs`, from `install-prereqs.sh`), each script a shim that runs its `INTERNAL` entry at the same path; `factory/pins.py`; tests in `factory/test_build_templates.py`, `test_security_init.py`, `test_prereqs.py` | 8 (part A) |
 ## Remaining, in order
 
 1. **Wrappers of Python scripts and small commands**: done (PR 2).
@@ -305,17 +306,60 @@ bash and Python side by side, and `main` works after every one.
      now checks the Python `start --no-dashboard` call) and `test_factory_helpers.sh` (the
      incomplete-checkout refusal, now through `update --plan`, and `sbx_not_signed_in`).
 8. **`setup` and `update`**, with `00-build-templates.sh`, `01-init-security.sh`,
-   `install-prereqs.sh`. What is left in `bin/factory` after step 7: `cmd_setup` (with
-   `sbx_not_signed_in`; it already ends in `factory _onboarding-hints`), `cmd_update` (with
-   `pull_factory`, `describe_loss`, `forget_role_sessions`, `rm_failed_after_stop`, `confirm`,
-   `bound_project`; it already restarts through Python `factory start --no-dashboard`),
-   `cmd_update_plan` (with `plan_maybe_sandboxes`) and `usage`. They still use the bash
-   `stale_sandboxes` and the fingerprint helpers under it in `scripts/lib/roles.sh`
-   (`sandbox_fingerprint`, `image_build_id`, `dir_hash`, `yes_no`, `RW_LAYOUT`, `broker_plugins`
-   in `common.sh`), and its role lookups (`list_roles`, `role_get`, `role_sandbox`,
-   `coordinator_broker_tools`); `factory/fingerprints.py` and `factory/roles.py` are their Python
-   copies, so the port calls those and deletes the bash. Its tests: `test_factory_update.sh`, and
-   what is left of `test_factory_state.sh` and `test_factory_helpers.sh`.
+   `install-prereqs.sh`, in two parts.
+   - **Part A (done): the three setup scripts.** Each stays at its path (`bin/factory`'s `cmd_setup`
+     and CI, `scripts/00-build-templates.sh --build-only`, call them there) as a shim that checks
+     what the bash checked and runs `exec "$(resolve_python)" "$ROOT/factory" _<name>`:
+     `_build-templates` (`factory/build_templates.py`; the usage check stays in the shim, so the
+     message still names `$0`), `_init-security` (`factory/security_init.py`) and `_install-prereqs`
+     (`factory/prereqs.py`). Output, exit status, programs run (argv lists, no shell) and files
+     written are what the bash gave: the old scripts and the new ones were run against stub
+     `docker`, `sbx`, `curl`, `sudo`, `apt-get` and `sw_vers` on 34 fixtures (the build with and
+     without `--build-only`, a policy overlay, plugins, a dirty or missing `broker/`, failing
+     builds and loads; the init with the gateway on and off, running sandboxes, a policy
+     initialised or not, denied or allowed; the install on macOS and Ubuntu, wrong platform, KVM,
+     checksum and download failures), and the status, stdout, stderr, calls and files were the same.
+     The deliberate differences are on failure paths only: if `docker image inspect` fails after
+     a load, bash left an empty `FACTORY_STATE/images/factory-<image>-v3.id` and Python leaves none
+     (so `image_build_id` reads "no id recorded" rather than an empty one); a filesystem error
+     (a full disk, an unreadable policy file) is `error: <path>: <reason>` where bash printed
+     `cp`'s or `mkdir`'s own message (not in the fixtures).
+     `00-build-templates.sh` still builds the broker only from `git archive` of the committed
+     `broker/`.
+   - **Where the pins live.** `scripts/lib/common.sh` stays the one copy of everything bash still
+     reads (`SBX_VERSION`, `SBX_URL`, `SBX_SHA256`, the `SHELLCHECK_*` values `scripts/lint.sh`
+     uses): `factory/pins.py` parses its `readonly NAME="value"` lines at run time, expanding
+     `${NAME}`, instead of a second copy. It goes with `common.sh` in step 9. The Linux `.deb`
+     pins (`SBX_DEB_UBUNTU*`) were only used by `preflight.sh`, so they were deleted from
+     `common.sh` and live only in `factory/preflight.py`; `SBX_VERSION` is still in both, compared
+     by `factory/test_preflight.py`. The `test_lint.sh` check that `00-build-templates.sh` passes
+     each ShellCheck pin as `--build-arg` is now `factory/test_build_templates.py` (the argv
+     `docker build` gets, with the values from `common.sh`); the Dockerfile `ARG` checks stay in
+     `test_lint.sh`.
+   - **`install-prereqs.sh` is Python too.** It could run before a suitable Python is installed,
+     but `factory setup` runs `factory doctor` first (which needs Python 3.9+, a README
+     prerequisite), and a shim that cannot find one prints `resolve_python`'s hint, the same one
+     `bin/factory` gives, so a fresh machine is no worse off.
+   - Deleted with part A, since nothing calls them: `scripts/lib/preflight.sh`, and in
+     `common.sh` `broker_export`, `prepare_broker_context` and the `SBX_DEB_UBUNTU*` pins.
+     `BROKER_GIT_SAFE` stays (`bin/factory` uses it). `test_factory_update.sh` Parts 3 and 4 (the
+     broker build context, and `00-build-templates.sh` against stub docker) are
+     `factory/test_build_templates.py`; `test_preflight.py` now asserts the answers the
+     deleted `preflight.sh` gave.
+   - **Part B (left): `setup` and `update`.** What is left in `bin/factory`: `cmd_setup` (with
+     `sbx_not_signed_in`; it already ends in `factory _onboarding-hints`), `cmd_update` (with
+     `pull_factory`, `describe_loss`, `forget_role_sessions`, `rm_failed_after_stop`, `confirm`,
+     `bound_project`; it already restarts through Python `factory start --no-dashboard`),
+     `cmd_update_plan` (with `plan_maybe_sandboxes`) and `usage`. They still use the bash
+     `stale_sandboxes` and the fingerprint helpers under it in `scripts/lib/roles.sh`
+     (`sandbox_fingerprint`, `image_build_id`, `dir_hash`, `yes_no`, `RW_LAYOUT`, `broker_plugins`
+     in `common.sh`), and its role lookups (`list_roles`, `role_get`, `role_sandbox`,
+     `coordinator_broker_tools`); `factory/fingerprints.py` and `factory/roles.py` are their Python
+     copies, so the port calls those and deletes the bash. Part B then calls
+     `build_templates.main`, `security_init.main` and `prereqs.main` directly and the three shims
+     can go (CI's `--build-only` becomes `factory _build-templates --build-only`). Its tests:
+     `test_factory_update.sh` (Parts 1, 2, 5 and 6), and what is left of `test_factory_state.sh`
+     and `test_factory_helpers.sh`.
 9. **Finish**: delete `scripts/lib/*.sh` and the bash tests, leave `bin/factory` as a shim
    with no `PORTED_COMMANDS` list (it always runs Python), drop the parity tests, update
    `scripts/lint.sh`. `templates/agent/factory-lane` and `factory-test` stay bash: they run

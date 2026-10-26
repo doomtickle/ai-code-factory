@@ -1,9 +1,9 @@
-"""Platform checks `factory doctor` makes. Port of scripts/lib/preflight.sh (which stays:
-scripts/install-prereqs.sh sources it), of resolve_python in scripts/lib/common.sh and of
+"""Platform checks `factory doctor` and `factory _install-prereqs` (factory/prereqs.py) make. Port of
+scripts/lib/preflight.sh (now gone), of resolve_python in scripts/lib/common.sh and of
 keychain_backend in scripts/lib/secrets.sh (now gone). factory/test_preflight.py runs the bash
-and the Python on the same fixtures (for keychain_backend, it checks the answers the bash gave).
-Each check raises Problem with the text bash prints on stderr (no final newline), and changes
-nothing.
+resolve_python and the Python on the same fixtures; for the rest it checks the answers the bash
+gave. Each check raises Problem with the text bash printed on stderr (no final newline), and
+changes nothing.
 """
 
 import os
@@ -13,7 +13,10 @@ import shutil
 
 from factory.context import FactoryError
 
-# Keep in sync with scripts/lib/common.sh (a test compares them).
+# SBX_VERSION is also pinned in scripts/lib/common.sh (a test compares them). The .deb pins below
+# (Linux x86_64, including WSL2: one per Ubuntu release) are only here. The .deb, not the tarball,
+# installs the AppArmor profile the sandbox shim needs on Ubuntu 23.10+. The hashes are the GitHub
+# release asset digests, checked against downloads on 2026-10-14.
 SBX_VERSION = "0.45.1"
 SBX_DEB_UBUNTU2404_URL = "https://github.com/docker/sbx-releases/releases/download/v%s/DockerSandboxes-linux-amd64-ubuntu2404.deb" % SBX_VERSION
 SBX_DEB_UBUNTU2404_SHA256 = "aaceda8ade7bdbb285a8e5b27e29d5af1aeef55c57bf4db892966ea47ecc11c1"

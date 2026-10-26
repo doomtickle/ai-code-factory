@@ -124,12 +124,12 @@ Everything is pinned for repeatable setups:
 
 | Component | Pinned in |
 |---|---|
-| `sbx` 0.45.1 (+ SHA-256, per platform) | `scripts/lib/common.sh` |
+| `sbx` 0.45.1 (+ SHA-256, per platform) | `scripts/lib/common.sh` (version, macOS); `factory/preflight.py` (Linux `.deb`s) |
 | Sandbox base images (digests) | `templates/*/Dockerfile`, `broker/Dockerfile` |
 | ruff 0.16.8 | `templates/reviewer/Dockerfile`, `templates/developer/Dockerfile` |
 | yarn 1.22.22 (+ SHA-256) and `factory-test` | `templates/developer/Dockerfile`, `templates/reviewer/Dockerfile` |
 | Chrome for Testing headless shell 156.0.8078.47 (linux64 and linux-arm64, each + SHA-256; its Ubuntu libraries and fonts pinned only by the base image digest) | `templates/developer/Dockerfile`, `templates/reviewer/Dockerfile` |
-| ShellCheck 0.10.0 (linux x86_64 and aarch64, each + SHA-256) | `scripts/lib/common.sh` (also darwin aarch64, for `scripts/lint.sh` on a host); the images get it as build args from `scripts/00-build-templates.sh` |
+| ShellCheck 0.10.0 (linux x86_64 and aarch64, each + SHA-256) | `scripts/lib/common.sh` (also darwin aarch64, for `scripts/lint.sh` on a host); the images get it as build args from `factory/build_templates.py`, which reads them from there |
 | Broker code + policy | `broker/` at this repo's commit, baked into `factory-broker:v3` at build time |
 | Dispatch bridge runtime | macOS system Python (`/usr/bin/python3`); `python3` on PATH on Linux |
 
@@ -1407,7 +1407,6 @@ factory/                     The host CLI in Python, being ported from bin/facto
                              with the dispatch bridge
 scripts/lib/common.sh        Pinned versions, checksums, names, shared checks
 scripts/lib/roles.sh         Role lookups and sandbox fingerprints for factory update (validation is factory/roles.py)
-scripts/lib/preflight.sh     Platform checks for the installer (factory doctor has them in factory/preflight.py)
 scripts/install-prereqs.sh   Install the pinned sbx
 scripts/00-build-templates.sh
 scripts/01-init-security.sh
@@ -1433,14 +1432,15 @@ Change pins on purpose, in their own commit, and re-run the full setup to test.
 - **Broker base image:** same with `docker/sandbox-templates:shell-docker` →
   `broker/Dockerfile`.
 - After changing any image, bump `TEMPLATE_TAG` (`v1` → `v2`) in `scripts/lib/common.sh`.
-- **sbx:** update the version, URL and SHA-256 in `scripts/lib/common.sh`,
-  for each platform you use:
-  - **macOS:** use the `digest` of `DockerSandboxes-darwin.tar.gz` on the GitHub
-    release.
-  - **Linux (x86_64):** use the `digest` of `DockerSandboxes-linux-amd64-ubuntu2404.deb`
-    and `-ubuntu2604.deb` on the GitHub release (`SBX_DEB_UBUNTU2404_*`,
-    `SBX_DEB_UBUNTU2604_*`). Check each against the file you download
-    (`sha256sum <file>`); never guess a checksum.
+- **sbx:** update `SBX_VERSION` in `scripts/lib/common.sh` **and** in
+  `factory/preflight.py` (a test compares them), and the SHA-256 for each platform
+  you use:
+  - **macOS:** the `digest` of `DockerSandboxes-darwin.tar.gz` on the GitHub
+    release, in `scripts/lib/common.sh` (`SBX_SHA256`).
+  - **Linux (x86_64):** the `digest` of `DockerSandboxes-linux-amd64-ubuntu2404.deb`
+    and `-ubuntu2604.deb` on the GitHub release, in `factory/preflight.py`
+    (`SBX_DEB_UBUNTU2404_SHA256`, `SBX_DEB_UBUNTU2604_SHA256`). Check each against
+    the file you download (`sha256sum <file>`); never guess a checksum.
 
   Kit keys, CLI flags and lifecycle behavior have changed between sbx releases, so
   re-run `sbx kit validate` on every kit and the broker/dispatch lifecycle checks.
@@ -1449,8 +1449,8 @@ Change pins on purpose, in their own commit, and re-run the full setup to test.
   no `sbx`, so they check it before using a flag, and `factory doctor` warns while
   it is missing, not yet generated, or for a different version than `SBX_VERSION`).
 - **ShellCheck:** change `SHELLCHECK_VERSION` and the `SHELLCHECK_*_SHA256` values in
-  `scripts/lib/common.sh` only; `scripts/lint.sh` and the images (via build args in
-  `scripts/00-build-templates.sh`) read them from there. Hash each release asset:
+  `scripts/lib/common.sh` only; `scripts/lint.sh` and the images (via build args from
+  `factory/build_templates.py`) read them from there. Hash each release asset:
   `curl -sL <asset URL> | shasum -a 256`.
 - **ruff:** change `RUFF_VERSION` in both `templates/reviewer/Dockerfile` and `templates/developer/Dockerfile`.
 - **yarn:** change `YARN_VERSION` and `YARN_SHA256` in **both**

@@ -7,25 +7,16 @@
 # in the same commit as any spec/script changes the new version requires.
 readonly SBX_VERSION="0.45.1"
 
-# Release artifacts for scripts/install-prereqs.sh: macOS (Apple silicon) and
-# Linux (x86_64, including WSL2). SHA-256 values come from the GitHub release
-# digests.
+# The macOS (Apple silicon) release artifact for `factory _install-prereqs`
+# (scripts/install-prereqs.sh), read from here by factory/pins.py. The SHA-256
+# value comes from the GitHub release digest. The Linux (x86_64, including WSL2)
+# .deb pins, one per Ubuntu release, are in factory/preflight.py only.
 readonly SBX_URL="https://github.com/docker/sbx-releases/releases/download/v${SBX_VERSION}/DockerSandboxes-darwin.tar.gz"
 readonly SBX_SHA256="0a7207d1736ef9d109b722cf3d21e2b9ed5840d7667fcbcb7596075265b22023"
 
-# Linux x86_64 (Ubuntu, including WSL2): sbx ships as a .deb per Ubuntu
-# release. The .deb (not the tarball) is what installs the AppArmor profile
-# the sandbox shim needs on Ubuntu 23.10+, at the /usr/libexec path that
-# profile names. Hashes are the GitHub release asset digests, checked against
-# downloads on 2026-10-14.
-readonly SBX_DEB_UBUNTU2404_URL="https://github.com/docker/sbx-releases/releases/download/v${SBX_VERSION}/DockerSandboxes-linux-amd64-ubuntu2404.deb"
-readonly SBX_DEB_UBUNTU2404_SHA256="aaceda8ade7bdbb285a8e5b27e29d5af1aeef55c57bf4db892966ea47ecc11c1"
-readonly SBX_DEB_UBUNTU2604_URL="https://github.com/docker/sbx-releases/releases/download/v${SBX_VERSION}/DockerSandboxes-linux-amd64-ubuntu2604.deb"
-readonly SBX_DEB_UBUNTU2604_SHA256="db12d894a9d92da7c33afb5a4654bb341a92a90189b2095490ed3128d58f9c3a"
-
 # Pinned ShellCheck for scripts/lint.sh (CI and local runs) and the developer and
-# reviewer images (00-build-templates.sh passes these as build args). Hashes checked
-# against the v0.10.0 release downloads on 2026-10-17. The linux.aarch64 hash (the
+# reviewer images (`factory _build-templates` reads these through factory/pins.py
+# and passes them as build args). Hashes checked against the v0.10.0 release downloads on 2026-10-17. The linux.aarch64 hash (the
 # images on Apple-silicon Macs) was computed on the host by the owner from the
 # official shellcheck-v0.10.0.linux.aarch64.tar.xz release asset on 2026-10-25.
 readonly SHELLCHECK_VERSION="0.10.0"
@@ -177,7 +168,7 @@ sbx_not_signed_in() {
 
 # broker_plugins -> comma-separated module names of the broker plugins in
 # the local config folder (FACTORY_CONFIG/plugins/<module>/); empty when
-# there are none. 00-build-templates.sh bakes the directory into the broker
+# there are none. `factory _build-templates` bakes the directory into the broker
 # image; factory/fingerprints.py has the Python copy, which the broker start
 # passes as PASSDESK_PLUGINS and records in the broker's fingerprint. This one
 # is for that fingerprint in sandbox_fingerprint (roles.sh), which `factory
@@ -211,42 +202,8 @@ resolve_python() {
   printf '%s' "$python"
 }
 
-# --- the broker image's build context -----------------------------------------------
-# broker/ is a plain directory of this repository. An agent working on the
-# factory's own repo can write into the working tree like any other file, so
-# the broker image is never built from it: it is built from "git archive" of
-# the committed tree (HEAD), so nothing left in the working tree -- edited,
-# untracked or git-ignored (e.g. a planted __pycache__/*.pyc) -- can reach
-# the image. Only changes committed to ROOT's HEAD ship.
-#
-# The repository's own .git (its config and hooks) is trusted here; see the
-# passdesk-broker decision log (2026-10-16) for that open risk.
-
+# --- git on the factory's own checkout ----------------------------------------------
 # Config forced on every git command the factory runs against its own
-# checkout: no fsmonitor command, no hooks.
+# checkout: no fsmonitor command, no hooks. (The broker image build is Python,
+# factory/build_templates.py, which exports the committed broker/ the same way.)
 BROKER_GIT_SAFE=(-c core.fsmonitor=false -c core.hooksPath=/dev/null)
-
-# broker_export ROOT DEST -> write the committed tree of ROOT's broker/ (at
-# ROOT's HEAD) into DEST, so DEST/Dockerfile is the broker's Dockerfile.
-broker_export() {
-  local root="$1" dest="$2" err
-  if ! err="$(git "${BROKER_GIT_SAFE[@]}" -C "$root" cat-file -e 'HEAD:broker/tools.txt' 2>&1)"; then
-    die "refusing to export the broker: broker/tools.txt is not in the committed tree of $root (${err:-HEAD has no broker/ directory})"
-  fi
-  git "${BROKER_GIT_SAFE[@]}" -C "$root" archive --format=tar HEAD broker/ | tar -x -f - -C "$dest" --strip-components=1 \
-    || die "exporting the committed broker/ from $root failed"
-}
-
-# prepare_broker_context ROOT DEST -> export the committed broker/ into DEST
-# (broker_export). 00-build-templates.sh builds the broker image from DEST.
-# Uncommitted work in broker/ is not refused, but is noted: it is not in the
-# image.
-prepare_broker_context() {
-  local dirty
-  broker_export "$1" "$2"
-  [ -f "$2/Dockerfile" ] || die "the committed broker/ has no Dockerfile"
-  dirty="$(git "${BROKER_GIT_SAFE[@]}" -C "$1" status --porcelain --untracked-files=all -- broker 2>/dev/null || true)"
-  if [ -n "$dirty" ]; then
-    echo "note: building the broker image from the committed broker/ (HEAD); uncommitted changes in $1/broker are not included" >&2
-  fi
-}
