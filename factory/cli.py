@@ -3,7 +3,7 @@
 import os
 import sys
 
-from factory import broker_start, dispatch_start, launch
+from factory import broker_start, build_templates, dispatch_start, launch, prereqs, security_init
 from factory.commands import config, docs, doctor, logs, packet, role, roles, runstate, secret, start, status, wrappers
 from factory.context import Context, FactoryError, Paths
 
@@ -38,10 +38,14 @@ COMMANDS = {
 }
 
 # Entry points the bash scripts run (`factory _launch`, `factory _start-broker`, `factory
-# _start-dispatch`: the scripts are thin shims now; `factory _onboarding-hints`, for bash
+# _start-dispatch`, `factory _build-templates`, `factory _init-security`, `factory
+# _install-prereqs`: the scripts are thin shims now; `factory _onboarding-hints`, for bash
 # `factory setup`): dispatched like COMMANDS, but not commands a person types, so they are not
 # in COMMANDS, PORTED_COMMANDS or the usage text. One entry per line, alphabetical.
 INTERNAL = {
+    "_build-templates": build_templates.main,
+    "_init-security": security_init.main,
+    "_install-prereqs": prereqs.main,
     "_launch": launch.main,
     "_onboarding-hints": start.onboarding_hints,
     "_start-broker": broker_start.main,

@@ -10,8 +10,9 @@ set -euo pipefail
 #    download path, which still checks the pinned SHA-256.
 # 3. templates/agent/extract-tar-member (how the images unpack the release
 #    without an xz program) takes only the named regular-file member.
-# 4. The Dockerfiles take the pin as build args with no defaults, and
-#    00-build-templates.sh passes them from lib/common.sh.
+# 4. The Dockerfiles take the pin as build args with no defaults (that
+#    `factory _build-templates` passes them from lib/common.sh is
+#    factory/test_build_templates.py).
 #
 # A fake shellcheck and a stub curl on a private PATH in a throwaway checkout:
 # no network, no real shellcheck.
@@ -157,8 +158,6 @@ for t in developer reviewer; do
   df="$REPO_ROOT/templates/$t/Dockerfile"
   for a in SHELLCHECK_VERSION SHELLCHECK_LINUX_X86_64_SHA256 SHELLCHECK_LINUX_AARCH64_SHA256; do
     grep -qx "ARG $a" "$df" && ok "$t Dockerfile: ARG $a has no default" || bad "$t Dockerfile: ARG $a has no default"
-    build_arg="$(grep -c -- "--build-arg \"$a=\$$a\"" "$REPO_ROOT/scripts/00-build-templates.sh" || true)"
-    assert_eq "00-build-templates.sh passes $a from common.sh" "$build_arg" "1"
   done
   chrome_line="$(grep -n 'chrome-headless-shell --version' "$df" | cut -d: -f1)"
   sc_line="$(grep -n 'shellcheck --version' "$df" | cut -d: -f1)"

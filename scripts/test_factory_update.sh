@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Regression tests for "factory update" and the broker image's build context.
-# broker/ is a plain directory of this repository:
+# Regression tests for "factory update". broker/ is a plain directory of this
+# repository:
 #
 # 1. scripts/lib/roles.sh reads broker/tools.txt and dies, naming the file,
 #    when it is missing.
@@ -11,14 +11,14 @@ set -euo pipefail
 #    uncommitted changes, tracked or untracked, in broker/ or anywhere else.
 #    Git-ignored files (e.g. a __pycache__/ from running the broker's tests)
 #    don't block it.
-# 3. The broker image's build context (scripts/lib/common.sh's broker_export
-#    and prepare_broker_context) is a "git archive" export of the committed
-#    broker/ (HEAD), byte-for-byte, never the working tree: an edited,
-#    untracked or git-ignored file planted in broker/ doesn't reach it, and a
-#    checkout without a committed broker/ is refused. Uncommitted work in
-#    broker/ is noted, not refused.
-# 4. scripts/00-build-templates.sh is run for real against a fixture, with
-#    stub docker and sbx commands, to show it builds from that export.
+# 3. (factory/test_build_templates.py) The broker image's build context is a
+#    "git archive" export of the committed broker/ (HEAD), byte-for-byte, never
+#    the working tree: an edited, untracked or git-ignored file planted in
+#    broker/ doesn't reach it, and a checkout without a committed broker/ is
+#    refused. Uncommitted work in broker/ is noted, not refused.
+# 4. (factory/test_build_templates.py) scripts/00-build-templates.sh is run for
+#    real against a fixture, with stub docker and sbx commands, to show it
+#    builds from that export.
 # 5. An exported ROOT doesn't redirect a direct run of bin/factory.
 # 6. `factory update --plan` (what the dashboard's UPDATE key shows before
 #    asking to confirm) changes nothing but the remote-tracking refs: it
@@ -28,11 +28,11 @@ set -euo pipefail
 #    upstream; --plan with --yes is refused.
 #
 # broker/ is writable by an agent working on this repo's own code like any
-# other file, so the build-context rules matter for real.
+# other file, so the build-context rules (3 and 4) matter for real.
 #
 # This test sources the real bin/factory (for pull_factory) and
-# scripts/lib/common.sh (for the broker_* helpers) and calls them directly,
-# against disposable local fixture repos. There is no other shell test
+# scripts/lib/common.sh and calls them directly, against disposable local
+# fixture repos. There is no other shell test
 # harness in this repo (bin/factory is otherwise driven by sbx/docker, which
 # this test must not require), so this exercises the git plumbing directly:
 # no network access, no sbx, no docker.
@@ -117,19 +117,6 @@ run_pull_factory() {
     pull_factory
   ) 2>&1 )"
   PF_RC=$?
-  set -e
-}
-
-# run_common FN ARGS... -> run a scripts/lib/common.sh function in a
-# subshell; combined output in $C_OUT, exit status in $C_RC.
-run_common() {
-  set +e
-  C_OUT="$( (
-    # shellcheck disable=SC1091
-    . "$REPO_ROOT/scripts/lib/common.sh"
-    "$@"
-  ) 2>&1 )"
-  C_RC=$?
   set -e
 }
 
@@ -224,147 +211,9 @@ assert_eq "git-ignored files in broker/: pull_factory exits 0" "$PF_RC" "0"
 assert_eq "git-ignored files in broker/ don't block the pull" "$(git -C "$ignored" rev-parse HEAD)" "$V3"
 
 # ===========================================================================
-# Part 3: the broker build context is an export of the committed broker/.
+# Parts 3 and 4 (the broker image's build context, and 00-build-templates.sh run
+# against stub docker and sbx) are factory/test_build_templates.py.
 # ===========================================================================
-committed_tree="$tmp/committed-tree"
-mkdir "$committed_tree"
-git -C "$tmp/seed" archive "$V3:broker" | tar -x -f - -C "$committed_tree"
-
-export_co="$(fresh_checkout export-co)"
-mkdir "$tmp/ctx-clean"
-run_common broker_export "$export_co" "$tmp/ctx-clean"
-assert_eq "broker_export succeeds on a clean checkout" "$C_RC" "0"
-diff -r "$committed_tree" "$tmp/ctx-clean" >/dev/null \
-  && ok "the exported build context is broker/'s committed tree exactly (Dockerfile at its top)" \
-  || bad "the exported build context is broker/'s committed tree exactly"
-
-# A planted ignored .pyc, an edit to a tracked file and an untracked file
-# are all in the working tree and none of them in the export.
-mkdir -p "$export_co/broker/passdesk/__pycache__"
-echo "planted bytecode" > "$export_co/broker/passdesk/__pycache__/app.cpython-312.pyc"
-echo "print('planted')" > "$export_co/broker/passdesk/app.py"
-echo "planted" > "$export_co/broker/planted.txt"
-mkdir "$tmp/ctx-planted"
-run_common broker_export "$export_co" "$tmp/ctx-planted"
-assert_eq "broker_export succeeds with planted files in the broker/ working tree" "$C_RC" "0"
-diff -r "$committed_tree" "$tmp/ctx-planted" >/dev/null \
-  && ok "an ignored .pyc, an edited file and an untracked file in broker/ don't reach the build context" \
-  || bad "an ignored .pyc, an edited file and an untracked file in broker/ don't reach the build context"
-
-mkdir "$tmp/ctx-prepared"
-run_common prepare_broker_context "$export_co" "$tmp/ctx-prepared"
-assert_eq "prepare_broker_context accepts uncommitted work in broker/" "$C_RC" "0"
-assert_contains "prepare_broker_context notes that uncommitted work is not included" "$C_OUT" "uncommitted changes in $export_co/broker are not included"
-diff -r "$committed_tree" "$tmp/ctx-prepared" >/dev/null \
-  && ok "prepare_broker_context exports the committed tree" \
-  || bad "prepare_broker_context exports the committed tree"
-
-# A deleted tracked file is still in the export.
-rm "$export_co/broker/Dockerfile"
-mkdir "$tmp/ctx-deleted"
-run_common broker_export "$export_co" "$tmp/ctx-deleted"
-[ -f "$tmp/ctx-deleted/Dockerfile" ] && ok "a Dockerfile deleted from the working tree is still in the export" \
-  || bad "a Dockerfile deleted from the working tree is still in the export"
-
-# A clean checkout prints no note.
-clean_co="$(fresh_checkout clean-co)"
-mkdir "$tmp/ctx-clean2"
-run_common prepare_broker_context "$clean_co" "$tmp/ctx-clean2"
-assert_eq "prepare_broker_context on a clean checkout: exits 0" "$C_RC" "0"
-assert_empty "prepare_broker_context on a clean checkout: prints nothing" "$C_OUT"
-
-# Work added to the index but not committed is not committed either.
-staged_co="$(fresh_checkout staged-co)"
-echo "print('staged')" > "$staged_co/broker/passdesk/app.py"
-git -C "$staged_co" add broker/passdesk/app.py
-mkdir "$tmp/ctx-staged"
-run_common broker_export "$staged_co" "$tmp/ctx-staged"
-assert_eq "a staged, uncommitted edit to broker/ is not exported" "$(cat "$tmp/ctx-staged/passdesk/app.py")" "print('v3')"
-
-# A checkout without a committed broker/ is refused, and nothing is written.
-nobroker="$tmp/nobroker"
-git init -q "$nobroker"
-git -C "$nobroker" commit -q --allow-empty -m "no broker"
-mkdir -p "$nobroker/broker" && echo "git_fetch" > "$nobroker/broker/tools.txt"
-mkdir "$tmp/ctx-nobroker"
-run_common broker_export "$nobroker" "$tmp/ctx-nobroker"
-assert_eq "broker_export refuses a checkout whose broker/ is not committed" "$C_RC" "1"
-assert_contains "broker_export's refusal names the problem" "$C_OUT" "broker/tools.txt is not in the committed tree"
-assert_empty "broker_export wrote nothing for an uncommitted broker/" "$(ls -A "$tmp/ctx-nobroker")"
-
-# ===========================================================================
-# Part 4: 00-build-templates.sh, run for real with stub docker and sbx.
-# ===========================================================================
-stubs="$tmp/stubs"
-mkdir -p "$stubs"
-cat > "$stubs/docker" <<'STUB'
-#!/bin/sh
-# docker build -t TAG -f DOCKERFILE [ARGS...] CONTEXT: record the broker's
-# Dockerfile, context path and a copy of the context (gone after the run).
-case "$1" in
-  build)
-    tag="$3" dockerfile="$5"
-    for a in "$@"; do ctx="$a"; done
-    case "$tag" in factory-broker:*)
-      rm -rf "$CAPTURE" && mkdir -p "$CAPTURE" && cp -R "$ctx/." "$CAPTURE/"
-      printf '%s\n' "$dockerfile" > "$CAPTURE.dockerfile"
-      printf '%s\n' "$ctx" > "$CAPTURE.context" ;;
-    esac ;;
-  image) [ "$2" != inspect ] || echo "sha256:stub" ;;
-esac
-STUB
-cat > "$stubs/sbx" <<STUB
-#!/bin/sh
-[ "\$1" != version ] || echo "sbx version: v$(sed -n 's/^readonly SBX_VERSION="\(.*\)"$/\1/p' "$REPO_ROOT/scripts/lib/common.sh") stub"
-STUB
-chmod +x "$stubs/docker" "$stubs/sbx"
-
-# run_build DIR -> run a copy of the real scripts/00-build-templates.sh (and
-# scripts/lib) from inside fixture checkout DIR, so its ROOT is DIR. Output
-# in $B_OUT, status in $B_RC, the broker's build context copied to $DIR.ctx.
-run_build() {
-  rm -rf "$1/scripts"
-  mkdir -p "$1/scripts"
-  cp -R "$REPO_ROOT/scripts/lib" "$1/scripts/lib"
-  cp "$REPO_ROOT/scripts/00-build-templates.sh" "$1/scripts/"
-  set +e
-  B_OUT="$(CAPTURE="$1.ctx" PATH="$stubs:$PATH" XDG_STATE_HOME="$tmp/state" \
-    XDG_CONFIG_HOME="$tmp/config" bash "$1/scripts/00-build-templates.sh" 2>&1)"
-  B_RC=$?
-  set -e
-}
-
-build_co="$(fresh_checkout build-co)"
-mkdir -p "$build_co/broker/passdesk/__pycache__"
-echo "planted bytecode" > "$build_co/broker/passdesk/__pycache__/app.cpython-312.pyc"
-run_build "$build_co"
-assert_eq "00-build-templates.sh succeeds on a checkout with a committed broker/ (stub docker)" "$B_RC" "0"
-diff -r "$committed_tree" "$build_co.ctx" >/dev/null \
-  && ok "00-build-templates.sh builds the broker from exactly the committed broker/ tree" \
-  || bad "00-build-templates.sh builds the broker from exactly the committed broker/ tree"
-case "$(cat "$build_co.ctx.context")" in
-  "$build_co"/*|"$build_co") bad "00-build-templates.sh's broker context is not inside the checkout" ;;
-  *) ok "00-build-templates.sh's broker context is not inside the checkout" ;;
-esac
-assert_eq "00-build-templates.sh takes the broker Dockerfile from the exported context" \
-  "$(cat "$build_co.ctx.dockerfile")" "$(cat "$build_co.ctx.context")/Dockerfile"
-assert_not_contains "00-build-templates.sh doesn't mention a submodule or pin" "$B_OUT" "submodule"
-
-echo "print('edited')" > "$build_co/broker/passdesk/app.py"
-echo "planted" > "$build_co/broker/planted.txt"
-run_build "$build_co"
-assert_eq "00-build-templates.sh still builds with uncommitted work in broker/" "$B_RC" "0"
-assert_contains "00-build-templates.sh notes that it is not in the image" "$B_OUT" "uncommitted changes in $build_co/broker are not included"
-diff -r "$committed_tree" "$build_co.ctx" >/dev/null \
-  && ok "uncommitted work in broker/ doesn't reach the broker image's build context" \
-  || bad "uncommitted work in broker/ doesn't reach the broker image's build context"
-
-rm -rf "$build_co.ctx"
-run_build "$nobroker"
-assert_eq "00-build-templates.sh refuses a checkout whose broker/ is not committed" "$B_RC" "1"
-assert_contains "00-build-templates.sh's refusal names the problem" "$B_OUT" "not in the committed tree"
-[ ! -e "$nobroker.ctx" ] && ok "00-build-templates.sh built nothing without a committed broker/" \
-  || bad "00-build-templates.sh built nothing without a committed broker/"
 
 # ===========================================================================
 # Part 5: an exported ROOT doesn't redirect a direct run of bin/factory.

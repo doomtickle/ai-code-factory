@@ -36,11 +36,12 @@ class ShimTest(unittest.TestCase):
         self.assertEqual(sorted(shim_ported_commands()), sorted(cli.COMMANDS))
 
     def test_internal_entry_points_are_not_commands(self):
-        # Run by the host scripts that are shims now (scripts/02-launch-factory.sh,
-        # scripts/start-broker.sh, scripts/start-dispatch.sh) and by bash `factory setup`
-        # (_onboarding-hints), never by a user.
+        # Run by the host scripts that are shims now (scripts/00-build-templates.sh,
+        # 01-init-security.sh, install-prereqs.sh, 02-launch-factory.sh, start-broker.sh,
+        # start-dispatch.sh) and by bash `factory setup` (_onboarding-hints), never by a user.
         self.assertEqual(list(cli.INTERNAL),
-                         ["_launch", "_onboarding-hints", "_start-broker", "_start-dispatch"])  # alphabetical
+                         ["_build-templates", "_init-security", "_install-prereqs", "_launch", "_onboarding-hints",
+                          "_start-broker", "_start-dispatch"])  # alphabetical
         for name in cli.INTERNAL:
             self.assertTrue(name.startswith("_"))
             self.assertNotIn(name, cli.COMMANDS)
