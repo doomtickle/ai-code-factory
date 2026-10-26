@@ -1,5 +1,6 @@
 """Tests for factory/repos.py (project_repos). Fixtures are the ones scripts/test_project_repos.sh
-runs against common.sh, dispatch/server.py and factory-lane."""
+runs against dispatch/server.py and factory-lane; the expected lists are what the bash copy in
+scripts/lib/common.sh (now gone) gave on them."""
 
 import errno
 import os
@@ -94,25 +95,22 @@ class ProjectReposTest(unittest.TestCase):
                 self.skipTest("filesystem rejects non-UTF-8 names")
         self.assertEqual([os.fsencode(r) for r in project_repos(p)], [b"a", b"b\xff", b"\xc3\xa9"])
 
-    def test_matches_the_bash_and_sandbox_implementations(self):
-        folders = [self.folder()]
-        for name, git in (("dir", "d"), ("file", "f"), ("none", None)):
+    def test_matches_the_old_bash_and_the_sandbox_implementation(self):
+        folders = [(self.folder(), ["Capital", "gitfile", "normal", "real-repo"])]
+        for name, git, expected in (("dir", "d", ["."]), ("file", "f", ["."]), ("none", None, ["sub"])):
             p = os.path.join(self.tmp, "parity-" + name)
             mkdir(p, "sub", ".git")
             if git == "d":
                 mkdir(p, ".git")
             elif git == "f":
                 write(os.path.join(p, ".git"), "gitdir: /elsewhere\n")
-            folders.append(p)
-        for folder in folders:
-            via_common = subprocess.run(
-                ["bash", "-c", '. "$1/scripts/lib/common.sh"; project_repos "$2"', "_", ROOT, folder],
-                stdout=subprocess.PIPE, check=True).stdout.decode().splitlines()
+            folders.append((p, expected))
+        for folder, expected in folders:
             via_lane = subprocess.run(
                 [os.path.join(ROOT, "templates/agent/factory-lane"), "repos", folder],
                 stdout=subprocess.PIPE, check=True).stdout.decode().splitlines()
-            self.assertEqual(project_repos(folder), via_common, folder)
-            self.assertEqual(sorted(via_lane), sorted(via_common), folder)
+            self.assertEqual(project_repos(folder), expected, folder)
+            self.assertEqual(sorted(via_lane), sorted(expected), folder)
 
 
 if __name__ == "__main__":

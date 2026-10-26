@@ -1,7 +1,7 @@
 """The factory's runtime state: where it may live, and moving it out of the repo. Ports of
-require_state_outside and migrate_state in scripts/lib/common.sh (which stay:
-02-launch-factory.sh calls the first, 03-stop-factory.sh the second). factory/test_state.py
-runs both migrate_state copies on the same fixtures.
+require_state_outside and migrate_state in scripts/lib/common.sh. The bash require_state_outside
+is gone; the bash migrate_state stays for 03-stop-factory.sh, and factory/test_state.py runs both
+migrate_state copies on the same fixtures.
 """
 
 import os

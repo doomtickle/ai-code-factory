@@ -1,15 +1,16 @@
 """Tests for role validation in factory/roles.py: validate_role, validate_role_override(s),
 validate_enabled_roles, role_lane_names, coordinator_broker_tools, known_broker_tools.
 
-Ported from scripts/test_factory_role_overrides.sh. Every check runs the Python and the
-bash helper (scripts/lib/roles.sh, still called by start-broker.sh, start-dispatch.sh,
-02-launch-factory.sh and bin/factory) on the same fixture and requires the same answer:
-the same refusal with the same message, or both pass. Where Python is deliberately
-stricter, a test says so and asserts only the Python.
+Ported from scripts/test_factory_role_overrides.sh. These checks ran the Python and the bash
+helpers of scripts/lib/roles.sh on the same fixture and required the same answer; the bash
+validation, role_lanes, role_lane_names, KNOWN_TEMPLATES and KNOWN_BROKER_TOOLS are gone, so
+each check now asserts the refusal (message for message) or the answer the bash gave, in the C
+locale and in C.UTF-8 alike. The bash that stays (role_get, list_roles, coordinator_broker_tools,
+in_list, the broker/tools.txt guard) is still run on the same fixtures. Where Python is
+deliberately stricter, a test says so.
 """
 
 import os
-import re
 import shlex
 import shutil
 import subprocess
@@ -18,7 +19,6 @@ import unittest
 
 from factory import roles
 from factory.context import FactoryError, Paths
-from factory.test_roles import locales_installed
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -39,6 +39,17 @@ TEMPLATE="developer"
 WORKSPACE="ro"
 BROKER_TOOLS="npm_fetch"
 '''
+
+# What validate_role says about a bad value of each key (then " (set in <override>)" when the
+# local override set it), as the bash said it.
+BAD = {"MODEL": "MODEL must contain only letters, digits, dots, dashes, underscores",
+       "MODELS": "MODELS entries must contain only letters, digits, dots, dashes, underscores",
+       "EFFORT": "EFFORT must be low, medium, high or xhigh (or empty)",
+       "LANES": "LANES must be a whole number from 1 to 8 (or empty)",
+       "MAX_SESSION_TOKENS": "MAX_SESSION_TOKENS must be a whole number of tokens (or empty)",
+       "MAX_TURNS": "MAX_TURNS must be a whole number of turns (or empty)",
+       "MAX_JOB_SECONDS": "MAX_JOB_SECONDS must be a whole number of seconds (or empty)"}
+ALLOWED = "allowed: MODEL MODELS EFFORT LANES MAX_SESSION_TOKENS MAX_TURNS MAX_JOB_SECONDS"
 
 
 class Fixture(unittest.TestCase):
@@ -75,39 +86,38 @@ class Fixture(unittest.TestCase):
     def override(self, text, role="developer"):
         self.write(os.path.join(self.overrides, role + ".conf"), text)
 
-    def bash(self, snippet, locale="C"):
-        """(status, stdout, stderr) of the bash helpers on this fixture (an empty working folder)."""
+    def bash(self, snippet):
+        """(status, stdout, stderr) of the bash helpers that remain, on this fixture (an empty
+        working folder)."""
         env = dict(os.environ, XDG_CONFIG_HOME=os.path.dirname(self.config), XDG_STATE_HOME=self.state,
-                   LC_ALL=locale)
+                   LC_ALL="C")
         cp = subprocess.run(
             ["bash", "-c", 'ROOT="$1"; . "$2/scripts/lib/common.sh"; . "$2/scripts/lib/roles.sh"; ' + snippet,
              "_", self.root, REPO],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env, cwd=self.cwd)
         return cp.returncode, cp.stdout.decode(errors="surrogateescape"), cp.stderr.decode(errors="surrogateescape")
 
-    def both(self, call, snippet, locale="C"):
-        """Run the Python `call` and the bash `snippet` (a die-ing helper); require the same
-        outcome and return the refusal message, or None if both passed."""
+    def refusal(self, call):
+        """The message `call` refuses with (what bash's `die` printed after "error: "), or None
+        if it passes."""
         try:
             call()
-            message = None
         except FactoryError as e:
-            message = str(e)
-        status, out, err = self.bash(snippet, locale)
-        if message is None:
-            self.assertEqual((status, out, err), (0, "", ""), "bash refused what Python accepts")
-        else:
-            self.assertEqual((status, out, err), (1, "", "error: %s\n" % message), "bash and Python disagree")
-        return message
+            return str(e)
+        return None
 
-    def role_check(self, role="developer", locale="C"):
-        return self.both(lambda: roles.validate_role(self.paths, role), 'validate_role "%s"' % role, locale)
+    def role_check(self, role="developer"):
+        return self.refusal(lambda: roles.validate_role(self.paths, role))
 
-    def overrides_check(self, locale="C"):
-        return self.both(lambda: roles.validate_role_overrides(self.paths), "validate_role_overrides", locale)
+    def overrides_check(self):
+        return self.refusal(lambda: roles.validate_role_overrides(self.paths))
 
-    def enabled_check(self, locale="C"):
-        return self.both(lambda: roles.validate_enabled_roles(self.paths), "validate_enabled_roles", locale)
+    def enabled_check(self):
+        return self.refusal(lambda: roles.validate_enabled_roles(self.paths))
+
+    def bad(self, key, overridden=True):
+        """The refusal of a bad KEY of the developer, set in its override or in role.conf."""
+        return "role developer: %s%s" % (BAD[key], " (set in %s)" % self.override_file if overridden else "")
 
     def bash_get(self, role, key):
         return self.bash('role_get "%s" %s' % (role, key))[1].rstrip("\n")
@@ -159,7 +169,9 @@ class AllowlistTest(Fixture):
     def test_a_local_override_cannot_set_optional_on_an_optional_role(self):
         self.write(self.enabled, "researcher\n")
         self.override('OPTIONAL="0"\n', role="researcher")
-        self.assertIn("OPTIONAL can't be set in a local override", self.role_check("researcher"))
+        self.assertEqual(self.role_check("researcher"),
+                         "%s/researcher.conf: OPTIONAL can't be set in a local override (%s); change it in "
+                         "roles/researcher/role.conf" % (self.overrides, ALLOWED))
         self.assertTrue(roles.role_optional(self.paths, "researcher"))
 
     def test_the_allowed_keys_are_the_ones_bash_allows(self):
@@ -170,33 +182,20 @@ class AllowlistTest(Fixture):
 
 class ValueTest(Fixture):
     def test_override_values_are_validated_like_role_conf_and_the_error_names_the_override(self):
-        cases = (
-            ('MODEL="bad model"', "MODEL must contain only"),
-            ('MODELS="opus bad;model"', "MODELS entries must contain only"),
-            ('EFFORT="max"', "EFFORT must be low, medium, high or xhigh"),
-            ('LANES="9"', "LANES must be a whole number from 1 to 8"),
-            ('LANES="0"', "LANES must be a whole number from 1 to 8"),
-            ('MAX_SESSION_TOKENS="lots"', "MAX_SESSION_TOKENS must be a whole number"),
-            ('MAX_TURNS="-1"', "MAX_TURNS must be a whole number"),
-            ('MAX_JOB_SECONDS="1h"', "MAX_JOB_SECONDS must be a whole number"),
-        )
-        for line, expected in cases:
+        for line in ('MODEL="bad model"', 'MODELS="opus bad;model"', 'EFFORT="max"', 'LANES="9"', 'LANES="0"',
+                     'MAX_SESSION_TOKENS="lots"', 'MAX_TURNS="-1"', 'MAX_JOB_SECONDS="1h"'):
             self.override(line + "\n")
-            message = self.role_check()
-            self.assertIn(expected, message, line)
-            self.assertTrue(message.endswith(" (set in %s)" % self.override_file), line)
+            self.assertEqual(self.role_check(), self.bad(line.split("=")[0]), line)
 
-    def test_odd_values_are_judged_alike_in_every_locale(self):
-        # Unicode digits, letters and spaces, and ASCII whitespace other than the space: a locale must
-        # not make bash accept (or Python reject) any of them.
+    def test_odd_values_are_judged_as_bash_judged_them_in_every_locale(self):
+        # Unicode digits, letters and spaces, and ASCII whitespace other than the space: bash refused
+        # every one, under C and C.UTF-8 alike, but for MODELS words split at a tab.
         odd = ("٣", "é", "a\u00a0b", "x\u2003", "\u20031", "1\v", "\v1", "1\f", "1\r", "1\t", "\t1")
-        keys = ("MODEL", "MODELS", "EFFORT", "LANES", "MAX_SESSION_TOKENS", "MAX_TURNS", "MAX_JOB_SECONDS")
-        utf8 = [l for l in locales_installed() if re.search(r"utf-?8", l, re.I)][:3]
-        for locale in ["C"] + utf8:
-            for key in keys:
-                for value in odd:
-                    self.override('%s="%s"\n' % (key, value))
-                    self.role_check(locale=locale)
+        for key in ("MODEL", "MODELS", "EFFORT", "LANES", "MAX_SESSION_TOKENS", "MAX_TURNS", "MAX_JOB_SECONDS"):
+            for value in odd:
+                self.override('%s="%s"\n' % (key, value))
+                passes = key == "MODELS" and value in ("1\t", "\t1")
+                self.assertEqual(self.role_check(), None if passes else self.bad(key), (key, value))
 
     def test_the_exact_messages(self):
         for line, expected in (
@@ -233,16 +232,16 @@ class ValueTest(Fixture):
                      'LANES=" 1"', 'LANES="1.5"', 'MAX_TURNS="٣"', 'MAX_TURNS="1 2"', 'MAX_TURNS=" 1"',
                      'MAX_TURNS="+1"'):
             self.override(conf + "\n")
-            self.assertIsNotNone(self.role_check(), conf)
+            self.assertEqual(self.role_check(), self.bad(conf.split("=")[0]), conf)
 
     def test_the_last_line_for_a_key_wins_in_the_override_and_in_role_conf(self):
         self.override('LANES="9"\nLANES="2"\n')
         self.assertIsNone(self.role_check())
         self.override('LANES="2"\nLANES="9"\n')
-        self.assertIn("LANES must be", self.role_check())
+        self.assertEqual(self.role_check(), self.bad("LANES"))
         self.override('')
         self.role_conf("developer", DEVELOPER + 'LANES="9"\n')
-        self.assertIn("LANES must be", self.role_check())
+        self.assertEqual(self.role_check(), self.bad("LANES", overridden=False))
 
 
 class RoleConfTest(Fixture):
@@ -266,9 +265,12 @@ class RoleConfTest(Fixture):
     def test_unknown_broker_tool(self):
         self.role_conf("developer", DEVELOPER.replace('BROKER_TOOLS="npm_fetch"', 'BROKER_TOOLS="npm_fetch evil git_push"'))
         self.assertEqual(self.role_check(), "role developer: unknown broker tool 'evil' (known: npm_fetch git_push)")
-        for tools in ("", "git_push npm_fetch", "  npm_fetch\tgit_push ", "npm_fetch,git_push", "NPM_FETCH", "npm_fetch\vgit_push"):
+        for tools, unknown in (("", None), ("git_push npm_fetch", None), ("  npm_fetch\tgit_push ", None),
+                               ("npm_fetch,git_push", "npm_fetch,git_push"), ("NPM_FETCH", "NPM_FETCH"),
+                               ("npm_fetch\vgit_push", "npm_fetch\vgit_push")):  # as bash judged them
             self.role_conf("developer", DEVELOPER.replace('BROKER_TOOLS="npm_fetch"', 'BROKER_TOOLS="%s"' % tools))
-            self.role_check()  # bash and Python agree, whichever way
+            self.assertEqual(self.role_check(), unknown and "role developer: unknown broker tool '%s' (known: npm_fetch "
+                             "git_push)" % unknown, repr(tools))
 
     def test_the_kit_and_instructions_must_exist(self):
         os.remove(os.path.join(self.root, "roles", "developer", "instructions.md"))
@@ -290,7 +292,7 @@ class RoleConfTest(Fixture):
         self.assertIsNone(self.role_check())
         os.remove(path)
         os.symlink(os.path.join(self.tmp, "gone.md"), path)
-        self.assertIn("missing or empty", self.role_check())
+        self.assertEqual(self.role_check(), "role developer: missing or empty roles/developer/instructions.md")
 
     def test_the_role_name_is_checked_first(self):
         for name in ("Developer", "d", "broker", "coordinator", "dispatch", "x-lane2", "a" * 32, "é1", "", "a b", "../x"):
@@ -312,45 +314,46 @@ class RoleConfTest(Fixture):
         with self.assertRaises(FactoryError) as cm:
             roles.validate_role(self.paths, "developer")
         self.assertEqual(str(cm.exception), expected)
-        self.assertEqual(self.bash(":"), (1, "", "error: " + expected + "\n"))
+        self.assertEqual(self.bash(":"), (1, "", "error: " + expected + "\n"))  # roles.sh keeps this guard
 
     def test_the_known_templates_and_tools_are_bash_s(self):
-        self.assertEqual(self.bash('printf %s "$KNOWN_TEMPLATES"')[1], " ".join(roles.KNOWN_TEMPLATES))
-        for text in ("# tools\nnpm_fetch\ngit_push\n", "npm_fetch\n\n  \n# x\n git_push \n", "a\r\n\r\nb\r\n", "a b\nc",
-                     "a\nb", "#only\n", "", "\n\n", "  # indented comment is a tool\n", "a\t\n\tb\n"):
+        self.assertEqual(roles.KNOWN_TEMPLATES, ("developer", "reviewer"))
+        # (tools.txt, KNOWN_BROKER_TOOLS as bash read it): comment and blank lines dropped, nothing trimmed.
+        for text, tools in (("# tools\nnpm_fetch\ngit_push\n", "npm_fetch git_push"),
+                            ("npm_fetch\n\n  \n# x\n git_push \n", "npm_fetch  git_push "),
+                            ("a\r\n\r\nb\r\n", "a\r b\r"), ("a b\nc", "a b c"), ("a\nb", "a b"), ("#only\n", ""),
+                            ("", ""), ("\n\n", ""), ("  # indented comment is a tool\n", "  # indented comment is a tool"),
+                            ("a\t\n\tb\n", "a\t \tb")):
             self.write(os.path.join(self.root, "broker", "tools.txt"), text)
-            self.assertEqual(self.bash('printf %s "$KNOWN_BROKER_TOOLS"')[1], roles.known_broker_tools(self.paths),
-                             repr(text))
+            self.assertEqual(roles.known_broker_tools(self.paths), tools, repr(text))
 
-    def test_the_real_tool_list_and_reserved_names_match_bash(self):
+    def test_the_real_tool_list_reads_as_the_bash_read_it(self):
+        # The line that set KNOWN_BROKER_TOOLS in roles.sh, run on the real list.
         real = Paths(REPO, "", "")
-        cp = subprocess.run(["bash", "-c", ('ROOT="$1"; . "$1/scripts/lib/common.sh"; . "$1/scripts/lib/roles.sh"; '
-                                            'printf %s "$KNOWN_BROKER_TOOLS"'), "_", REPO],
-                            stdout=subprocess.PIPE, check=True)
+        cp = subprocess.run(["bash", "-c", 't="$(sed -e \'/^#/d\' -e \'/^[[:space:]]*$/d\' "$1" | tr \'\\n\' \' \')"; '
+                             'printf %s "${t% }"', "_", os.path.join(REPO, "broker", "tools.txt")],
+                            stdout=subprocess.PIPE, env=dict(os.environ, LC_ALL="C"), check=True)
         self.assertEqual(cp.stdout.decode(), roles.known_broker_tools(real))
         self.assertTrue(roles.known_broker_tools(real))
 
-    def test_every_real_role_validates_in_python_as_in_bash(self):
+    def test_every_real_role_validates(self):
         real = Paths(REPO, self.config, self.state)
         for name in roles.list_all_roles(real):
             roles.validate_role(real, name)
-            subprocess.run(["bash", "-c", ('ROOT="$1"; . "$1/scripts/lib/common.sh"; . "$1/scripts/lib/roles.sh"; '
-                                           'validate_role "$2"'), "_", REPO, name],
-                           env=dict(os.environ, XDG_CONFIG_HOME=os.path.dirname(self.config)), check=True)
 
     def test_a_value_of_several_words_or_none_is_refused_alike(self):
         # in_list takes one exact word: TEMPLATE="developer reviewer" and EFFORT="low medium" are not
-        # in their lists, in bash as in Python; an empty TEMPLATE or WORKSPACE is not either.
+        # in their lists, as bash's were not; an empty TEMPLATE or WORKSPACE is not either.
         for old, new, message in (
-                ('TEMPLATE="developer"', 'TEMPLATE="developer reviewer"', "TEMPLATE must be one of"),
-                ('TEMPLATE="developer"', 'TEMPLATE=""', "TEMPLATE must be one of"),
+                ('TEMPLATE="developer"', 'TEMPLATE="developer reviewer"', "TEMPLATE must be one of: developer reviewer"),
+                ('TEMPLATE="developer"', 'TEMPLATE=""', "TEMPLATE must be one of: developer reviewer"),
                 ('WORKSPACE="rw"', 'WORKSPACE="rw ro"', "WORKSPACE must be rw or ro"),
                 ('WORKSPACE="rw"', 'WORKSPACE=""', "WORKSPACE must be rw or ro"),
-                ('EFFORT=""', 'EFFORT="low medium"', "EFFORT must be low"),
-                ('EFFORT=""', 'EFFORT="low\tmedium"', "EFFORT must be low"),
-                ('WORKSPACE="rw"', 'WORKSPACE="rw"\nOPTIONAL="0 1"', "OPTIONAL must be 1")):
+                ('EFFORT=""', 'EFFORT="low medium"', BAD["EFFORT"]),
+                ('EFFORT=""', 'EFFORT="low\tmedium"', BAD["EFFORT"]),
+                ('WORKSPACE="rw"', 'WORKSPACE="rw"\nOPTIONAL="0 1"', "OPTIONAL must be 1 (off unless enabled-roles names it) or empty")):
             self.role_conf("developer", DEVELOPER.replace(old, new))
-            self.assertIn(message, self.role_check() or "", new)
+            self.assertEqual(self.role_check(), "role developer: " + message, new)
 
     def test_bash_in_list_takes_one_exact_word(self):
         for word, listing, expected in (("low", "low medium high", 0), ("high", "low medium high", 0),
@@ -373,7 +376,7 @@ class StrictLinesTest(Fixture):
             self.override(line + "\n")
             self.assertEqual(self.role_check(), '%s: not a KEY="value" line: %s' % (self.override_file, line), line)
         self.override('MODEL="$(touch %s)"\n' % pwned)
-        self.assertIn("MODEL must contain only", self.role_check())
+        self.assertEqual(self.role_check(), self.bad("MODEL"))
         self.assertFalse(os.path.exists(pwned), "the override was executed")
 
     def test_lines_that_are_fine(self):
@@ -385,18 +388,20 @@ class StrictLinesTest(Fixture):
         self.assertIsNone(self.role_check())
 
     def test_non_ascii_whitespace_is_not_whitespace(self):
-        for locale in ["C"] + [l for l in locales_installed() if re.search(r"utf-?8", l, re.I)][:3]:
-            for prefix in (" ", " ", "　"):
-                self.override(prefix + '# comment\n')
-                self.assertIn("not a KEY=", self.role_check(locale=locale), (locale, prefix))
-            self.override('LANES="2" \n')  # trailing: not [[:space:]] in sed's C-locale view either
-            self.role_check(locale=locale)
+        # Bash refused these under C and C.UTF-8 alike.
+        for prefix in ("\u2003", "\u00a0", "\u3000"):
+            self.override(prefix + '# comment\n')
+            self.assertEqual(self.role_check(), '%s: not a KEY="value" line: %s# comment' % (self.override_file, prefix),
+                             repr(prefix))
+        self.override('LANES="2"\u2003\n')  # trailing: not [[:space:]] in sed's C-locale view either
+        self.assertEqual(self.role_check(), '%s: not a KEY="value" line: LANES="2"\u2003' % self.override_file)
 
     def test_the_first_bad_line_is_the_one_reported(self):
         self.override('LANES="2"\nbad\nBROKER_TOOLS="x"\n')
-        self.assertIn("not a KEY", self.role_check())
+        self.assertEqual(self.role_check(), '%s: not a KEY="value" line: bad' % self.override_file)
         self.override('LANES="2"\nBROKER_TOOLS="x"\nbad\n')
-        self.assertIn("BROKER_TOOLS can't be set", self.role_check())
+        self.assertEqual(self.role_check(), "%s: BROKER_TOOLS can't be set in a local override (%s); change it in "
+                         "roles/developer/role.conf" % (self.override_file, ALLOWED))
 
     def test_file_kinds(self):
         os.makedirs(self.override_file)
@@ -408,8 +413,7 @@ class StrictLinesTest(Fixture):
         self.write(os.path.join(self.tmp, "real.conf"), 'LANES="4"\n')  # bash follows a symlink to a file
         os.symlink(os.path.join(self.tmp, "real.conf"), self.override_file)
         self.assertIsNone(self.role_check())
-        self.assertEqual(roles.role_lanes(self.paths, "developer"), "4")
-        self.assertEqual(self.bash('role_lanes developer')[1], "4")
+        self.assertEqual(roles.role_lanes(self.paths, "developer"), "4")  # as bash's role_lanes read it
         os.remove(self.override_file)
         os.symlink(self.config, self.override_file)  # to a directory
         self.assertEqual(self.role_check(), "%s: not a regular file" % self.override_file)
@@ -425,7 +429,7 @@ class StrictLinesTest(Fixture):
 
     def test_bytes_that_are_not_utf8_are_data(self):
         self.override(b'MODEL="\xff\xfe"\n')
-        self.assertIn("MODEL must contain only", self.role_check())
+        self.assertEqual(self.role_check(), self.bad("MODEL"))
         self.override(b'bad \xff line\n')
         self.assertEqual(self.role_check(), '%s: not a KEY="value" line: bad \udcff line' % self.override_file)
 
@@ -447,7 +451,7 @@ class OverridesFolderTest(Fixture):
         os.symlink(os.path.join(self.tmp, "nowhere"), os.path.join(self.overrides, "dangling.conf"))
         self.assertIsNone(self.overrides_check())
         os.makedirs(os.path.join(self.overrides, "adir.conf"))  # a folder with the name counts
-        self.assertIn("no role named 'adir'", self.overrides_check())
+        self.assertEqual(self.overrides_check(), self.no_role("adir"))
 
     def test_the_override_folder_being_a_file_is_not_an_error(self):
         os.makedirs(self.config)
@@ -458,23 +462,27 @@ class OverridesFolderTest(Fixture):
         self.override('BROKER_TOOLS="evil"\n')  # validate_role reports this one, not validate_role_overrides
         self.assertIsNone(self.overrides_check())
 
+    def no_role(self, name):
+        return ("%s/%s.conf: no role named '%s' in %s/roles (an override is named <role>.conf; see: factory roles)"
+                % (self.overrides, name, name, self.root))
+
     def test_the_first_unknown_name_in_byte_order_is_reported(self):
         for name in ("b-x", "a-y", "Zed"):
             self.override("", role=name)
-        self.assertIn("/Zed.conf: no role named 'Zed'", self.overrides_check())
+        self.assertEqual(self.overrides_check(), self.no_role("Zed"))
         os.remove(os.path.join(self.overrides, "Zed.conf"))
-        self.assertIn("/a-y.conf: no role named 'a-y'", self.overrides_check())
+        self.assertEqual(self.overrides_check(), self.no_role("a-y"))
 
-    def test_several_bad_overrides_are_reported_in_byte_order_in_every_locale(self):
+    def test_several_bad_overrides_are_reported_in_byte_order(self):
         for name in ("b-x", "a-y", "Zed", "c-z"):
             self.override("", role=name)
-        for locale in ["C"] + [l for l in locales_installed() if not re.match(r"(c|posix)(\.|$)", l, re.I)][:3]:
-            self.assertIn("/Zed.conf: no role named 'Zed'", self.overrides_check(locale), locale)
+        self.assertEqual(self.overrides_check(), self.no_role("Zed"))
 
     def test_enabled_roles_are_validated_first(self):
         self.write(self.enabled, "nobody\n")
         self.override("", role="designer")
-        self.assertIn("enabled-roles: no role named 'nobody'", self.overrides_check())
+        self.assertEqual(self.overrides_check(), "%s: no role named 'nobody' in %s/roles (see: factory roles)"
+                         % (self.enabled, self.root))
 
 
 class EnabledRolesTest(Fixture):
@@ -532,10 +540,9 @@ class EnabledRolesTest(Fixture):
             self.assertIsNone(self.enabled_check(), repr(text))
             self.assertEqual(self.bash("list_roles")[1].split(), roles.list_roles(self.paths), repr(text))
 
-    def test_the_names_are_byte_wise_in_every_locale(self):
+    def test_the_names_are_byte_wise(self):
         self.write(self.enabled, "researcher\né\n")
-        for locale in ["C"] + [l for l in locales_installed() if not re.match(r"(c|posix)(\.|$)", l, re.I)][:3]:
-            self.assertIn("not a role name", self.enabled_check(locale), locale)
+        self.assertEqual(self.enabled_check(), "%s: not a role name (one per line, e.g. researcher): é" % self.enabled)
 
     def test_file_kinds(self):
         os.makedirs(self.enabled)
@@ -562,29 +569,28 @@ class EnabledRolesTest(Fixture):
 class LaneNamesTest(Fixture):
     def test_lane_names(self):
         self.assertEqual(roles.role_lane_names(self.paths, "developer"), ["developer", "developer-lane2", "developer-lane3"])
-        self.assertEqual(self.bash("role_lane_names developer")[1].split(), roles.role_lane_names(self.paths, "developer"))
         self.assertEqual(roles.role_lane_names(self.paths, "researcher"), ["researcher"])
         self.override('LANES="5"\n')
         self.assertEqual(roles.role_lane_names(self.paths, "developer")[-1], "developer-lane5")
 
-    def test_every_value_gives_the_lanes_bash_does_in_every_locale(self):
-        values = ("1", "2", "8", "9", "", "x", " 3", "3 ", "\t3", "3\t", "+3", "010", "-1", "0", "3.5", "1 2",
-                  "0x3", "٣", "9223372036854775808", "-9223372036854775809", " ", "+", "-", "3x", "\v3", "3\v",
-                  "\f3", "3\f", "\r3", "3\r", "\u00a03", "3\u00a0", "\u20033", "3\u2003",
-                  "00000000000000000000000000000000004")
-        # Bash's [ -le ] trims \v, \f and \r differently from one version to the next, and [[:blank:]]
-        # from one locale to the next: Python must follow the pinned rule (spaces and tabs), not them.
-        utf8 = [l for l in locales_installed() if re.search(r"utf-?8", l, re.I)][:3]
-        for locale in ["C"] + utf8:
-            for value in values:
-                self.role_conf("developer", DEVELOPER.replace('LANES="3"', 'LANES="%s"' % value))
-                status, out, _ = self.bash("role_lane_names developer", locale)
-                self.assertEqual((status, out.split()), (0, roles.role_lane_names(self.paths, "developer")),
-                                 (locale, value))
+    def test_every_value_gives_the_lanes_bash_gave_in_every_locale(self):
+        # (LANES, how many lanes bash's role_lane_names listed, under C and C.UTF-8 alike): an integer
+        # with an optional sign and surrounding spaces or tabs, else just lane 1. Bash's [ -le ] trims
+        # \v, \f and \r differently from one version to the next, and [[:blank:]] from one locale to the
+        # next: Python follows the pinned rule (spaces and tabs), not them.
+        counts = (("1", 1), ("2", 2), ("8", 8), ("9", 9), ("", 1), ("x", 1), (" 3", 3), ("3 ", 3), ("\t3", 3),
+                  ("3\t", 3), ("+3", 3), ("010", 10), ("-1", 1), ("0", 1), ("3.5", 1), ("1 2", 1), ("0x3", 1),
+                  ("٣", 1), ("9223372036854775808", 1), ("-9223372036854775809", 1), (" ", 1), ("+", 1), ("-", 1),
+                  ("3x", 1), ("\v3", 1), ("3\v", 1), ("\f3", 1), ("3\f", 1), ("\r3", 1), ("3\r", 1),
+                  ("\u00a03", 1), ("3\u00a0", 1), ("\u20033", 1), ("3\u2003", 1),
+                  ("00000000000000000000000000000000004", 4))
+        for value, n in counts:
+            self.role_conf("developer", DEVELOPER.replace('LANES="3"', 'LANES="%s"' % value))
+            self.assertEqual(roles.role_lane_names(self.paths, "developer"),
+                             ["developer"] + ["developer-lane%d" % k for k in range(2, n + 1)], repr(value))
 
     def test_the_override_decides_the_count(self):
         self.override('LANES="2"\n')
-        self.assertEqual(self.bash("role_lane_names developer")[1].split(), ["developer", "developer-lane2"])
         self.assertEqual(roles.role_lane_names(self.paths, "developer"), ["developer", "developer-lane2"])
 
 

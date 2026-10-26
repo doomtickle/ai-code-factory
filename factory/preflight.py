@@ -1,8 +1,9 @@
 """Platform checks `factory doctor` makes. Port of scripts/lib/preflight.sh (which stays:
 scripts/install-prereqs.sh sources it), of resolve_python in scripts/lib/common.sh and of
-keychain_backend in scripts/lib/secrets.sh. factory/test_preflight.py runs the bash and
-the Python on the same fixtures. Each check raises Problem with the text bash prints on
-stderr (no final newline), and changes nothing.
+keychain_backend in scripts/lib/secrets.sh (now gone). factory/test_preflight.py runs the bash
+and the Python on the same fixtures (for keychain_backend, it checks the answers the bash gave).
+Each check raises Problem with the text bash prints on stderr (no final newline), and changes
+nothing.
 """
 
 import os

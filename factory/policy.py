@@ -1,10 +1,9 @@
-"""Reading policy.toml the way the bash checks do: policy_value, policy_string,
-gitlab_needs_token, gitlab_mr_unheld, jira_cloud_id_set, any_jira_tool_granted and
-npm_private_registry_needs_token (scripts/lib/common.sh and bin/factory). Not a TOML parser:
-a line scan good enough for the values these checks read. The bash copies stay until `start`
-and `setup` are ported; factory/test_policy.py runs both on the same fixtures. Also the lane
-git identity rules (policy_toml_string, lane_identity_problem), which only start-dispatch.sh used:
-their bash is gone.
+"""Reading policy.toml the way the bash checks did: policy_value, policy_string, git_push_enabled,
+github_repos_listed, gitlab_needs_token, gitlab_mr_unheld, jira_cloud_id_set, any_jira_tool_granted
+and npm_private_registry_needs_token (once in scripts/lib/common.sh and bin/factory; their bash is
+gone, and factory/test_policy.py checks the answers it gave). Not a TOML parser: a line scan good
+enough for the values these checks read. Also the lane git identity rules (policy_toml_string,
+lane_identity_problem).
 """
 
 import os
@@ -87,6 +86,24 @@ def npm_private_registry_needs_token(paths):
     (which needs the keychain credential)."""
     granted = any(" npm_fetch " in " %s " % roles.role_get(paths, r, "BROKER_TOOLS") for r in roles.list_roles(paths))
     return granted and policy_string(paths, "packages", "npm_private_registry") != ""
+
+
+def git_push_enabled(paths):
+    """True if [git].repos is a list with something in it: a "[", later a character that is
+    neither "]" nor a space, and after it a "]"."""
+    value = policy_value(paths, "git", "repos") or ""
+    return re.search(r"\[.*[^\]%s].*\]" % _SPACE, value) is not None
+
+
+def github_repos_listed(paths):
+    """True if some quoted [git].repos entry is a GitHub owner/name: it holds a "/" and its
+    first segment has no dot or port (a host-qualified entry is on GitLab)."""
+    value = policy_value(paths, "git", "repos") or ""
+    for entry in re.findall('"([^"]*)"', value):
+        parts = entry.split("/")
+        if len(parts) >= 2 and not re.search("[.:]", parts[0]):
+            return True
+    return False
 
 
 def gitlab_needs_token(paths):

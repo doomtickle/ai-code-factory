@@ -12,20 +12,19 @@ set -euo pipefail
 #    would re-mint).
 # 2. `factory update`: when `sbx rm` fails after the factory was stopped, it
 #    says what is left stopped and how to recover ("factory start"), instead of
-#    a bare set -e abort. The success path keeps working. (`factory reset` is
-#    Python now: factory/test_command_runstate.py tests it and that its message
-#    is rm_failed_after_stop's.)
-# 3. setup_done requires the current image tag: factory-<image>:v2 left over
-#    from before a tag bump must not count as set up.
+#    a bare set -e abort. The success path keeps working, and starts the bound
+#    project again through Python `factory start --no-dashboard`. (`factory
+#    reset` and `start`, with its project switch, are Python now:
+#    factory/test_command_runstate.py and factory/test_command_start.py; the
+#    image-tag check, setup_done, is in factory/test_sbx.py.)
 #
 # Drives a fixture checkout (bin/factory + scripts/lib + start-broker.sh,
 # stub 03-stop-factory.sh) against a fake sbx on a private PATH. No real sbx,
 # docker or network access needed.
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-TAG="$(sed -n 's/^readonly TEMPLATE_TAG="\(.*\)"$/\1/p' "$REPO_ROOT/scripts/lib/common.sh")"
 SBX_VER="$(sed -n 's/^readonly SBX_VERSION="\(.*\)"$/\1/p' "$REPO_ROOT/scripts/lib/common.sh")"
-[ -n "$TAG" ] && [ -n "$SBX_VER" ] || { echo "cannot read TEMPLATE_TAG / SBX_VERSION from common.sh" >&2; exit 1; }
+[ -n "$SBX_VER" ] || { echo "cannot read SBX_VERSION from common.sh" >&2; exit 1; }
 
 tmp="$(cd "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf "$tmp"' EXIT
@@ -55,11 +54,7 @@ cat > "$fx/scripts/03-stop-factory.sh" <<'STUB'
 #!/bin/sh
 echo "stop" >> "$CALLS"
 STUB
-cat > "$fx/scripts/02-launch-factory.sh" <<'STUB'
-#!/bin/sh
-echo "launch $1" >> "$CALLS"
-STUB
-chmod +x "$fx/scripts/03-stop-factory.sh" "$fx/scripts/02-launch-factory.sh"
+chmod +x "$fx/scripts/03-stop-factory.sh"
 
 # --- fake sbx and curl -------------------------------------------------------------
 # FAKE_SECRETS: the `secret ls` output. FAKE_SET_FAIL=1: `secret set` fails.
@@ -174,6 +169,10 @@ export FAKE_SANDBOXES="factory-broker factory-developer other"
 # 2a/2b. factory update --pulled --yes with one stale sandbox. cmd_setup and the
 # staleness check are replaced (they need docker and real images); the code
 # under test is the stop / rm / restart sequence in cmd_update itself.
+# The Python update hands the restart to: records `<checkout>/factory start PROJECT --no-dashboard`.
+fake_python="$tmp/fake-python"
+printf '#!/bin/sh\nshift\necho "$*" >> "$CALLS"\n' > "$fake_python"
+chmod +x "$fake_python"
 update_run() { # update_run -> F_OUT, F_RC
   set +e
   F_OUT="$(
@@ -182,7 +181,7 @@ update_run() { # update_run -> F_OUT, F_RC
     cmd_setup() { :; }
     stale_sandboxes() { echo factory-developer; }
     describe_loss() { echo "its scratch folder"; }
-    cmd_start() { echo "start $1" >> "$CALLS"; }
+    resolve_python() { printf %s "$fake_python"; }
     cmd_update --pulled --yes 2>&1
   )"
   F_RC=$?
@@ -203,73 +202,9 @@ reset_run
 unset FAKE_RM_FAIL
 update_run
 assert_eq "update: exits 0 when rm works" "$F_RC" "0"
-assert_eq "update: stops, then starts the bound project again" "$(cat "$CALLS")" "stop
-start $project"
+assert_eq "update: stops, then starts the bound project again, in Python, without the dashboard" "$(cat "$CALLS")" "stop
+start $project --no-dashboard"
 assert_contains "update: reports the removal" "$F_OUT" "removed factory-developer"
-
-# 2c. `factory start` for another project than the bound one, confirmed: it
-# runs the Python `factory reset --yes` (removes the factory-* sandboxes, forgets
-# the binding), then launches the new project. Declined, nothing is removed.
-# If reset fails, `start` stops with its status and launches nothing.
-other_project="$tmp/other-project"
-mkdir -p "$other_project"
-export FAKE_TEMPLATES="factory-developer:$TAG factory-reviewer:$TAG factory-broker:$TAG"
-switch_run() { # switch_run ANSWER(0|1) -> F_OUT, F_RC
-  set +e
-  F_OUT="$(
-    # shellcheck source=/dev/null
-    . "$fx/bin/factory"
-    if [ "$1" = 1 ]; then confirm() { return 0; }; else confirm() { return 1; }; fi
-    onboarding_hints() { :; }
-    cmd_start "$other_project" --no-dashboard 2>&1
-  )"
-  F_RC=$?
-  set -e
-}
-printf '%s\n' "$project" > "$broker_state/project"
-reset_run
-switch_run 0
-assert_nonzero "switch declined: exits non-zero" "$F_RC"
-assert_contains "switch declined: says it is not switching" "$F_OUT" "not switching"
-assert_not_contains "switch declined: nothing was removed" "$(cat "$FAKE_SBX_ARGS")" "rm --force"
-assert_eq "switch declined: the project stays bound" "$(cat "$broker_state/project")" "$project"
-reset_run
-switch_run 1
-assert_eq "switch confirmed: exits 0" "$F_RC" "0"
-assert_contains "switch confirmed: removes the factory-* sandboxes" "$(cat "$FAKE_SBX_ARGS")" "rm --force factory-broker factory-developer"
-assert_eq "switch confirmed: stops, then launches the new project" "$(cat "$CALLS")" "stop
-launch $other_project"
-assert_contains "switch confirmed: says the factory is no longer bound" "$F_OUT" "no longer bound"
-[ ! -e "$broker_state/project" ] && ok "switch confirmed: the old binding is removed" \
-  || bad "switch confirmed: the old binding is removed"
-printf '%s\n' "$project" > "$broker_state/project"
-reset_run
-FAKE_RM_FAIL=1 switch_run 1
-assert_eq "switch, reset fails: exits with reset's status" "$F_RC" "1"
-assert_eq "switch, reset fails: stops, and launches nothing" "$(cat "$CALLS")" "stop"
-assert_contains "switch, reset fails: says what is left" "$F_OUT" "could not remove"
-assert_not_contains "switch, reset fails: does not go on to the new project" "$F_OUT" "Factory running"
-assert_eq "switch, reset fails: the project stays bound" "$(cat "$broker_state/project")" "$project"
-
-# ===========================================================================
-# Part 3: setup_done needs the current image tag.
-# ===========================================================================
-setup_done_status() { # setup_done_status TEMPLATES -> 0 or 1
-  local s=0
-  FAKE_TEMPLATES="$1" bash -c '. "$1/bin/factory"; setup_done' _ "$fx" >/dev/null 2>&1 || s=$?
-  echo "$s"
-}
-all_current="factory-developer:$TAG factory-reviewer:$TAG factory-broker:$TAG"
-assert_eq "setup_done: all three images at the current tag" "$(setup_done_status "$all_current")" "0"
-assert_eq "setup_done: unrelated templates alongside are fine" \
-  "$(setup_done_status "other:latest $all_current")" "0"
-assert_eq "setup_done: only an old tag (v2) present" \
-  "$(setup_done_status "factory-developer:v2 factory-reviewer:v2 factory-broker:v2")" "1"
-assert_eq "setup_done: old and new tag side by side, one image missing the new tag" \
-  "$(setup_done_status "factory-developer:$TAG factory-reviewer:$TAG factory-broker:v2")" "1"
-assert_eq "setup_done: a tag that only starts like the current one" \
-  "$(setup_done_status "factory-developer:${TAG}0 factory-reviewer:$TAG factory-broker:$TAG")" "1"
-assert_eq "setup_done: no templates" "$(setup_done_status "")" "1"
 
 echo "---"
 echo "$pass passed, $fail failed"

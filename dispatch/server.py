@@ -166,7 +166,7 @@ _MODEL_NAME = re.compile(r"^[A-Za-z0-9._-]{1,80}$")
 # claude's --effort levels the Coordinator may pick ("max" is left out: it has no
 # cap on thinking, and not every model supports it).
 EFFORTS = ("low", "medium", "high", "xhigh")
-# Keep in sync with RESERVED_ROLE_NAMES in scripts/lib/roles.sh (valid_role_name).
+# Keep in sync with RESERVED_ROLE_NAMES in factory/roles.py (valid_role_name).
 _RESERVED_ROLE_NAMES = {"broker", "coordinator", "dispatch"}
 # Lane k>=2 of role R is "R-lane<k>", so no role may itself be named like a lane.
 _LANE_SUFFIX = re.compile(r"-lane[0-9]+$")

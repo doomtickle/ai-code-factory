@@ -1,18 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Tests for the bash helpers of bin/factory and scripts/lib that `factory doctor` and
-# `factory status` (now Python: factory/test_command_doctor.py, test_command_status.py) do not
-# cover, because only `start`, `setup` and the other commands still in bash call them:
+# Tests for the bash helpers of bin/factory and scripts/lib that only the commands still
+# in bash (`setup`, `update`) use; the rest moved to Python with their commands
+# (require_project_commits: factory/test_command_start.py; run_or_die:
+# factory/test_broker_start.py):
 #
 # 1. Any command still in bash stops with a message on a checkout whose
 #    broker/ is incomplete (no broker/tools.txt), naming the command that
 #    restores it. ('factory doctor' and 'factory setup' report it instead.)
-# 2. require_project_commits (factory start): a project repo with no commits is
-#    refused by name, before anything is created; repos with commits, and a
-#    project that isn't a repo, pass.
-# 3. sbx_not_signed_in: true only when sbx says "Not authenticated".
-# 4. run_or_die: silent on success, the last 20 lines of output on failure.
+# 2. sbx_not_signed_in (factory setup): true only when sbx says "Not authenticated".
 #
 # Fixtures are local git repos and stub commands on a private PATH: no network,
 # no sbx, no docker, no keychain.
@@ -82,14 +79,14 @@ run_in() {
 # Part 1: a checkout whose broker/ is incomplete
 # ===========================================================================
 make_checkout "$tmp/fresh3" nobroker
-run_in "$tmp/fresh3" start
+run_in "$tmp/fresh3" update --plan
 out="$(cat "$tmp/out")"
 [ "$RC" -ne 0 ] && ok "other commands still stop without broker/" || bad "other commands still stop without broker/"
 assert_contains "roles.sh says what is missing" "$out" "broker/tools.txt is missing"
 assert_contains "roles.sh shows the restore command" "$out" "checkout HEAD -- broker"
 
 # ===========================================================================
-# Parts 2-4: functions, from a checkout that has a broker/ (so sourcing works)
+# Part 2: functions, from a checkout that has a broker/ (so sourcing works)
 # ===========================================================================
 rdy="$tmp/ready"
 make_checkout "$rdy"
@@ -103,30 +100,7 @@ fn() { # fn CODE -> run CODE in a subshell with bin/factory sourced, output in $
   ) > "$tmp/out" 2>&1 || RC=$?
 }
 
-# --- Part 2: require_project_commits ---------------------------------------------
-proj="$tmp/proj"
-mkdir -p "$proj/empty-repo" "$proj/good-repo" "$proj/not-a-repo"
-git init -q "$proj/empty-repo"
-git init -q "$proj/good-repo"
-git -C "$proj/good-repo" commit -q --allow-empty -m first
-
-fn "require_project_commits '$proj'"
-[ "$RC" -ne 0 ] && ok "a folder holding a repo with no commits is refused" || bad "a folder holding a repo with no commits is refused"
-assert_contains "the refusal names the empty repo" "$(cat "$tmp/out")" "$proj/empty-repo is a git repository with no commits"
-assert_contains "the refusal says how to fix it" "$(cat "$tmp/out")" "commit --allow-empty"
-assert_not_contains "the repo with commits is not blamed" "$(cat "$tmp/out")" "good-repo is a git"
-
-fn "require_project_commits '$proj/empty-repo'"
-[ "$RC" -ne 0 ] && ok "an empty repo as the project is refused" || bad "an empty repo as the project is refused"
-assert_contains "it names the repo" "$(cat "$tmp/out")" "$proj/empty-repo/. is a git repository with no commits"
-
-fn "require_project_commits '$proj/good-repo'"
-[ "$RC" -eq 0 ] && ok "a repo with a commit passes" || bad "a repo with a commit passes ($(cat "$tmp/out"))"
-
-fn "require_project_commits '$proj/not-a-repo'"
-[ "$RC" -eq 0 ] && ok "a project that isn't a repo passes (nothing to check)" || bad "a project that isn't a repo passes ($(cat "$tmp/out"))"
-
-# --- Part 3: sbx_not_signed_in ------------------------------------------------
+# --- Part 2: sbx_not_signed_in ------------------------------------------------
 sb="$tmp/sb"
 mkdir -p "$sb"
 printf '#!/bin/sh\necho "Error: Not authenticated. Run sbx login" >&2\nexit 1\n' > "$sb/sbx"
@@ -139,22 +113,6 @@ fn "PATH='$sb':\$PATH; sbx_not_signed_in"
 printf '#!/bin/sh\nexit 1\n' > "$sb/sbx"
 fn "PATH='$sb':\$PATH; sbx_not_signed_in"
 [ "$RC" -ne 0 ] && ok "an sbx that fails for another reason is left to the build" || bad "an sbx that fails for another reason is left to the build"
-
-# --- Part 4: run_or_die ---------------------------------------------------------
-loud="$tmp/loud"
-mkdir -p "$loud"
-printf '#!/bin/sh\nfor i in $(seq 1 25); do echo "line $i" >&2; done\nexit 3\n' > "$loud/fail"
-printf '#!/bin/sh\necho noisy\nexit 0\n' > "$loud/succeed"
-chmod +x "$loud/fail" "$loud/succeed"
-fn "run_or_die 'could not do it' '$loud/fail' a b"
-[ "$RC" -ne 0 ] && ok "run_or_die fails when the command does" || bad "run_or_die fails when the command does"
-out="$(cat "$tmp/out")"
-assert_contains "run_or_die says what failed" "$out" "error: could not do it (exit status 3)"
-assert_contains "run_or_die shows the last line" "$out" "line 25"
-assert_contains "run_or_die shows the 20th line from the end" "$out" "line 6"
-assert_not_contains "run_or_die cuts the earlier lines" "$out" "line 5"
-fn "run_or_die 'could not do it' '$loud/succeed'"
-[ "$RC" -eq 0 ] && [ ! -s "$tmp/out" ] && ok "run_or_die is silent on success" || bad "run_or_die is silent on success"
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

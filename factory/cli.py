@@ -3,8 +3,8 @@
 import os
 import sys
 
-from factory import broker_start, dispatch_start
-from factory.commands import config, docs, doctor, logs, packet, role, roles, runstate, secret, status, wrappers
+from factory import broker_start, dispatch_start, launch
+from factory.commands import config, docs, doctor, logs, packet, role, roles, runstate, secret, start, status, wrappers
 from factory.context import Context, FactoryError, Paths
 
 # Command name -> run(ctx, args). bin/factory's PORTED_COMMANDS lists these
@@ -30,15 +30,20 @@ COMMANDS = {
     "role": role.run,
     "roles": roles.run,
     "secret": secret.run,
+    "start": start.run,
     "status": status.run,
     "stop": runstate.stop,
+    "up": start.run,
     "watch": wrappers.watch,
 }
 
-# Entry points the bash scripts run (`factory _start-broker`, `factory _start-dispatch`; the
-# scripts are thin shims now): dispatched like COMMANDS, but not commands a person types, so
-# they are not in COMMANDS, PORTED_COMMANDS or the usage text. One entry per line, alphabetical.
+# Entry points the bash scripts run (`factory _launch`, `factory _start-broker`, `factory
+# _start-dispatch`: the scripts are thin shims now; `factory _onboarding-hints`, for bash
+# `factory setup`): dispatched like COMMANDS, but not commands a person types, so they are not
+# in COMMANDS, PORTED_COMMANDS or the usage text. One entry per line, alphabetical.
 INTERNAL = {
+    "_launch": launch.main,
+    "_onboarding-hints": start.onboarding_hints,
     "_start-broker": broker_start.main,
     "_start-dispatch": dispatch_start.main,
 }

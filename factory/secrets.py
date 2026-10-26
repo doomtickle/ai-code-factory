@@ -23,7 +23,7 @@ from factory.context import FactoryError
 from factory.keychain import FOUND, NOT_STORED
 from factory.programs import DROP, PASS, run_tool, to_stderr
 
-# Keep in sync with FACTORY_SECRET_NAMES in scripts/lib/secrets.sh (a test compares them).
+# The broker credential files (the bash FACTORY_SECRET_NAMES, in this order).
 SECRET_NAMES = ("jira", "gemini", "npm-registry", "gitlab", "approvals-webhook")
 
 SECRETS_DIR = "/etc/factory-broker/secrets"

@@ -1,5 +1,5 @@
-"""Tests for factory/commands/config.py (factory config init). Ported from parts 1-3 of
-scripts/test_factory_config.sh."""
+"""Tests for factory/commands/config.py (factory config init), and that config.example/ is inert.
+Ported from scripts/test_factory_config.sh (its cloud_id checks are in factory/test_policy.py)."""
 
 import filecmp
 import io
@@ -130,6 +130,25 @@ class RealExampleTest(CommandTest):
             active = [l.strip() for l in f if l.strip() and not l.lstrip().startswith("#")]
         self.assertEqual(active, ["[git]", "repos = []"])
         self.assertEqual(err.getvalue(), "")
+
+    def test_the_example_allows_no_host(self):
+        example = os.path.join(REPO, "config.example")
+        with open(os.path.join(example, "broker-kit", "spec.yaml")) as f:
+            active = [l for l in f if l.strip() and not l.lstrip().startswith("#")]
+        self.assertEqual([l for l in active if "example" in l or "permissions" in l or "allow" in l], [])
+        uncommented = []
+        for folder, _, names in os.walk(example):
+            for name in names:
+                with open(os.path.join(folder, name), errors="replace") as f:
+                    uncommented += [l for l in f if not l.lstrip().startswith("#") and "example." in l]
+        self.assertEqual(uncommented, [])
+
+    def test_help_lists_config_init_and_docs_print(self):
+        out = subprocess.run([os.path.join(REPO, "bin", "factory"), "help"], stdout=subprocess.PIPE,
+                             env=dict(self.environ, PATH=os.environ["PATH"]), stdin=subprocess.DEVNULL,
+                             check=True).stdout.decode()
+        self.assertIn("factory config init", out)
+        self.assertIn("factory docs [--print]", out)
 
 
 if __name__ == "__main__":

@@ -2,9 +2,8 @@
 factory-<name>: macOS Keychain, Linux secret-tool, or the Windows Credential Manager on WSL2
 (preflight.keychain_backend picks one). Port of keychain_lookup, keychain_has,
 keychain_search_empty, keychain_store, keychain_delete and the PowerShell scripts of
-wincred_run (scripts/lib/secrets.sh). The bash keychain_lookup, keychain_has, keychain_search_empty
-and the lookup script stay until `start` is ported (bin/factory's keychain_warn_missing uses
-them); factory/test_keychain.py and factory/test_secrets.py run both on the same stubs.
+wincred_run (scripts/lib/secrets.sh). That bash is gone; factory/test_keychain.py and
+factory/test_secrets.py check the answers it gave on the same stubs.
 
 A value is bytes. It goes into the keychain only on a program's stdin and comes out only
 from `lookup` (for factory/secrets.py to pass on, again on stdin); `has` only tests that it
@@ -14,7 +13,7 @@ is non-empty. It is never put in argv, a message or a file on the host.
 from factory import preflight
 from factory.programs import DROP, KEEP, PASS, run_tool
 
-# The names `factory secret save` accepts (FACTORY_KEYCHAIN_NAMES in secrets.sh; a test compares):
+# The names `factory secret save` accepts (the bash FACTORY_KEYCHAIN_NAMES, in this order):
 # the broker credential files (secrets.SECRET_NAMES) and "github", the broker-scoped sbx secret.
 KEYCHAIN_NAMES = ("jira", "gemini", "npm-registry", "gitlab", "approvals-webhook", "github")
 

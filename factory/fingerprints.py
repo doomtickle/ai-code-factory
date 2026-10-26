@@ -1,8 +1,8 @@
 """Sandbox fingerprints: a digest of what a sandbox was created from, recorded when it is
 created, so `factory start` can tell it is out of date. Port of sandbox_fingerprint (the broker,
 Coordinator and role cases), record_sandbox_fingerprint, stale_sandboxes, image_build_id, dir_hash
-and yes_no (scripts/lib/roles.sh), and of broker_plugins (scripts/lib/common.sh). The bash copies
-stay while their callers do (`start`, `update`, 02-launch-factory.sh; step 7 part C2 and step 8).
+and yes_no (scripts/lib/roles.sh), and of broker_plugins (scripts/lib/common.sh). The bash
+record_sandbox_fingerprint is gone; the others stay while `factory update` uses them (step 8).
 The digest must stay byte for byte the bash one, which compares against what this records, and
 stale_sandboxes must name the same sandboxes in the same order; factory/test_fingerprints.py and
 factory/test_broker_start.py run both on the same fixtures.

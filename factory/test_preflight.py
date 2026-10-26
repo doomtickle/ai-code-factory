@@ -1,8 +1,9 @@
 """Tests for factory/preflight.py. Ported from the helpers in scripts/lib/preflight.sh (which
 stays: scripts/install-prereqs.sh sources it), resolve_python (common.sh) and keychain_backend
-(secrets.sh). Each check runs the bash and the Python on the same fixture and requires the
-same answer; the Python-only seams (an os-release, /proc/version and /dev/kvm that a test
-supplies) stand in for another machine.
+(secrets.sh, now gone). Each check runs the bash and the Python on the same fixture and requires
+the same answer, but keychain_backend's, which assert the answers the bash gave; the Python-only
+seams (an os-release, /proc/version and /dev/kvm that a test supplies) stand in for another
+machine.
 """
 
 import os
@@ -27,7 +28,7 @@ class PreflightTest(CommandTest):
         if path is not None:
             e["PATH"] = path
         cp = subprocess.run(["bash", "-c", 'ROOT="$1"; . "$1/scripts/lib/common.sh"; '
-                             '. "$1/scripts/lib/preflight.sh"; . "$1/scripts/lib/secrets.sh"; ' + snippet, "_", REPO],
+                             '. "$1/scripts/lib/preflight.sh"; ' + snippet, "_", REPO],
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=e, stdin=subprocess.DEVNULL, cwd=self.tmp)
         return cp.returncode, cp.stdout.decode(), cp.stderr.decode()
 
@@ -230,16 +231,10 @@ class KeychainBackendTest(PreflightTest):
         self.private_path()
 
     def both(self, **env):
-        """The backend the Python picks on the stubbed host; the bash must agree, except where
-        it reads this machine's own /proc/version (which a test cannot stub) and that says something else."""
+        """The backend the Python picks on the stubbed host; each test asserts the one the bash
+        keychain_backend picked there."""
         self.environ.update(env)
-        ctx = self.ctx()
-        picked = preflight.keychain_backend(ctx)
-        if preflight.is_wsl() == preflight.is_wsl(ctx.host_files["proc_version"]) or env.get("FACTORY_POWERSHELL") or env.get("FACTORY_KEYCHAIN"):
-            status, out, err = self.bash("keychain_backend", path=self.environ["PATH"], env=env)
-            self.assertEqual((status, err), (0, ""))
-            self.assertEqual(picked, out)
-        return picked
+        return preflight.keychain_backend(self.ctx())
 
     def test_the_override_wins(self):
         self.assertEqual(self.both(FACTORY_KEYCHAIN="wincred"), "wincred")

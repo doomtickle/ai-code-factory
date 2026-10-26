@@ -1,7 +1,7 @@
 """Start (or restart) the broker sandbox for a project, register it with the sbx MCP gateway
 once per role that has BROKER_TOOLS, and deliver the credentials sbx can't proxy-inject. Port
 of scripts/start-broker.sh, now a shim that runs this as `factory _start-broker <project-dir>`;
-02-launch-factory.sh calls it, and it is safe to run on its own.
+the launch (factory/launch.py) calls main directly, and it is safe to run on its own.
 
 Each role authenticates with its own bearer token, minted once: the value goes only to `sbx
 secret set` on its stdin (the gateway sends it as that role's header); the broker sees only its

@@ -1,8 +1,8 @@
 """The git repositories of a project, which rw roles clone as lanes.
 
-Same listing as project_repos in scripts/lib/common.sh and templates/agent/factory-lane;
-scripts/test_project_repos.sh runs them on one fixture and fails if they differ.
-The dispatch bridge imports this one.
+Same listing as project_repos in templates/agent/factory-lane (the bash copy in
+scripts/lib/common.sh is gone); scripts/test_project_repos.sh runs both on one fixture and
+fails if they differ. The dispatch bridge imports this one.
 """
 
 import os

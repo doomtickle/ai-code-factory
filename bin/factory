@@ -26,7 +26,7 @@ ROOT="$(dirname "$SCRIPTS")"
 # run there; factory/cli.py's COMMANDS lists the same names (a test keeps them equal).
 # Everything else falls through to the bash below until it is ported. Only when run
 # directly: a test that sources this file still gets the bash functions.
-PORTED_COMMANDS="analytics approvals approve chat config coordinator dashboard docs doctor down gui log logs packet packets reset restart role roles secret status stop watch"
+PORTED_COMMANDS="analytics approvals approve chat config coordinator dashboard docs doctor down gui log logs packet packets reset restart role roles secret start status stop up watch"
 if [ "${BASH_SOURCE[0]}" = "$0" ] && [ -n "${1:-}" ]; then
   case " $PORTED_COMMANDS " in
     *" $1 "*)
@@ -36,18 +36,14 @@ if [ "${BASH_SOURCE[0]}" = "$0" ] && [ -n "${1:-}" ]; then
 fi
 # roles.sh dies without broker/tools.txt. 'factory help' needs neither, so it skips it:
 # it must work on a fresh clone, before 'factory setup' (a test sourcing this file
-# always gets roles.sh). 'setup' skips it too: it runs 'factory doctor' (Python, which
-# checks broker/ itself and reports what it finds) first, and loads roles.sh after.
+# always gets roles.sh). 'setup' skips it too: it uses no role helper, and runs 'factory
+# doctor' (Python, which checks broker/ itself and reports what it finds) first.
 case "${BASH_SOURCE[0]}:${1:-help}" in
   "$0":help|"$0":-h|"$0":--help|"$0":setup) ;;
   *)
     # shellcheck source=../scripts/lib/roles.sh
     . "$SCRIPTS/lib/roles.sh" ;;
 esac
-# shellcheck source=../scripts/lib/preflight.sh
-. "$SCRIPTS/lib/preflight.sh"
-# shellcheck source=../scripts/lib/secrets.sh
-. "$SCRIPTS/lib/secrets.sh"
 
 
 if [ -t 1 ]; then B=$'\033[1m' G=$'\033[32m' Y=$'\033[33m' R=$'\033[31m' N=$'\033[0m'
@@ -145,9 +141,6 @@ EOF
 # --- setup -------------------------------------------------------------------------
 cmd_setup() {
   "$(resolve_python)" "$ROOT/factory" doctor || die "fix the problems above, then run 'factory setup' again"
-  # doctor passed, so broker/ is usable; roles.sh (needed by onboarding_hints) was skipped up front
-  # shellcheck source=../scripts/lib/roles.sh
-  . "$SCRIPTS/lib/roles.sh"
 
   step "Installing pinned tools (sbx $SBX_VERSION)"
   "$SCRIPTS/install-prereqs.sh"
@@ -188,224 +181,12 @@ cmd_setup() {
     *) warn "add this to your shell profile: export PATH=\"\$HOME/.local/bin:\$PATH\"" ;;
   esac
 
-  onboarding_hints
+  # The start's warnings (factory/commands/start.py); under `factory update`
+  # (FACTORY_UPDATING=1) without the out-of-date one: update recreates those next.
+  "$(resolve_python)" "$ROOT/factory" _onboarding-hints
 
   say ""
   say "${G}Setup complete.${N} Next: cd into a project and run ${B}factory start${N}"
-}
-
-setup_done() {
-  [ "$(sbx settings get mcp.forceLocalGateway 2>/dev/null)" = "true" ] || return 1
-  local templates
-  templates="$(sbx template ls -q 2>/dev/null)"
-  # The tag matters: after a TEMPLATE_TAG bump the old images are still listed,
-  # but the sandboxes are created from factory-<image>:$TEMPLATE_TAG.
-  for image in developer reviewer broker; do
-    printf '%s\n' "$templates" | grep -Eq "factory-$image:$TEMPLATE_TAG([[:space:]]|\$)" || return 1
-  done
-}
-
-# --- start -------------------------------------------------------------------------
-# require_project_commits PROJECT -> die, naming the repo, if any repository
-# the roles would work in (project_repos) has no commits: the lane clone and
-# the review packet both need a HEAD, and would fail much later without one.
-require_project_commits() {
-  local project="$1" repo dir
-  for repo in $(project_repos "$project"); do
-    dir="$project/$repo"
-    git "${BROKER_GIT_SAFE[@]}" -C "$dir" rev-parse --verify --quiet 'HEAD^{commit}' >/dev/null 2>&1 \
-      || die "$dir is a git repository with no commits yet, so the developer has nothing to branch from. Make the first commit there (git -C '$dir' commit --allow-empty -m 'Initial commit'), then run 'factory start' again."
-  done
-}
-
-cmd_start() {
-  # --no-ui (or FACTORY_NO_UI=1): everything but the dashboard. Talk to the
-  # Coordinator with `factory chat` and follow roles with `factory watch` or
-  # `factory logs`. Otherwise the start ends by running `factory dashboard`,
-  # which holds the Coordinator's terminal.
-  # --layout (or FACTORY_LAYOUT) is kept only so old habits and saved choices
-  # don't break: "web" is the one layout, and resolve_layout warns about the
-  # removed "watch" and "tabs".
-  # --no-dashboard (internal, from cmd_update and `factory restart`, which is
-  # Python): finish instead of running the dashboard in the foreground, so
-  # `factory update --yes` and `factory restart` return.
-  local target="" project current no_ui="${FACTORY_NO_UI:-}" layout_flag="" no_dashboard=""
-  while [ $# -gt 0 ]; do
-    case "$1" in
-      --no-ui) no_ui=1 ;;
-      --no-dashboard) no_dashboard=1 ;;
-      --layout)
-        [ $# -ge 2 ] || die "usage: factory start [dir] [--no-ui] [--layout web]"
-        layout_flag="$2"
-        shift ;;
-      -*) die "usage: factory start [dir] [--no-ui] [--layout web]" ;;
-      *) [ -z "$target" ] || die "usage: factory start [dir] [--no-ui] [--layout web]"; target="$1" ;;
-    esac
-    shift
-  done
-  resolve_layout "$layout_flag" "${FACTORY_LAYOUT:-}" >/dev/null
-  target="${target:-.}"
-  [ -d "$target" ] || die "no such directory: $target"
-  project="$(cd "$target" && pwd -P)"
-  require_sbx
-  setup_done || die "the factory is not set up yet: run 'factory setup' first"
-  require_project_commits "$project"
-  case "$project" in
-    /mnt/[a-z]/*) is_wsl && warn "$project is on a Windows drive: sandboxes will be slow and file permissions unreliable. Clone it into the Linux filesystem (e.g. ~/code) instead." ;;
-  esac
-
-  current="$(bound_project)"
-  if [ -n "$current" ] && [ "$current" != "$project" ] && sbx ls -q | grep -q '^factory-'; then
-    say "The factory is currently set up for ${B}$current${N}."
-    if confirm "Switch to $project? This removes the agent sandboxes (your Claude login is kept)."; then
-      "$(resolve_python)" "$ROOT/factory" reset --yes
-    else
-      die "not switching. Run 'factory start $current' to open the current project."
-    fi
-  fi
-
-  if [ "$no_ui" = 1 ]; then
-    FACTORY_NO_UI=1 "$SCRIPTS/02-launch-factory.sh" "$project"
-    onboarding_hints
-    say ""
-    say "Factory running, without the dashboard."
-    say "  Talk to the Coordinator:  ${B}factory chat${N}"
-    say "  Watch every lane:         ${B}factory watch${N}"
-    say "  Follow one role's log:    ${B}factory logs <role>${N}  (roles: $(list_roles | tr '\n' ' '))"
-    say "  Stop everything:          ${B}factory stop${N}"
-  else
-    "$SCRIPTS/02-launch-factory.sh" "$project"
-    onboarding_hints
-    say ""
-    if [ -n "$no_dashboard" ]; then
-      say "Factory running. Run ${B}factory dashboard${N} to open it."
-      return
-    fi
-    say "Factory running. Opening the dashboard: talk to the Coordinator on its screen."
-    say "Ctrl-C closes the dashboard (and the Coordinator's terminal); the factory keeps"
-    say "running. Reopen it with ${B}factory dashboard${N}; stop everything with ${B}factory stop${N}."
-    "$(resolve_python)" "$ROOT/factory" dashboard
-  fi
-}
-
-# jira_cloud_id_set -> success if [jira].cloud_id is set to something other
-# than empty or the all-zero placeholder UUID from config.example/.
-jira_cloud_id_set() {
-  local id
-  id="$(policy_string jira cloud_id)"
-  [ -n "$id" ] && [ -n "${id//[0-]/}" ]
-}
-
-git_push_enabled() {
-  policy_value git repos | grep -qE '\[.*[^][:space:]].*\]'
-}
-
-# github_repos_listed -> success if some [git].repos entry is a GitHub owner/name
-# (its first segment has no dot or port; a host-qualified entry is on GitLab).
-github_repos_listed() {
-  policy_value git repos | grep -o '"[^"]*"' | tr -d '"' \
-    | awk -F/ 'NF >= 2 && $1 !~ /[.:]/ { f = 1 } END { exit !f }'
-}
-
-# keychain_has SERVICE: scripts/lib/secrets.sh (macOS Keychain, Linux
-# secret-tool, or the Windows Credential Manager on WSL2).
-
-# keychain_warn_missing SERVICE MESSAGE -> warn MESSAGE if the keychain has
-# no SERVICE; if it is locked or unavailable (keychain_has status 2), say
-# that instead, since whether SERVICE is stored can't be told.
-keychain_warn_missing() {
-  local rc=0
-  keychain_has "$1" || rc=$?
-  case "$rc" in
-    0) ;;
-    1) warn "$2" ;;
-    *) warn "the keychain is locked or unavailable, so $1 couldn't be checked; unlock it and run this again" ;;
-  esac
-}
-
-# any_jira_tool_granted -> success if the Coordinator or any role is granted a
-# jira_* broker tool (jira_my_issues, jira_get_issue). Other broker tools
-# (web_fetch, npm_fetch, ...) don't need a Jira token, so warning on any
-# BROKER_TOOLS grant would be a false positive for roles/setups that never
-# touch Jira.
-any_jira_tool_granted() {
-  local r
-  case " $(coordinator_broker_tools) " in *" jira_"*) return 0 ;; esac
-  for r in $(list_roles); do
-    case " $(role_get "$r" BROKER_TOOLS) " in *" jira_"*) return 0 ;; esac
-  done
-  return 1
-}
-
-# gitlab_needs_token -> success if the policy sets [gitlab].url: the git tools
-# and gitlab_create_mr then need the gitlab credential (a file, as sbx can't
-# inject it).
-gitlab_needs_token() {
-  # Either TOML string form ("..." or '...'), as long as it isn't empty.
-  policy_value gitlab url | grep -qE "^[[:space:]]*(\"[^\"]+\"|'[^']+')"
-}
-
-# gitlab_mr_unheld -> prints why, and succeeds, when GitLab merge requests would
-# open without approval although other writes are held: gitlab_create_mr is
-# granted and [gitlab].url set, but the local [approvals].tools list leaves it
-# out. Silent otherwise: no list or tools = [] means holds are off altogether
-# (the gateway holds nothing until the list names a tool).
-gitlab_mr_unheld() {
-  local r granted="" tools
-  for r in $(list_roles); do
-    case " $(role_get "$r" BROKER_TOOLS) " in *" gitlab_create_mr "*) granted=1 ;; esac
-  done
-  [ -n "$granted" ] && gitlab_needs_token || return 1
-  tools="$(policy_value approvals tools || true)"
-  [ -n "$tools" ] || return 1  # no list: holds are off
-  case "$tools" in *'"gitlab_create_mr"'*) return 1 ;; esac
-  [ -n "$(printf '%s' "$tools" | tr -d '[] \t')" ] || return 1  # tools = []: nothing is held at all
-  printf '%s\n' "[approvals].tools is set without \"gitlab_create_mr\""
-}
-
-# npm_private_registry_needs_token -> success if a role is granted npm_fetch and
-# the policy names a private npm registry (which needs the keychain credential).
-npm_private_registry_needs_token() {
-  local r granted=""
-  for r in $(list_roles); do
-    case " $(role_get "$r" BROKER_TOOLS) " in *" npm_fetch "*) granted=1 ;; esac
-  done
-  [ -n "$granted" ] || return 1
-  [ -n "$(policy_string packages npm_private_registry)" ]
-}
-
-onboarding_hints() {
-  local stale
-  if [ -z "${FACTORY_UPDATING:-}" ]; then
-    stale="$(stale_sandboxes | tr '\n' ' ')"
-    [ -z "$stale" ] || warn "out of date (made from an older image or kit): ${stale% }; run 'factory update' to recreate them"
-  fi
-  if ! claude_login_stored; then
-    warn "first time: type /login in the Coordinator (POWER ON on the dashboard) to sign in with your Claude subscription, then run 'factory start' again (or press RESTART on the dashboard) to create the role sandboxes"
-  fi
-  if git_push_enabled; then
-    local sbx_secrets
-    sbx_secrets="$(sbx secret ls 2>/dev/null || true)"
-    if printf '%s\n' "$sbx_secrets" | awk '$1 == "(global)" && $3 == "github" { f = 1 } END { exit !f }'; then
-      warn "a global GitHub token is stored, so sbx injects it for every sandbox, not just the broker. Run 'factory secret save github', then remove the global one: sbx secret rm github"
-    elif github_repos_listed && ! printf '%s\n' "$sbx_secrets" | grep -q " github "; then
-      warn "git push/PR is enabled but no GitHub token is stored: run 'factory secret save github' (see README: Enabling git push and pull requests)"
-    fi
-  fi
-  if any_jira_tool_granted; then
-    keychain_warn_missing factory-jira "Jira tools are granted but no token is stored in the keychain (see README: Enabling Jira)"
-    jira_cloud_id_set || warn "Jira tools are granted but [jira].cloud_id is not set; set it in $FACTORY_CONFIG/policy.toml (see README: Enabling Jira)"
-  fi
-  if npm_private_registry_needs_token; then
-    keychain_warn_missing factory-npm-registry "npm_fetch can't download private npm packages until a token is stored in the keychain (see README: Enabling a private npm registry)"
-  fi
-  if gitlab_needs_token; then
-    keychain_warn_missing factory-gitlab "[gitlab].url is set but no GitLab token is stored: run 'factory secret save gitlab' (see README: Enabling GitLab)"
-  fi
-  local why
-  if why="$(gitlab_mr_unheld)"; then
-    warn "GitLab merge requests open without approval: $why (see README: Enabling approvals)"
-  fi
 }
 
 # --- stop / reset: ported to Python (factory/commands/runstate.py) ------------------
@@ -605,7 +386,7 @@ cmd_update() {
   if [ -n "$project" ] && [ -d "$project" ]; then
     # Never end an update in the foreground dashboard: scripts
     # run `factory update --yes` and expect it to return.
-    cmd_start "$project" --no-dashboard
+    "$(resolve_python)" "$ROOT/factory" start "$project" --no-dashboard
   else
     say ""
     say "${G}Updated.${N} Next: cd into a project and run ${B}factory start${N}"
@@ -621,7 +402,6 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
   case "$command" in
     setup) cmd_setup "$@" ;;
     update|upgrade) cmd_update "$@" ;;
-    start|up) cmd_start "$@" ;;
     help|-h|--help) usage ;;
     *) usage; die "unknown command: $command" ;;
   esac

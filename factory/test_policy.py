@@ -1,39 +1,46 @@
-"""Tests for factory/policy.py. Ported from policy_value (scripts/lib/common.sh) and
-gitlab_needs_token / gitlab_mr_unheld / jira_cloud_id_set / any_jira_tool_granted /
-npm_private_registry_needs_token (bin/factory), policy_string (common.sh); the bash copies stay until
-`start` is ported. Each check runs both on the same policy files and requires the same answer.
+"""Tests for factory/policy.py. Ported from the parity tests against policy_value and policy_string
+(scripts/lib/common.sh) and git_push_enabled, github_repos_listed, gitlab_needs_token,
+gitlab_mr_unheld, jira_cloud_id_set, any_jira_tool_granted and npm_private_registry_needs_token
+(bin/factory), and from scripts/test_factory_gitlab.sh and the cloud_id part of
+scripts/test_factory_config.sh. That bash is gone: every expected answer here is the one it gave
+on the same policy files.
 """
 
 import os
-import subprocess
+import re
 import unittest
 
 from factory import policy
 from factory.fixtures import REPO, CommandTest
 
+# Each fixture, with what policy_value gave for [gitlab] url, [approvals] tools, [web] allow_hosts
+# and [other] url (None: unset, nothing printed).
 POLICIES = [
-    "",
-    "[gitlab]\nurl = \"https://gitlab.example\"\n",
-    "[gitlab]\nurl = 'https://gitlab.example'\n",
-    "[gitlab]\nurl = \"\"\n",
-    "[gitlab]\nurl=\"x\" # comment\n[other]\nurl = \"no\"\n",
-    "[other]\nurl = \"no\"\n[gitlab]\n# url = \"commented\"\n",
-    "[gitlab]\n  url   =   \"indented\"\n",
-    "[gitlab]\nurl = unquoted\n",
-    "[gitlab-extra]\nurl = \"wrong section\"\n",
-    "[approvals]\ntools = [\"git_push\"]\n",
-    "[approvals]\ntools = [\"gitlab_create_mr\", \"git_push\"]\n",
-    "[approvals]\ntools = []\n",
-    "[approvals]\ntools = [ ]  # none\n",
-    "[approvals]\ntools = [\n  \"git_push\", # a\n  \"jira\"\n]\n",
-    "[approvals]\ntools = [\n  \"gitlab_create_mr\",\n]\n",
-    "[approvals]\ntools = [\n]\n",
-    "[approvals]\ntools = [\n  \"never closed\"\n",
-    "[approvals]\ntools = [\"git_push\"]\ntools = [\"later\"]\n",
-    "[approvals]\nother = 1\n[approvals]\ntools = [\"two sections\"]\n",
-    "[web]\nallow_hosts = [\"a\", \"b\"]\n[approvals]\ntools = [\"x\"]",
-    "[gitlab]\r\nurl = \"crlf\"\r\n",
+    ("", None, None, None, None),
+    ("[gitlab]\nurl = \"https://gitlab.example\"\n", '"https://gitlab.example"', None, None, None),
+    ("[gitlab]\nurl = 'https://gitlab.example'\n", "'https://gitlab.example'", None, None, None),
+    ("[gitlab]\nurl = \"\"\n", '""', None, None, None),
+    ("[gitlab]\nurl=\"x\" # comment\n[other]\nurl = \"no\"\n", '"x" # comment', None, None, '"no"'),
+    ("[other]\nurl = \"no\"\n[gitlab]\n# url = \"commented\"\n", None, None, None, '"no"'),
+    ("[gitlab]\n  url   =   \"indented\"\n", '"indented"', None, None, None),
+    ("[gitlab]\nurl = unquoted\n", "unquoted", None, None, None),
+    ("[gitlab-extra]\nurl = \"wrong section\"\n", None, None, None, None),
+    ("[approvals]\ntools = [\"git_push\"]\n", None, '["git_push"]', None, None),
+    ("[approvals]\ntools = [\"gitlab_create_mr\", \"git_push\"]\n", None, '["gitlab_create_mr", "git_push"]', None, None),
+    ("[approvals]\ntools = []\n", None, "[]", None, None),
+    ("[approvals]\ntools = [ ]  # none\n", None, "[ ]  # none", None, None),
+    ("[approvals]\ntools = [\n  \"git_push\", # a\n  \"jira\"\n]\n", None, '[   "git_push",    "jira" ]', None, None),
+    ("[approvals]\ntools = [\n  \"gitlab_create_mr\",\n]\n", None, '[   "gitlab_create_mr", ]', None, None),
+    ("[approvals]\ntools = [\n]\n", None, "[ ]", None, None),
+    ("[approvals]\ntools = [\n  \"never closed\"\n", None, None, None, None),
+    ("[approvals]\ntools = [\"git_push\"]\ntools = [\"later\"]\n", None, '["git_push"]', None, None),
+    ("[approvals]\nother = 1\n[approvals]\ntools = [\"two sections\"]\n", None, '["two sections"]', None, None),
+    ("[web]\nallow_hosts = [\"a\", \"b\"]\n[approvals]\ntools = [\"x\"]", None, '["x"]', '["a", "b"]', None),
+    ("[gitlab]\r\nurl = \"crlf\"\r\n", '"crlf"\r', None, None, None),
 ]
+TEXTS = [p[0] for p in POLICIES]
+KEYS = (("gitlab", "url"), ("approvals", "tools"), ("web", "allow_hosts"), ("other", "url"))
+UNHELD = '[approvals].tools is set without "gitlab_create_mr"'
 
 
 class PolicyTest(CommandTest):
@@ -43,16 +50,9 @@ class PolicyTest(CommandTest):
         self.write("repo/roles/developer/role.conf", 'TEMPLATE="developer"\nWORKSPACE="rw"\nBROKER_TOOLS="git_fetch gitlab_create_mr"\n')
         self.write("repo/roles/reviewer/role.conf", 'TEMPLATE="reviewer"\nWORKSPACE="ro"\nBROKER_TOOLS="git_fetch"\n')
 
-    def bash(self, snippet):
-        env = dict(self.environ, XDG_CONFIG_HOME=os.path.dirname(self.config), XDG_STATE_HOME=os.path.dirname(self.state), LC_ALL="C")
-        cp = subprocess.run(["bash", "-c", 'ROOT="$1"; . "$2/scripts/lib/common.sh"; . "$2/scripts/lib/roles.sh"; '
-                             'eval "$(sed -n \'/^gitlab_needs_token() {/,/^}/p;/^gitlab_mr_unheld() {/,/^}/p;/^jira_cloud_id_set() {/,/^}/p;'
-                             '/^any_jira_tool_granted() {/,/^}/p;/^npm_private_registry_needs_token() {/,/^}/p\' "$2/bin/factory")"; '
-                             + snippet, "_", self.root, REPO],
-                            env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL, cwd=self.tmp)
-        return cp.returncode, cp.stdout.decode(), cp.stderr.decode()
-
     def write_policy(self, base, local):
+        os.makedirs(self.config, exist_ok=True)
+        os.makedirs(os.path.join(self.root, "broker"), exist_ok=True)
         for path, text in ((os.path.join(self.root, "broker", "policy.toml"), base), (os.path.join(self.config, "policy.toml"), local)):
             if os.path.exists(path):
                 os.remove(path)
@@ -60,29 +60,29 @@ class PolicyTest(CommandTest):
                 with open(path, "w", newline="") as f:
                     f.write(text)
 
+    def either_file(self, text):
+        """TEXT as the repo's policy, then as this machine's overlay: the answers are the same."""
+        for base, local in ((text, None), (None, text)):
+            self.write_policy(base, local)
+            yield
+
+    def grant(self, tools):
+        self.write("repo/roles/developer/role.conf", 'TEMPLATE="developer"\nWORKSPACE="rw"\nBROKER_TOOLS="%s"\n' % tools)
+
 
 class PolicyValueTest(PolicyTest):
-    def both(self, section, key):
-        _, out, err = self.bash('policy_value %s %s' % (section, key))
-        value = policy.policy_value(self.paths, section, key)
-        self.assertEqual(err, "")
-        self.assertEqual(out, "" if value is None else value + "\n", (section, key))
-        return value
-
-    def test_every_fixture_reads_the_same(self):
-        os.makedirs(self.config)
-        os.makedirs(os.path.join(self.root, "broker"), exist_ok=True)
-        for text in POLICIES:
-            for base, local in ((text, None), (None, text), (text, "[approvals]\ntools = [\"mine\"]\n")):
-                self.write_policy(base, local)
-                for section, key in (("gitlab", "url"), ("approvals", "tools"), ("web", "allow_hosts"), ("other", "url")):
-                    self.both(section, key)
+    def test_every_fixture_reads_as_bash_did(self):
+        for text, *want in POLICIES:
+            for _ in self.either_file(text):
+                self.assertEqual([policy.policy_value(self.paths, s, k) for s, k in KEYS], want, repr(text))
+            self.write_policy(text, "[approvals]\ntools = [\"mine\"]\n")
+            self.assertEqual([policy.policy_value(self.paths, s, k) for s, k in KEYS], [want[0], '["mine"]', want[2], want[3]],
+                             repr(text))
 
     def test_the_local_overlay_wins_only_where_it_sets_the_key(self):
-        os.makedirs(self.config)
         self.write_policy("[approvals]\ntools = [\"base\"]\n[gitlab]\nurl = \"https://base\"\n", "[approvals]\ntools = [\"mine\"]\n")
-        self.assertEqual(self.both("approvals", "tools"), '["mine"]')
-        self.assertEqual(self.both("gitlab", "url"), '"https://base"')
+        self.assertEqual(policy.policy_value(self.paths, "approvals", "tools"), '["mine"]')
+        self.assertEqual(policy.policy_value(self.paths, "gitlab", "url"), '"https://base"')
 
     def test_an_empty_value_is_set_but_empty(self):
         self.write_policy("[gitlab]\nurl =\n", None)
@@ -94,62 +94,201 @@ class PolicyValueTest(PolicyTest):
 
 
 class GitlabTest(PolicyTest):
-    def test_needs_token_and_unheld_agree_with_bash(self):
-        os.makedirs(self.config)
-        for text in POLICIES + ["[gitlab]\nurl = \"https://g\"\n[approvals]\ntools = [\"git_push\"]\n",
-                                "[gitlab]\nurl = \"https://g\"\n[approvals]\ntools = [\"gitlab_create_mr\"]\n",
-                                "[gitlab]\nurl = \"https://g\"\n[approvals]\ntools = []\n",
-                                "[gitlab]\nurl = \"https://g\"\n[approvals]\ntools = [\n \"git_push\"\n]\n"]:
-            for base, local in ((text, None), (None, text)):
-                self.write_policy(base, local)
-                status, _, _ = self.bash("gitlab_needs_token")
-                self.assertEqual(policy.gitlab_needs_token(self.paths), status == 0, text)
-                status, out, _ = self.bash("gitlab_mr_unheld")
-                why = policy.gitlab_mr_unheld(self.paths)
-                self.assertEqual((status == 0, out.rstrip("\n")), (why is not None, why or ""), text)
+    # (fixture, gitlab_needs_token, gitlab_mr_unheld) with developer granted gitlab_create_mr.
+    CASES = [(t, t in (TEXTS[1], TEXTS[2], TEXTS[4], TEXTS[6], TEXTS[20]), None) for t in TEXTS] + [
+        ("[gitlab]\nurl = \"https://g\"\n[approvals]\ntools = [\"git_push\"]\n", True, UNHELD),
+        ("[gitlab]\nurl = \"https://g\"\n[approvals]\ntools = [\"gitlab_create_mr\"]\n", True, None),
+        ("[gitlab]\nurl = \"https://g\"\n[approvals]\ntools = []\n", True, None),
+        ("[gitlab]\nurl = \"https://g\"\n[approvals]\ntools = [\n \"git_push\"\n]\n", True, UNHELD),
+    ]
+
+    def test_needs_token_and_unheld_answer_as_bash_did(self):
+        for text, needs, why in self.CASES:
+            for _ in self.either_file(text):
+                self.assertEqual(policy.gitlab_needs_token(self.paths), needs, repr(text))
+                self.assertEqual(policy.gitlab_mr_unheld(self.paths), why, repr(text))
 
     def test_it_warns_only_when_the_tool_is_granted(self):
-        os.makedirs(self.config)
         self.write_policy('[gitlab]\nurl = "https://g"\n[approvals]\ntools = ["git_push"]\n', None)
-        self.assertEqual(policy.gitlab_mr_unheld(self.paths), '[approvals].tools is set without "gitlab_create_mr"')
-        self.write("repo/roles/developer/role.conf", 'TEMPLATE="developer"\nWORKSPACE="rw"\nBROKER_TOOLS="git_fetch"\n')
+        self.assertEqual(policy.gitlab_mr_unheld(self.paths), UNHELD)
+        self.grant("git_fetch")
         self.assertIsNone(policy.gitlab_mr_unheld(self.paths))
 
 
 class JiraAndNpmTest(PolicyTest):
-    def test_policy_string_jira_and_npm_agree_with_bash(self):
-        os.makedirs(self.config)
-        extra = ['[jira]\ncloud_id = "5c1f"\n', '[jira]\ncloud_id = "00000000-0000-0000-0000-000000000000"\n',
-                 '[jira]\ncloud_id = "0-0"\n', '[jira]\ncloud_id = ""\n', "[jira]\ncloud_id = 'single'\n",
-                 '[jira]\ncloud_id = unquoted\n', '[jira]\ncloud_id = "a" "b"\n', '[jira]\ncloud_id = "0a"\n',
-                 '[packages]\nnpm_private_registry = "https://r.example"\n', '[packages]\nnpm_private_registry = ""\n']
-        grants = ("git_fetch", "npm_fetch", "jira_my_issues npm_fetch", "web_fetch xnpm_fetch", "xjira_a")
-        for text in POLICIES + extra:
-            for base, local in ((text, None), (None, text)):
-                self.write_policy(base, local)
-                for section, key in (("jira", "cloud_id"), ("packages", "npm_private_registry"), ("gitlab", "url")):
-                    _, out, _ = self.bash("policy_string %s %s" % (section, key))
-                    self.assertEqual(policy.policy_string(self.paths, section, key), out.rstrip("\n"), (text, key))
-                status, _, _ = self.bash("jira_cloud_id_set")
-                self.assertEqual(policy.jira_cloud_id_set(self.paths), status == 0, text)
-                for tools in grants:
-                    self.write("repo/roles/developer/role.conf", 'TEMPLATE="developer"\nWORKSPACE="rw"\nBROKER_TOOLS="%s"\n' % tools)
-                    status, _, _ = self.bash("npm_private_registry_needs_token")
-                    self.assertEqual(policy.npm_private_registry_needs_token(self.paths), status == 0, (text, tools))
+    # (fixture, policy_string of [jira] cloud_id, [packages] npm_private_registry and [gitlab] url,
+    # jira_cloud_id_set)
+    STRINGS = [
+        (TEXTS[1], "", "", "https://gitlab.example", False),
+        (TEXTS[4], "", "", "x", False),
+        (TEXTS[6], "", "", "indented", False),
+        (TEXTS[20], "", "", "crlf", False),
+        ('[jira]\ncloud_id = "5c1f"\n', "5c1f", "", "", True),
+        ('[jira]\ncloud_id = "00000000-0000-0000-0000-000000000000"\n', "00000000-0000-0000-0000-000000000000", "", "", False),
+        ('[jira]\ncloud_id = "0-0"\n', "0-0", "", "", False),
+        ('[jira]\ncloud_id = ""\n', "", "", "", False),
+        ("[jira]\ncloud_id = 'single'\n", "", "", "", False),
+        ('[jira]\ncloud_id = unquoted\n', "", "", "", False),
+        ('[jira]\ncloud_id = "a" "b"\n', "a", "", "", True),
+        ('[jira]\ncloud_id = "0a"\n', "0a", "", "", True),
+        ('[packages]\nnpm_private_registry = "https://r.example"\n', "", "https://r.example", "", False),
+        ('[packages]\nnpm_private_registry = ""\n', "", "", "", False),
+    ]
+    # Every other fixture of POLICIES reads as "" for all three, with no cloud_id set.
+    STRINGS += [(t, "", "", "", False) for t in TEXTS if t not in (TEXTS[1], TEXTS[4], TEXTS[6], TEXTS[20])]
+    # Which of these grants hold npm_fetch (a whole word).
+    GRANTS = (("git_fetch", False), ("npm_fetch", True), ("jira_my_issues npm_fetch", True),
+              ("web_fetch xnpm_fetch", False), ("xjira_a", False))
 
-    def test_any_jira_tool_granted_agrees_with_bash(self):
-        for coordinator in ("", "web_fetch", "jira_my_issues", "xjira_a jira", "git_fetch jira_x"):
-            for role in ("git_fetch", "jira_get_issue", "xjira_a"):
-                self.write("repo/kits/coordinator/broker.conf", 'BROKER_TOOLS="%s"\n' % coordinator)
-                self.write("repo/roles/developer/role.conf", 'TEMPLATE="developer"\nWORKSPACE="rw"\nBROKER_TOOLS="%s"\n' % role)
-                status, _, _ = self.bash("any_jira_tool_granted")
-                self.assertEqual(policy.any_jira_tool_granted(self.paths), status == 0, (coordinator, role))
+    def test_policy_string_jira_and_npm_answer_as_bash_did(self):
+        self.assertEqual(len(self.STRINGS), len(POLICIES) + 10)
+        for text, cloud_id, registry, url, cloud_id_set in self.STRINGS:
+            for _ in self.either_file(text):
+                self.assertEqual([policy.policy_string(self.paths, s, k) for s, k in
+                                  (("jira", "cloud_id"), ("packages", "npm_private_registry"), ("gitlab", "url"))],
+                                 [cloud_id, registry, url], repr(text))
+                self.assertEqual(policy.jira_cloud_id_set(self.paths), cloud_id_set, repr(text))
+                for tools, npm in self.GRANTS:
+                    self.grant(tools)
+                    self.assertEqual(policy.npm_private_registry_needs_token(self.paths), npm and registry != "",
+                                     (text, tools))
+
+    def test_any_jira_tool_granted_answers_as_bash_did(self):
+        # (Coordinator's BROKER_TOOLS, the developer's, granted) -- only a whole word starting jira_ counts.
+        for coordinator, role, want in (
+                ("", "git_fetch", False), ("", "jira_get_issue", True), ("", "xjira_a", False),
+                ("web_fetch", "git_fetch", False), ("web_fetch", "jira_get_issue", True), ("web_fetch", "xjira_a", False),
+                ("jira_my_issues", "git_fetch", True), ("jira_my_issues", "jira_get_issue", True),
+                ("jira_my_issues", "xjira_a", True),
+                ("xjira_a jira", "git_fetch", False), ("xjira_a jira", "jira_get_issue", True), ("xjira_a jira", "xjira_a", False),
+                ("git_fetch jira_x", "git_fetch", True), ("git_fetch jira_x", "jira_get_issue", True),
+                ("git_fetch jira_x", "xjira_a", True)):
+            self.write("repo/kits/coordinator/broker.conf", 'BROKER_TOOLS="%s"\n' % coordinator)
+            self.grant(role)
+            self.assertEqual(policy.any_jira_tool_granted(self.paths), want, (coordinator, role))
 
     def test_the_all_zero_placeholder_is_not_a_cloud_id(self):
         self.write_policy('[jira]\ncloud_id = "00000000-0000-0000-0000-000000000000"\n', None)
         self.assertFalse(policy.jira_cloud_id_set(self.paths))
         self.write_policy('[jira]\ncloud_id = "00000000-0000-0000-0000-000000000001"\n', None)
         self.assertTrue(policy.jira_cloud_id_set(self.paths))
+
+
+class GitReposTest(PolicyTest):
+    # (fixture, git_push_enabled, github_repos_listed), as the bash gave them.
+    CASES = [
+        ("", False, False),
+        ('[other]\nrepos = ["a/b"]\n', False, False),
+        ("[git]\nrepos = []\n", False, False),
+        ("[git]\nrepos = [ ]\n", False, False),
+        ("[git]\nrepos = [\t]\n", False, False),
+        ("[git]\nrepos = [\n]\n", False, False),
+        ('[git]\nrepos = ["a/b"]\n', True, True),
+        ('[git]\nrepos = [\n  "a/b",\n]\n', True, True),
+        ("[git]\nrepos = [\n  # none yet\n]\n", False, False),
+        ('[git]\nrepos = ["gitlab.acme.net/platform/api", "gitlab.acme.net:8443/g/p"]\n', True, False),
+        ('[git]\nrepos = ["gitlab.acme.net/platform/api", "my-org/my-project"]\n', True, True),
+        ('[git]\nrepos = ["noslash"]\n', True, False),
+        ('[git]\nrepos = ["/lead"]\n', True, True),
+        ('[git]\nrepos = ["a/"]\n', True, True),
+        ('[git]\nrepos = [""]\n', True, False),
+        ("[git]\nrepos = ['a/b']\n", True, False),
+        ('[git]\nrepos = "a/b"\n', False, True),
+        ("[git]\nrepos = [[]]\n", True, False),  # only "]" and spaces are not content
+        ("[git]\nrepos = [ ] x ]\n", True, False),
+        ('[git]\nrepos = ["a/b"] # mine\n', True, True),
+        ('[git]\nrepos = ["a/b/c"]\n', True, True),
+        ('[git]\nrepos = ["a:b/c"]\n', True, False),
+        ('[git]\nrepos = ["a.b", "c/d"]\n', True, True),
+        ('[git]\nrepos = ["a\\"/b"]\n', True, False),
+        ('[git]\nrepos = [\r\n  "x/y"\r\n]\r\n', True, True),
+        ('[git]\nrepos = ["a/b"\n', False, False),
+        ('[git]\n  repos = ["o/r"]\n', True, True),
+        ('[git]\r\nrepos = ["o/r"]\r\n', True, True),
+        ("[git]\nrepos =\n", False, False),
+        ("[git]\nrepos = x\n", False, False),
+    ]
+
+    def test_push_enabled_and_github_listed_answer_as_bash_did(self):
+        for text, enabled, github in self.CASES:
+            for _ in self.either_file(text):
+                self.assertEqual((policy.git_push_enabled(self.paths), policy.github_repos_listed(self.paths)),
+                                 (enabled, github), repr(text))
+
+
+class GitlabChecksTest(PolicyTest):
+    """Ported from scripts/test_factory_gitlab.sh (doomtickle/passdesk-ops#122): the repo's policy
+    has an empty [git] repos list and an empty [gitlab] url, and this machine's overlay varies."""
+
+    GITLAB = '[gitlab]\nurl = "https://gitlab.acme.net/"\n'
+
+    def setUp(self):
+        super().setUp()
+        self.grant("npm_fetch git_push gitlab_create_mr")
+        os.remove(os.path.join(self.root, "roles", "reviewer", "role.conf"))
+        self.write_policy('[git]\nrepos = []\n\n[gitlab]\nurl = ""\n', None)
+
+    def overlay(self, text):
+        with open(os.path.join(self.config, "policy.toml"), "w") as f:
+            f.write(text + "\n")
+
+    def test_policy_value(self):
+        self.overlay('[approvals]\ntools = [\n  "git_push",   # pushes\n  "github_create_pr",\n]\nhold_seconds = 45')
+        self.assertEqual(re.sub(" +", " ", policy.policy_value(self.paths, "approvals", "tools")),
+                         '[ "git_push", "github_create_pr", ]')  # a multi-line array comes back joined
+        self.assertEqual(policy.policy_value(self.paths, "approvals", "hold_seconds"), "45")  # the key after it
+        self.overlay('[git]\nrepos = ["a/b"]')
+        self.assertEqual(policy.policy_value(self.paths, "git", "repos"), '["a/b"]')  # one line: unchanged
+        self.assertEqual(policy.policy_value(self.paths, "gitlab", "url"), '""')  # from broker/policy.toml
+
+    def test_gitlab_needs_token(self):
+        for text, want in ((self.GITLAB, True), ("[gitlab]\nurl = 'https://gitlab.acme.net/'", True),
+                           ('[gitlab]\nurl = ""', False),
+                           ('# [gitlab]\n# url = "https://gitlab.example.com/"', False)):  # base url = ""
+            self.overlay(text)
+            self.assertEqual(policy.gitlab_needs_token(self.paths), want, text)
+
+    def test_github_repos_listed(self):
+        for text, want in (('[git]\nrepos = ["gitlab.acme.net/platform/api", "gitlab.acme.net:8443/g/p"]', False),
+                           ('[git]\nrepos = ["gitlab.acme.net/platform/api", "my-org/my-project"]', True),
+                           ("[git]\nrepos = []", False)):
+            self.overlay(text)
+            self.assertEqual(policy.github_repos_listed(self.paths), want, text)
+
+    def test_gitlab_mr_unheld(self):
+        for text, want in (
+                (self.GITLAB, None),  # no [approvals].tools: holds off
+                (self.GITLAB + '[approvals]\ntools = ["git_push", "github_create_pr"]', UNHELD),
+                (self.GITLAB + '[approvals]\ntools = [\n  "git_push",\n  "github_create_pr",\n]', UNHELD),
+                (self.GITLAB + '[approvals]\ntools = [\n  "git_push",\n  "gitlab_create_mr",\n]', None),
+                (self.GITLAB + '[approvals]\ntools = ["git_push", "gitlab_create_mr"]', None),
+                (self.GITLAB + "[approvals]\ntools = []", None),  # holds off on purpose
+                (self.GITLAB + "[approvals]\ntools = [\n]", None),
+                ('[approvals]\ntools = ["git_push"]', None)):  # no GitLab configured
+            self.overlay(text)
+            self.assertEqual(policy.gitlab_mr_unheld(self.paths), want, text)
+        self.overlay(self.GITLAB + '[approvals]\ntools = ["git_push"]')
+        self.grant("npm_fetch git_push")  # no role granted gitlab_create_mr
+        self.assertIsNone(policy.gitlab_mr_unheld(self.paths))
+
+
+class CloudIdTest(PolicyTest):
+    """Ported from the jira_cloud_id_set part of scripts/test_factory_config.sh."""
+
+    def test_cloud_id(self):
+        self.write_policy('[jira]\ncloud_id = ""\n', None)
+        with open(os.path.join(REPO, "config.example", "policy.toml")) as f:
+            example = f.read().rstrip("\n")
+        for text, want in (('[jira]\ncloud_id = "3f2a9c1e-5b7d-4e8a-9c0f-1a2b3c4d5e6f"', True),
+                           ('[jira]\ncloud_id = ""', False),
+                           ('[jira]\ncloud_id = "00000000-0000-0000-0000-000000000000"', False),
+                           ('[jira]\ncloud_id = "00000000-0000-0000-0000-000000000001"', True),
+                           (example, False)):  # the commented-out example
+            with open(os.path.join(self.config, "policy.toml"), "w") as f:
+                f.write(text + "\n")
+            self.assertEqual(policy.jira_cloud_id_set(self.paths), want, text)
+        os.remove(os.path.join(self.config, "policy.toml"))
+        self.assertFalse(policy.jira_cloud_id_set(self.paths))  # falls back to the empty repo policy
 
 
 if __name__ == "__main__":

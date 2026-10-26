@@ -1,7 +1,10 @@
 """Tests for factory/sbx.py. Ported from sbx_installed_version, sandbox_exists, sandbox_running,
 claude_login_stored and sbx_reference_problem (scripts/lib/common.sh) and setup_done
-(bin/factory); the bash copies stay until their callers are ported. Each check runs both on the
-same `sbx` stub and requires the same answer. require_sbx (common.sh) is compared on whether it dies and what it says.
+(bin/factory). The bash sbx_installed_version, sandbox_running and sbx_reference_problem stay
+until their callers are ported, and each check runs both on the same `sbx` stub and requires the
+same answer; require_sbx (common.sh) is compared on whether it dies and what it says. The bash
+sandbox_exists, claude_login_stored and setup_done are gone: their checks assert the answers the
+bash gave.
 """
 
 import os
@@ -30,7 +33,8 @@ class SbxTest(CommandTest):
         self.tool("sbx", body)
 
     def bash(self, snippet):
-        cp = subprocess.run(["bash", "-c", 'ROOT="$1"; . "$1/bin/factory"; ' + snippet, "_", REPO], env=dict(self.environ, LC_ALL="C"),
+        cp = subprocess.run(["bash", "-c", 'set -euo pipefail; ROOT="$1"; . "$1/scripts/lib/common.sh"; ' + snippet, "_", REPO],
+                            env=dict(self.environ, LC_ALL="C"),
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL, cwd=self.tmp)
         return cp.returncode, cp.stdout.decode(), cp.stderr.decode()
 
@@ -94,11 +98,12 @@ class SandboxStateTest(SbxTest):
         self.sbx_stub('if [ "$1 $2" = "ls -q" ]; then printf "factory-broker\\nfactory-developer\\nfactory-broker-2\\n"; '
                       'else cat <<\'EOF\'\n%s\nEOF\nfi\n' % self.LISTING.rstrip("\n"))
 
-    def test_exists_and_running_agree_with_bash(self):
+    def test_exists_as_bash_did_and_running_agrees_with_bash(self):
         self.stub_listing()
         ctx = self.ctx()
-        for name in ("factory-broker", "factory-developer", "factory-reviewer", "factory-broker-2", "factory-none", "factory", "NAME"):
-            self.assertEqual(sbx.sandbox_exists(ctx, name), self.bash('sandbox_exists "%s"' % name)[0] == 0, name)
+        for name, exists in (("factory-broker", True), ("factory-developer", True), ("factory-reviewer", False),
+                             ("factory-broker-2", True), ("factory-none", False), ("factory", False), ("NAME", False)):
+            self.assertEqual(sbx.sandbox_exists(ctx, name), exists, name)
             self.assertEqual(sbx.sandbox_running(ctx, name), self.bash('sandbox_running "%s"' % name)[0] == 0, name)
         self.assertTrue(sbx.sandbox_running(ctx, "factory-broker"))
         self.assertFalse(sbx.sandbox_running(ctx, "factory-developer"))
@@ -108,7 +113,7 @@ class SandboxStateTest(SbxTest):
         ctx = self.ctx()
         self.assertFalse(sbx.sandbox_exists(ctx, "factory-broker"))
         self.assertFalse(sbx.sandbox_running(ctx, "factory-broker"))
-        self.assertEqual(self.bash('sandbox_exists factory-broker')[0], 1)
+        self.assertEqual(self.bash('sandbox_running factory-broker')[0], 1)
 
     def test_names_lists_what_sbx_prints(self):
         self.stub_listing()
@@ -180,10 +185,14 @@ class CoordinatorAttachedTest(SbxTest):
 
 
 class LoginTest(SbxTest):
-    def test_the_anthropic_secret_is_found_like_bash(self):
-        for listing in ("global anthropic x", "SCOPE SERVICE\nglobal github\n", "anthropic", " anthropic ", "x anthropic", ""):
+    def test_the_anthropic_secret_is_found_as_bash_found_it(self):
+        for listing, stored in (("global anthropic x", True), ("SCOPE SERVICE\nglobal github\n", False), ("anthropic", False),
+                                (" anthropic ", True), ("x anthropic", False), ("", False)):
             self.sbx_stub("cat <<'EOF'\n%s\nEOF\n" % listing)
-            self.assertEqual(sbx.claude_login_stored(self.ctx()), self.bash("claude_login_stored")[0] == 0, listing)
+            self.assertEqual(sbx.claude_login_stored(self.ctx()), stored, listing)
+
+    def test_without_sbx_there_is_no_login(self):
+        self.assertFalse(sbx.claude_login_stored(self.ctx()))
 
 
 class SetupDoneTest(SbxTest):
@@ -191,10 +200,9 @@ class SetupDoneTest(SbxTest):
         self.sbx_stub('case "$1 $2" in "settings get") echo "%s";; "template ls") cat <<\'EOF\'\n%s\nEOF\n;; esac\n' % (forced, templates))
 
     def both(self, **kw):
+        """setup_done on the stub; each test asserts what the bash setup_done answered."""
         self.stub(**kw)
-        answer = sbx.setup_done(self.ctx())
-        self.assertEqual(answer, self.bash("setup_done")[0] == 0, kw)
-        return answer
+        return sbx.setup_done(self.ctx())
 
     def test_all_three_images_of_the_current_tag_and_the_baseline(self):
         self.assertTrue(self.both())

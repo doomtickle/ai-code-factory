@@ -2,14 +2,10 @@
 # A role is a directory roles/<name>/ containing role.conf and kit/spec.yaml.
 # shellcheck shell=bash
 
-# Broker tool names, from the manifest the broker's tests keep in sync with its
-# registry (host scripts run on a Python too old to import the broker).
-# broker/ is part of this repository.
+# broker/ is part of this repository, and its tool manifest is what role
+# validation (factory/roles.py known_broker_tools) checks grants against: a
+# checkout without it is incomplete.
 [ -f "$ROOT/broker/tools.txt" ] || die "$ROOT/broker/tools.txt is missing: broker/ is incomplete in this checkout (restore it with 'git -C $ROOT checkout HEAD -- broker')"
-KNOWN_BROKER_TOOLS="$(sed -e '/^#/d' -e '/^[[:space:]]*$/d' "$ROOT/broker/tools.txt" | tr '\n' ' ')"
-readonly KNOWN_BROKER_TOOLS="${KNOWN_BROKER_TOOLS% }"
-readonly KNOWN_TEMPLATES="developer reviewer"
-readonly RESERVED_ROLE_NAMES="broker coordinator dispatch"
 
 # list_all_roles -> every role in roles/, enabled or not
 list_all_roles() {
@@ -52,7 +48,8 @@ conf_get() {
 enabled_roles_file() { printf '%s/enabled-roles' "$FACTORY_CONFIG"; }
 
 # enabled_roles_listed -> the names in enabled-roles, one per line (lines that
-# aren't plain role names are skipped here; validate_enabled_roles reports them)
+# aren't plain role names are skipped here; factory/roles.py
+# validate_enabled_roles reports them)
 enabled_roles_listed() {
   local f LC_ALL=C # byte order: in a locale [a-z] also matches letters like é
   f="$(enabled_roles_file)"
@@ -65,30 +62,13 @@ role_listed_enabled() { in_list "$1" "$(enabled_roles_listed | tr '\n' ' ')"; }
 # role_optional ROLE -> success if ROLE's committed role.conf sets OPTIONAL="1"
 role_optional() { [ "$(conf_get "$ROOT/roles/$1/role.conf" OPTIONAL)" = 1 ]; }
 
-# validate_enabled_roles -> dies unless enabled-roles holds only blank lines,
-# comments and names of roles in roles/ (a typo would silently enable nothing).
-validate_enabled_roles() {
-  local f line trimmed LC_ALL=C # byte order, as in enabled_roles_listed
-  f="$(enabled_roles_file)"
-  [ -e "$f" ] || return 0
-  [ -f "$f" ] || die "$f: not a regular file"
-  while IFS= read -r line || [ -n "$line" ]; do
-    trimmed="${line#"${line%%[![:space:]]*}"}"
-    trimmed="${trimmed%"${trimmed##*[![:space:]]}"}"
-    case "$trimmed" in ''|'#'*) continue ;; esac
-    printf '%s' "$trimmed" | grep -Eq '^[a-z][a-z0-9-]*$' \
-      || die "$f: not a role name (one per line, e.g. researcher): $line"
-    [ -f "$ROOT/roles/$trimmed/role.conf" ] \
-      || die "$f: no role named '$trimmed' in $ROOT/roles (see: factory roles)"
-  done < "$f"
-}
-
 # --- Local role overrides ------------------------------------------------------------
 # FACTORY_CONFIG/roles/<role>.conf: this machine's tuning of a role, layered
 # over roles/<role>/role.conf so a user needn't edit their clone. Same
 # KEY="value" format, parsed (never sourced), and only the keys below: nothing
 # that moves the security boundary (BROKER_TOOLS, WORKSPACE, TEMPLATE, ...).
-# validate_role checks the merged values exactly as it checks role.conf's.
+# factory/roles.py validate_role checks the merged values exactly as it
+# checks role.conf's.
 # start-dispatch.sh snapshots the overrides for the bridge
 # (DISPATCH_STATE/role-overrides), so changes apply on the next `factory start`.
 readonly ROLE_OVERRIDE_KEYS="MODEL MODELS EFFORT LANES MAX_SESSION_TOKENS MAX_TURNS MAX_JOB_SECONDS"
@@ -107,49 +87,10 @@ role_conf_file() {
   fi
 }
 
-# override_note ROLE KEY -> " (set in <override file>)" if ROLE's local
-# override sets KEY, else nothing: for error messages
-override_note() {
-  local f
-  f="$(role_conf_file "$1" "$2")"
-  [ "$f" = "$ROOT/roles/$1/role.conf" ] || printf ' (set in %s)' "$f"
-}
-
 # role_get ROLE KEY -> value of KEY="value" for ROLE: role.conf, with the
 # local override layered on top (both parsed, never sourced)
 role_get() {
   conf_get "$(role_conf_file "$1" "$2")" "$2"
-}
-
-# validate_role_override ROLE -> dies unless ROLE's override (if any) holds
-# only blank lines, comments and KEY="value" lines for ROLE_OVERRIDE_KEYS.
-validate_role_override() {
-  local f line trimmed key LC_ALL=C # [[:space:]] is ASCII whitespace only, in every locale
-  f="$(role_override_file "$1")"
-  [ -e "$f" ] || return 0
-  [ -f "$f" ] || die "$f: not a regular file"
-  while IFS= read -r line || [ -n "$line" ]; do
-    trimmed="${line#"${line%%[![:space:]]*}"}"
-    case "$trimmed" in ''|'#'*) continue ;; esac
-    key="$(printf '%s\n' "$line" | sed -n 's/^\([A-Z_][A-Z_]*\)=".*"[[:space:]]*$/\1/p')"
-    [ -n "$key" ] || die "$f: not a KEY=\"value\" line: $line"
-    in_list "$key" "$ROLE_OVERRIDE_KEYS" \
-      || die "$f: $key can't be set in a local override (allowed: $ROLE_OVERRIDE_KEYS); change it in roles/$1/role.conf"
-  done < "$f"
-}
-
-# validate_role_overrides -> dies if an override names no role in roles/, or if
-# enabled-roles (see Optional roles above) is malformed.
-validate_role_overrides() {
-  local f r LC_ALL=C # byte order, as factory/roles.py sorts; a locale sorts Zed after a-y
-  validate_enabled_roles
-  for f in "$FACTORY_CONFIG"/roles/*.conf; do
-    [ -e "$f" ] || continue
-    r="$(basename "$f" .conf)"
-    [ -f "$ROOT/roles/$r/role.conf" ] \
-      || die "$f: no role named '$r' in $ROOT/roles (an override is named <role>.conf; see: factory roles)"
-  done
-  return 0
 }
 
 # coordinator_broker_tools -> value of BROKER_TOOLS="..." in
@@ -164,7 +105,6 @@ coordinator_broker_tools() {
 }
 
 role_sandbox() { printf 'factory-%s' "$1"; }
-role_broker_mcp() { printf 'factory-broker-%s' "$1"; }
 
 # in_list WORD "LIST" -> success if WORD is one of the space-separated LIST.
 # An empty WORD, or one holding a space, tab or newline, is never in the list
@@ -172,78 +112,6 @@ role_broker_mcp() { printf 'factory-broker-%s' "$1"; }
 in_list() {
   case "$1" in '' | *[[:space:]]*) return 1 ;; esac
   case " $2 " in *" $1 "*) return 0 ;; *) return 1 ;; esac
-}
-
-# Role names must not end in -lane<N>: that is how a role's extra lanes are
-# named (role_lane_names), so such a role would collide with another's lane.
-valid_role_name() {
-  local LC_ALL=C # byte order: in a locale [a-z] also matches letters like é (macOS)
-  printf '%s' "$1" | grep -Eq '^[a-z][a-z0-9-]{1,30}$' && ! in_list "$1" "$RESERVED_ROLE_NAMES" \
-    && ! printf '%s' "$1" | grep -Eq -- '-lane[0-9]+$'
-}
-
-# role_lanes ROLE -> how many jobs ROLE may run at once (LANES in role.conf,
-# 1 when empty). validate_role rejects values outside 1..8.
-role_lanes() {
-  local n
-  n="$(role_get "$1" LANES)"
-  printf '%s' "${n:-1}"
-}
-
-# role_lane_names ROLE -> ROLE's lane names, one per line: lane 1 is ROLE
-# itself, lane k >= 2 is ROLE-lane<k>. Each lane has its own session and
-# transcript (DISPATCH_STATE sessions/<lane>, logs/<lane>.log); all lanes
-# share the role's one sandbox.
-role_lane_names() {
-  local n k LC_ALL=C # [[:blank:]] is space and tab only, in every locale
-  n="$(role_lanes "$1")"
-  # An integer with optional sign and surrounding blanks, else just lane 1. Spelled out
-  # because `[ -le ]` trims trailing \v, \f and \r in some bash versions and not in others.
-  if [[ "$n" =~ ^[[:blank:]]*([+-]?[0-9]+)[[:blank:]]*$ ]]; then n="${BASH_REMATCH[1]}"; else n=1; fi
-  printf '%s\n' "$1"
-  k=2
-  while [ "$k" -le "$n" ]; do
-    printf '%s-lane%s\n' "$1" "$k"
-    k=$((k + 1))
-  done
-}
-
-validate_role() {
-  local r="$1" t m LC_ALL=C # byte order for the [A-Za-z0-9] / [0-9] checks below
-  valid_role_name "$r" || die "invalid role name '$r' (lowercase letters, digits, dashes; not ending in -lane<N>; not: $RESERVED_ROLE_NAMES)"
-  [ -f "$ROOT/roles/$r/kit/spec.yaml" ] || die "role $r: missing roles/$r/kit/spec.yaml"
-  [ -s "$ROOT/roles/$r/instructions.md" ] || die "role $r: missing or empty roles/$r/instructions.md"
-  validate_role_override "$r"
-  m="$(conf_get "$ROOT/roles/$r/role.conf" OPTIONAL)"
-  [ -z "$m" ] || in_list "$m" "0 1" || die "role $r: OPTIONAL must be 1 (off unless enabled-roles names it) or empty"
-  in_list "$(role_get "$r" TEMPLATE)" "$KNOWN_TEMPLATES" \
-    || die "role $r: TEMPLATE must be one of: $KNOWN_TEMPLATES"
-  in_list "$(role_get "$r" WORKSPACE)" "rw ro" || die "role $r: WORKSPACE must be rw or ro"
-  for t in $(role_get "$r" BROKER_TOOLS); do
-    in_list "$t" "$KNOWN_BROKER_TOOLS" || die "role $r: unknown broker tool '$t' (known: $KNOWN_BROKER_TOOLS)"
-  done
-  m="$(role_get "$r" MODEL)"
-  [ -z "$m" ] || printf '%s' "$m" | grep -Eq '^[A-Za-z0-9._-]+$' \
-    || die "role $r: MODEL must contain only letters, digits, dots, dashes, underscores$(override_note "$r" MODEL)"
-  for m in $(role_get "$r" MODELS); do
-    printf '%s' "$m" | grep -Eq '^[A-Za-z0-9._-]+$' \
-      || die "role $r: MODELS entries must contain only letters, digits, dots, dashes, underscores$(override_note "$r" MODELS)"
-  done
-  m="$(role_get "$r" EFFORT)"
-  [ -z "$m" ] || in_list "$m" "low medium high xhigh" \
-    || die "role $r: EFFORT must be low, medium, high or xhigh (or empty)$(override_note "$r" EFFORT)"
-  m="$(role_get "$r" LANES)"
-  [ -z "$m" ] || printf '%s' "$m" | grep -Eq '^[1-8]$' \
-    || die "role $r: LANES must be a whole number from 1 to 8 (or empty)$(override_note "$r" LANES)"
-  m="$(role_get "$r" MAX_SESSION_TOKENS)"
-  [ -z "$m" ] || printf '%s' "$m" | grep -Eq '^[0-9]+$' \
-    || die "role $r: MAX_SESSION_TOKENS must be a whole number of tokens (or empty)$(override_note "$r" MAX_SESSION_TOKENS)"
-  m="$(role_get "$r" MAX_TURNS)"
-  [ -z "$m" ] || printf '%s' "$m" | grep -Eq '^[0-9]+$' \
-    || die "role $r: MAX_TURNS must be a whole number of turns (or empty)$(override_note "$r" MAX_TURNS)"
-  m="$(role_get "$r" MAX_JOB_SECONDS)"
-  [ -z "$m" ] || printf '%s' "$m" | grep -Eq '^[0-9]+$' \
-    || die "role $r: MAX_JOB_SECONDS must be a whole number of seconds (or empty)$(override_note "$r" MAX_JOB_SECONDS)"
 }
 
 # --- Sandbox fingerprints ------------------------------------------------------------
@@ -258,7 +126,8 @@ validate_role() {
 # (RW_LAYOUT), so a change to how such sandboxes are created marks the old
 # ones out of date.
 
-# How 02-launch-factory.sh lays out an rw role's sandbox. lanes-v1: a scratch
+# How factory/launch.py lays out an rw role's sandbox (RW_LAYOUT in
+# factory/fingerprints.py is the Python copy). lanes-v1: a scratch
 # dir as the writable primary workspace, the project read-only, and only
 # PROJECT/.factory/outgoing writable; the role works in lane clones on the
 # sandbox's own disk. (Before: the project itself, read-write.)
@@ -304,11 +173,6 @@ sandbox_fingerprint() {
       # Only rw roles: read-only roles' sandboxes keep their fingerprint.
       [ "$(role_get "$role" WORKSPACE)" != rw ] || printf 'layout=%s\n' "$RW_LAYOUT" ;;
   esac | sha256_hash
-}
-
-record_sandbox_fingerprint() {
-  mkdir -p "$FACTORY_STATE/sandboxes"
-  sandbox_fingerprint "$1" > "$(sandbox_fingerprint_file "$1")"
 }
 
 # stale_sandboxes -> existing broker, Coordinator and role sandboxes whose
