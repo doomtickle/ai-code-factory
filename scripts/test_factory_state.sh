@@ -9,10 +9,11 @@ set -euo pipefail
 #    file behind, and leaves an existing hash unchanged (a hash that no longer
 #    matches the stored secret would make every broker call a 401, and nothing
 #    would re-mint).
-# 2. `factory reset` and `factory update`: when `sbx rm` fails after the
-#    factory was stopped, they say what is left stopped and how to recover
-#    ("factory start"), instead of a bare set -e abort. The success paths keep
-#    working.
+# 2. `factory update`: when `sbx rm` fails after the factory was stopped, it
+#    says what is left stopped and how to recover ("factory start"), instead of
+#    a bare set -e abort. The success path keeps working. (`factory reset` is
+#    Python now: factory/test_command_runstate.py tests it and that its message
+#    is rm_failed_after_stop's.)
 # 3. setup_done requires the current image tag: factory-<image>:v2 left over
 #    from before a tag bump must not count as set up.
 #
@@ -41,6 +42,8 @@ assert_nonzero() { [ "$2" -ne 0 ] && ok "$1" || bad "$1 (exit status was 0)"; }
 fx="$tmp/checkout"
 mkdir -p "$fx/bin" "$fx/scripts/lib" "$fx/broker" "$fx/kits"
 cp "$REPO_ROOT/bin/factory" "$fx/bin/factory"
+cp -R "$REPO_ROOT/factory" "$fx/factory"
+find "$fx/factory" -name __pycache__ -prune -exec rm -rf {} +
 cp "$REPO_ROOT"/scripts/lib/*.sh "$fx/scripts/lib/"
 cp "$REPO_ROOT/scripts/start-broker.sh" "$REPO_ROOT/scripts/start-dispatch.sh" "$fx/scripts/"
 cp -R "$REPO_ROOT/roles" "$fx/roles"
@@ -188,28 +191,7 @@ mkdir -p "$broker_state" "$dispatch_state"
 printf '%s\n' "$project" > "$broker_state/project"
 export FAKE_SANDBOXES="factory-broker factory-developer other"
 
-# 2a. factory reset --yes, rm fails.
-reset_run
-export FAKE_RM_FAIL=1
-run_cmd "$fx/bin/factory" reset --yes
-assert_nonzero "reset, failing rm: exits non-zero" "$F_RC"
-assert_eq "reset, failing rm: the factory was stopped first" "$(cat "$CALLS")" "stop"
-assert_contains "reset, failing rm: names the sandboxes it could not remove" "$F_OUT" "factory-broker"
-assert_contains "reset, failing rm: says what is left stopped" "$F_OUT" "Left stopped"
-assert_contains "reset, failing rm: gives the recovery command" "$F_OUT" "factory start"
-assert_not_contains "reset, failing rm: does not claim success" "$F_OUT" "no longer bound"
-assert_eq "reset, failing rm: the project stays bound (so 'factory start' works)" \
-  "$(cat "$broker_state/project")" "$project"
-
-# 2b. factory reset --yes, rm works: unchanged behavior.
-reset_run
-unset FAKE_RM_FAIL
-run_cmd "$fx/bin/factory" reset --yes
-assert_eq "reset: exits 0" "$F_RC" "0"
-assert_contains "reset: says the factory is no longer bound" "$F_OUT" "no longer bound"
-[ ! -e "$broker_state/project" ] && ok "reset: the binding is removed" || bad "reset: the binding is removed"
-
-# 2c/2d. factory update --pulled --yes with one stale sandbox. cmd_setup and the
+# 2a/2b. factory update --pulled --yes with one stale sandbox. cmd_setup and the
 # staleness check are replaced (they need docker and real images); the code
 # under test is the stop / rm / restart sequence in cmd_update itself.
 update_run() { # update_run -> F_OUT, F_RC
@@ -244,6 +226,41 @@ assert_eq "update: exits 0 when rm works" "$F_RC" "0"
 assert_eq "update: stops, then starts the bound project again" "$(cat "$CALLS")" "stop
 start $project"
 assert_contains "update: reports the removal" "$F_OUT" "removed factory-developer"
+
+# 2c. `factory start` for another project than the bound one, confirmed: it
+# runs the Python `factory reset --yes` (removes the factory-* sandboxes, forgets
+# the binding), then launches the new project. Declined, nothing is removed.
+other_project="$tmp/other-project"
+mkdir -p "$other_project"
+export FAKE_TEMPLATES="factory-developer:$TAG factory-reviewer:$TAG factory-broker:$TAG"
+switch_run() { # switch_run ANSWER(0|1) -> F_OUT, F_RC
+  set +e
+  F_OUT="$(
+    # shellcheck source=/dev/null
+    . "$fx/bin/factory"
+    if [ "$1" = 1 ]; then confirm() { return 0; }; else confirm() { return 1; }; fi
+    onboarding_hints() { :; }
+    cmd_start "$other_project" --no-dashboard 2>&1
+  )"
+  F_RC=$?
+  set -e
+}
+printf '%s\n' "$project" > "$broker_state/project"
+reset_run
+switch_run 0
+assert_nonzero "switch declined: exits non-zero" "$F_RC"
+assert_contains "switch declined: says it is not switching" "$F_OUT" "not switching"
+assert_not_contains "switch declined: nothing was removed" "$(cat "$FAKE_SBX_ARGS")" "rm --force"
+assert_eq "switch declined: the project stays bound" "$(cat "$broker_state/project")" "$project"
+reset_run
+switch_run 1
+assert_eq "switch confirmed: exits 0" "$F_RC" "0"
+assert_contains "switch confirmed: removes the factory-* sandboxes" "$(cat "$FAKE_SBX_ARGS")" "rm --force factory-broker factory-developer"
+assert_eq "switch confirmed: stops, then launches the new project" "$(cat "$CALLS")" "stop
+launch $other_project"
+assert_contains "switch confirmed: says the factory is no longer bound" "$F_OUT" "no longer bound"
+[ ! -e "$broker_state/project" ] && ok "switch confirmed: the old binding is removed" \
+  || bad "switch confirmed: the old binding is removed"
 
 # ===========================================================================
 # Part 3: setup_done needs the current image tag.

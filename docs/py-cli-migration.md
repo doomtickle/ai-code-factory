@@ -35,6 +35,7 @@ bash and Python side by side, and `main` works after every one.
 | `factory doctor`: `factory/commands/doctor.py`, with the helpers it uses in `factory/preflight.py` (`scripts/lib/preflight.sh` ported, the bash stays for `install-prereqs.sh`), `factory/sbx.py` and `factory/policy.py`; `disabled_role_sandboxes` in `factory/roles.py` | 4 (part 1) |
 | `factory status`: `factory/commands/status.py`, with `factory/keychain.py` (`keychain_has` and the lookups it uses), `factory/approvals.py` (the approvals summary and status line, shared with `doctor`), `require_sbx` in `factory/sbx.py` and the Jira/npm token checks in `factory/policy.py`; tests in `factory/test_command_status.py` | 4 (part 3) |
 | `factory secret` (`save`, `forget`, `set`, `rm`, `ls`): `factory/commands/secret.py`, with the `scripts/lib/secrets.sh` helpers it uses in `factory/secrets.py` and the keychain ones in `factory/keychain.py` (shared with `status`; the bash stays for `start-broker.sh` and `keychain_warn_missing`) | 5 |
+| `factory chat` (and `coordinator`), `stop` (and `down`), `restart`, `reset`: `factory/commands/runstate.py`, with `runs_sandbox` and `coordinator_attached` in `factory/sbx.py`, `Context.confirm` and an `exec` that replaces the process (`os.execvpe`); `03-stop-factory.sh` stays shell; tests in `factory/test_command_runstate.py` and `factory/test_sbx.py` | 6 |
 
 ## Remaining, in order
 
@@ -101,8 +102,39 @@ bash and Python side by side, and `main` works after every one.
      the programs involved print at most a line);
    - a NUL byte in a value is kept (bash's `$(...)` dropped it with a warning);
    - delivery and revocation check the name again themselves (bash relied on its callers).
-6. **Run state**: sandbox fingerprints and `stale_sandboxes` (`common.sh`), then
-   `stop`, `restart`, `reset`, `chat`, with `03-stop-factory.sh`.
+6. **Run state**: done. `chat`, `stop`, `restart` and `reset` are in
+   `factory/commands/runstate.py`.
+   - `chat` ends in `ctx.exec` (`os.execvpe`), so the terminal goes straight to `sbx run`. Its
+     attached check is `sbx.coordinator_attached` (`ps -axo args=`, a failing `ps` reads as nobody),
+     which uses `sbx.runs_sandbox`, the dashboard's rule (`scripts/dashboard_term.py`
+     `runs_sandbox`) copied; `factory/test_sbx.py` runs both on the same fixtures and requires the
+     same answers. The awk `coordinator_attached` in `common.sh` is deleted, since nothing else
+     called it.
+   - `stop` and `reset` run `scripts/03-stop-factory.sh` as it is. **It stays shell**: `update` (bin/factory) also runs it, the docs
+     tell people to run it by hand, it runs `migrate_state` and needs `jq`, and a port would
+     only move its `ps` and `sbx stop` lines without removing any bash. Python takes only its exit
+     status. It goes with `common.sh` in step 9.
+   - `restart` runs the stop script, then the bash `start` as the fixed argv
+     `[<checkout>/bin/factory, start, <project>, --no-dashboard]` (no shell). It moves to a direct
+     call when `start` is ported (step 7).
+   - `reset` asks through `Context.confirm` (a tty on stdin; `y`, `yes`, any case), as bash did. Bash's
+     project switch in `cmd_start` now runs `python3 factory reset --yes`.
+   - The bash `rm_failed_after_stop` stays for `cmd_update` (step 8); the Python copy is
+     `runstate.rm_failed_after_stop`, and `factory/test_command_runstate.py` compares the two
+     messages (reset and update wording, including the trailing space after each name).
+   - **Sandbox fingerprints and `stale_sandboxes` are not ported here**: only `start` and `update`
+     use them, so they go with steps 7 and 8.
+   - Tests: the usage and no-project parts of `test_factory_restart.sh`, the reset parts of
+     `test_factory_state.sh`, `test_factory_chat.sh` and Part 6 of `test_factory_layout.sh`
+     (`coordinator_attached`) are now Python and deleted. What stays shell: the restart that runs the
+     real bash `start` and the real stop script against real sleeping processes
+     (`test_factory_restart.sh`), the stale saved layout, and the `cmd_start` project switch calling
+     Python `reset --yes` (`test_factory_state.sh` 2c), because they test bash that is not ported.
+   - Output is byte-identical (16 scenarios compared old against new: status, stdout, stderr,
+     sbx calls and state). One difference, on a failure path: if removing the `project` files or
+     the session files fails for a reason other than "not there", Python stops with
+     `error: could not remove <path>` where bash's `rm -f` printed its own message and (under `set -e`) exited with
+     rm's status.
 7. **`start`**, with `start-broker.sh`, `start-dispatch.sh` and `02-launch-factory.sh`
    (the riskiest: it creates sandboxes and delivers credentials; the credential rules in
    `CLAUDE.md` apply unchanged, argv lists only).

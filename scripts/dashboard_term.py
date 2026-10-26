@@ -186,7 +186,7 @@ def runs_sandbox(argv: list, name: str) -> bool:
     `--name NAME`, `--name=NAME`, or a bare argument NAME before any `--`
     (`sbx run` takes a sandbox name positionally too; sbx has no short form
     of --name). Errs on the side of a match: a second attachment is the harm.
-    Same rule as coordinator_attached in scripts/lib/common.sh."""
+    Same rule as runs_sandbox in factory/sbx.py (what `factory chat` checks)."""
     if not argv or os.path.basename(argv[0]) != "sbx":
         return False
     i = 1

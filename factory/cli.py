@@ -3,7 +3,7 @@
 import os
 import sys
 
-from factory.commands import config, docs, doctor, logs, packet, role, roles, secret, status, wrappers
+from factory.commands import config, docs, doctor, logs, packet, role, roles, runstate, secret, status, wrappers
 from factory.context import Context, FactoryError, Paths
 
 # Command name -> run(ctx, args). bin/factory's PORTED_COMMANDS lists these
@@ -12,8 +12,11 @@ COMMANDS = {
     "analytics": wrappers.analytics,
     "approvals": wrappers.approvals,
     "approve": wrappers.approvals,
+    "chat": runstate.chat,
     "config": config.run,
+    "coordinator": runstate.chat,
     "dashboard": wrappers.dashboard,
+    "down": runstate.stop,
     "docs": docs.run,
     "doctor": doctor.run,
     "gui": wrappers.dashboard,
@@ -21,10 +24,13 @@ COMMANDS = {
     "logs": logs.run,
     "packet": packet.run,
     "packets": packet.run,
+    "reset": runstate.reset,
+    "restart": runstate.restart,
     "role": role.run,
     "roles": roles.run,
     "secret": secret.run,
     "status": status.run,
+    "stop": runstate.stop,
     "watch": wrappers.watch,
 }
 

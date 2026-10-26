@@ -75,9 +75,7 @@ jobs:
         run: bash scripts/test_factory_layout.sh
       - name: factory-shot argument handling
         run: bash scripts/test_factory_shot.sh
-      - name: factory chat
-        run: bash scripts/test_factory_chat.sh
-      - name: factory restart
+      - name: factory restart (the Python command driving the bash start, and the stop script)
         run: bash scripts/test_factory_restart.sh
       - name: factory state (token minting, failed rm, image tag)
         run: bash scripts/test_factory_state.sh
@@ -124,9 +122,7 @@ jobs:
         run: bash scripts/test_factory_layout.sh
       - name: factory-shot argument handling
         run: bash scripts/test_factory_shot.sh
-      - name: factory chat
-        run: bash scripts/test_factory_chat.sh
-      - name: factory restart
+      - name: factory restart (the Python command driving the bash start, and the stop script)
         run: bash scripts/test_factory_restart.sh
       - name: factory state (token minting, failed rm, image tag)
         run: bash scripts/test_factory_state.sh

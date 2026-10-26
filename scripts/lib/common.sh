@@ -268,28 +268,6 @@ sandbox_exists() {
   sbx ls -q 2>/dev/null | grep -qx "$1"
 }
 
-# coordinator_attached -> success if some process on this machine is already
-# running `sbx run` on $COORDINATOR_SANDBOX (`factory chat` or the
-# dashboard's Terminal 0). A second one would start a second Coordinator
-# in the same VM. It matches `sbx [global flags] run ...` with the name as
-# `--name NAME`, `--name=NAME` or a bare argument before any `--` (`sbx run`
-# takes a sandbox name positionally too; there is no short form of --name),
-# erring towards a match. Same rule as runs_sandbox in
-# scripts/dashboard_term.py.
-coordinator_attached() {
-  ps -axo args= 2>/dev/null | awk -v n="$COORDINATOR_SANDBOX" '
-    {
-      b = $1; sub(/.*\//, "", b)
-      if (b != "sbx") next
-      i = 2
-      while (i <= NF && substr($i, 1, 1) == "-") i++
-      if ($i != "run") next
-      for (j = i + 1; j <= NF && $j != "--"; j++)
-        if ($j == n || $j == "--name=" n) found = 1
-    }
-    END { exit !found }'
-}
-
 # sandbox_running NAME -> success if NAME exists and sbx reports it running
 sandbox_running() {
   [ "$(sbx ls 2>/dev/null | awk -v s="$1" '$1 == s { print $3 }')" = running ]

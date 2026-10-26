@@ -1,6 +1,7 @@
 """What the host's `sbx` CLI says about the factory's sandboxes and setup: ports of
 sbx_installed_version, sandbox_exists, sandbox_running, claude_login_stored and
-sbx_reference_problem (scripts/lib/common.sh) and of setup_done (bin/factory). The bash
+sbx_reference_problem (scripts/lib/common.sh), of coordinator_attached (its bash copy is gone with
+`factory chat`; the rule is the dashboard's `runs_sandbox`) and of setup_done (bin/factory). The bash
 copies stay until their callers are ported; factory/test_sbx.py compares both on the same
 stubs. Every query is read-only, and an sbx that is missing or fails reads as "nothing".
 """
@@ -45,6 +46,35 @@ def sandbox_names(ctx):
 
 def sandbox_exists(ctx, name):
     return name in sandbox_names(ctx)
+
+
+def runs_sandbox(argv, name):
+    """True if argv is `sbx [global flags] run ...` naming the sandbox: as `--name NAME`,
+    `--name=NAME`, or a bare argument NAME before any `--` (`sbx run` takes a sandbox name
+    positionally too; sbx has no short form of --name). Errs on the side of a match: a second
+    attachment is the harm. The same rule as runs_sandbox in scripts/dashboard_term.py (a
+    security rule of the dashboard, scripts/CLAUDE.md); factory/test_sbx.py runs both on the
+    same fixtures."""
+    if not argv or os.path.basename(argv[0]) != "sbx":
+        return False
+    i = 1
+    while i < len(argv) and argv[i].startswith("-"):
+        i += 1
+    if i >= len(argv) or argv[i] != "run":
+        return False
+    for arg in argv[i + 1:]:
+        if arg == "--":
+            break
+        if arg == name or arg == "--name=" + name:
+            return True
+    return False
+
+
+def coordinator_attached(ctx, name):
+    """True if some process on this machine is already running `sbx run` on NAME (`factory
+    chat`, or the dashboard's Terminal 0): a second one would start a second Coordinator in
+    the same VM. A `ps` that fails reads as nobody."""
+    return any(runs_sandbox(line.split(), name) for line in ctx.capture(["ps", "-axo", "args="]).out.split("\n"))
 
 
 def sandbox_running(ctx, name):

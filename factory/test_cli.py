@@ -79,9 +79,9 @@ class MainTest(unittest.TestCase):
         return rc, out.getvalue(), err.getvalue()
 
     def test_a_command_not_ported_yet_is_an_error(self):
-        rc, out, err = self.run_main("stop")
+        rc, out, err = self.run_main("start")
         self.assertEqual((rc, out), (1, ""))
-        self.assertEqual(err, "error: 'stop' is not ported to the Python CLI yet; run it through bin/factory\n")
+        self.assertEqual(err, "error: 'start' is not ported to the Python CLI yet; run it through bin/factory\n")
 
     def test_no_command_is_an_error(self):
         self.assertEqual(self.run_main()[0], 1)
