@@ -1,18 +1,22 @@
 """Sandbox fingerprints: a digest of what a sandbox was created from, recorded when it is
-created, so `factory start` can tell it is out of date. Port of the broker's case of
-sandbox_fingerprint and of record_sandbox_fingerprint, image_build_id and dir_hash
-(scripts/lib/roles.sh), and of broker_plugins (scripts/lib/common.sh). The Coordinator's and
-the roles' fingerprints, and stale_sandboxes, are still bash (02-launch-factory.sh and `start`
-use them; step 7 part C ports them). The digest must stay byte for byte the bash one, which
-compares against what this records; factory/test_broker_start.py runs both on the same
-fixtures.
+created, so `factory start` can tell it is out of date. Port of sandbox_fingerprint (the broker,
+Coordinator and role cases), record_sandbox_fingerprint, stale_sandboxes, image_build_id, dir_hash
+and yes_no (scripts/lib/roles.sh), and of broker_plugins (scripts/lib/common.sh). The bash copies
+stay while their callers do (`start`, `update`, 02-launch-factory.sh; step 7 part C2 and step 8).
+The digest must stay byte for byte the bash one, which compares against what this records, and
+stale_sandboxes must name the same sandboxes in the same order; factory/test_fingerprints.py and
+factory/test_broker_start.py run both on the same fixtures.
 """
 
 import hashlib
 import os
 import stat
 
-from factory import sbx
+from factory import roles, sbx
+from factory.context import COORDINATOR_SANDBOX
+
+# Keep in sync with RW_LAYOUT in scripts/lib/roles.sh (a test compares them).
+RW_LAYOUT = "lanes-v1"
 
 
 def broker_plugins(paths):
@@ -34,7 +38,7 @@ def image_build_id(paths, image):
         with open(os.path.join(paths.state, "images", "factory-%s-%s.id" % (image, sbx.TEMPLATE_TAG)), "rb") as f:
             return f.read().rstrip(b"\n")
     except OSError:
-        return ("factory-%s:%s" % (image, sbx.TEMPLATE_TAG)).encode()
+        return ("factory-%s:%s" % (image, sbx.TEMPLATE_TAG)).encode("utf-8", "surrogateescape")
 
 
 def _sha256_file(path):
@@ -66,17 +70,69 @@ def dir_hash(folder):
     return hashlib.sha256(listing).hexdigest().encode()
 
 
-def broker_fingerprint(paths):
-    """What the broker sandbox is created from, as the hex digest the bash records."""
-    text = b"image=%s\nkit=%s\nlocal-kit=%s\nplugins=%s\n" % (
-        image_build_id(paths, "broker"), dir_hash(os.path.join(paths.root, "kits", "broker")),
-        dir_hash(os.path.join(paths.config, "broker-kit")), broker_plugins(paths).encode())
+def _yes_no(value):
+    return b"yes" if value else b"no"
+
+
+def _text(value):
+    return value.encode("utf-8", "surrogateescape")
+
+
+def sandbox_fingerprint(paths, name):
+    """What the sandbox NAME is created from, as the hex digest the bash records. A name that
+    is neither the broker nor the Coordinator is a role's sandbox, factory-<role>. Grants in
+    broker.conf and LANES are left out on purpose (see scripts/lib/roles.sh)."""
+    if name == sbx.BROKER_SANDBOX:
+        text = b"image=%s\nkit=%s\nlocal-kit=%s\nplugins=%s\n" % (
+            image_build_id(paths, "broker"), dir_hash(os.path.join(paths.root, "kits", "broker")),
+            dir_hash(os.path.join(paths.config, "broker-kit")), broker_plugins(paths).encode())
+    elif name == COORDINATOR_SANDBOX:
+        text = b"image=%s\nkit=%s\nbroker=%s\n" % (
+            image_build_id(paths, "developer"), dir_hash(os.path.join(paths.root, "kits", "coordinator")),
+            _yes_no(roles.coordinator_broker_tools(paths)))
+    else:
+        role = name[len("factory-"):] if name.startswith("factory-") else name
+        workspace = roles.role_get(paths, role, "WORKSPACE")
+        text = b"image=%s\nkit=%s\nworkspace=%s\nbroker=%s\n" % (
+            image_build_id(paths, roles.role_get(paths, role, "TEMPLATE")),
+            dir_hash(os.path.join(paths.root, "roles", role, "kit")), _text(workspace),
+            _yes_no(roles.role_get(paths, role, "BROKER_TOOLS")))
+        if workspace == "rw":
+            text += b"layout=%s\n" % RW_LAYOUT.encode()
     return hashlib.sha256(text).hexdigest()
 
 
-def record_broker_fingerprint(paths):
-    """Write the broker's fingerprint to FACTORY_STATE/sandboxes/factory-broker."""
-    folder = os.path.join(paths.state, "sandboxes")
-    os.makedirs(folder, exist_ok=True)
-    with open(os.path.join(folder, sbx.BROKER_SANDBOX), "w") as f:
-        f.write(broker_fingerprint(paths) + "\n")
+def broker_fingerprint(paths):
+    return sandbox_fingerprint(paths, sbx.BROKER_SANDBOX)
+
+
+def fingerprint_file(paths, name):
+    return os.path.join(paths.state, "sandboxes", name)
+
+
+def record_sandbox_fingerprint(paths, name):
+    """Write NAME's fingerprint to FACTORY_STATE/sandboxes/NAME."""
+    os.makedirs(os.path.join(paths.state, "sandboxes"), exist_ok=True)
+    with open(fingerprint_file(paths, name), "w") as f:
+        f.write(sandbox_fingerprint(paths, name) + "\n")
+
+
+def stale_sandboxes(ctx):
+    """The existing broker, Coordinator and role sandboxes whose inputs changed since they were
+    created (or that predate fingerprints), in that order. Like bash, an `sbx ls -q` that fails
+    reads as no sandboxes (so nothing is stale), and a missing or unreadable fingerprint file
+    is a mismatch."""
+    paths = ctx.paths
+    existing = set(sbx.sandbox_names(ctx))
+    stale = []
+    for name in [sbx.BROKER_SANDBOX, COORDINATOR_SANDBOX] + [roles.role_sandbox(r) for r in roles.list_roles(paths)]:
+        if name not in existing:
+            continue
+        try:
+            with open(fingerprint_file(paths, name), "rb") as f:
+                recorded = f.read().rstrip(b"\n")
+        except OSError:
+            recorded = None
+        if recorded != sandbox_fingerprint(paths, name).encode():
+            stale.append(name)
+    return stale

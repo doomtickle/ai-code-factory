@@ -42,6 +42,7 @@ bash and Python side by side, and `main` works after every one.
 | `factory chat` (and `coordinator`), `stop` (and `down`), `restart`, `reset`: `factory/commands/runstate.py`, with `runs_sandbox` and `coordinator_attached` in `factory/sbx.py`, `Context.confirm` and an `exec` that replaces the process (`os.execvpe`); `03-stop-factory.sh` stays shell; tests in `factory/test_command_runstate.py` and `factory/test_sbx.py` | 6 |
 | `factory _start-dispatch` (step 7, part A): `factory/dispatch_start.py`, with `migrate_state` in `factory/state.py` and `policy_toml_string` and `lane_identity_problem` in `factory/policy.py`; `scripts/start-dispatch.sh` is a shim that runs it; tests in `factory/test_dispatch_start.py` and `factory/test_state.py` | 7 (part A) |
 | `scripts/start-broker.sh` (step 7, part B): `factory/broker_start.py` as `factory _start-broker` (`INTERNAL`), the script a shim; the broker's sandbox fingerprint and `broker_plugins` in `factory/fingerprints.py`; `clear_all_manual` and the `sync_from_keychain` statuses (#179) in `factory/secrets.py`; tests in `factory/test_broker_start.py` | 7 (part B) |
+| The Coordinator's and roles' sandbox fingerprints, `record_sandbox_fingerprint` for any sandbox and `stale_sandboxes` (step 7, part C1): `factory/fingerprints.py` (`sandbox_fingerprint`, `record_sandbox_fingerprint`, `stale_sandboxes`); the bash copies in `scripts/lib/roles.sh` stay for their callers; tests in `factory/test_fingerprints.py` | 7 (part C1) |
 ## Remaining, in order
 
 1. **Wrappers of Python scripts and small commands**: done (PR 2).
@@ -209,14 +210,22 @@ bash and Python side by side, and `main` works after every one.
      out of date once: `factory start` warns, and `factory update` recreates it (which drops
      held writes). macOS's UTF-8 locales are believed to collate in code point order, which
      would leave its brokers unaffected (unverified).
-   - Not ported here: the Coordinator's and roles' fingerprints and `stale_sandboxes` (part C).
+   - Not ported here: the Coordinator's and roles' fingerprints and `stale_sandboxes` (part C1 did).
      `migrate_state` is part A's, from `factory/state.py`, and `require_state_outside` moved there
      too (the bash one stays for `02-launch-factory.sh`). Part B's own `migrate_state` copy is
      gone; A's differs from it only on failure paths (it stops the bridge only for an ASCII-digit
      pid, with `os.kill` rather than a `kill` argv, and a failing move is an `error:` line).
      `run_or_die` and the token minting stay in `broker_start.py`.
-   - **Part C, remaining: `02-launch-factory.sh`, `cmd_start`, `onboarding_hints`**, and the
-     Coordinator's and roles' sandbox fingerprints and `stale_sandboxes` that step 6 left for here.
+   - **Part C1 (done): the Coordinator's and roles' sandbox fingerprints, `record_sandbox_fingerprint`
+     for any sandbox and `stale_sandboxes`** in `factory/fingerprints.py`, checked digest for digest
+     and list for list against the bash on the same fixtures (`factory/test_fingerprints.py`). The
+     bash copies in `scripts/lib/roles.sh` stay: `onboarding_hints`, `cmd_update_plan`, `cmd_update`
+     and `02-launch-factory.sh` still call them. Like bash, an `sbx ls -q` that fails reads as no
+     sandboxes (what it printed is kept); `broker_start.py` records through `record_sandbox_fingerprint`.
+   - **Part C, remaining: `02-launch-factory.sh`, `cmd_start`, `onboarding_hints`**, which use the
+     Python functions; then the bash fingerprint helpers (`sandbox_fingerprint`,
+     `record_sandbox_fingerprint`, `stale_sandboxes`, `image_build_id`, `dir_hash`, `yes_no`,
+     `RW_LAYOUT`) go once `update` (step 8) no longer needs them.
 8. **`setup` and `update`**, with `00-build-templates.sh`, `01-init-security.sh`,
    `install-prereqs.sh`.
 9. **Finish**: delete `scripts/lib/*.sh` and the bash tests, leave `bin/factory` as a shim
