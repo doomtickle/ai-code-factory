@@ -38,10 +38,10 @@ bash and Python side by side, and `main` works after every one.
 | Bash `in_list` takes one exact word, as Python's `_in_list` (no new command) | done |
 | `factory doctor`: `factory/commands/doctor.py`, with the helpers it uses in `factory/preflight.py` (`scripts/lib/preflight.sh` ported, the bash stays for `install-prereqs.sh`), `factory/sbx.py` and `factory/policy.py`; `disabled_role_sandboxes` in `factory/roles.py` | 4 (part 1) |
 | `factory status`: `factory/commands/status.py`, with `factory/keychain.py` (`keychain_has` and the lookups it uses), `factory/approvals.py` (the approvals summary and status line, shared with `doctor`), `require_sbx` in `factory/sbx.py` and the Jira/npm token checks in `factory/policy.py`; tests in `factory/test_command_status.py` | 4 (part 3) |
-| `factory secret` (`save`, `forget`, `set`, `rm`, `ls`): `factory/commands/secret.py`, with the `scripts/lib/secrets.sh` helpers it uses in `factory/secrets.py` and the keychain ones in `factory/keychain.py` (shared with `status`; the bash stays for `start-broker.sh` and `keychain_warn_missing`) | 5 |
+| `factory secret` (`save`, `forget`, `set`, `rm`, `ls`): `factory/commands/secret.py`, with the `scripts/lib/secrets.sh` helpers it uses in `factory/secrets.py` and the keychain ones in `factory/keychain.py` (shared with `status`; the bash stays for `keychain_warn_missing`) | 5 |
 | `factory chat` (and `coordinator`), `stop` (and `down`), `restart`, `reset`: `factory/commands/runstate.py`, with `runs_sandbox` and `coordinator_attached` in `factory/sbx.py`, `Context.confirm` and an `exec` that replaces the process (`os.execvpe`); `03-stop-factory.sh` stays shell; tests in `factory/test_command_runstate.py` and `factory/test_sbx.py` | 6 |
+| `factory _start-dispatch` (step 7, part A): `factory/dispatch_start.py`, with `migrate_state` in `factory/state.py` and `policy_toml_string` and `lane_identity_problem` in `factory/policy.py`; `scripts/start-dispatch.sh` is a shim that runs it; tests in `factory/test_dispatch_start.py` and `factory/test_state.py` | 7 (part A) |
 | `scripts/start-broker.sh` (step 7, part B): `factory/broker_start.py` as `factory _start-broker` (`INTERNAL`), the script a shim; the broker's sandbox fingerprint and `broker_plugins` in `factory/fingerprints.py`; `clear_all_manual` and the `sync_from_keychain` statuses (#179) in `factory/secrets.py`; tests in `factory/test_broker_start.py` | 7 (part B) |
-
 ## Remaining, in order
 
 1. **Wrappers of Python scripts and small commands**: done (PR 2).
@@ -144,9 +144,31 @@ bash and Python side by side, and `main` works after every one.
      files are best effort in both.
 7. **`start`**, with `start-broker.sh`, `start-dispatch.sh` and `02-launch-factory.sh`
    (the riskiest: it creates sandboxes and delivers credentials; the credential rules in
-   `CLAUDE.md` apply unchanged, argv lists only). In three parts: A `start-dispatch.sh`, B
-   `start-broker.sh`, C `02-launch-factory.sh` and `cmd_start`.
-   - **Part B (`start-broker.sh`): done.** `factory/broker_start.py` does it all, run as
+   `CLAUDE.md` apply unchanged, argv lists only). In three parts: A and B are done, C remains.
+   - **Part A, done: `start-dispatch.sh`.** `factory/dispatch_start.py` (`main(ctx, argv)`) does
+     the validation, the lane identity check and snapshot, the snapshots into `FACTORY_STATE`
+     (role instructions plus project notes, role overrides, enabled-roles, the docs), `running_pid`
+     and `port_holder`, and the bridge restart and readiness wait. `scripts/start-dispatch.sh` is
+     now `exec "$(resolve_python)" "$ROOT/factory" _start-dispatch "$@"`, which `02-launch-factory.sh`
+     still calls. Snapshots stay atomic where they were (a `.tmp` folder renamed into place), a new
+     file takes the source's mode less the umask as `cp` did, and the token goes only to
+     `sbx secret set`'s stdin. `migrate_state` is also in Python (`factory/state.py`); the bash one
+     stays for `03-stop-factory.sh`, and `factory/test_state.py` runs both on
+     the same fixtures. `policy_toml_string`, `lane_identity_problem` and `write_lane_identity` were
+     only this script's, so they are deleted from `common.sh` (the Python rules are in
+     `factory/policy.py`; their shell tests are in `factory/test_dispatch_start.py`). The old and
+     new scripts were compared on 17 scenarios (fresh, rerun, another project, usage errors, wrong
+     sbx, failed mint over an old hash, bad override, bad identity, missing `tools.txt`, a bridge
+     that exits or never answers, a failed `mcp add`, a stranger on the port) and 37 identity
+     policies: same output, exit status, sbx calls and files, modes included. Deliberate
+     differences, all on failure paths: (1) `curl`, `openssl` and `sha256sum`/`shasum` are no longer
+     needed, since the readiness probes talk to 127.0.0.1 directly (no proxy) and the token and its
+     hash come from `secrets` and `hashlib`, so there is no "not found in PATH" error for them;
+     (2) the usage line names `<checkout>/scripts/start-dispatch.sh` where bash printed `$0`;
+     (3) a file operation that fails prints `error: <path>: <reason>` and exits 1 (bash printed its
+     tool's message, then died under `set -e`); (4) a failing `kill` of an old bridge (here and in
+     `migrate_state`) stops with `error: could not stop the dispatch bridge (<pid>): <reason>`.
+   - **Part B, done: `start-broker.sh`.** `factory/broker_start.py` does it all, run as
      `factory _start-broker <project-dir>`; the script is a shim that keeps its path and its usage
      check (the message names `$0`). The token hashes, `grants.json` (the same bytes as jq's),
      the `project` file, the broker's fingerprint (`factory/fingerprints.py`, byte for byte
@@ -188,9 +210,13 @@ bash and Python side by side, and `main` works after every one.
      held writes). macOS's UTF-8 locales are believed to collate in code point order, which
      would leave its brokers unaffected (unverified).
    - Not ported here: the Coordinator's and roles' fingerprints and `stale_sandboxes` (part C).
-     `migrate_state`, `require_state_outside`, `run_or_die` and the token minting are in
-     `broker_start.py`; part A needs some of the same, so whichever merges second should share
-     them.
+     `migrate_state` is part A's, from `factory/state.py`, and `require_state_outside` moved there
+     too (the bash one stays for `02-launch-factory.sh`). Part B's own `migrate_state` copy is
+     gone; A's differs from it only on failure paths (it stops the bridge only for an ASCII-digit
+     pid, with `os.kill` rather than a `kill` argv, and a failing move is an `error:` line).
+     `run_or_die` and the token minting stay in `broker_start.py`.
+   - **Part C, remaining: `02-launch-factory.sh`, `cmd_start`, `onboarding_hints`**, and the
+     Coordinator's and roles' sandbox fingerprints and `stale_sandboxes` that step 6 left for here.
 8. **`setup` and `update`**, with `00-build-templates.sh`, `01-init-security.sh`,
    `install-prereqs.sh`.
 9. **Finish**: delete `scripts/lib/*.sh` and the bash tests, leave `bin/factory` as a shim

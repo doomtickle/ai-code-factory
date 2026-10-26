@@ -824,7 +824,7 @@ def valid_lane_dir(path: str) -> bool:
             and not re.search(r"[\x00-\x1f\x7f-\x9f]", path))
 
 
-# The same rules as lane_identity_problem in scripts/lib/common.sh and
+# The same rules as lane_identity_problem in factory/policy.py and
 # check_identity in templates/agent/factory-lane ("{lane}" is replaced there).
 _IDENTITY_BAD = re.compile(r"[\x00-\x1f\x7f-\x9f<>]")
 _IDENTITY_EMAIL = re.compile(r"[^-@\s\x00-\x1f\x7f-\x9f<>][^@\s\x00-\x1f\x7f-\x9f<>]*@[^@\s\x00-\x1f\x7f-\x9f<>]+")

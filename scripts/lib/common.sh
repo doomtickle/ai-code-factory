@@ -309,60 +309,6 @@ policy_string() {
   policy_value "$1" "$2" | awk -F'"' '{ print $2 }'
 }
 
-# policy_toml_string SECTION KEY -> the text of a one-line TOML string value
-# of KEY in [SECTION] (policy_value's precedence): "basic" without escapes or
-# 'literal'. Fails when KEY is unset; prints "?" and fails when it is set to
-# anything else (an escape, a number, an unclosed quote).
-policy_toml_string() {
-  local raw re_basic='^"([^"\\]*)"[[:space:]]*(#.*)?$' re_literal="^'([^']*)'[[:space:]]*(#.*)?\$"
-  raw="$(policy_value "$1" "$2")"
-  [ -n "$raw" ] || return 1
-  if [[ "$raw" =~ $re_basic ]] || [[ "$raw" =~ $re_literal ]]; then
-    printf '%s\n' "${BASH_REMATCH[1]}"
-  else
-    echo "?"
-    return 1
-  fi
-}
-
-# lane_identity_problem NAME EMAIL -> why NAME <EMAIL> can't be a lane's git
-# identity, or nothing (and failure) when it can. Empty means the default
-# (factory-<lane>, <lane>@factory.invalid); "{lane}" stands for the lane name.
-# The same rules as check_identity in templates/agent/factory-lane and
-# lane_identity_problem in dispatch/server.py.
-lane_identity_problem() {
-  local LC_ALL=C name="${1//\{lane\}/developer}" email="${2//\{lane\}/developer}" bad='[[:cntrl:]<>]'
-  local email_re='^[^-@[:space:][:cntrl:]<>][^@[:space:][:cntrl:]<>]*@[^@[:space:][:cntrl:]<>]+$'
-  if [ -n "$1" ] && ! { [ -n "${name//[[:space:]]/}" ] && [ "${#name}" -le 128 ] \
-      && ! [[ "$name" =~ $bad ]] && [ "${name#-}" = "$name" ]; }; then
-    echo "author_name must be 1-128 characters, not only spaces, with no control character, \"<\" or \">\", and not start with \"-\""
-  elif [ -n "$2" ] && ! { [ "${#email}" -le 254 ] && [[ "$email" =~ $email_re ]]; }; then
-    echo "author_email must look like name@domain: one \"@\", no spaces, control characters, \"<\" or \">\", not starting with \"-\", at most 254 characters"
-  else
-    return 1
-  fi
-}
-
-# write_lane_identity FILE -> the lanes' git identity ([git] author_name and
-# author_email in policy.toml) as AUTHOR_NAME="..." / AUTHOR_EMAIL="..." lines
-# in FILE, for the dispatch bridge to pass to `factory-lane prepare`. Neither
-# set: no FILE (factory-lane's default). Refuses (dies, leaving no FILE) on an
-# invalid value.
-write_lane_identity() {
-  local name="" email="" why
-  rm -f "$1"
-  name="$(policy_toml_string git author_name)" || [ "$name" != "?" ] \
-    || die "[git] author_name in policy.toml must be a one-line string (\"...\" without escapes, or '...')"
-  email="$(policy_toml_string git author_email)" || [ "$email" != "?" ] \
-    || die "[git] author_email in policy.toml must be a one-line string (\"...\" without escapes, or '...')"
-  if why="$(lane_identity_problem "$name" "$email")"; then
-    die "[git] in policy.toml: $why"
-  fi
-  if [ -n "$name$email" ]; then
-    printf 'AUTHOR_NAME="%s"\nAUTHOR_EMAIL="%s"\n' "$name" "$email" > "$1"
-  fi
-}
-
 # sbx_not_signed_in -> success only when sbx itself says it is not signed in
 # to Docker ("Not authenticated", the message the image load gives). Any other
 # answer, including an sbx that can't be asked, is "unknown" and fails, so the

@@ -36,8 +36,9 @@ class ShimTest(unittest.TestCase):
         self.assertEqual(sorted(shim_ported_commands()), sorted(cli.COMMANDS))
 
     def test_internal_entry_points_are_not_commands(self):
-        # Run by the host scripts that are shims now (scripts/start-broker.sh), never by a user.
-        self.assertEqual(sorted(cli.INTERNAL), ["_start-broker"])
+        # Run by the host scripts that are shims now (scripts/start-broker.sh,
+        # scripts/start-dispatch.sh), never by a user.
+        self.assertEqual(list(cli.INTERNAL), ["_start-broker", "_start-dispatch"])  # alphabetical
         for name in cli.INTERNAL:
             self.assertTrue(name.startswith("_"))
             self.assertNotIn(name, cli.COMMANDS)
@@ -98,6 +99,13 @@ class MainTest(unittest.TestCase):
 
     def test_no_command_is_an_error(self):
         self.assertEqual(self.run_main()[0], 1)
+
+    def test_an_internal_entry_point_runs_but_is_not_a_command(self):
+        rc, out, err = self.run_main("_start-dispatch")
+        self.assertEqual((rc, out), (1, ""))
+        self.assertRegex(err, r"^error: usage: .*/scripts/start-dispatch\.sh <project-dir>\n$")
+        with open(SHIM) as f:
+            self.assertNotIn("_start-dispatch", f.read())
 
 
 if __name__ == "__main__":

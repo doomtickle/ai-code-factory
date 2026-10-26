@@ -3,7 +3,7 @@
 import os
 import sys
 
-from factory import broker_start
+from factory import broker_start, dispatch_start
 from factory.commands import config, docs, doctor, logs, packet, role, roles, runstate, secret, status, wrappers
 from factory.context import Context, FactoryError, Paths
 
@@ -35,10 +35,12 @@ COMMANDS = {
     "watch": wrappers.watch,
 }
 
-# Entry points of the host scripts that are thin shims now (scripts/start-broker.sh), run
-# like COMMANDS but not commands: not in PORTED_COMMANDS, nor in any usage text.
+# Entry points the bash scripts run (`factory _start-broker`, `factory _start-dispatch`; the
+# scripts are thin shims now): dispatched like COMMANDS, but not commands a person types, so
+# they are not in COMMANDS, PORTED_COMMANDS or the usage text. One entry per line, alphabetical.
 INTERNAL = {
     "_start-broker": broker_start.main,
+    "_start-dispatch": dispatch_start.main,
 }
 
 ROOT = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
@@ -54,5 +56,6 @@ def main(argv=None, *, root=None, environ=None, stdout=None, stderr=None, runner
             raise FactoryError("%r is not ported to the Python CLI yet; run it through bin/factory" % command)
         return handler(ctx, argv[1:])
     except FactoryError as e:
+        ctx._flush()
         ctx.stderr.write("error: %s\n" % e)
         return 1
