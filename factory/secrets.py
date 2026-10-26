@@ -1,10 +1,9 @@
 """The credentials sbx cannot proxy-inject (Jira, Gemini, the private npm registry token,
 the GitLab token and the approvals webhook URL): the named exception in CLAUDE.md
-("Credentials"). Port of the helpers in scripts/lib/secrets.sh that `factory secret` uses;
-the keychain itself is factory/keychain.py (keychain_backend is in factory/preflight.py), and
-running a program with a value on its stdin factory/programs.py. The bash stays while
-scripts/start-broker.sh sources it; factory/test_secrets.py runs the bash and the Python on
-the same fakes and requires the same argv, statuses and messages.
+("Credentials"). Port of the scripts/lib/secrets.sh helpers `factory secret` and the broker
+start (factory/broker_start.py) use; their bash copies are gone. The keychain itself is
+factory/keychain.py (keychain_backend is in factory/preflight.py), and running a program with a
+value on its stdin factory/programs.py.
 
 A value is bytes, and it goes only to a program's stdin (the keychain tool, powershell.exe,
 `sbx exec -i` into /etc/factory-broker/secrets/ in the broker sandbox, `sbx secret set`).
@@ -20,10 +19,11 @@ block a revocation.
 import os
 
 from factory import keychain, preflight, sbx
+from factory.context import FactoryError
 from factory.keychain import FOUND, NOT_STORED
 from factory.programs import DROP, PASS, run_tool, to_stderr
 
-# Keep in sync with scripts/lib/secrets.sh (a test compares them).
+# Keep in sync with FACTORY_SECRET_NAMES in scripts/lib/secrets.sh (a test compares them).
 SECRET_NAMES = ("jira", "gemini", "npm-registry", "gitlab", "approvals-webhook")
 
 SECRETS_DIR = "/etc/factory-broker/secrets"
@@ -31,7 +31,8 @@ SECRETS_DIR = "/etc/factory-broker/secrets"
 # Run by `sh -c` inside the broker sandbox, with the name as $1 and the value on stdin:
 # umask 077, write to a .tmp file and rename it into place. When sbx exec runs as root
 # (an old broker image) the chowns hand the directory and file to "agent", who the gateway
-# runs as; as "agent" they are skipped. Byte for byte the script of secret_deliver_file.
+# runs as; as "agent" they are skipped. Byte for byte the script of the bash secret_deliver_file
+# it replaced.
 DELIVER_SCRIPT = (
     'umask 077 && dir="/etc/factory-broker/secrets" && mkdir -p "$dir" \\\n'
     '     && { [ "$(id -u)" != 0 ] || chown agent:agent "$dir"; } \\\n'
@@ -135,29 +136,53 @@ def unmark_manual(paths, name):
         pass
 
 
+def clear_all_manual(paths):
+    """Remove every marker and return the names cleared, sorted. Called only when a brand new
+    broker sandbox is created: it has none of the credentials, so a marker left from an older
+    one is stale and would make sync_from_keychain skip a name the new sandbox has no file
+    for. Raises FactoryError if a marker can't be removed."""
+    names = manual_names(paths)
+    for name in names:
+        path = os.path.join(manual_dir(paths), name)
+        try:
+            os.remove(path)
+        except FileNotFoundError:
+            pass
+        except OSError as e:
+            raise FactoryError("could not remove the 'factory secret set' marker %s: %s" % (path, e.strerror or e))
+    return names
+
+
+# What sync_from_keychain returns.
+SYNCED = 0  # the broker's file matches the keychain (delivered or revoked), or NAME is manual
+NOT_DELIVERED = 1  # the keychain's value did not reach the broker (a warning says why)
+REVOKE_FAILED = 2  # the broker's file could not be removed: it may still be active
+
+
 def sync_from_keychain(ctx, name, quiet=False):
     """Deliver the keychain's factory-NAME to the broker sandbox or, if the keychain
     definitely has none, revoke the broker's file; leave it alone (one warning) if the
     keychain can't be read, and entirely (one note) if NAME is marked manual. QUIET drops
-    the note and what sbx prints on stdout (bash's >/dev/null). Returns 2 if a revocation
-    failed (the file may still be active), else 0, a failed delivery included."""
+    the note and what sbx prints on stdout (bash's >/dev/null). Returns SYNCED,
+    NOT_DELIVERED (a failed delivery or an unreadable keychain) or REVOKE_FAILED."""
     service = "factory-" + name
     if is_manual(ctx.paths, name):
         if not quiet:
             ctx.say("note: %s is managed by 'factory secret set/rm'; leaving it as is" % name)
-        return 0
+        return SYNCED
     out = DROP if quiet else PASS
     status, value = keychain.lookup(ctx, service)
     if status == NOT_STORED:
         if not revoke_file(ctx, name, out=out):
             to_stderr(ctx, "error: could not remove the %s credential file from the broker sandbox; "
                              "it may still be active even though its keychain entry is gone\n" % name)
-            return 2
-        return 0
+            return REVOKE_FAILED
+        return SYNCED
     if status != FOUND:
         keychain_unavailable_warning(ctx, service, "the broker's %s credential" % name)
-        return 0
+        return NOT_DELIVERED
     if not deliver_file(ctx, name, value, out=out):
         to_stderr(ctx, "warning: could not deliver the %s credential to the broker sandbox "
                          "(an old broker image? see README, Upgrading, for the rebuild steps)\n" % name)
-    return 0
+        return NOT_DELIVERED
+    return SYNCED

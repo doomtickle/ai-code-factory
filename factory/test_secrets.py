@@ -1,10 +1,11 @@
-"""Tests for factory/secrets.py, the port of the scripts/lib/secrets.sh helpers `factory secret`
-uses. The bash stays while scripts/start-broker.sh sources it, so each helper runs in bash and in
-Python against the same fake sbx, secret-tool, security and powershell.exe, and must give the
-same status, value, messages and the same argv, byte for byte. Ported from parts 4c, 5, 8 and 9
-of scripts/test_factory_secret.sh, which also covered secret_clear_all_manual and
-keychain_warn_missing: they have no Python copy yet (start-broker.sh and `factory status` call
-them), so they are tested here in bash alone.
+"""Tests for factory/secrets.py, the helpers `factory secret` and the broker start
+(factory/broker_start.py) use, and for the keychain lookups. Their bash copies in
+scripts/lib/secrets.sh went with start-broker.sh, except keychain_has and what it calls
+(bin/factory's keychain_warn_missing still uses them until `start` is ported): those run in bash
+and in Python against the same fake sbx, secret-tool, security and powershell.exe, and must give
+the same status, value, messages and the same argv, byte for byte. The rest are tested in Python
+alone, against the outputs the bash gave. Ported from parts 4c, 5, 8 and 9 of
+scripts/test_factory_secret.sh.
 
 Nothing here needs sbx, a keychain or a network: every program is a fake on the PATH that logs
 its argv and environment and keeps what it reads on stdin in a file of its own.
@@ -16,6 +17,7 @@ import subprocess
 import tempfile
 
 from factory import keychain, secrets
+from factory.context import FactoryError
 from factory.fixtures import REPO, CommandTest
 
 # Records "$*" (one line a call) and the exact argv (NUL after each argument, \1 after each
@@ -200,7 +202,8 @@ class SecretFakes(CommandTest):
 
 
 class Parity(SecretFakes):
-    """Runs a helper in bash and in Python against the same fakes."""
+    """Runs a helper in Python against the fakes, and the bash keychain lookups that remain
+    (keychain_has and what it calls) against the same fakes."""
 
     def bash(self, snippet, env=None, stdin=b""):
         """(status, stdout, stderr) of SNIPPET with secrets.sh sourced, and the calls the fakes
@@ -223,6 +226,10 @@ class Parity(SecretFakes):
             self.environ.clear()
             self.environ.update(saved)
         return (answer, self.out.getvalue(), self.err.getvalue()), self.calls()
+
+    def run_py(self, fn, env=None):
+        """(fn's answer, stdout, stderr) of FN(ctx)."""
+        return self.py(fn, env)[0]
 
     def calls(self):
         return {name: self.logged(name) for name in ("sbx-argv.bin", "sbx-stdin", "sbx-secret-stdin", "keyring-argv.bin",
@@ -248,31 +255,48 @@ class ConstantsTest(Parity):
         for bad in ("", "jira gemini", " jira", "jira ", "../jira", "jira/x", "JIRA", "passdesk-license", "factory-jira"):
             self.assertFalse(secrets.secret_name_valid(bad), bad)
             self.assertFalse(keychain.name_valid(bad), bad)
-            (status, _, _), _ = self.bash('secret_name_valid "$X" || keychain_name_valid "$X"', {"X": bad})
+            (status, _, _), _ = self.bash('keychain_name_valid "$X"', {"X": bad})
             self.assertEqual(status, 1, bad)
+
+    def test_the_bash_left_is_only_what_keychain_has_needs(self):
+        # The rest went with start-broker.sh (factory/broker_start.py); bin/factory's
+        # keychain_warn_missing calls keychain_has until `start` is ported.
+        (status, out, _), _ = self.bash("declare -F | awk '{print $3}'")
+        defined = set(out.split())
+        for gone in ("secret_name_valid", "keychain_unavailable_warning", "keychain_store", "keychain_delete",
+                     "github_sync_from_keychain", "secret_deliver_file", "secret_revoke_file", "secret_manual_dir",
+                     "secret_is_manual", "secret_mark_manual", "secret_unmark_manual", "secret_clear_all_manual",
+                     "secret_sync_from_keychain"):
+            self.assertNotIn(gone, defined)
+        for kept in ("keychain_has", "keychain_lookup", "keychain_search_empty", "keychain_backend", "wincred_run",
+                     "wincred_powershell", "keychain_name_valid"):
+            self.assertIn(kept, defined)
 
 
 class DeliverTest(Parity):
-    def test_a_found_value_goes_to_the_broker_on_stdin_with_the_same_argv(self):
+    def test_a_found_value_goes_to_the_broker_on_stdin(self):
         env = {"FACTORY_KEYCHAIN": "secret-tool", "FAKE_KEYRING": "found", "FAKE_SBX_SAYS": "sbx said this"}
-        bash, py = self.same("secret_sync_from_keychain jira", lambda c: secrets.sync_from_keychain(c, "jira"), env)
-        self.assertEqual(bash, (0, "sbx said this\n", ""))
-        self.assertEqual(py, (0, "sbx said this\n", ""))
+        py = self.run_py(lambda c: secrets.sync_from_keychain(c, "jira"), env)
+        self.assertEqual(py, (secrets.SYNCED, "sbx said this\n", ""))
         self.assertEqual(self.argv("sbx-argv.bin"),
                          [["exec", "-i", "factory-broker", "sh", "-c", secrets.DELIVER_SCRIPT, "_", "jira"]])
         self.assertEqual(self.logged("sbx-stdin"), VALUE.encode())
-        self.assert_not_leaked(VALUE, bash[1], bash[2], py[1], py[2])
+        self.assert_not_leaked(VALUE, py[1], py[2])
+
+    def test_the_delivery_script_is_the_one_the_bash_ran(self):
+        self.assertEqual(secrets.DELIVER_SCRIPT,
+                         'umask 077 && dir="/etc/factory-broker/secrets" && mkdir -p "$dir" \\\n'
+                         '     && { [ "$(id -u)" != 0 ] || chown agent:agent "$dir"; } \\\n'
+                         '     && dest="$dir/$1" && cat > "$dest.tmp" && mv "$dest.tmp" "$dest" \\\n'
+                         '     && { [ "$(id -u)" != 0 ] || chown agent:agent "$dest"; }')
 
     def test_quiet_drops_what_sbx_says_and_the_note(self):
         env = {"FACTORY_KEYCHAIN": "secret-tool", "FAKE_KEYRING": "found", "FAKE_SBX_SAYS": "sbx said this"}
-        bash, py = self.same("secret_sync_from_keychain jira >/dev/null",
-                             lambda c: secrets.sync_from_keychain(c, "jira", quiet=True), env)
-        self.assertEqual(bash, (0, "", ""))
-        self.assertEqual(py, bash)
+        self.assertEqual(self.run_py(lambda c: secrets.sync_from_keychain(c, "jira", quiet=True), env),
+                         (secrets.SYNCED, "", ""))
         self.mark("jira")
-        bash, py = self.same("secret_sync_from_keychain jira >/dev/null",
-                             lambda c: secrets.sync_from_keychain(c, "jira", quiet=True), env)
-        self.assertEqual(py, bash)
+        self.assertEqual(self.run_py(lambda c: secrets.sync_from_keychain(c, "jira", quiet=True), env),
+                         (secrets.SYNCED, "", ""))
 
     def test_the_delivery_script_writes_the_file_atomically(self):
         # Run it for real in a local sh, with the secrets folder moved into the scratch folder.
@@ -285,12 +309,13 @@ class DeliverTest(Parity):
         self.assertEqual(os.stat(path).st_mode & 0o777, 0o600)
         self.assertFalse(os.path.exists(path + ".tmp"))
 
-    def test_a_failed_delivery_is_a_warning_only(self):
+    def test_a_failed_delivery_warns_and_is_not_delivered(self):
         env = {"FACTORY_KEYCHAIN": "secret-tool", "FAKE_KEYRING": "found", "FAKE_SBX_DELIVER_FAIL": "1"}
-        bash, py = self.same("secret_sync_from_keychain gemini", lambda c: secrets.sync_from_keychain(c, "gemini"), env)
-        self.assertEqual(bash[0], 0)
-        self.assertIn("warning: could not deliver the gemini credential", bash[2])
-        self.assertEqual(py, bash)
+        self.assertEqual(self.run_py(lambda c: secrets.sync_from_keychain(c, "gemini"), env),
+                         (secrets.NOT_DELIVERED, "", "warning: could not deliver the gemini credential to the broker "
+                          "sandbox (an old broker image? see README, Upgrading, for the rebuild steps)\n"))
+        self.assertEqual(self.logged("sbx-stdin"), VALUE.encode())
+        self.assertEqual(len({secrets.SYNCED, secrets.NOT_DELIVERED, secrets.REVOKE_FAILED}), 3)
 
     def test_a_name_that_is_not_ours_is_never_delivered_or_revoked(self):
         ctx = self.ctx()
@@ -300,34 +325,29 @@ class DeliverTest(Parity):
 
 
 class SyncTest(Parity):
-    """secret_sync_from_keychain: what start-broker.sh does for each name on every start."""
+    """sync_from_keychain: what the broker start does for each name on every start."""
 
     def test_a_marked_name_is_left_alone(self):
         self.mark("jira")
-        bash, py = self.same("secret_sync_from_keychain jira", lambda c: secrets.sync_from_keychain(c, "jira"),
-                             {"FACTORY_KEYCHAIN": "secret-tool", "FAKE_KEYRING": "absent"})
-        self.assertEqual(bash, (0, "note: jira is managed by 'factory secret set/rm'; leaving it as is\n", ""))
-        self.assertEqual(py, bash)
+        py = self.run_py(lambda c: secrets.sync_from_keychain(c, "jira"),
+                         {"FACTORY_KEYCHAIN": "secret-tool", "FAKE_KEYRING": "absent"})
+        self.assertEqual(py, (secrets.SYNCED, "note: jira is managed by 'factory secret set/rm'; leaving it as is\n", ""))
         self.assertEqual(self.calls(), dict.fromkeys(self.calls(), b""))  # no lookup, no sbx
 
     def test_not_stored_revokes_the_file(self):
         for backend in ("none", "secret-tool", "macos", "wincred"):
             with self.subTest(backend=backend):
                 env = {"FACTORY_KEYCHAIN": backend, "FAKE_KEYRING": "absent"}
-                bash, py = self.same("secret_sync_from_keychain gemini",
-                                     lambda c: secrets.sync_from_keychain(c, "gemini"), env)
-                self.assertEqual(bash, (0, "", ""))
-                self.assertEqual(py, bash)
+                self.assertEqual(self.run_py(lambda c: secrets.sync_from_keychain(c, "gemini"), env),
+                                 (secrets.SYNCED, "", ""))
                 self.assertEqual(self.argv("sbx-argv.bin"),
                                  [["exec", "factory-broker", "rm", "-f", "/etc/factory-broker/secrets/gemini"]])
 
     def test_a_failed_revocation_is_status_2(self):
-        env = {"FAKE_SBX_RM_FAIL": "1"}
-        bash, py = self.same("secret_sync_from_keychain npm-registry",
-                             lambda c: secrets.sync_from_keychain(c, "npm-registry"), env)
-        self.assertEqual(bash[0], 2)
-        self.assertIn("error: could not remove the npm-registry credential file", bash[2])
-        self.assertEqual(py, bash)
+        py = self.run_py(lambda c: secrets.sync_from_keychain(c, "npm-registry"), {"FAKE_SBX_RM_FAIL": "1"})
+        self.assertEqual(py, (secrets.REVOKE_FAILED, "", "error: could not remove the npm-registry credential file "
+                              "from the broker sandbox; it may still be active even though its keychain entry is gone\n"))
+        self.assertEqual(secrets.REVOKE_FAILED, 2)
 
     def test_an_unreadable_keychain_keeps_the_file_and_warns_once(self):
         cases = [("secret-tool", m) for m in ("locked", "locked-silent", "search-error", "search-silent")]
@@ -338,28 +358,32 @@ class SyncTest(Parity):
                 if mode == "ps-fail":
                     env["FAKE_PS_FAIL"] = "1"
                     self.store_wincred("factory-gitlab", VALUE)
-                bash, py = self.same("secret_sync_from_keychain gitlab",
-                                     lambda c: secrets.sync_from_keychain(c, "gitlab"), env)
-                self.assertEqual(bash[:2], (0, ""))
-                self.assertEqual(bash[2].count("\n"), 1)
-                self.assertIn("could not read factory-gitlab from the keychain", bash[2])
-                self.assertIn("To fix: ", bash[2])
+                py = self.run_py(lambda c: secrets.sync_from_keychain(c, "gitlab"), env)
+                self.assertEqual(py[:2], (secrets.NOT_DELIVERED, ""))
+                self.assertEqual(py[2].count("\n"), 1)
+                self.assertIn("could not read factory-gitlab from the keychain", py[2])
+                self.assertIn("To fix: ", py[2])
                 for noise in ("interaction is not allowed", "D-Bus", "NoReply", "cannot start", VALUE):
-                    self.assertNotIn(noise, bash[2])
-                self.assertEqual(py, bash)
+                    self.assertNotIn(noise, py[2])
                 self.assertEqual(self.logged("sbx-argv.bin"), b"")  # the credential is kept
                 self.assertNotIn(b"--unlock", self.logged("keyring-argv.bin"))
 
     def test_the_warning_names_the_fix_for_each_backend(self):
-        for backend, hint in (("macos", "unlock the Keychain"), ("secret-tool", "unlock your login keyring"),
-                              ("wincred", "powershell.exe"), ("other", "check this machine's keychain")):
+        hints = {"macos": "unlock the Keychain (security unlock-keychain) and allow access when asked",
+                 "secret-tool": "unlock your login keyring (log in to the desktop session, or open Passwords and Keys) "
+                                "and check that a Secret Service such as gnome-keyring-daemon is running "
+                                "(try: secret-tool lookup service factory-jira)",
+                 "wincred": "check that Windows PowerShell runs from WSL (powershell.exe) and can reach the "
+                            "Credential Manager",
+                 "other": "check this machine's keychain"}
+        for backend, hint in hints.items():
             with self.subTest(backend=backend):
-                bash, py = self.same("keychain_unavailable_warning factory-jira \"the broker's jira credential\"",
-                                     lambda c: secrets.keychain_unavailable_warning(c, "factory-jira",
-                                                                                   "the broker's jira credential"),
-                                     {"FACTORY_KEYCHAIN": backend})
-                self.assertIn(hint, bash[2])
-                self.assertEqual(py[1:], bash[1:])
+                py = self.run_py(lambda c: secrets.keychain_unavailable_warning(c, "factory-jira",
+                                                                               "the broker's jira credential"),
+                                 {"FACTORY_KEYCHAIN": backend})
+                self.assertEqual(py[1:], ("", "warning: could not read factory-jira from the keychain (locked or "
+                                              "unavailable); leaving the broker's jira credential as it is. To fix: "
+                                              "%s, then run 'factory start' again\n" % hint))
 
 
 class LookupTest(Parity):
@@ -415,16 +439,19 @@ class StoreDeleteTest(Parity):
     def test_store_sends_the_value_on_stdin_only(self):
         for backend in ("secret-tool", "wincred"):
             with self.subTest(backend=backend):
-                env = {"FACTORY_KEYCHAIN": backend, "V": "wc-secret-1"}
-                bash, bash_calls = self.bash('printf %s "$V" | keychain_store factory-jira', env)
-                py, py_calls = self.py(lambda c: keychain.store(c, "factory-jira", b"wc-secret-1"), env)
-                self.assertEqual(py_calls, bash_calls)
-                self.assertEqual((py[0], bash[0]), (True, 0))
+                env = {"FACTORY_KEYCHAIN": backend}
+                py, calls = self.py(lambda c: keychain.store(c, "factory-jira", b"wc-secret-1"), env)
+                self.assertEqual(py, (True, "", ""))
                 stdin = "keyring-stdin" if backend == "secret-tool" else "ps-stdin"
-                self.assertEqual(self.logged(stdin), b"wc-secret-1")
-                self.assertNotIn(b"wc-secret-1", self.logged("keyring-argv.bin") + self.logged("ps-argv.bin"))
-                if backend == "wincred":
-                    self.assertIn(b"Retrieve('factory-jira'", self.logged("ps-argv.bin"))
+                self.assertEqual(calls[stdin], b"wc-secret-1")
+                self.assertNotIn(b"wc-secret-1", calls["keyring-argv.bin"] + calls["ps-argv.bin"])
+                if backend == "secret-tool":
+                    self.assertEqual(self.argv("keyring-argv.bin"),
+                                     [["store", "--label", "AI Code Factory: factory-jira", "service", "factory-jira"]])
+                else:
+                    self.assertEqual(self.argv("ps-argv.bin"), [["-NoProfile", "-NonInteractive", "-Command",
+                                                                 keychain.wincred_script("store", "factory-jira")]])
+                    self.assertIn(b"Retrieve('factory-jira'", calls["ps-argv.bin"])
 
     def test_a_failed_store_is_false(self):
         ctx = self.ctx()
@@ -436,27 +463,31 @@ class StoreDeleteTest(Parity):
 
     def test_delete(self):
         self.store_wincred("factory-jira", "x")
-        for backend in ("secret-tool", "macos", "wincred", "none"):
+        expected = {"secret-tool": ("keyring-argv.bin", [["clear", "service", "factory-jira"]]),
+                    "macos": ("keyring-argv.bin", [["delete-generic-password", "-s", "factory-jira"]]),
+                    "wincred": ("ps-argv.bin", [["-NoProfile", "-NonInteractive", "-Command",
+                                                 keychain.wincred_script("delete", "factory-jira")]]),
+                    "none": ("keyring-argv.bin", [])}
+        for backend, (log, argv) in expected.items():
             with self.subTest(backend=backend):
-                bash, py = self.same("keychain_delete factory-jira", lambda c: keychain.delete(c, "factory-jira"),
-                                     {"FACTORY_KEYCHAIN": backend})
-                self.assertEqual(bash, (0, "", ""))
-                self.assertEqual(py[1:], bash[1:])
+                py = self.run_py(lambda c: keychain.delete(c, "factory-jira"), {"FACTORY_KEYCHAIN": backend})
+                self.assertEqual(py[1:], ("", ""))
+                self.assertEqual(self.argv(log), argv)
         self.assertFalse(os.path.exists(os.path.join(self.log, "wincred", "factory-jira")))
 
 
 class GithubSyncTest(Parity):
     def sync(self, env):
-        bash, py = self.same("github_sync_from_keychain", secrets.github_sync_from_keychain, env)
-        self.assertEqual(bash[0], 0)
-        self.assertEqual(py[1:], bash[1:])
-        return bash
+        py = self.run_py(secrets.github_sync_from_keychain, env)
+        self.assertIsNone(py[0])
+        return py
 
     def test_found_is_registered_broker_scoped_on_stdin(self):
         for backend in ("secret-tool", "macos"):
             with self.subTest(backend=backend):
                 out = self.sync({"FACTORY_KEYCHAIN": backend, "FAKE_KEYRING": "found"})
-                self.assertEqual(out[1], "GitHub token for factory-broker restored from the keychain (factory-github)\n")
+                self.assertEqual(out[1:], ("GitHub token for factory-broker restored from the keychain (factory-github)\n",
+                                           ""))
                 self.assertEqual(self.argv("sbx-argv.bin"),
                                  [["secret", "set", "-f", "github", "--sandbox", "factory-broker"]])
                 self.assertEqual(self.logged("sbx-secret-stdin"), VALUE.encode())
@@ -472,17 +503,18 @@ class GithubSyncTest(Parity):
 
     def test_a_failed_registration_warns(self):
         out = self.sync({"FACTORY_KEYCHAIN": "secret-tool", "FAKE_KEYRING": "found", "FAKE_SBX_SET_FAIL": "1"})
-        self.assertIn("warning: could not register the GitHub token", out[2])
+        self.assertEqual(out[1:], ("", "warning: could not register the GitHub token from the keychain for "
+                                       "factory-broker; run 'factory secret save github' again\n"))
 
 
 class ManualMarkersTest(Parity):
-    def test_mark_list_and_unmark_match_the_bash(self):
+    def test_mark_list_and_unmark(self):
         self.assertEqual(secrets.manual_names(self.paths), [])
         self.assertTrue(secrets.mark_manual(self.paths, "gitlab"))
         self.assertEqual(os.stat(self.markers).st_mode & 0o777, 0o700)
         self.assertEqual(os.path.getsize(os.path.join(self.markers, "gitlab")), 0)
-        (status, _, _), _ = self.bash("secret_is_manual gitlab && secret_mark_manual jira")
-        self.assertEqual(status, 0)
+        self.assertTrue(secrets.is_manual(self.paths, "gitlab"))
+        self.assertTrue(secrets.mark_manual(self.paths, "jira"))
         self.assertEqual(secrets.manual_names(self.paths), ["gitlab", "jira"])
         secrets.unmark_manual(self.paths, "jira")
         secrets.unmark_manual(self.paths, "jira")
@@ -492,15 +524,21 @@ class ManualMarkersTest(Parity):
         self.write("state/ai-code-factory/secrets-manual", "not a folder")
         self.assertFalse(secrets.mark_manual(self.paths, "jira"))
 
-    def test_secret_clear_all_manual_stays_bash(self):
-        # Only start-broker.sh calls it (step 7 ports it), when it creates a new broker sandbox.
-        self.mark("jira", "npm-registry")
-        (status, out, err), calls = self.bash("secret_clear_all_manual")
-        self.assertEqual((status, sorted(out.split()), err), (0, ["jira", "npm-registry"], ""))
-        self.assertEqual(os.listdir(self.markers), [])
-        self.assertEqual(calls["sbx-argv.bin"], b"")
-        os.rmdir(self.markers)
-        self.assertEqual(self.bash("secret_clear_all_manual")[0], (0, "", ""))
+    def test_clear_all_manual(self):
+        # Only the broker start calls it, when it creates a new broker sandbox.
+        self.mark("npm-registry", "jira", ".hidden")
+        self.assertEqual(secrets.clear_all_manual(self.paths), ["jira", "npm-registry"])
+        self.assertEqual(os.listdir(self.markers), [".hidden"])  # as the bash glob, which skips dotfiles
+        self.assertEqual(self.logged("sbx-argv.bin"), b"")
+        shutil.rmtree(self.markers)
+        self.assertEqual(secrets.clear_all_manual(self.paths), [])
+
+    def test_a_marker_that_cannot_be_cleared_stops_the_start(self):
+        os.makedirs(os.path.join(self.markers, "gemini"))
+        with self.assertRaises(FactoryError) as cm:
+            secrets.clear_all_manual(self.paths)
+        self.assertTrue(str(cm.exception).startswith(
+            "could not remove the 'factory secret set' marker %s: " % os.path.join(self.markers, "gemini")))
 
 
 class WarnMissingTest(SecretFakes):

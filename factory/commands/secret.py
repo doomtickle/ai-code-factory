@@ -153,8 +153,9 @@ def secret_save(ctx, args):
     if name == "github":
         secrets.github_sync_from_keychain(ctx)
         return 0
+    # NOT_DELIVERED (1) and REVOKE_FAILED (2) have printed why; only a delivery says so.
     status = secrets.sync_from_keychain(ctx, name, quiet=True)
-    if status == 0:
+    if status == secrets.SYNCED:
         ctx.ok("delivered '%s' to the running broker" % name)
     return status
 

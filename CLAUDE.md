@@ -119,7 +119,7 @@ socket, or host credentials. Full picture: README.md.
 - The GitHub token is scoped to the Broker sandbox (`sbx secret set github --sandbox
   factory-broker`), never global. `scripts/start-broker.sh` re-registers a host-keychain
   `factory-github` entry, broker-scoped and over stdin, on every broker start
-  (`github_sync_from_keychain`), so recreating the broker never drops it.
+  (`github_sync_from_keychain`, `factory/secrets.py`), so recreating the broker never drops it.
 - Real credentials (GitHub, Anthropic) are injected out-of-band by the host egress
   proxy, never passed into a sandbox in plaintext. Register via `sbx secret set
   <service>` (global scope default); never commit them to git or pass them as env

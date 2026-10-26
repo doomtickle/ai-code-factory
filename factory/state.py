@@ -1,6 +1,7 @@
-"""Moving the factory's runtime state out of the repo: a port of migrate_state in
-scripts/lib/common.sh (which stays: start-broker.sh and 03-stop-factory.sh call it).
-factory/test_state.py runs both on the same fixtures.
+"""The factory's runtime state: where it may live, and moving it out of the repo. Ports of
+require_state_outside and migrate_state in scripts/lib/common.sh (which stay:
+02-launch-factory.sh calls the first, 03-stop-factory.sh the second). factory/test_state.py
+runs both migrate_state copies on the same fixtures.
 """
 
 import os
@@ -12,6 +13,14 @@ from factory.context import FactoryError
 
 # Tests replace it, so a restart does not wait a real second.
 sleep = time.sleep
+
+
+def require_state_outside(paths, project):
+    """Refuse a state dir inside PROJECT (e.g. XDG_STATE_HOME pointed into it), where agents
+    could edit it."""
+    if (paths.state + "/").startswith(project + "/"):
+        raise FactoryError("factory state (%s) is inside the project %s, where agents could edit it; "
+                           "set XDG_STATE_HOME elsewhere" % (paths.state, project))
 
 
 def migrate_state(ctx, root):

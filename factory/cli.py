@@ -3,7 +3,7 @@
 import os
 import sys
 
-from factory import dispatch_start
+from factory import broker_start, dispatch_start
 from factory.commands import config, docs, doctor, logs, packet, role, roles, runstate, secret, status, wrappers
 from factory.context import Context, FactoryError, Paths
 
@@ -35,9 +35,11 @@ COMMANDS = {
     "watch": wrappers.watch,
 }
 
-# Entry points the bash scripts run (`factory _start-dispatch`): dispatched like COMMANDS, but not
-# commands a person types, so they are not in COMMANDS, PORTED_COMMANDS or the usage text.
+# Entry points the bash scripts run (`factory _start-broker`, `factory _start-dispatch`; the
+# scripts are thin shims now): dispatched like COMMANDS, but not commands a person types, so
+# they are not in COMMANDS, PORTED_COMMANDS or the usage text. One entry per line, alphabetical.
 INTERNAL = {
+    "_start-broker": broker_start.main,
     "_start-dispatch": dispatch_start.main,
 }
 
