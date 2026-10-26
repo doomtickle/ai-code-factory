@@ -23,10 +23,14 @@ readonly SBX_DEB_UBUNTU2404_SHA256="aaceda8ade7bdbb285a8e5b27e29d5af1aeef55c57bf
 readonly SBX_DEB_UBUNTU2604_URL="https://github.com/docker/sbx-releases/releases/download/v${SBX_VERSION}/DockerSandboxes-linux-amd64-ubuntu2604.deb"
 readonly SBX_DEB_UBUNTU2604_SHA256="db12d894a9d92da7c33afb5a4654bb341a92a90189b2095490ed3128d58f9c3a"
 
-# Pinned ShellCheck for scripts/lint.sh (CI and local runs). Hashes checked against
-# the v0.10.0 release downloads on 2026-10-17.
+# Pinned ShellCheck for scripts/lint.sh (CI and local runs) and the developer and
+# reviewer images (00-build-templates.sh passes these as build args). Hashes checked
+# against the v0.10.0 release downloads on 2026-10-17. The linux.aarch64 hash (the
+# images on Apple-silicon Macs) was computed on the host by the owner from the
+# official shellcheck-v0.10.0.linux.aarch64.tar.xz release asset on 2026-10-25.
 readonly SHELLCHECK_VERSION="0.10.0"
 readonly SHELLCHECK_LINUX_X86_64_SHA256="6c881ab0698e4e6ea235245f22832860544f17ba386442fe7e9d629f8cbedf87"
+readonly SHELLCHECK_LINUX_AARCH64_SHA256="324a7e89de8fa2aed0d0c28f3dab59cf84c6d74264022c00c22af665ed1a09bb"
 readonly SHELLCHECK_DARWIN_AARCH64_SHA256="bbd2f14826328eee7679da7221f2bc3afb011f6a928b848c80c321f6046ddf81"
 
 # Factory sandbox, template and MCP names. Role sandboxes are factory-<role>.

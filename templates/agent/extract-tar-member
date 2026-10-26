@@ -1,0 +1,44 @@
+#!/usr/bin/env python3
+"""Usage: extract-tar-member ARCHIVE MEMBER DEST
+
+Writes the one regular-file member MEMBER (its exact name) of the .tar.xz
+ARCHIVE to the new file DEST, mode 0755. Nothing else in the archive is read
+or extracted, and an existing DEST is refused. The image builds use it for the
+ShellCheck release because the pinned base has no xz program, but its python3
+has lzma. Run it only on an archive whose SHA-256 has been checked.
+"""
+
+import os
+import shutil
+import sys
+import tarfile
+
+
+def main(argv):
+    if len(argv) != 4:
+        print(__doc__.split("\n\n")[0], file=sys.stderr)
+        return 2
+    archive, member, dest = argv[1:]
+    try:
+        with tarfile.open(archive, "r:xz") as tar:
+            try:
+                info = tar.getmember(member)
+            except KeyError:
+                print(f"extract-tar-member: no member '{member}' in {archive}", file=sys.stderr)
+                return 1
+            if not info.isreg():
+                print(f"extract-tar-member: '{member}' is not a regular file", file=sys.stderr)
+                return 1
+            src = tar.extractfile(info)
+            fd = os.open(dest, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o755)
+            with os.fdopen(fd, "wb") as out:
+                shutil.copyfileobj(src, out)
+            os.chmod(dest, 0o755)
+    except (OSError, tarfile.TarError) as e:
+        print(f"extract-tar-member: {e}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))
