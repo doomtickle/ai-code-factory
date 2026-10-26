@@ -86,6 +86,16 @@ class MainTest(unittest.TestCase):
     def test_no_command_is_an_error(self):
         self.assertEqual(self.run_main()[0], 1)
 
+    def test_an_internal_entry_point_runs_but_is_not_a_command(self):
+        self.assertEqual(sorted(cli.INTERNAL), ["_start-dispatch"])
+        self.assertFalse(set(cli.INTERNAL) & set(cli.COMMANDS))
+        self.assertFalse(set(cli.INTERNAL) & set(shim_ported_commands()))
+        rc, out, err = self.run_main("_start-dispatch")
+        self.assertEqual((rc, out), (1, ""))
+        self.assertRegex(err, r"^error: usage: .*/scripts/start-dispatch\.sh <project-dir>\n$")
+        with open(SHIM) as f:
+            self.assertNotIn("_start-dispatch", f.read())
+
 
 if __name__ == "__main__":
     unittest.main()

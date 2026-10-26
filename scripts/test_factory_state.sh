@@ -3,7 +3,8 @@ set -euo pipefail
 
 # Regression tests for host CLI state handling:
 #
-# 1. Token minting (scripts/start-broker.sh, scripts/start-dispatch.sh): the
+# 1. Token minting (scripts/start-broker.sh; start-dispatch's is tested in
+#    factory/test_dispatch_start.py): the
 #    token's hash is written only after `sbx secret set` succeeds. A failing
 #    set stops the script with a message naming the secret, leaves no hash
 #    file behind, and leaves an existing hash unchanged (a hash that no longer
@@ -17,7 +18,7 @@ set -euo pipefail
 # 3. setup_done requires the current image tag: factory-<image>:v2 left over
 #    from before a tag bump must not count as set up.
 #
-# Drives a fixture checkout (bin/factory + scripts/lib + the start scripts,
+# Drives a fixture checkout (bin/factory + scripts/lib + start-broker.sh,
 # stub 03-stop-factory.sh) against a fake sbx on a private PATH. No real sbx,
 # docker or network access needed.
 
@@ -45,7 +46,7 @@ cp "$REPO_ROOT/bin/factory" "$fx/bin/factory"
 cp -R "$REPO_ROOT/factory" "$fx/factory"
 find "$fx/factory" -name __pycache__ -prune -exec rm -rf {} +
 cp "$REPO_ROOT"/scripts/lib/*.sh "$fx/scripts/lib/"
-cp "$REPO_ROOT/scripts/start-broker.sh" "$REPO_ROOT/scripts/start-dispatch.sh" "$fx/scripts/"
+cp "$REPO_ROOT/scripts/start-broker.sh" "$fx/scripts/"
 cp -R "$REPO_ROOT/roles" "$fx/roles"
 cp -R "$REPO_ROOT/kits/coordinator" "$fx/kits/coordinator"
 printf '%s\n' npm_fetch pip_download git_fetch git_push github_create_pr gitlab_create_mr \
@@ -162,27 +163,6 @@ case "$dev_hash" in
     || bad "broker mint, successful set: developer hash is a sha256 (got '$dev_hash')" ;;
   *) bad "broker mint, successful set: developer hash is a sha256 (got '$dev_hash')" ;;
 esac
-
-# 1d. Dispatch, nothing minted yet, set fails: dies naming the secret, no hash file.
-reset_run
-rm -rf "$dispatch_state"
-export FAKE_SET_FAIL=1
-run_cmd "$fx/scripts/start-dispatch.sh" "$project"
-assert_nonzero "dispatch mint, failing set: exits non-zero" "$F_RC"
-assert_contains "dispatch mint, failing set: names the secret" "$F_OUT" "mcp:factory-dispatch:token"
-assert_contains "dispatch mint, failing set: says the hash was not changed" "$F_OUT" "token hash was not changed"
-[ ! -e "$dispatch_state/token.sha256" ] && ok "dispatch mint, failing set: no hash file is left behind" \
-  || bad "dispatch mint, failing set: no hash file is left behind"
-
-# 1e. Dispatch, an older hash exists, set fails: the older hash is unchanged.
-reset_run
-mkdir -p "$dispatch_state"
-printf 'oldhash\n' > "$dispatch_state/token.sha256"
-run_cmd "$fx/scripts/start-dispatch.sh" "$project"
-assert_nonzero "dispatch mint over an old hash, failing set: exits non-zero" "$F_RC"
-assert_eq "dispatch mint over an old hash, failing set: the hash is unchanged" \
-  "$(cat "$dispatch_state/token.sha256")" "oldhash"
-unset FAKE_SET_FAIL
 
 # ===========================================================================
 # Part 2: a failing `sbx rm` after the stop says what is left and how to recover.

@@ -2,7 +2,9 @@
 gitlab_needs_token, gitlab_mr_unheld, jira_cloud_id_set, any_jira_tool_granted and
 npm_private_registry_needs_token (scripts/lib/common.sh and bin/factory). Not a TOML parser:
 a line scan good enough for the values these checks read. The bash copies stay until `start`
-and `setup` are ported; factory/test_policy.py runs both on the same fixtures.
+and `setup` are ported; factory/test_policy.py runs both on the same fixtures. Also the lane
+git identity rules (policy_toml_string, lane_identity_problem), which only start-dispatch.sh used:
+their bash is gone.
 """
 
 import os
@@ -109,3 +111,44 @@ def gitlab_mr_unheld(paths):
     if not tools.translate({ord(c): None for c in "[] \t"}):
         return None
     return '[approvals].tools is set without "gitlab_create_mr"'
+
+
+_BASIC_STRING = re.compile("\"([^\"\\\\]*)\"[%s]*(#.*)?" % _SPACE)
+_LITERAL_STRING = re.compile("'([^']*)'[%s]*(#.*)?" % _SPACE)
+
+
+def policy_toml_string(paths, section, key):
+    """The text of a one-line TOML string value of KEY in [SECTION] (policy_value's precedence):
+    "basic" without escapes, or 'literal'. None when KEY is unset; ValueError when it is set to
+    anything else (an escape, a number, an unclosed quote)."""
+    raw = policy_value(paths, section, key)
+    if not raw:
+        return None
+    m = _BASIC_STRING.fullmatch(raw) or _LITERAL_STRING.fullmatch(raw)
+    if m is None:
+        raise ValueError(raw)
+    return m.group(1)
+
+
+# Bytes, as bash counts them under LC_ALL=C: a control character is 0-31 or 127, a space is
+# one of " \t\n\v\f\r".
+_IDENTITY_BAD = re.compile(rb"[\x00-\x1f\x7f<>]")
+_IDENTITY_EMAIL = re.compile(rb"[^-@ \t\n\v\f\r\x00-\x1f\x7f<>][^@ \t\n\v\f\r\x00-\x1f\x7f<>]*@[^@ \t\n\v\f\r\x00-\x1f\x7f<>]+")
+
+
+def lane_identity_problem(name, email):
+    """Why NAME <EMAIL> can't be a lane's git identity, or None when it can. Empty means the
+    default (factory-<lane>, <lane>@factory.invalid); "{lane}" stands for the lane name. The
+    same rules as check_identity in templates/agent/factory-lane and lane_identity_problem in
+    dispatch/server.py."""
+    def raw(value):
+        return value.replace("{lane}", "developer").encode("utf-8", "surrogateescape")
+
+    if name and not (raw(name).strip(_SPACE.encode()) and len(raw(name)) <= 128
+                     and not _IDENTITY_BAD.search(raw(name)) and not raw(name).startswith(b"-")):
+        return ('author_name must be 1-128 characters, not only spaces, with no control character, "<" or ">", '
+                'and not start with "-"')
+    if email and not (len(raw(email)) <= 254 and _IDENTITY_EMAIL.fullmatch(raw(email))):
+        return ('author_email must look like name@domain: one "@", no spaces, control characters, "<" or ">", '
+                'not starting with "-", at most 254 characters')
+    return None
