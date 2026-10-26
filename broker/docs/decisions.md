@@ -2,6 +2,25 @@
 
 Dated entries, for the user to review. Newest first.
 
+## 2026-10-26
+
+- **`start-broker.sh` is Python (`factory/broker_start.py`); a failed credential delivery
+  still only warns there, but `factory secret save` now says it failed.** Step 7 part B of
+  `docs/py-cli-migration.md` (doomtickle/passdesk-ops#169), and #179.
+  `secrets.sync_from_keychain` now returns `SYNCED` (0), `NOT_DELIVERED` (1: the delivery
+  failed, or the keychain could not be read) or `REVOKE_FAILED` (2). It used to return 0 for a
+  failed delivery, so `save` printed "delivered" for a value that never reached the broker.
+  `save` prints that line only on `SYNCED` and exits with the status. The broker start keeps
+  its behaviour: a failed delivery or an unreadable keychain warns and the start goes on (a
+  denied keychain prompt, or an old broker image, must not stop the whole factory), and only a
+  failed revocation is fatal, as the credential may still be active. Two things are stricter
+  than the bash on failure paths. A `factory secret set` marker that can't be removed when a
+  new broker sandbox is created now stops the start; before, the start went on with a stale
+  marker. And the name of a former role, which comes from `sbx mcp ls`, is used as a file name
+  under `tokens/` only if it has no `/`, so sbx output can't get a file outside the state dir
+  removed. Values still go only to a program's stdin, and the one shell, the fixed
+  server-start script, runs inside the broker sandbox with no value in it.
+
 ## 2026-10-25
 
 - **`stop`, `restart`, `reset` and `chat` are Python; `03-stop-factory.sh` stays shell.**

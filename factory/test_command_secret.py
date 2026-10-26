@@ -246,6 +246,18 @@ class SaveTest(SecretTest):
         self.assertFalse(os.path.exists(os.path.join(self.markers, "jira")))  # the keychain manages it now
         self.assert_not_leaked("wc-secret-Bx9Qe", out, err)
 
+    def test_a_failed_delivery_says_so_and_fails(self):
+        # doomtickle/passdesk-ops#179: no "delivered" line, and the exit status says it failed.
+        status, out, err = self.factory("save", "jira", stdin="wc-secret-Fd4Lm\n", FACTORY_KEYCHAIN="wincred",
+                                        FAKE_SBX_DELIVER_FAIL="1")
+        self.assertEqual(status, 1)
+        self.assertEqual(out, "  ✓ saved factory-jira in the keychain (wincred); every broker start delivers it from now on\n")
+        self.assertEqual(err, "warning: could not deliver the jira credential to the broker sandbox "
+                              "(an old broker image? see README, Upgrading, for the rebuild steps)\n")
+        self.assertNotIn("delivered", out + err)
+        self.assertEqual(self.logged("sbx-stdin"), b"wc-secret-Fd4Lm")  # it was tried, over stdin
+        self.assert_not_leaked("wc-secret-Fd4Lm", out, err)
+
     def test_secret_tool_save(self):
         status, out, err = self.factory("save", "gitlab", stdin="st-secret-Jh2Vn\n", FACTORY_KEYCHAIN="secret-tool",
                                         FAKE_KEYRING="found")

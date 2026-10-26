@@ -1402,7 +1402,7 @@ factory/                     The host CLI in Python, being ported from bin/facto
                              with the dispatch bridge
 scripts/lib/common.sh        Pinned versions, checksums, names, shared checks
 scripts/lib/roles.sh         Role parsing and validation
-scripts/lib/secrets.sh       keychains (macOS, secret-tool, Windows Credential Manager), factory secret
+scripts/lib/secrets.sh       the keychain lookups bin/factory still uses (the rest is factory/secrets.py, factory/keychain.py)
 scripts/lib/preflight.sh     Platform checks shared by the installer and factory doctor
 scripts/install-prereqs.sh   Install the pinned sbx
 scripts/00-build-templates.sh

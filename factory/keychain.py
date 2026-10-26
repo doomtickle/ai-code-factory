@@ -2,8 +2,9 @@
 factory-<name>: macOS Keychain, Linux secret-tool, or the Windows Credential Manager on WSL2
 (preflight.keychain_backend picks one). Port of keychain_lookup, keychain_has,
 keychain_search_empty, keychain_store, keychain_delete and the PowerShell scripts of
-wincred_run (scripts/lib/secrets.sh). The bash copies stay until `start` is ported;
-factory/test_keychain.py and factory/test_secrets.py run both on the same stubs.
+wincred_run (scripts/lib/secrets.sh). The bash keychain_lookup, keychain_has, keychain_search_empty
+and the lookup script stay until `start` is ported (bin/factory's keychain_warn_missing uses
+them); factory/test_keychain.py and factory/test_secrets.py run both on the same stubs.
 
 A value is bytes. It goes into the keychain only on a program's stdin and comes out only
 from `lookup` (for factory/secrets.py to pass on, again on stdin); `has` only tests that it

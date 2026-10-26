@@ -35,6 +35,19 @@ class ShimTest(unittest.TestCase):
     def test_the_shim_and_the_package_list_the_same_commands(self):
         self.assertEqual(sorted(shim_ported_commands()), sorted(cli.COMMANDS))
 
+    def test_internal_entry_points_are_not_commands(self):
+        # Run by the host scripts that are shims now (scripts/start-broker.sh), never by a user.
+        self.assertEqual(sorted(cli.INTERNAL), ["_start-broker"])
+        for name in cli.INTERNAL:
+            self.assertTrue(name.startswith("_"))
+            self.assertNotIn(name, cli.COMMANDS)
+            self.assertNotIn(name, shim_ported_commands())
+        out = self.run_shim("help").stdout.decode()
+        self.assertNotIn("_start", out)
+        cp = self.run_shim("_start-broker")
+        self.assertEqual(cp.returncode, 1)
+        self.assertIn(b"unknown command: _start-broker", cp.stderr)
+
     def test_a_ported_command_runs_in_python(self):
         cp = self.run_shim("roles")
         self.assertEqual((cp.returncode, cp.stderr), (0, b""))

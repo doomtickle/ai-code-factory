@@ -3,6 +3,7 @@
 import os
 import sys
 
+from factory import broker_start
 from factory.commands import config, docs, doctor, logs, packet, role, roles, runstate, secret, status, wrappers
 from factory.context import Context, FactoryError, Paths
 
@@ -34,6 +35,12 @@ COMMANDS = {
     "watch": wrappers.watch,
 }
 
+# Entry points of the host scripts that are thin shims now (scripts/start-broker.sh), run
+# like COMMANDS but not commands: not in PORTED_COMMANDS, nor in any usage text.
+INTERNAL = {
+    "_start-broker": broker_start.main,
+}
+
 ROOT = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 
 
@@ -41,7 +48,7 @@ def main(argv=None, *, root=None, environ=None, stdout=None, stderr=None, runner
     argv = sys.argv[1:] if argv is None else list(argv)
     ctx = Context(Paths.from_environ(root or ROOT, environ), environ, stdout, stderr, runner, execer)
     command = argv[0] if argv else ""
-    handler = COMMANDS.get(command)
+    handler = COMMANDS.get(command) or INTERNAL.get(command)
     try:
         if handler is None:
             raise FactoryError("%r is not ported to the Python CLI yet; run it through bin/factory" % command)
