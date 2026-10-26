@@ -11,6 +11,9 @@ bash and Python side by side, and `main` works after every one.
 - `factory/` is the package (`python3 -m factory`, or `python3 <checkout>/factory`,
   which is what the shim runs). `factory/cli.py` holds `COMMANDS`, the table of
   ported commands; each lives in `factory/commands/<group>.py` as `run(ctx, args)`.
+  `INTERNAL` next to it holds entry points the bash scripts run (`factory _start-dispatch`):
+  dispatched the same way, but not commands a person types, so not in `COMMANDS`,
+  `PORTED_COMMANDS` or the usage text.
 - `bin/factory` lists the same names in `PORTED_COMMANDS` and `exec`s the package for
   them; every other command still runs the bash. A test keeps the two lists equal.
 - Shared core already in Python: `factory/conf.py` (the `KEY="value"` parser),
@@ -36,6 +39,7 @@ bash and Python side by side, and `main` works after every one.
 | `factory status`: `factory/commands/status.py`, with `factory/keychain.py` (`keychain_has` and the lookups it uses), `factory/approvals.py` (the approvals summary and status line, shared with `doctor`), `require_sbx` in `factory/sbx.py` and the Jira/npm token checks in `factory/policy.py`; tests in `factory/test_command_status.py` | 4 (part 3) |
 | `factory secret` (`save`, `forget`, `set`, `rm`, `ls`): `factory/commands/secret.py`, with the `scripts/lib/secrets.sh` helpers it uses in `factory/secrets.py` and the keychain ones in `factory/keychain.py` (shared with `status`; the bash stays for `start-broker.sh` and `keychain_warn_missing`) | 5 |
 | `factory chat` (and `coordinator`), `stop` (and `down`), `restart`, `reset`: `factory/commands/runstate.py`, with `runs_sandbox` and `coordinator_attached` in `factory/sbx.py`, `Context.confirm` and an `exec` that replaces the process (`os.execvpe`); `03-stop-factory.sh` stays shell; tests in `factory/test_command_runstate.py` and `factory/test_sbx.py` | 6 |
+| `factory _start-dispatch` (step 7, part A): `factory/dispatch_start.py`, with `migrate_state` in `factory/state.py` and `policy_toml_string` and `lane_identity_problem` in `factory/policy.py`; `scripts/start-dispatch.sh` is a shim that runs it; tests in `factory/test_dispatch_start.py` and `factory/test_state.py` | 7 (part A) |
 
 ## Remaining, in order
 
@@ -138,7 +142,33 @@ bash and Python side by side, and `main` works after every one.
      files are best effort in both.
 7. **`start`**, with `start-broker.sh`, `start-dispatch.sh` and `02-launch-factory.sh`
    (the riskiest: it creates sandboxes and delivers credentials; the credential rules in
-   `CLAUDE.md` apply unchanged, argv lists only).
+   `CLAUDE.md` apply unchanged, argv lists only). Done in three parts:
+   - **Part A, done: `start-dispatch.sh`.** `factory/dispatch_start.py` (`main(ctx, argv)`) does
+     the validation, the lane identity check and snapshot, the snapshots into `FACTORY_STATE`
+     (role instructions plus project notes, role overrides, enabled-roles, the docs), `running_pid`
+     and `port_holder`, and the bridge restart and readiness wait. `scripts/start-dispatch.sh` is
+     now `exec "$(resolve_python)" "$ROOT/factory" _start-dispatch "$@"`, which `02-launch-factory.sh`
+     still calls. Snapshots stay atomic where they were (a `.tmp` folder renamed into place), a new
+     file takes the source's mode less the umask as `cp` did, and the token goes only to
+     `sbx secret set`'s stdin. `migrate_state` is also in Python (`factory/state.py`); the bash one
+     stays for `start-broker.sh` and `03-stop-factory.sh`, and `factory/test_state.py` runs both on
+     the same fixtures. `policy_toml_string`, `lane_identity_problem` and `write_lane_identity` were
+     only this script's, so they are deleted from `common.sh` (the Python rules are in
+     `factory/policy.py`; their shell tests are in `factory/test_dispatch_start.py`). The old and
+     new scripts were compared on 17 scenarios (fresh, rerun, another project, usage errors, wrong
+     sbx, failed mint over an old hash, bad override, bad identity, missing `tools.txt`, a bridge
+     that exits or never answers, a failed `mcp add`, a stranger on the port) and 37 identity
+     policies: same output, exit status, sbx calls and files, modes included. Deliberate
+     differences, all on failure paths: (1) `curl`, `openssl` and `sha256sum`/`shasum` are no longer
+     needed, since the readiness probes talk to 127.0.0.1 directly (no proxy) and the token and its
+     hash come from `secrets` and `hashlib`, so there is no "not found in PATH" error for them;
+     (2) the usage line names `<checkout>/scripts/start-dispatch.sh` where bash printed `$0`;
+     (3) a file operation that fails prints `error: <path>: <reason>` and exits 1 (bash printed its
+     tool's message, then died under `set -e`); (4) a failing `kill` of an old bridge (here and in
+     `migrate_state`) stops with `error: could not stop the dispatch bridge (<pid>): <reason>`.
+   - **Part B: `start-broker.sh`** (runs in parallel, adds `"_start-broker"` to `INTERNAL`).
+   - **Part C: `02-launch-factory.sh`, `cmd_start`, `onboarding_hints`**, and the sandbox
+     fingerprints and `stale_sandboxes` that step 6 left for here.
 8. **`setup` and `update`**, with `00-build-templates.sh`, `01-init-security.sh`,
    `install-prereqs.sh`.
 9. **Finish**: delete `scripts/lib/*.sh` and the bash tests, leave `bin/factory` as a shim
