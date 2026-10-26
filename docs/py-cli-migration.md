@@ -96,8 +96,9 @@ bash and Python side by side, and `main` works after every one.
    calls `keychain_has`: since part B only that and what it calls are left.
    `factory/test_secrets.py` runs the bash and the Python helpers on the same fakes and requires the
    same statuses, values, messages and argv (the delivery and PowerShell scripts byte for byte);
-   it also tests `secret_clear_all_manual` and `keychain_warn_missing`, which have no Python copy
-   yet. `factory/test_command_secret.py` replaces `test_factory_secret.sh`; it passed against the
+   it also tests `keychain_warn_missing`, which has no Python copy yet, and that the bash
+   helpers part B ported (`secret_clear_all_manual` among them, now `secrets.clear_all_manual`)
+   are gone from `secrets.sh`. `factory/test_command_secret.py` replaces `test_factory_secret.sh`; it passed against the
    bash `cmd_secret` before that was deleted. Deliberate differences, all on failure paths:
    - when the marker can't be written, bash also printed `mkdir`'s or the shell's own error before
      its `error:` line; Python prints only the `error:` line;
@@ -177,8 +178,15 @@ bash and Python side by side, and `main` works after every one.
      `/` still loses its registration and secrets, but no file is removed for it; (5) a state file or
      folder that can't be written (the fingerprint, a hash, `grants.json`) stops with `error: <path>:
      <reason>` and exit 1, where bash printed the shell's own message (also exit 1); (6) the
-     plugin list is in byte order, where bash's glob used the locale's collation (the same for
-     plugin module names).
+     plugin list is in byte order, where bash's glob used the locale's collation. Module names
+     can hold capitals and `_`, which glibc's UTF-8 locales order differently (`alpha,Zed`,
+     `myother,my_plugin`), so `broker_plugins` in `common.sh` now sorts with `LC_ALL=C` too, for
+     `stale_sandboxes`, and the parity test runs the bash under the installed locales. The old
+     `start-broker.sh` recorded the fingerprint under the user's locale, so a broker created
+     before this change, with such a plugin set, on a Linux host with a UTF-8 locale, is reported
+     out of date once: `factory start` warns, and `factory update` recreates it (which drops
+     held writes). macOS's UTF-8 locales are believed to collate in code point order, which
+     would leave its brokers unaffected (unverified).
    - Not ported here: the Coordinator's and roles' fingerprints and `stale_sandboxes` (part C).
      `migrate_state`, `require_state_outside`, `run_or_die` and the token minting are in
      `broker_start.py`; part A needs some of the same, so whichever merges second should share

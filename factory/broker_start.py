@@ -261,7 +261,8 @@ def register(ctx, state, broker_roles):
     prefix = broker_mcp("")
     for name in [w for line in lines if line.startswith(prefix) for w in line.split()]:
         role = name[len(prefix):] if name.startswith(prefix) else name
-        if roles._in_list(role, " ".join(broker_roles)):
+        # A NUL (from sbx) can reach neither an argv nor a path: leave that name alone.
+        if "\0" in name or roles._in_list(role, " ".join(broker_roles)):
             continue
         ctx.say("Removing broker access for former role %s..." % role)
         quiet = {"stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}

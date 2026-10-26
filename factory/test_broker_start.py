@@ -359,6 +359,18 @@ class ExistingBrokerTest(BrokerFakes):
         self.assertIn(["mcp", "rm", "--force", "factory-broker-../../victim"], self.calls())
         self.assertEqual(self.read(victim), "keep me\n")
 
+    def test_a_former_role_name_with_a_nul_is_skipped(self):
+        # A NUL can reach neither an argv nor a path: the name is left alone, the rest goes on.
+        self.existing_broker("factory-broker-dev\nfactory-broker-coordinator\nfactory-broker-go\0ne\n"
+                             "factory-broker-gone\n")
+        self.write(os.path.join(self.broker, "tokens", "gone.sha256"), "h\n")
+        status, out, err = self.start(self.project)
+        self.assertEqual((status, err), (0, ""))
+        self.assertNotIn("\0", out)
+        self.assertNotIn("go\0ne", "".join(" ".join(c) for c in self.calls()))
+        self.assertIn(["mcp", "rm", "--force", "factory-broker-gone"], self.calls())
+        self.assertFalse(os.path.exists(os.path.join(self.broker, "tokens", "gone.sha256")))
+
     def test_bound_to_another_project(self):
         self.existing_broker()
         self.write(os.path.join(self.broker, "project"), "/somewhere/else\n")
@@ -527,6 +539,23 @@ class FingerprintTest(BrokerFakes):
         for plugin in ("b", "a", "__pycache__", ".x"):
             os.makedirs(os.path.join(self.config, "plugins", plugin))
         self.check()
+
+    def test_plugins_in_byte_order_in_every_locale(self):
+        # glibc's en_US.UTF-8 sorts alpha before Zed and, skipping the _ at first, myother before
+        # my_plugin: the bash must not use the locale's order, which the fingerprint check
+        # (stale_sandboxes) compares against.
+        for plugin in ("alpha", "Zed", "my_plugin", "myother"):
+            os.makedirs(os.path.join(self.config, "plugins", plugin))
+        self.assertEqual(fingerprints.broker_plugins(self.paths), "Zed,alpha,my_plugin,myother")
+        # Up to three installed locales, en_US first (bash warns about one that isn't); only a
+        # host with glibc's en_US.UTF-8 (or the like) really tells the orders apart.
+        installed = subprocess.run(["locale", "-a"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL).stdout.split()
+        others = [l.decode() for l in installed if l.lower() not in (b"c", b"posix")]
+        others.sort(key=lambda l: not l.lower().startswith("en_us."))
+        for loc in ["C"] + others[:3]:
+            with self.subTest(locale=loc):
+                self.environ["LC_ALL"] = loc
+                self.check()
 
     def test_a_kit_that_is_a_link_is_not_descended(self):
         real = os.path.join(self.tmp, "real-kit")

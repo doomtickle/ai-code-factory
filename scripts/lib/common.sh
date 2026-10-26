@@ -385,7 +385,7 @@ claude_login_stored() {
 # directory into the broker image and start-broker.sh passes this list as
 # PASSDESK_PLUGINS when it creates the broker sandbox.
 broker_plugins() {
-  local d names=""
+  local d names="" LC_ALL=C # byte order, as factory/fingerprints.py sorts; glibc's en_US.UTF-8 puts Zed after alpha
   for d in "$FACTORY_CONFIG"/plugins/*/; do
     [ -d "$d" ] || continue
     d="${d%/}"; d="${d##*/}"

@@ -513,11 +513,12 @@ agent sandbox (the narrowly-scoped exception documented in this repo's
 keychain entry (macOS: `security delete-generic-password -s factory-gemini`;
 Linux: `secret-tool clear service factory-gemini`) and run
 `./scripts/start-broker.sh <project-dir>` again - it removes the now-stale
-file from the broker sandbox instead of leaving it usable. If the keychain
-prompt is denied or the keychain is locked when `start-broker.sh` runs, the
-lookup returns nothing and the script treats that the same as a revoked
-entry: it still removes the delivered file, so the tool fails closed instead
-of continuing to work off the old key.
+file from the broker sandbox instead of leaving it usable. Only an entry that
+is definitely gone revokes the file: if the keychain prompt is denied or the
+keychain is locked when `start-broker.sh` runs, the delivered file is left as
+it is (the tool keeps working off the old key) and the start prints a warning
+naming the entry and how to unlock the keychain. Unlock it and run
+`start-broker.sh` again to finish the revocation.
 
 ### Enabling Jira
 
@@ -552,10 +553,11 @@ API tokens and delete the keychain entry (macOS: `security
 delete-generic-password -s factory-jira`; Linux: `secret-tool clear service
 factory-jira`) and run `./scripts/start-broker.sh <project-dir>` again - it
 removes the now-stale file from the broker sandbox instead of leaving it
-usable. If the keychain prompt is denied or the keychain is locked when
-`start-broker.sh` runs, the lookup returns nothing and the script treats that
-the same as a revoked entry: it still removes the delivered file, so the tool
-fails closed instead of continuing to work off the old token.
+usable. Only an entry that is definitely gone revokes the file: if the
+keychain prompt is denied or the keychain is locked when `start-broker.sh`
+runs, the delivered file is left as it is (the tool keeps working off the old
+token) and the start prints a warning naming the entry and how to unlock the
+keychain. Unlock it and run `start-broker.sh` again to finish the revocation.
 
 Like every broker credential, the token is never visible to the Coordinator or any
 role: the broker reads it from a file inside its own sandbox and returns only the
