@@ -171,7 +171,7 @@ def create_sandbox(ctx, project, state):
                 "-t", "factory-broker:" + sbx.TEMPLATE_TAG, "-p", "127.0.0.1:%d:8765" % BROKER_PORT,
                 "-e", "BROKER_WORKSPACE=" + project, "-e", "BROKER_STATE=" + state,
                 "shell"] + kits + [project, state])
-    fingerprints.record_broker_fingerprint(paths)
+    fingerprints.record_sandbox_fingerprint(paths, sbx.BROKER_SANDBOX)
     # A brand new sandbox has none of the credentials delivered, so any marker left from an
     # older one (after 'factory reset' or 'factory update' removed it) is stale: left in place,
     # sync_from_keychain would skip that name forever, "leaving it as is" for a credential that
