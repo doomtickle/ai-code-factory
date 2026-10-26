@@ -13,7 +13,6 @@ import json
 import os
 import re
 import shutil
-import signal
 import socket
 import subprocess
 import sys
@@ -141,11 +140,6 @@ class StartDispatchTest(CommandTest):
             if proc.poll() is None:
                 proc.kill()
             proc.wait()
-        try:
-            with open(os.path.join(self.dstate, "pid")) as f:
-                os.kill(int(f.read()), signal.SIGKILL)
-        except (OSError, ValueError):
-            pass
 
     def ctx(self, tty=False):
         ctx = super().ctx(tty)

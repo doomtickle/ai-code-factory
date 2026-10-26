@@ -6,10 +6,8 @@ ps is a stub, the "bridge" a sleeping child, and the folders are scratch ones.
 """
 
 import os
-import shutil
 import signal
 import subprocess
-import tempfile
 import unittest
 from unittest import mock
 
