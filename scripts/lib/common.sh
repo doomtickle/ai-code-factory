@@ -327,9 +327,10 @@ claude_login_stored() {
 
 # broker_plugins -> comma-separated module names of the broker plugins in
 # the local config folder (FACTORY_CONFIG/plugins/<module>/); empty when
-# there are none. 00-build-templates.sh bakes the
-# directory into the broker image and start-broker.sh passes this list as
-# PASSDESK_PLUGINS when it creates the broker sandbox.
+# there are none. 00-build-templates.sh bakes the directory into the broker
+# image; factory/fingerprints.py has the Python copy, which the broker start
+# passes as PASSDESK_PLUGINS and records in the broker's fingerprint. This one
+# is for that fingerprint in sandbox_fingerprint (roles.sh), until part C.
 broker_plugins() {
   local d names="" LC_ALL=C # byte order, as factory/fingerprints.py sorts; glibc's en_US.UTF-8 puts Zed after alpha
   for d in "$FACTORY_CONFIG"/plugins/*/; do

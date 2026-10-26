@@ -1,6 +1,6 @@
 """Tests for factory/state.py: migrate_state is a port of the function of the same name in
-scripts/lib/common.sh (which stays: start-broker.sh and 03-stop-factory.sh call it), so each
-case runs both on identical fixtures and compares what they print, the exit status and the files.
+scripts/lib/common.sh (which stays: 03-stop-factory.sh calls it), so each case runs both on
+identical fixtures and compares what they print, the exit status and the files.
 
 ps is a stub, the "bridge" a sleeping child, and the folders are scratch ones.
 """
@@ -147,6 +147,23 @@ class MigrateStateTest(CommandTest):
         self.assertEqual(out, "Stopping dispatch bridge (%d) to move its state out of the repo...\n"
                               "error: could not stop the dispatch bridge (%d): No such process\n" % (pid, pid))
         self.assertTrue(os.path.isdir(os.path.join(root, ".dispatch")))
+
+
+class RequireStateOutsideTest(unittest.TestCase):
+    def paths(self, state_dir):
+        return mock.Mock(state=state_dir)
+
+    def test_inside_the_project_is_refused(self):
+        for state_dir in ("/p/proj/.state/ai-code-factory", "/p/proj"):
+            with self.subTest(state=state_dir), self.assertRaises(FactoryError) as caught:
+                state.require_state_outside(self.paths(state_dir), "/p/proj")
+            self.assertEqual(str(caught.exception), "factory state (%s) is inside the project /p/proj, where "
+                                                     "agents could edit it; set XDG_STATE_HOME elsewhere" % state_dir)
+
+    def test_outside_is_fine_even_with_a_shared_prefix(self):
+        for state_dir in ("/p/proj-state/ai-code-factory", "/p/ai-code-factory", "/elsewhere"):
+            with self.subTest(state=state_dir):
+                state.require_state_outside(self.paths(state_dir), "/p/proj")
 
 
 if __name__ == "__main__":

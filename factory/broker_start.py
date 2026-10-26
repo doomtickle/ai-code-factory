@@ -20,7 +20,6 @@ import hashlib
 import json
 import os
 import secrets as token_source
-import shutil
 import subprocess
 import time
 
@@ -28,6 +27,7 @@ from factory import fingerprints, preflight, roles, sbx, secrets
 from factory.commands.status import BROKER_PORT
 from factory.context import FactoryError
 from factory.programs import DROP, run_tool, to_stderr
+from factory.state import migrate_state, require_state_outside
 
 URL = "http://127.0.0.1:%d/mcp" % BROKER_PORT
 
@@ -88,41 +88,6 @@ def run_or_die(ctx, message, argv):
         text += "\n".join("  " + line for line in lines[-20:]) + ("\n" if got.out.endswith("\n") else "")
     to_stderr(ctx, text)
     raise Exit(1)
-
-
-def require_state_outside(paths, project):
-    """Refuse a state dir inside PROJECT (e.g. XDG_STATE_HOME pointed into it), where agents
-    could edit it."""
-    if (paths.state + "/").startswith(project + "/"):
-        raise FactoryError("factory state (%s) is inside the project %s, where agents could edit it; "
-                           "set XDG_STATE_HOME elsewhere" % (paths.state, project))
-
-
-def migrate_state(ctx):
-    """One-time move of state from its old in-repo place (ROOT/.broker, .dispatch, .roles) to
-    FACTORY_STATE, first stopping a bridge still running from there (common.sh migrate_state)."""
-    root, state = ctx.paths.root, ctx.paths.state
-    os.makedirs(state, exist_ok=True)
-    os.chmod(state, 0o700)
-    try:
-        with open(os.path.join(root, ".dispatch", "pid"), encoding="utf-8", errors="surrogateescape") as f:
-            pid = f.read().rstrip("\n")
-    except OSError:
-        pid = ""
-    if pid and os.path.join(root, "dispatch", "server.py") in ctx.capture(["ps", "-p", pid, "-o", "command="]).out:
-        ctx.say("Stopping dispatch bridge (%s) to move its state out of the repo..." % pid)
-        _check(ctx.run(["kill", pid]))
-        _sleep(1)
-    for old in ("broker", "dispatch", "roles"):
-        src = os.path.join(root, "." + old)
-        if not os.path.isdir(src):
-            continue
-        new = os.path.join(state, old)
-        if os.path.exists(new):
-            raise FactoryError("state exists both in %s and %s; keep one (move or delete the other), then re-run"
-                               % (src, new))
-        ctx.say("Moving %s to %s..." % (src, new))
-        shutil.move(src, new)
 
 
 def _write(path, text):
@@ -316,7 +281,7 @@ def start(ctx, args):
     state = paths.broker_state
 
     require_state_outside(paths, project)
-    migrate_state(ctx)
+    migrate_state(ctx, paths.root)
     os.makedirs(os.path.join(state, "tokens"), exist_ok=True)
     os.chmod(state, 0o700)
 
