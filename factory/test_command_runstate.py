@@ -7,6 +7,7 @@ The output was also compared with the bash these replaced, on the same stubs, be
 sbx, ps and the stop script are stubs, so nothing here touches a real sandbox or process.
 """
 
+import io
 import os
 import subprocess
 import sys
@@ -262,6 +263,22 @@ class ResetTest(RunStateTest):
         self.assertNotIn("no longer bound", out)
         self.assertTrue(os.path.exists(os.path.join(self.paths.broker_state, "project")))
         self.assertEqual(self.sessions(), [".hidden", "developer", "developer.json", "subdir"])
+
+    def test_a_project_path_that_is_a_directory_is_an_error_on_any_host(self):
+        for state in (self.paths.broker_state, self.paths.dispatch_state):
+            self.bind()
+            path = os.path.join(state, "project")
+            os.remove(path)
+            os.mkdir(path)
+            self.err = io.StringIO()
+            out = self.ctx().stdout
+            rc = main(["reset", "--yes"], root=self.root, environ=self.environ, stdout=out, stderr=self.err)
+            self.assertEqual(rc, 1, path)
+            self.assertTrue(self.err.getvalue().endswith("error: could not remove %s: Is a directory\n" % path),
+                            self.err.getvalue())
+            self.assertNotIn("no longer bound", out.getvalue())
+            self.assertEqual(self.sessions(), [".hidden", "developer", "developer.json", "subdir"])
+            os.rmdir(path)
 
     def test_a_failing_stop_removes_nothing(self):
         self.write("stop-status", "4\n")

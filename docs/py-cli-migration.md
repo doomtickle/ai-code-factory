@@ -131,10 +131,11 @@ bash and Python side by side, and `main` works after every one.
      (`test_factory_restart.sh`), the stale saved layout, and the `cmd_start` project switch calling
      Python `reset --yes` (`test_factory_state.sh` 2c), because they test bash that is not ported.
    - Output is byte-identical (16 scenarios compared old against new: status, stdout, stderr,
-     sbx calls and state). One difference, on a failure path: if removing the `project` files or
-     the session files fails for a reason other than "not there", Python stops with
-     `error: could not remove <path>` where bash's `rm -f` printed its own message and (under `set -e`) exited with
-     rm's status.
+     sbx calls and state). One difference, on a failure path: if removing a `project` file fails for a
+     reason other than "not there" (a directory in its place, a permission error), Python stops with
+     `error: could not remove <path>: <reason>` and exit 1 (a directory reads "Is a directory" on every host);
+     bash's `rm -f` printed its own message and, under `set -e`, exited with rm's status. Session
+     files are best effort in both.
 7. **`start`**, with `start-broker.sh`, `start-dispatch.sh` and `02-launch-factory.sh`
    (the riskiest: it creates sandboxes and delivers credentials; the credential rules in
    `CLAUDE.md` apply unchanged, argv lists only).

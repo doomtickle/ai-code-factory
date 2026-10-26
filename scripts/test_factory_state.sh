@@ -230,6 +230,7 @@ assert_contains "update: reports the removal" "$F_OUT" "removed factory-develope
 # 2c. `factory start` for another project than the bound one, confirmed: it
 # runs the Python `factory reset --yes` (removes the factory-* sandboxes, forgets
 # the binding), then launches the new project. Declined, nothing is removed.
+# If reset fails, `start` stops with its status and launches nothing.
 other_project="$tmp/other-project"
 mkdir -p "$other_project"
 export FAKE_TEMPLATES="factory-developer:$TAG factory-reviewer:$TAG factory-broker:$TAG"
@@ -261,6 +262,14 @@ launch $other_project"
 assert_contains "switch confirmed: says the factory is no longer bound" "$F_OUT" "no longer bound"
 [ ! -e "$broker_state/project" ] && ok "switch confirmed: the old binding is removed" \
   || bad "switch confirmed: the old binding is removed"
+printf '%s\n' "$project" > "$broker_state/project"
+reset_run
+FAKE_RM_FAIL=1 switch_run 1
+assert_eq "switch, reset fails: exits with reset's status" "$F_RC" "1"
+assert_eq "switch, reset fails: stops, and launches nothing" "$(cat "$CALLS")" "stop"
+assert_contains "switch, reset fails: says what is left" "$F_OUT" "could not remove"
+assert_not_contains "switch, reset fails: does not go on to the new project" "$F_OUT" "Factory running"
+assert_eq "switch, reset fails: the project stays bound" "$(cat "$broker_state/project")" "$project"
 
 # ===========================================================================
 # Part 3: setup_done needs the current image tag.

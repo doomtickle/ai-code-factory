@@ -73,10 +73,10 @@ def _remove(path):
         os.unlink(path)
     except FileNotFoundError:
         pass
-    except IsADirectoryError:
-        pass
     except OSError as e:
-        raise FactoryError("could not remove %s: %s" % (path, e.strerror or e))
+        # Linux says EISDIR and macOS EPERM for a directory; bash's rm -f fails on both.
+        why = "Is a directory" if os.path.isdir(path) and not os.path.islink(path) else (e.strerror or e)
+        raise FactoryError("could not remove %s: %s" % (path, why))
 
 
 def reset(ctx, args):
@@ -86,6 +86,7 @@ def reset(ctx, args):
     sandboxes = []
     for name in sbx.sandbox_names(ctx):
         if name.startswith("factory-"):
+            # Same word-splitting as bash's unquoted $(... | grep '^factory-') on purpose.
             sandboxes.extend(name.split())
     if not args or args[0] != "--yes":
         ctx.say("This removes these sandboxes: %s" % "".join(n + " " for n in sandboxes))
