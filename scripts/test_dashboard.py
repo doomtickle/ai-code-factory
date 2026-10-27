@@ -856,6 +856,19 @@ class ServiceTests(unittest.TestCase):
         os.unlink(Path(self.paths.config) / "roles" / "developer.conf")
         self.assertEqual(self.service()["lines"], ["role override developer.conf changed"])
 
+    def test_override_of_a_disabled_optional_role_is_not_due(self):
+        (self.fx.roles / "researcher").mkdir()
+        (self.fx.roles / "researcher" / "role.conf").write_text('LANES="1"\nOPTIONAL="1"\n')
+        self.record()
+        self.snapshot_start()  # what `factory start` writes: no researcher override, enabled-roles empty
+        self.config("roles/researcher.conf", 'MODEL="a"\n')
+        self.config("projects/proj.researcher.md", "- notes\n")
+        self.assertEqual(self.service(), {"due": None, "lines": []})
+        self.config("enabled-roles", "researcher\n")  # switching it on is what makes the override count
+        self.assertEqual(self.service()["lines"], [
+            "role override researcher.conf changed", "enabled-roles changed",
+            "project notes proj.researcher.md changed"])
+
     def test_enabled_roles_compared_by_content(self):
         self.record()
         self.snapshot_start()
@@ -884,7 +897,7 @@ class ServiceTests(unittest.TestCase):
     def test_odd_file_names_are_made_printable(self):
         self.record()
         self.snapshot_start()
-        self.config("roles/ev\x1b[31mil.conf", 'MODEL="b"\n')
+        (self.fx.state / "dispatch" / "role-overrides" / "ev\x1b[31mil.conf").write_text('MODEL="b"\n')
         self.assertEqual(self.service()["lines"], ["role override ev?[31mil.conf changed"])
 
     def test_a_failure_reads_as_nothing_due(self):

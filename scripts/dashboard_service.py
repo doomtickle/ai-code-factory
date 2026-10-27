@@ -64,7 +64,10 @@ def restart_lines(paths: Paths, project: str) -> list:
         return []
     config = Path(paths.config)
     lines = []
-    for name in sorted(set(_names(config / "roles", ".conf")) | set(_names(snap / "role-overrides", ".conf"))):
+    # Only the roles this machine runs get an override copied (as `factory start` does), plus
+    # whatever the snapshot already holds, so a removed override is still noticed.
+    running = {r + ".conf" for r in roles.list_roles(paths)}
+    for name in sorted((running & set(_names(config / "roles", ".conf"))) | set(_names(snap / "role-overrides", ".conf"))):
         if _read(config / "roles" / name) != _read(snap / "role-overrides" / name):
             lines.append(f"role override {clean(name)} changed")
     listed = _read(snap / "enabled-roles")
@@ -72,7 +75,7 @@ def restart_lines(paths: Paths, project: str) -> list:
             roles.parse_enabled_roles((listed or b"").decode("utf-8", "replace"))):
         lines.append("enabled-roles changed")
     if project and project != "(no project)":
-        notes = [project + ".md"] + [f"{project}.{r}.md" for r in roles.list_all_roles(paths)]
+        notes = [project + ".md"] + [f"{project}.{r}.md" for r in roles.list_roles(paths)]
         for name in notes:
             try:
                 if os.stat(config / "projects" / name).st_mtime > since:
