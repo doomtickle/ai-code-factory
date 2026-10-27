@@ -6,6 +6,7 @@ lists the same names for host scripts, which can't import the broker
 # isort: off
 from . import web  # noqa: F401
 from . import git  # noqa: F401
+from . import github_issues  # noqa: F401
 from . import gemini  # noqa: F401
 from . import jira  # noqa: F401
 from . import npm  # noqa: F401

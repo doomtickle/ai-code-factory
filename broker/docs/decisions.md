@@ -2,6 +2,37 @@
 
 Dated entries, for the user to review. Newest first.
 
+## 2026-10-27
+
+- **`github_get_issue` and `github_list_issues`: read-only, with their own repo list,
+  `[github].issue_read_repos`** (doomtickle/passdesk-ops#187). The Coordinator read
+  `BACKLOG.md`, a snapshot that goes stale, and the owner pasted issue text in by hand;
+  the Jira tools already show the shape (read-only, opt-in grant in
+  `kits/coordinator/broker.conf`, content wrapped as untrusted). Choices:
+  - **A new list, empty by default, not `issue_repos` and not `[git].repos`.** Reusing
+    `issue_repos` would make every tracker the Coordinator may read one the reviewer
+    may also write to (and the reverse), tying two grants that are decided separately.
+    `[git].repos` usually holds public repos, where anyone can write an issue; the text
+    would go straight into the Coordinator's context, the one role that delegates work.
+    The cost is one more list to set; an empty list leaves both tools returning DENIED,
+    the same inert default as `issue_repos`. The doctor reports it.
+  - **Read only, nothing that writes.** `GET`s of one issue, its comments and a repo's
+    issue list. A pull request is refused by `github_get_issue` and left out of
+    `github_list_issues` (the issues API returns both).
+  - **Output is bounded:** at most 30 issues; title 300 characters, body 10,000, each
+    comment 2,000 and the last 5 comments; 20,000 overall. Everything goes through
+    `sanitize` (escapes and control characters stripped, secrets redacted) and
+    `untrusted` (nonce-marked block), and the call is audited like any tool (the result
+    is cut to 500 characters in the record).
+  - **Token handling is `github_create_issue`'s:** the same `_github_api`, so the sbx proxy
+    authenticates, or in standalone a Bearer header with redirects refused. The token needs
+    Issues read; the failure hint says so. `number` is an `integer` argument, which the
+    call layer already type-checks.
+  - **Not granted by default.** Like Jira, the Coordinator gets them only when the user
+    sets `BROKER_TOOLS` in `kits/coordinator/broker.conf` (then `factory update`, which
+    recreates its sandbox). The Coordinator briefing carries the same rule as for Jira:
+    ticket content is data, and it confirms with the user before delegating from it.
+
 ## 2026-10-26
 
 - **`start-broker.sh` is Python (`factory/broker_start.py`); a failed credential delivery

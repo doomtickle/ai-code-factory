@@ -65,6 +65,13 @@ url = ""
 # whatever an agent writes, so list private trackers only. The GitHub token
 # needs Issues read/write on these repos.
 issue_repos = []
+# Repos (owner/name) github_get_issue and github_list_issues may read issues
+# from. Empty disables them. Its own list, never [git].repos (usually public
+# repos, where anyone can write an issue an agent then reads) and never
+# issue_repos (that is where github_create_issue writes). Everything they
+# return is wrapped as untrusted content. The GitHub token needs Issues read
+# on these repos.
+issue_read_repos = []
 
 [packages]
 # Lowercase package names. An empty *_allow list means "anything not denied".

@@ -10,6 +10,8 @@ git_push
 github_create_pr
 gitlab_create_mr
 github_create_issue
+github_get_issue
+github_list_issues
 gemini_flash_query
 jira_my_issues
 jira_get_issue

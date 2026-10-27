@@ -74,8 +74,8 @@ The package is `passdesk/`:
   (`approvals/patches/<sha256>.patch`, capped by `[approvals]
   patch_max_bytes`) for the person approving to read; the card carries only
   its digest and size.
-- `passdesk/tools/`: one module per tool (`web`, `git`, `gemini`, `jira`,
-  `npm`, `pip`), each registering its tools with `core.registry`.
+- `passdesk/tools/`: one module per tool (`web`, `git`, `github_issues`,
+  `gemini`, `jira`, `npm`, `pip`), each registering its tools with `core.registry`.
 
 `server.py` is the entry point; `run.sh` restarts it on crash; `policy.toml`
 is the default policy, baked into the image at build time (see `Dockerfile`)
@@ -218,6 +218,11 @@ then:
   <token>` to `api.github.com` and refuse redirects, like every
   authenticated call. `github_create_issue` needs the token to have Issues
   read/write on the repos in `[github].issue_repos`.
+- `github_get_issue` and `github_list_issues` are read-only and send the same
+  Bearer header (or rely on the proxy) the same way; they need Issues read on
+  the repos in `[github].issue_read_repos`, a list of its own (not
+  `[git].repos`, not `issue_repos`). Their output is cleaned, size-capped and
+  wrapped as untrusted content.
 - Once read, the token and its encoded form are redacted (as
   `[REDACTED:live-credential]`) from tool output, errors, the audit log and
   approval cards, and a PR title or body containing it is refused.

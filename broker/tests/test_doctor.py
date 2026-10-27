@@ -161,6 +161,23 @@ class PolicyChecks(DoctorBase):
             doctor.check_policy(report, self.policy_path)
             self.assertWarns(report, "[approvals].patch_max_bytes")
 
+    def test_issue_read_repos_is_checked(self):
+        self.policy(GOOD_POLICY + '\n[github]\nissue_read_repos = ["acme/tracker"]\n')
+        report = doctor.Report()
+        doctor.check_policy(report, self.policy_path)
+        self.assertNoFailures(report)
+        self.assertEqual(report.messages(doctor.WARN), [])
+        self.assertFalse(any("issue_read_repos is empty" in m for m in report.messages(doctor.INFO)))
+        for bad in ('"acme/tracker"', '["acme"]', '["a/../b"]', "[1]"):
+            self.policy(GOOD_POLICY + f"\n[github]\nissue_read_repos = {bad}\n")
+            report = doctor.Report()
+            doctor.check_policy(report, self.policy_path)
+            self.assertFails(report, "[github].issue_read_repos must be a list")
+        report = doctor.Report()
+        doctor.check_policy(report, REPO_POLICY)
+        self.assertTrue(any("[github].issue_read_repos is empty: github_get_issue and github_list_issues "
+                            "return DENIED" in m for m in report.messages(doctor.INFO)))
+
     def test_approvals_tools_are_checked(self):
         self.policy(GOOD_POLICY + '\n[approvals]\ntools = "git_push"\n')
         report = doctor.Report()
@@ -504,6 +521,17 @@ class StandaloneChecks(DoctorBase):
         doctor.check_standalone(report, granted={"git_fetch"})
         self.assertWarns(report, "no github credential")
 
+    def test_github_issue_read_tools_want_the_github_credential(self):
+        for tool in ("github_get_issue", "github_list_issues"):
+            report = doctor.Report()
+            doctor.check_standalone(report, granted={tool})
+            self.assertWarns(report, "no github credential")
+        config.CREDENTIAL_PROVIDERS = "file,env-file"
+        self.write_secret(credentials.secrets_dir() / "github", "ghp_" + "a" * 36)
+        report = doctor.Report()
+        doctor.check_standalone(report, granted={"github_get_issue"})
+        self.assertTrue(any("github credential present" in m for m in report.messages(doctor.OK)))
+
     def test_github_credential_absent_and_not_wanted_is_only_info(self):
         report = doctor.Report()
         doctor.check_standalone(report, granted=set())
@@ -825,6 +853,40 @@ class LiveChecks(DoctorBase):
         doctor.check_live(report, pol, "http://127.0.0.1:1/mcp", http=down)
         self.assertFails(report, "does not answer")
         self.assertFails(report, "cannot reach api.github.com")
+
+    def test_issue_read_probe_runs_only_when_the_tools_are_granted(self):
+        pol = {"github": {"issue_read_repos": ["acme/tracker"]}}
+        api = "https://api.github.com/repos/acme/tracker/issues?per_page=1"
+        seen = []
+
+        def http_with(code):
+            def http(url, headers=None, data=None, timeout=10):
+                seen.append(url)
+                return code, b"[]"
+            return http
+
+        for granted in (set(), {"git_push"}):
+            report = doctor.Report()
+            doctor.check_live_issue_read(report, pol, granted, http=http_with(200))
+            self.assertEqual(report.items, [])
+        report = doctor.Report()
+        doctor.check_live_issue_read(report, {}, {"github_get_issue"}, http=http_with(200))
+        self.assertEqual((report.items, seen), ([], []))
+        for code, level, fragment in ((200, doctor.OK, "are readable (github_get_issue)"),
+                                      (404, doctor.FAIL, "HTTP 404 for the issues of acme/tracker"),
+                                      (403, doctor.FAIL, "HTTP 403"), (500, doctor.WARN, "HTTP 500")):
+            report = doctor.Report()
+            doctor.check_live_issue_read(report, pol, {"github_get_issue"}, http=http_with(code))
+            self.assertTrue(any(fragment in m for m in report.messages(level)), (code, report.items))
+            if code == 403:
+                self.assertTrue(any("Issues: read" in line for _, _, _, fix in report.items for line in fix))
+        self.assertEqual(set(seen), {api})
+
+        def down(url, headers=None, data=None, timeout=10):
+            raise urllib.error.URLError("no route")
+        report = doctor.Report()
+        doctor.check_live_issue_read(report, pol, {"github_list_issues"}, http=down)
+        self.assertFails(report, "cannot reach api.github.com to check issues in acme/tracker")
 
     def test_github_token_hints_drop_sbx_command_in_standalone_deployment(self):
         self.policy()

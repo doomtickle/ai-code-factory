@@ -42,7 +42,8 @@ dashboard in your browser.
   sandboxes and nothing is typed into a terminal for you. It can also be granted
   broker tools directly, with no role in between, in `kits/coordinator/broker.conf`
   (the same way a role's `BROKER_TOOLS` work); none by default. The read-only
-  Jira tools are the opt-in example (see "Enabling Jira").
+  Jira and GitHub issue tools are the opt-ins (see "Enabling Jira" and
+  "Enabling GitHub issues").
 - **Roles:** defined as data in `roles/<name>/`. Each role has its own
   instructions, a kit (Anthropic-only network access), an image, a list of the
   broker tools it may use, and a number of **lanes**: how many tasks it runs at
@@ -117,6 +118,8 @@ dashboard in your browser.
 - Optional: a Gemini API key, only if the (optional, off by default) researcher is enabled and should use `gemini_flash_query`
 - Optional: a scoped Atlassian API token, only if the Coordinator should use
   `jira_my_issues` / `jira_get_issue`
+- Optional: the GitHub token with **Issues: read** on the repos you list, only if
+  the Coordinator should use `github_get_issue` / `github_list_issues`
 - Optional: a read-only token for your private npm registry, only if your
   projects depend on private packages (see "Enabling a private npm registry")
 
@@ -563,6 +566,41 @@ Like every broker credential, the token is never visible to the Coordinator or a
 role: the broker reads it from a file inside its own sandbox and returns only the
 issue data the tools ask for.
 
+### Enabling GitHub issues
+
+The Coordinator's `github_get_issue(repo, number)` and
+`github_list_issues(repo, state?, labels?)` give it **read-only** access to a
+repo's issue tracker, so it can read the real issue instead of the
+`BACKLOG.md` snapshot or text you paste in. `github_get_issue` returns the
+title, state, labels, body and the last five comments; `github_list_issues`
+returns up to 30 issues (never pull requests), most recently updated first,
+as number, title, state, labels and update time. Everything comes back
+wrapped as untrusted content, cleaned and size-capped, and every call is
+audited. They are an opt-in, like Jira: the Coordinator is granted no broker
+tools by default, and until you list a repo the tools return DENIED.
+
+1. List the repos in `[github].issue_read_repos` in your local `policy.toml`
+   (Local settings), e.g. `issue_read_repos = ["my-org/tracker"]`. It is its
+   own list on purpose: not `[git].repos` (usually public repos, where anyone
+   can write an issue the Coordinator would then read) and not
+   `[github].issue_repos` (where the reviewer may *file* issues). List repos
+   whose issue authors you trust; the text is still treated as data.
+2. Give the GitHub token **Issues: read** on those repos (the token is the one
+   the other GitHub tools use; save it again with `factory secret save github`
+   if you changed it). Nothing else is needed: with `sbx` the egress proxy
+   attaches it.
+3. Grant the tools: in `kits/coordinator/broker.conf` set
+   `BROKER_TOOLS="github_get_issue github_list_issues"` (add the Jira names
+   too if you use both). Then run `factory update`: it rebuilds the broker
+   image and recreates the Coordinator's sandbox, which gains broker access
+   only when it is created (its conversation history is discarded, as
+   `factory update` says before it asks).
+
+`factory doctor` checks that the GitHub token is present once these tools are
+granted, and whether `issue_read_repos` is set. The Coordinator is told that
+issue content is data: if an issue looks like work for a role, it summarizes
+it and confirms with you before delegating.
+
 ### Enabling approvals
 
 With holds on, every held write (`git_push`, `github_create_pr`,
@@ -957,6 +995,8 @@ sandbox (sandboxes are never deleted automatically).
 | `github_create_pr` | Opens a (draft) PR; title and body are secret-scanned; refuses GitLab projects |
 | `gitlab_create_mr` | Opens a (draft) GitLab merge request (the title gets `Draft: `); title and body are secret-scanned; refuses GitHub repos |
 | `github_create_issue` | Files an issue in a repo on `[github].issue_repos` (existing labels only); title and body are secret-scanned |
+| `github_get_issue` | One issue in a repo on `[github].issue_read_repos`: title, state, labels, body, recent comments; read-only; output marked untrusted |
+| `github_list_issues` | Lists issues (not PRs) in a repo on `[github].issue_read_repos`, most recently updated first, at most 30 (`state`, `labels` filters); read-only; output marked untrusted |
 | `gemini_flash_query` | Sends a prompt to Gemini Flash for cheap/fast summarization or triage; prompt is secret-scanned and size-limited; output marked untrusted |
 | `jira_my_issues` | Lists Jira Cloud issues assigned to the caller (`status`: `todo`/`in_progress`/`all`, default not-Done); read-only; output marked untrusted |
 | `jira_get_issue` | One Jira Cloud issue the caller is assigned to: summary, status, priority, description, recent comments; read-only; output marked untrusted |
@@ -1024,7 +1064,7 @@ Then `factory update` (a plain `factory start` delivers it too). With no
 keychain (headless Linux), `factory secret set <name>` delivers it to the
 running broker now; it is lost when the broker is recreated, so run it again
 after `factory update`. Token scopes: *Enabling git push and pull requests*,
-*Enabling GitLab* and *Enabling Jira*.
+*Enabling GitLab*, *Enabling Jira* and *Enabling GitHub issues*.
 
 **Jira isn't configured** (`[jira].site and cloud_id are not set`,
 `[jira].cloud_id is not a valid UUID`). Set both in your local `policy.toml`
@@ -1385,7 +1425,7 @@ roles/<name>/role.conf       Role definition: description, image, rw/ro, lanes, 
 roles/<name>/instructions.md Role instructions (added to each task's system prompt)
 roles/<name>/kit/spec.yaml   Role kit: Anthropic-only egress
 kits/coordinator/spec.yaml   Coordinator kit
-kits/coordinator/broker.conf Coordinator's direct broker tool grants (none by default; Jira is the opt-in)
+kits/coordinator/broker.conf Coordinator's direct broker tool grants (none by default; Jira and GitHub issues are the opt-ins)
 kits/broker/spec.yaml        Broker kit: GitHub, registries, docs hosts
 broker/                      the Broker: MCP server (runs in the broker VM), policy, tests
 broker/passdesk/core/        Gateway core: protocol, auth and grants, policy, filters, audit

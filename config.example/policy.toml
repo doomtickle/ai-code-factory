@@ -52,6 +52,15 @@ repos = []
 # [github]
 # issue_repos = ["my-org/tracker"]
 
+# Repos whose issues the read-only github_get_issue / github_list_issues may
+# read (the Coordinator's opt-in grant in kits/coordinator/broker.conf, the
+# same list for any role granted them). Its own list: not [git].repos, not
+# issue_repos. Issue text is written by others and is always handed to the
+# agent as untrusted data; list repos whose issue authors you trust. The
+# GitHub token needs Issues read on them. Empty = both tools return DENIED.
+# Goes in the same [github] table as issue_repos.
+# issue_read_repos = ["my-org/tracker"]
+
 # Hold writes for a person. Each tool named here is staged for your decision
 # (the dashboard's control unit, or `factory approvals`) instead of leaving
 # the machine: the agent's call returns at once, the gateway makes the write
