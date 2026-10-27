@@ -326,8 +326,9 @@
     $("svc-update").disabled = !!fault || !st || run;
     $("svc-doctor").disabled = !!fault || !st || run;
     setClass($("led-doctor"), `led${run ? " a blink" : ""}`);
-    setClass($("led-restart"), `led${run ? " a blink" : ""}`);
-    setClass($("led-update"), `led${run ? " a blink" : ""}`);
+    const due = st && st.service;  // the header's SERVICE DUE lamp: light the key that applies it
+    setClass($("led-restart"), `led${run ? " a blink" : due === "restart" ? " a" : ""}`);
+    setClass($("led-update"), `led${run ? " a blink" : due === "update" ? " a" : ""}`);
     const showLog = !fault && !!a.name && a.phase !== "idle";
     $("svc-log").hidden = !showLog;
     setClass($("led-log"), `led${run ? " a blink" : a.phase === "done" ? " g" : a.phase === "failed" ? " r" : ""}`);

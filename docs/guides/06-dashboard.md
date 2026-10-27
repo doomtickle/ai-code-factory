@@ -43,7 +43,15 @@ underneath them.
 - **Lamps:** LINK is green while the page can reach the dashboard (red and
   blinking when it can't). BRIDGE is green while the dispatch bridge runs,
   the part that hands the Coordinator's jobs to the roles. GATE blinks amber
-  while a write is held for you.
+  while a write is held for you. SERVICE goes amber and reads **UPDATE due**
+  when a sandbox is out of date (made from an older image or kit): hover it
+  for the sandboxes and why, e.g. `factory-broker: broker-kit/ changed`; the
+  control unit's UPDATE key lights too. It reads **RESTART due** when a
+  setting read at start-up changed since the last `factory start` (a role
+  override file, `enabled-roles`, or your project notes), and RESTART lights.
+  Dark means nothing is due. It only tells you; you press the key (the
+  control unit asks first). It reads files, so a sandbox made before the
+  factory recorded fingerprints isn't named; `factory start` still warns.
 - **Readouts:** today's spend in dollars, today's job count, the jobs running
   now, and the clock.
 - **MANUAL** opens these docs in a tab of their own. The **?** on each module

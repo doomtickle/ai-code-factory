@@ -76,9 +76,9 @@ const flush = async () => { for (let i = 0; i < 20; i++) await new Promise(r => 
 
 // The server.
 const calls = [];
-let cards = [], patch = null, refuse = null;  // refuse: [status, body] for the next decide
+let cards = [], patch = null, refuse = null, service = null;  // refuse: [status, body] for the next decide
 function reply(name, body) {
-  if (name === "state") return { cards, action: { name: null, phase: "idle" }, bound: true, project: "p", now: 0 };
+  if (name === "state") return { cards, action: { name: null, phase: "idle" }, bound: true, project: "p", now: 0, service };
   if (name === "decide") return { ok: true, id: body.id, verdict: body.verdict, text: "done" };
   if (name === "patch") return patch;
   return {};
@@ -296,6 +296,18 @@ const card = (over) => Object.assign({ id: "c1", tool: "git_push", role: "develo
   assert.match($("deck-body").textContent, /“<img src=x onerror=alert\(1\)>”/);
   assert.match($("deck-body").textContent, /by <b>evil<\/b> at \?/);
   results.push("agent strings stay text");
+
+  // 11. The header's SERVICE DUE lamp lights the key that applies it: UPDATE or RESTART, never both.
+  const leds = () => [$("led-restart").className, $("led-update").className];
+  assert.deepStrictEqual(leds(), ["led", "led"], "nothing due: both dark");
+  service = "update"; await advance(2000);
+  assert.deepStrictEqual(leds(), ["led", "led a"]);
+  service = "restart"; await advance(2000);
+  assert.deepStrictEqual(leds(), ["led a", "led"]);
+  service = "bogus"; await advance(2000);
+  assert.deepStrictEqual(leds(), ["led", "led"], "anything else lights nothing");
+  service = null;
+  results.push("service keys follow the lamp");
 
   Date.now = realNow;
   console.log(JSON.stringify(results));

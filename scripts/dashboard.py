@@ -11,6 +11,9 @@ The state view is read-only. To build it, it reads files under the
 factory state folder and makes no network connection:
   dispatch/logs/<lane>.log, dispatch/audit.jsonl, dispatch/packets/, dispatch/pid
   broker/audit.jsonl, broker/approvals/pending/, broker/project
+and, for the SERVICE DUE lamp (dashboard_service.py), sandboxes/ and sandbox-parts/ (the
+fingerprints each sandbox was made from), the snapshots `factory start` keeps in dispatch/, and the
+factory config folder (--config) it compares them with; no command is run for it.
 It reuses watch.py's transcript model and approvals.py's card reader rather
 than parsing either command's output. The main page only displays: nothing
 it can reach acts.
@@ -110,6 +113,7 @@ from urllib.parse import parse_qs, urlsplit
 import approvals
 import dashboard_controls as dc
 import dashboard_demo as demo
+import dashboard_service as ds
 import dashboard_term as dt
 import docs
 import watch as w
@@ -164,6 +168,7 @@ COOKIE = "factory_dashboard"  # prefix: the cookie is COOKIE_<port> (see cookie_
 TAIL = 40          # transcript lines per lane in /api/state (taller lane screens)
 FULL = 1500        # transcript lines per lane in /api/lane
 EVENTS = 80        # event printer lines
+SERVICE_TTL = 5    # seconds between checks of the SERVICE DUE lamp
 WRITES_TTL = 4     # seconds between reads of approvals/done/ for the deferred-write list
 VERDICT = re.compile(r"^- Verdict: (\S+)", re.M)
 DESK_MAX = 40      # characters of a lane's desk placard (the floor slides what the glass can't show)
@@ -303,8 +308,10 @@ def broker_event(rec: dict) -> dict | None:
 # State
 
 class Dashboard:
-    def __init__(self, state: Path, roles: Path, project: str, demo: bool = False):
+    def __init__(self, state: Path, roles: Path, project: str, demo: bool = False, paths=None):
         self.state, self.project, self.demo = state, project, demo
+        self.paths = paths  # factory.context.Paths for the SERVICE DUE lamp; None (demo): never due
+        self._service: tuple = (0.0, {"due": None, "lines": []})
         self.watch = w.Watch(state / "dispatch", roles, project)
         self.broker = BrokerAudit(state / "broker" / "audit.jsonl")
         self.verdicts: dict = {}
@@ -344,6 +351,15 @@ class Dashboard:
             cached = approvals.read_writes(self.state / "broker", now)
             self._writes = (now, cached)
         return [dict(w) for w in cached]
+
+    def service(self, now: float) -> dict:
+        """The SERVICE DUE lamp (dashboard_service.py), recomputed at most every SERVICE_TTL seconds:
+        it hashes the kits and stats the config folder."""
+        at, cached = self._service
+        if now - at >= SERVICE_TTL or now < at:
+            cached = ds.service(self.paths, self.project)
+            self._service = (now, cached)
+        return {"due": cached["due"], "lines": list(cached["lines"])}
 
     def cards(self, now: float, fp: bool = False) -> list:
         """The pending approval cards. A card's principal is the broker token's
@@ -455,6 +471,7 @@ class Dashboard:
             "events": events,
             "gate": cards,
             "writes": self.writes(now),
+            "service": self.service(now),
         }
 
     @staticmethod
@@ -669,6 +686,8 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="factory dashboard", description=__doc__.splitlines()[0])
     ap.add_argument("--state", type=Path, help="the factory state folder (holds dispatch/ and broker/)")
     ap.add_argument("--roles", type=Path, help="the factory's roles/ folder")
+    ap.add_argument("--config", type=Path, help="the factory config folder, for the SERVICE DUE lamp "
+                    "(default: FACTORY_CONFIG's usual place under XDG_CONFIG_HOME)")
     ap.add_argument("--project", default="", help="the project the factory runs on (for the header)")
     ap.add_argument("--port", type=int, default=0, help="port on 127.0.0.1 (default: any free port)")
     ap.add_argument("--no-open", action="store_true", help="print the URL without opening a browser")
@@ -680,7 +699,7 @@ def main(argv=None) -> int:
                     help="show made-up data from scripts/dashboard-demo/, with no factory running; nothing acts")
     args = ap.parse_args(argv)
     if args.demo:
-        given = [f for f, v in (("--state", args.state), ("--project", args.project),
+        given = [f for f, v in (("--state", args.state), ("--project", args.project), ("--config", args.config),
                                 ("--coordinator", args.coordinator), ("--factory", args.factory)) if v]
         if given:
             ap.error(f"--demo shows built-in sample data and has no state folder, project, Coordinator terminal "
@@ -713,7 +732,11 @@ def main(argv=None) -> int:
 
 
 def _serve(args, term) -> int:
-    board = Dashboard(args.state, args.roles, args.project or "(no project)", demo=args.demo)
+    paths = None
+    if not args.demo:
+        root = args.roles.resolve().parent
+        paths = ds.Paths(str(root), str(args.config or ds.Paths.from_environ(str(root)).config), str(args.state))
+    board = Dashboard(args.state, args.roles, args.project or "(no project)", demo=args.demo, paths=paths)
     if not board.watch.lanes:
         print("no roles or transcripts found", file=sys.stderr)
         return 1

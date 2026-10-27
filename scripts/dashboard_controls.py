@@ -234,11 +234,12 @@ class Controls:
         cards, _, _ = self.gate(now)
         with self.board.lock:
             writes = self.board.writes(now)  # display only: deferred writes the gateway made (or failed)
+            service = self.board.service(now)["due"]  # display only: which service key's LED to light
         project = self.bound()
         with self.lock:
             action = self.action_json()
         return 200, {"now": now, "project": project, "bound": bool(project), "cards": cards, "writes": writes,
-                     "action": action}
+                     "service": service, "action": action}
 
     def held_card(self, cid: str, fp: str) -> dict:
         """The pending card with exactly this id, if its fingerprint is still fp."""

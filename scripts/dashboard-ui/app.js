@@ -261,9 +261,25 @@
     $("lamp-bridge").className = `led ${state.bridge ? "g" : "r"}`;
     const undecided = state.gate.filter(x => x.decided !== "approve" && x.decided !== "decline").length;
     $("lamp-gate").className = `led ${undecided ? "a blink" : state.gate.length ? "a" : ""}`;
+    renderService(state.service);
     setSeg($("ro-spend"), Number(state.totals.cost).toFixed(2));
     setSeg($("ro-jobs"), String(state.totals.jobs));
     setSeg($("ro-run"), String(state.totals.running));
+  }
+
+  // SERVICE DUE: amber when a sandbox is out of date (UPDATE applies it) or a start-time setting
+  // changed (RESTART applies it). The host worked it out; the lines are text only.
+  const SERVICE_HEAD = { update: "UPDATE", restart: "RESTART" };
+  function renderService(svc) {
+    const due = svc && SERVICE_HEAD[svc.due] ? svc.due : null;
+    const lines = due && Array.isArray(svc.lines) ? svc.lines.filter(l => typeof l === "string") : [];
+    const text = !due ? "Service: nothing due"
+      : `Service due: ${SERVICE_HEAD[due]} applies it. ${lines.join("; ")}`;
+    $("lamp-service").className = `led ${due ? "a" : ""}`;
+    $("lamp-service-label").textContent = due ? `${SERVICE_HEAD[due]} due` : "Service";
+    const box = $("lamp-service-box");
+    box.title = text;
+    box.setAttribute("aria-label", text);
   }
 
   // The gate LCD is an aria-live region, so it is rebuilt only when the staged

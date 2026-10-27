@@ -325,6 +325,13 @@ class DecideTests(unittest.TestCase):
         self.assertEqual(out["action"], {"name": None, "phase": "idle", "started": None, "ended": None,
                                          "exit": None, "reload": "none"})
 
+    def test_state_says_which_service_key_is_due(self):
+        self.assertIsNone(self.state()["service"])
+        self.env.board._service = (self.env.fx.now, {"due": "restart", "lines": ["enabled-roles changed"]})
+        out = self.state()
+        self.assertEqual(out["service"], "restart")
+        self.assertNotIn("enabled-roles", json.dumps(out))
+
     def test_state_marks_queued_cards_and_lists_deferred_writes(self):
         e = self.env
         card = write_card(e.fx.state, "pr1", e.fx.now)
@@ -1293,7 +1300,8 @@ class CuScriptTests(unittest.TestCase):
                          ["plain approve", "deck asks, arms, confirms", "cancel, fp change and gone cancel the question",
                           "viewer asks with the count", "viewer: fp change cancels",
                           "decided card shows its state, keys dark", "expired card shows EXPIRED, keys dark",
-                          "refusals shown as text", "decline without a reason says so", "agent strings stay text"])
+                          "refusals shown as text", "decline without a reason says so", "agent strings stay text",
+                          "service keys follow the lamp"])
 
 
 class RealPageTests(unittest.TestCase):

@@ -2,6 +2,23 @@
 
 Dated entries, for the user to review. Newest first.
 
+## 2026-10-27
+
+- **The dashboard's SERVICE DUE lamp reads files, never `sbx ls -q`, and names the sandbox's
+  inputs that changed from lines the start now records.** doomtickle/passdesk-ops#184. The
+  state view only reads the state folder, so it can't ask sbx which sandboxes exist: it checks
+  `fingerprints.is_stale` (the one notion of stale, the same test `factory start` warns with)
+  for each sandbox that has a recorded fingerprint. A sandbox made before fingerprints, or
+  never created, is therefore not named there; `factory start` still warns for it. To say
+  *why* ("kit changed"), `record_sandbox_fingerprint` also writes the lines the digest is taken
+  of to `FACTORY_STATE/sandbox-parts/<name>` (a separate folder: the `sandboxes/` files stay
+  byte for byte what the bash reads); a sandbox with no such file gets a general reason. The
+  digest has no policy.toml input, so the broker's reason is "image rebuilt (policy.toml or
+  broker code)", not "policy.toml changed". RESTART compares role overrides and `enabled-roles`
+  by content with their snapshots in `FACTORY_STATE/dispatch/`, and project notes by mtime
+  against the snapshot's last write; deleted notes aren't noticed. It is display only: UPDATE
+  wins when both apply, and a failure while computing it reads as nothing due.
+
 ## 2026-10-26
 
 - **`start-broker.sh` is Python (`factory/broker_start.py`); a failed credential delivery

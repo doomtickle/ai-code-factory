@@ -19,6 +19,9 @@ from pathlib import Path
 from unittest import mock
 
 import dashboard as d
+import dashboard_demo as demo
+from factory import fingerprints as fp
+from factory.context import Paths
 
 UI = Path(__file__).resolve().parent / "dashboard-ui"
 REPO = Path(__file__).resolve().parent.parent
@@ -756,6 +759,161 @@ class ServerTests(unittest.TestCase):
             self.assertIs(card["queued"], False)
         self.assertEqual(state["writes"], [])
         self.assertNotIn(self.server.term_server.cu_key, json.dumps(state))
+
+
+class ServiceTests(unittest.TestCase):
+    """The SERVICE DUE lamp: fixture fingerprints and config files, no sbx and no command run."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        base = Path(self.tmp.name)
+        self.fx = Fixture(base)
+        self.paths = Paths(str(base), str(base / "config"), str(self.fx.state))
+        (base / "kits" / "coordinator").mkdir(parents=True)
+        (base / "kits" / "coordinator" / "spec.yaml").write_text("name: coordinator\n")
+        (base / "kits" / "broker").mkdir(parents=True)
+        (base / "kits" / "broker" / "spec.yaml").write_text("name: broker\n")
+        (self.fx.roles / "developer" / "kit").mkdir()
+        (self.fx.roles / "developer" / "kit" / "spec.yaml").write_text("name: developer\n")
+        self.board = d.Dashboard(self.fx.state, self.fx.roles, "proj", paths=self.paths)
+        self.names = [fp.sbx.BROKER_SANDBOX, fp.COORDINATOR_SANDBOX, "factory-developer", "factory-reviewer"]
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def record(self):
+        for name in self.names:
+            fp.record_sandbox_fingerprint(self.paths, name)
+
+    def service(self, now=None):
+        board = d.Dashboard(self.fx.state, self.fx.roles, "proj", paths=self.paths)  # no cache between calls
+        return board.snapshot(now or self.fx.now)["service"]
+
+    def snapshot_start(self, notes_age=0):
+        """What `factory start` leaves in dispatch/ (enabled-roles is written last)."""
+        snap = self.fx.state / "dispatch"
+        (snap / "role-overrides").mkdir(exist_ok=True)
+        (snap / "enabled-roles").write_text("")
+        past = time.time() - notes_age
+        os.utime(snap / "enabled-roles", (past, past))
+
+    def config(self, rel, text):
+        path = Path(self.paths.config) / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+        return path
+
+    def test_nothing_due_when_nothing_changed(self):
+        self.record()
+        self.snapshot_start()
+        self.assertEqual(self.service(), {"due": None, "lines": []})
+
+    def test_no_recorded_fingerprints_is_not_due(self):
+        self.assertEqual(self.service(), {"due": None, "lines": []})
+
+    def test_changed_kit_is_update_and_names_the_sandbox_and_why(self):
+        self.record()
+        (self.fx.roles / "developer" / "kit" / "spec.yaml").write_text("name: developer\nchanged: yes\n")
+        self.assertEqual(self.service(), {"due": "update", "lines": ["factory-developer: kit changed"]})
+
+    def test_broker_reasons_and_order(self):
+        self.record()
+        self.config("broker-kit/hosts.yaml", "hosts: [example.org]\n")
+        (Path(self.paths.state) / "images").mkdir()
+        (Path(self.paths.state) / "images" / f"factory-broker-{fp.sbx.TEMPLATE_TAG}.id").write_text("sha256:new\n")
+        (Path(self.paths.root) / "kits" / "coordinator" / "spec.yaml").write_text("name: other\n")
+        self.assertEqual(self.service(), {"due": "update", "lines": [
+            "factory-broker: image rebuilt (policy.toml or broker code), broker-kit/ changed",
+            "factory-coordinator: kit changed"]})
+
+    def test_a_sandbox_recorded_before_reasons_were_kept_gets_a_general_one(self):
+        self.record()
+        os.unlink(fp.parts_file(self.paths, "factory-reviewer"))
+        (self.fx.roles / "reviewer" / "role.conf").write_text('LANES="1"\nBROKER_TOOLS="web_fetch"\n')
+        self.assertEqual(self.service()["lines"], ["factory-reviewer: made from an older image, kit or setting"])
+
+    def test_update_wins_over_restart_and_hides_its_lines(self):
+        self.record()
+        self.snapshot_start()
+        (self.fx.roles / "developer" / "kit" / "spec.yaml").write_text("name: x\n")
+        self.config("enabled-roles", "reviewer\n")
+        self.assertEqual(self.service(), {"due": "update", "lines": ["factory-developer: kit changed"]})
+
+    def test_new_override_is_restart(self):
+        self.record()
+        self.snapshot_start()
+        self.config("roles/developer.conf", 'MODEL="claude-haiku-4-5"\n')
+        self.assertEqual(self.service(), {"due": "restart", "lines": ["role override developer.conf changed"]})
+
+    def test_override_matching_its_snapshot_is_quiet_and_an_edit_or_removal_is_not(self):
+        self.record()
+        self.snapshot_start()
+        self.config("roles/developer.conf", 'MODEL="a"\n')
+        (self.fx.state / "dispatch" / "role-overrides" / "developer.conf").write_text('MODEL="a"\n')
+        self.assertIsNone(self.service()["due"])
+        self.config("roles/developer.conf", 'MODEL="b"\n')
+        self.assertEqual(self.service()["lines"], ["role override developer.conf changed"])
+        os.unlink(Path(self.paths.config) / "roles" / "developer.conf")
+        self.assertEqual(self.service()["lines"], ["role override developer.conf changed"])
+
+    def test_enabled_roles_compared_by_content(self):
+        self.record()
+        self.snapshot_start()
+        self.config("enabled-roles", "# nothing\n")
+        self.assertIsNone(self.service()["due"])
+        self.config("enabled-roles", "researcher\n")
+        self.assertEqual(self.service(), {"due": "restart", "lines": ["enabled-roles changed"]})
+
+    def test_project_notes_newer_than_the_snapshot_are_restart_and_older_are_not(self):
+        self.record()
+        self.snapshot_start(notes_age=100)
+        notes = self.config("projects/proj.md", "- tests: npm test\n")
+        old = time.time() - 500
+        os.utime(notes, (old, old))
+        self.assertIsNone(self.service()["due"])
+        self.config("projects/proj.developer.md", "- style\n")
+        self.config("projects/other.md", "not this project\n")
+        self.assertEqual(self.service(), {"due": "restart", "lines": ["project notes proj.developer.md changed"]})
+
+    def test_nothing_to_compare_before_the_first_start(self):
+        self.record()
+        self.config("enabled-roles", "researcher\n")
+        self.config("roles/developer.conf", 'MODEL="b"\n')
+        self.assertEqual(self.service(), {"due": None, "lines": []})
+
+    def test_odd_file_names_are_made_printable(self):
+        self.record()
+        self.snapshot_start()
+        self.config("roles/ev\x1b[31mil.conf", 'MODEL="b"\n')
+        self.assertEqual(self.service()["lines"], ["role override ev?[31mil.conf changed"])
+
+    def test_a_failure_reads_as_nothing_due(self):
+        self.record()
+        with mock.patch.object(d.ds.fingerprints, "recorded_sandboxes", side_effect=RuntimeError):
+            self.assertEqual(self.service(), {"due": None, "lines": []})
+
+    def test_no_paths_never_due_and_the_result_is_cached(self):
+        self.assertEqual(d.Dashboard(self.fx.state, self.fx.roles, "proj").snapshot(self.fx.now)["service"],
+                         {"due": None, "lines": []})
+        self.record()
+        self.assertIsNone(self.board.snapshot(self.fx.now)["service"]["due"])
+        (self.fx.roles / "developer" / "kit" / "spec.yaml").write_text("name: x\n")
+        self.assertIsNone(self.board.snapshot(self.fx.now + 1)["service"]["due"])
+        self.assertEqual(self.board.snapshot(self.fx.now + d.SERVICE_TTL)["service"]["due"], "update")
+
+    def test_the_demo_has_the_lamp_off(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            demo.build(Path(tmp))
+            board = d.Dashboard(Path(tmp), d.DOCS_ROOT / "roles", demo.PROJECT, demo=True)
+            self.assertEqual(board.snapshot()["service"], {"due": None, "lines": []})
+
+    def test_the_page_has_the_lamp_and_the_unit_keys_follow_it(self):
+        html = (UI / "index.html").read_text()
+        self.assertIn('id="lamp-service"', html)
+        self.assertIn("state.service", (UI / "app.js").read_text())
+        cu = (UI / "cu.js").read_text()
+        self.assertIn('due === "restart"', cu)
+        self.assertIn('due === "update"', cu)
 
 
 class DocsAbsentTests(unittest.TestCase):

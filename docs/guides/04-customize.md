@@ -27,6 +27,10 @@ affected, after listing what each one loses and asking you.
 
 > **Tip:** Not sure? `factory start` warns when a sandbox is out of date:
 > `out of date (made from an older image or kit): factory-broker; run 'factory update' to recreate them`.
+> The dashboard shows the same on its **SERVICE** lamp: amber, "UPDATE due",
+> with the sandboxes and why on hover, and the UPDATE key lit. It reads
+> "RESTART due" (RESTART lit) when a role override, `enabled-roles` or the
+> project notes changed since the last `factory start`.
 
 ## Per-project notes
 
