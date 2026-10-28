@@ -26,7 +26,7 @@
   // Monitor state: the open lane, its tab, the latest /api/lane data, a request
   // sequence number (stale responses are dropped) and what the body shows now.
   let monLane = null, monTab = "transcript", monData = null, monSeq = 0, monBusy = false;
-  let monJob = "", monBack = "";  // the job whose packet the monitor shows (an OUTBOX row), and the row to return focus to
+  let monJob = "", monBack = "";  // the job whose packet the monitor shows ("" = the lane's newest, followed live), and the OUTBOX row to return focus to
   let shown = { lane: null, tab: null, keys: [], packet: null };
   // ---------- 7-segment LCD digits, drawn as SVG
   const SEG = { a: "4,2 6,0 16,0 18,2 16,4 6,4", b: "18,3 20,5 20,15 18,17 16,15 16,5", c: "18,19 20,21 20,31 18,33 16,31 16,21",
@@ -540,22 +540,73 @@
     const body = $("mon-body");
     body.scrollTop = tab === "packet" ? 0 : body.scrollHeight;
   }
+  // The PACKET tab steps through the lane's jobs (monData.jobs, newest first). ◀ / [ go to an older job,
+  // ▶ / ] to a newer one; the newest is followed live (monJob "") so a job that starts shows its pending view.
+  const secs = n => (n == null ? "--" : n < 3600 ? `${Math.floor(n / 60)}:${String(n % 60).padStart(2, "0")}` : `${Math.floor(n / 3600)}h${String(Math.floor(n % 3600 / 60)).padStart(2, "0")}`);
+  function monPos() {
+    const jobs = (monData && monData.jobs) || [];
+    const cur = monJob || jobs[0] || "";
+    return { jobs, i: jobs.indexOf(cur) };
+  }
+  function stepJob(dir) {  // dir +1: older, -1: newer
+    if (!monLane || monTab !== "packet") return;
+    const { jobs, i } = monPos();
+    const to = i < 0 ? -1 : i + dir;
+    if (to < 0 || to >= jobs.length) return;
+    monJob = to === 0 ? "" : jobs[to];
+    monBusy = false; monSeq++;
+    renderMon();
+    loadMon();
+  }
+  function renderMonNav() {
+    const nav = $("mon-nav");
+    const sel = monData && monData.sel;
+    const show = monTab === "packet" && monData && monData.jobs && monData.jobs.length > 0;
+    nav.hidden = !show;
+    if (!show) { setText($("mon-note"), ""); return; }
+    const { jobs, i } = monPos();
+    $("mon-older").disabled = i < 0 || i >= jobs.length - 1;
+    $("mon-newer").disabled = i <= 0;
+    setText($("mon-pos"), i < 0 ? `${jobs.length} jobs` : `${i + 1}/${jobs.length}`);
+    const parts = [`job ${monData.job}`];
+    if (sel) {
+      parts.push(LABEL[sel.state] || sel.state || "?");
+      if (sel.cost != null) parts.push(usd(sel.cost));
+      if (sel.when) parts.push(sel.when);
+    }
+    setText($("mon-note"), parts.join(" · "));
+  }
+  function pendingView(sel) {
+    const box = el("div", "pending");
+    box.append(el("p", "pending-h", "JOB RUNNING"), el("p", "pending-n", "The packet is written when the job ends."));
+    const rows = [["TASK", sel.task || "--"], ["MODEL", sel.model || "--"], ["ELAPSED", secs(sel.elapsed)],
+      ["COST SO FAR", sel.cost == null ? "-- (not reported until the job ends)" : usd(sel.cost)], ["STARTED", sel.when || "--"]];
+    for (const [k, v] of rows) {
+      const row = el("div", "pending-row");
+      row.append(el("span", "pending-k", k), el("span", "pending-v", v));
+      box.append(row);
+    }
+    return box;
+  }
   const transcriptLine = e => { const n = el("div", `ln k-${e.kind}`); n.append(el("span", "ts", e.ts), el("span", "tx", lineText(e))); return n; };
   function renderMon() {
     const d = monData || (state && state.lanes.find(l => l.name === monLane)) || { name: monLane, state: "idle", tail: [] };
     setText($("mon-title"), `MONITOR · ${d.name}`);
-    setText($("mon-note"), monJob ? `PACKET · job ${monJob}` : "");
+    renderMonNav();
     setClass($("mon-led"), `led ${LED[d.state] || ""}`);
     const st = $("mon-state"); setClass(st, `state-tag st-${d.state}`); setText(st, LABEL[d.state] || d.state);
     document.querySelectorAll(".tabkey[data-tab]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.tab === monTab)));
     const body = $("mon-body");
     const same = shown.lane === monLane && shown.tab === monTab;
     if (monTab === "packet") {
+      const pending = !!(monData && monData.pending && monData.sel);
       const text = monData ? monData.packet : "LOADING…";
-      if (same && shown.packet === text) return;
-      body.replaceChildren(el("pre", "packet", text));
-      if (!same) body.scrollTop = 0;
-      shown = { lane: monLane, tab: monTab, keys: [], packet: text };
+      const sig = pending ? JSON.stringify(["pending", monData.sel]) : `${monData ? monData.job : ""}\n${text}`;
+      if (same && shown.packet === sig) return;
+      body.replaceChildren(pending ? pendingView(monData.sel) : el("pre", "packet", text));
+      const job = monData ? monData.job : "";
+      if (!same || shown.job !== job) body.scrollTop = 0;
+      shown = { lane: monLane, tab: monTab, keys: [], packet: sig, job };
       return;
     }
     const lines = d.tail || [];
@@ -591,6 +642,8 @@
     shown = { lane: monLane, tab: monTab, keys, packet: null };
   }
   document.querySelectorAll(".tabkey[data-tab]").forEach(b => b.addEventListener("click", () => setTab(b.dataset.tab)));
+  $("mon-older").addEventListener("click", () => stepJob(1));
+  $("mon-newer").addEventListener("click", () => stepJob(-1));
   $("mon-close").addEventListener("click", closeMon);
   $("scrim").addEventListener("click", e => { if (e.target === $("scrim")) closeMon(); });
 
@@ -612,6 +665,8 @@
       else if (e.key === "Tab") trapTab(e);
       else if (e.key === "p") setTab("packet");
       else if (e.key === "t") setTab("transcript");
+      else if (e.key === "[") stepJob(1);
+      else if (e.key === "]") stepJob(-1);
       return;
     }
     if (e.key === "f" || e.key === "F") { $("floor-key").click(); return; }

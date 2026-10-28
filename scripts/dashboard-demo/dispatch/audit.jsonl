@@ -1,3 +1,3 @@
-{"ts": "{{iso:-18000}}", "event": "job-end", "job_id": "20261023-demo00-dev0", "role": "developer", "lane": "developer", "status": "done", "elapsed_seconds": 612, "model": "claude-sonnet-5-5", "cost_usd": 1.12, "context_tokens": 61000}
+{"ts": "{{iso:-18000}}", "event": "job-end", "job_id": "20261023-080000-f0a1b2", "role": "developer", "lane": "developer", "status": "done", "elapsed_seconds": 612, "model": "claude-sonnet-5-5", "cost_usd": 1.12, "context_tokens": 61000}
 {"ts": "{{iso:-11160}}", "event": "job-end", "job_id": "20261023-demo02-dev2", "role": "developer", "lane": "developer-lane2", "status": "done", "elapsed_seconds": 240, "model": "claude-sonnet-5-5", "cost_usd": 0.74, "context_tokens": 38000}
 {"ts": "{{iso:-296}}", "event": "job-end", "job_id": "20261023-demo04-rev2", "role": "reviewer", "lane": "reviewer-lane2", "status": "done", "elapsed_seconds": 124, "model": "claude-opus-5-5", "cost_usd": 0.58, "context_tokens": 47000}

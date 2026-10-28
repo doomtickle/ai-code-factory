@@ -423,6 +423,16 @@ html.cu-open, html.cu-open body { overflow: hidden; }
 .mon-h .title { font-family: var(--f-crt); font-size: 1.5rem; color: var(--silk); }
 .mon-h .mon-note { color: var(--led-amber); text-transform: none; letter-spacing: .06em; min-width: 0; overflow-wrap: anywhere; }
 .mon-h .mon-note:empty { display: none; }
+.mon-h .pk-nav { display: flex; align-items: center; gap: 8px; }
+.mon-h .pk-nav[hidden] { display: none; }
+.mon-h .pk-nav .silk { min-width: 4ch; text-align: center; }
+.tabkey:disabled { opacity: .4; cursor: default; box-shadow: none; }
+.mon-body .pending { display: grid; gap: 6px; }
+.mon-body .pending-h { font-weight: 700; color: var(--lcd-green); }
+.mon-body .pending-n { opacity: .72; margin-bottom: 8px; }
+.mon-body .pending-row { display: grid; grid-template-columns: 9em minmax(0, 1fr); gap: 10px; }
+.mon-body .pending-k { opacity: .68; }
+.mon-body .pending-v { white-space: pre-wrap; overflow-wrap: anywhere; }
 .mon-h .right { margin-left: auto; display: flex; gap: 8px; }
 .tabkey { cursor: pointer; border: 0; padding: 4px 10px; border-radius: 4px; background: linear-gradient(180deg, #ece7d8, var(--key)); color: var(--key-ink);
   font-family: var(--f-silk); font-weight: 700; letter-spacing: .12em; text-transform: uppercase; font-size: .75rem; box-shadow: 0 3px 0 var(--key-lo), 0 4px 4px rgba(0,0,0,.5); }

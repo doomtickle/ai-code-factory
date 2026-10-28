@@ -21,6 +21,7 @@ from unittest import mock
 
 import dashboard as d
 import dashboard_demo as demo
+import dashboard_jobs as jobs_mod
 import dashboard_outbox as ob
 from factory import fingerprints as fp
 from factory.context import Paths
@@ -604,16 +605,20 @@ class ServerTests(unittest.TestCase):
         return resp, body
 
     def test_lane_packet_by_job_id(self):
-        resp, body = self.get("/api/lane?name=developer&job=20261019-000002-bbbbbb")
+        resp, body = self.get("/api/lane?name=reviewer&job=20261019-000002-bbbbbb")
         self.assertEqual(resp.status, 200)
-        self.assertIn("reviewer job 20261019-000002-bbbbbb", json.loads(body)["packet"])
-        resp, body = self.get("/api/lane?name=developer&job=20261019-000077-abcdef")
-        self.assertEqual(resp.status, 200)
-        self.assertIn("no packet for job", json.loads(body)["packet"])
+        detail = json.loads(body)
+        self.assertIn("reviewer job 20261019-000002-bbbbbb", detail["packet"])
+        self.assertEqual((detail["job"], detail["jobs"]), ("20261019-000002-bbbbbb", ["20261019-000002-bbbbbb"]))
+        # A job that did not run on that lane (another lane's, or none at all) is a 404 that says so.
+        for name, job in (("developer", "20261019-000002-bbbbbb"), ("reviewer", "20261019-000077-abcdef")):
+            resp, body = self.get(f"/api/lane?name={name}&job={job}")
+            self.assertEqual(resp.status, 404, (name, job))
+            self.assertIn("did not run on this lane", body.decode())
         for bad in ("../x", "20261019-000002-bbbbbb%2f..", "x", "20261019-000002-BBBBBB"):
             self.assertEqual(self.get(f"/api/lane?name=developer&job={bad}")[0].status, 400, bad)
         self.assertEqual(self.get("/api/lane?name=nobody&job=20261019-000002-bbbbbb")[0].status, 404)
-        self.assertEqual(self.get("/api/lane?name=developer&job=20261019-000002-bbbbbb", cookie=False)[0].status, 403)
+        self.assertEqual(self.get("/api/lane?name=reviewer&job=20261019-000002-bbbbbb", cookie=False)[0].status, 403)
 
     def test_state_carries_the_outbox(self):
         resp, body = self.get("/api/state")
@@ -1301,13 +1306,14 @@ class OutboxTests(unittest.TestCase):
         self.assertEqual(self.rows(), [])
         self.assertIsNone(ob.read_regular(Path(self.tmp.name) / "nope", 10))
 
-    def test_the_lane_packet_endpoint_takes_only_a_job_id(self):
-        detail = self.board.lane_detail("developer", self.now, job="20261019-000002-bbbbbb")
+    def test_the_lane_packet_endpoint_takes_only_a_job_of_that_lane(self):
+        detail = self.board.lane_detail("reviewer", self.now, job="20261019-000002-bbbbbb")
         self.assertIn("reviewer job 20261019-000002-bbbbbb", detail["packet"])
-        detail = self.board.lane_detail("developer", self.now, job="20261019-000077-abcdef")
-        self.assertIn("no packet for job", detail["packet"])
-        for bad in ("../../broker/audit", "20261019-000002-bbbbbb/../x", "x", "20261019-000002-BBBBBB"):
-            self.assertIn("no packet", self.board.lane_detail("developer", self.now, job=bad)["packet"])
+        for lane, job in (("developer", "20261019-000002-bbbbbb"), ("reviewer", "20261019-000077-abcdef"),
+                          ("reviewer", "../../broker/audit"), ("reviewer", "20261019-000002-bbbbbb/../x"),
+                          ("reviewer", "x"), ("reviewer", "20261019-000002-BBBBBB")):
+            with self.assertRaises(d.NoSuchJob, msg=(lane, job)):
+                self.board.lane_detail(lane, self.now, job=job)
         self.assertIsNone(self.board.lane_detail("nobody", self.now, job="20261019-000002-bbbbbb"))
 
     def test_the_demo_has_two_rows(self):
@@ -1326,6 +1332,172 @@ class OutboxTests(unittest.TestCase):
             for row in rows:   # the press needs the lane to exist, and the packet to be the job's own
                 self.assertIn(row["lane"], [lane["name"] for lane in board.snapshot()["lanes"]])
                 self.assertIn(f"job {row['job']}", board.lane_detail(row["lane"], job=row["job"])["packet"].split("\n")[0])
+
+
+class LaneJobsTests(unittest.TestCase):
+    """The PACKET tab's job list (doomtickle/passdesk-ops#191): /api/lane returns the lane's past jobs,
+    newest first and capped, the packet of the one asked for, and what the monitor shows about it."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.fx = Fixture(Path(self.tmp.name))
+        self.now = self.fx.now
+        self.board = d.Dashboard(self.fx.state, self.fx.roles, "proj")
+        self.dispatch = self.fx.state / "dispatch"
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def job_id(self, n):
+        return f"20261019-{n // 3600:02d}{n // 60 % 60:02d}{n % 60:02d}-{n:06x}"
+
+    def write_jobs(self, records):
+        (self.dispatch / "jobs.json").write_text(json.dumps({"version": 1, "jobs": records}))
+
+    def rec(self, n, lane="reviewer", status="done", **extra):
+        return dict({"id": self.job_id(n), "role": "reviewer", "lane": lane, "status": status, "task": f"Review number {n}",
+                     "started": self.now - 1000 + n, "finished": self.now - 940 + n, "model": "claude-opus-5-5",
+                     "cost_usd": 0.25}, **extra)
+
+    def packet(self, n, text=None):
+        (self.dispatch / "packets" / f"{self.job_id(n)}.md").write_text(text or f"# reviewer job {self.job_id(n)}: done\n")
+
+    def test_a_lane_with_no_job_has_an_empty_list(self):
+        (self.fx.roles / "idle").mkdir()
+        (self.fx.roles / "idle" / "role.conf").write_text('LANES="1"\n')
+        self.board = d.Dashboard(self.fx.state, self.fx.roles, "proj")   # discovers the lane made above
+        detail = self.board.lane_detail("idle", self.now)
+        self.assertEqual(detail["jobs"], [])
+        self.assertIsNone(detail["sel"])
+        self.assertFalse(detail["pending"])
+        self.assertEqual(detail["packet"], "(no job on this lane yet)")
+        with self.assertRaises(d.NoSuchJob):
+            self.board.lane_detail("idle", self.now, job=self.job_id(1))
+
+    def test_a_lane_with_one_job_selects_it(self):
+        detail = self.board.lane_detail("reviewer", self.now)
+        self.assertEqual((detail["job"], detail["jobs"]), ("20261019-000002-bbbbbb", ["20261019-000002-bbbbbb"]))
+        self.assertIn("- Verdict: REVISE", detail["packet"])
+        self.assertFalse(detail["pending"])
+        sel = detail["sel"]
+        self.assertEqual((sel["id"], sel["state"], sel["status"], sel["model"], sel["cost"], sel["elapsed"]),
+                         ("20261019-000002-bbbbbb", "revise", "done", "opus-5-5", 0.5, 60))
+
+    def test_many_jobs_come_newest_first_and_capped(self):
+        self.write_jobs([self.rec(n) for n in range(1, 61)] + [self.rec(99, lane="developer")])
+        for n in (1, 60, 55):
+            self.packet(n)
+        detail = self.board.lane_detail("reviewer", self.now)
+        ids = detail["jobs"]
+        self.assertEqual(ids[0], self.job_id(60))
+        self.assertEqual(len(ids), jobs_mod.LIST_MAX)
+        self.assertEqual(ids, sorted(ids, reverse=True))
+        self.assertNotIn(self.job_id(99), ids)            # another lane's job
+        self.assertEqual(detail["job"], self.job_id(60))   # no job asked for: the newest
+        self.assertEqual(detail["sel"]["task"], "Review number 60")
+        # A job past the cap is still served, and comes last on the list.
+        old = self.board.lane_detail("reviewer", self.now, job=self.job_id(1))
+        self.assertEqual((old["job"], old["jobs"][-1], len(old["jobs"])), (self.job_id(1), self.job_id(1), jobs_mod.LIST_MAX + 1))
+        self.assertIn(self.job_id(1), old["packet"])
+        mid = self.board.lane_detail("reviewer", self.now, job=self.job_id(55))
+        self.assertEqual((mid["job"], len(mid["jobs"])), (self.job_id(55), jobs_mod.LIST_MAX))
+        # Another lane's job is refused, not served.
+        with self.assertRaises(d.NoSuchJob):
+            self.board.lane_detail("reviewer", self.now, job=self.job_id(99))
+
+    def test_jobs_come_from_the_index_the_audit_and_the_transcript(self):
+        self.write_jobs([self.rec(5), dict(self.rec(6), status="running", finished=None, cost_usd=None)])
+        with open(self.dispatch / "audit.jsonl", "a") as f:
+            f.write(json.dumps(
+                {"ts": "2026-10-19T00:00:00Z", "event": "job-end", "job_id": self.job_id(4), "lane": "reviewer", "status": "failed",
+                 "elapsed_seconds": 7, "cost_usd": 0.1}) + "\n" + json.dumps(
+                {"ts": "2026-10-19T00:00:00Z", "event": "job-end", "job_id": self.job_id(3), "lane": "developer", "status": "done"}) + "\n")
+        ids = self.board.lane_detail("reviewer", self.now)["jobs"]
+        # The index, the audit's (this lane's only), and the transcript's job, newest id first.
+        self.assertEqual(ids, [self.job_id(6), self.job_id(5), self.job_id(4), "20261019-000002-bbbbbb"])
+        failed = self.board.lane_detail("reviewer", self.now, job=self.job_id(4))
+        self.assertEqual((failed["sel"]["state"], failed["sel"]["cost"], failed["sel"]["elapsed"]), ("failed", 0.1, 7))
+
+    def test_a_missing_packet_file_says_so(self):
+        self.write_jobs([self.rec(5), self.rec(6)])
+        self.packet(5)
+        detail = self.board.lane_detail("reviewer", self.now, job=self.job_id(6))
+        self.assertIn(f"no packet for job {self.job_id(6)}", detail["packet"])
+        self.assertFalse(detail["pending"])   # a finished job is not pending: the file is just not there
+        self.assertEqual(detail["sel"]["state"], "done")
+        self.assertIn("# reviewer job", self.board.lane_detail("reviewer", self.now, job=self.job_id(5))["packet"])
+
+    def test_a_symlinked_or_oversized_packet_is_not_followed_or_read_whole(self):
+        self.write_jobs([self.rec(5), self.rec(6)])
+        secret = Path(self.tmp.name) / "secret.txt"
+        secret.write_text("TOP SECRET")
+        (self.dispatch / "packets" / f"{self.job_id(5)}.md").symlink_to(secret)
+        self.assertNotIn("TOP SECRET", self.board.lane_detail("reviewer", self.now, job=self.job_id(5))["packet"])
+        self.packet(6, "x" * (d.PACKET_MAX + 10))
+        self.assertEqual(len(self.board.lane_detail("reviewer", self.now, job=self.job_id(6))["packet"]), d.PACKET_MAX)
+
+    def test_a_running_job_is_pending_with_its_task_model_elapsed_and_cost(self):
+        running = dict(self.rec(5), status="running", finished=None, cost_usd=0.31, started=self.now - 90, model="claude-sonnet-5-5")
+        self.write_jobs([running, self.rec(4)])
+        self.packet(4)
+        (self.dispatch / "logs" / "reviewer.log").write_text(
+            f"{hms(self.now - 90)}  \u25b6 job {self.job_id(5)} from the Coordinator\n{hms(self.now - 90)}     > Review number 5\n")
+        detail = self.board.lane_detail("reviewer", self.now)
+        self.assertEqual(detail["job"], self.job_id(5))
+        self.assertTrue(detail["pending"])
+        sel = detail["sel"]
+        self.assertEqual((sel["state"], sel["task"], sel["model"], sel["cost"], sel["elapsed"]),
+                         ("running", "Review number 5", "sonnet-5-5", 0.31, 90))
+        self.assertRegex(sel["when"], r"^\d\d:\d\d$")
+        # Stepping back to the finished job is not pending; its transcript tail is the same live one.
+        back = self.board.lane_detail("reviewer", self.now, job=self.job_id(4))
+        self.assertFalse(back["pending"])
+        self.assertEqual(back["tail"], detail["tail"])
+        # With the bridge down nothing is running: interrupted, and no pending view.
+        (self.dispatch / "pid").unlink()
+        down = self.board.lane_detail("reviewer", self.now)
+        self.assertEqual((down["sel"]["state"], down["pending"]), ("interrupted", False))
+
+    def test_agent_text_stays_text_and_one_line(self):
+        task = "<img src=x onerror=alert(1)>\n  second   line"
+        self.write_jobs([self.rec(5, task=task)])
+        self.packet(5, "<script>alert(1)</script>")
+        detail = self.board.lane_detail("reviewer", self.now, job=self.job_id(5))
+        self.assertEqual(detail["packet"], "<script>alert(1)</script>")
+        self.assertEqual(detail["sel"]["task"], "<img src=x onerror=alert(1)> second line")
+
+    def test_a_bad_index_adds_no_jobs(self):
+        for text in ("not json", json.dumps({"version": 2, "jobs": [self.rec(5)]}), json.dumps({"version": 1, "jobs": "x"}),
+                     json.dumps({"version": 1, "jobs": [5, None, dict(self.rec(5), id="../x"), dict(self.rec(6), started="x", model=7, cost_usd=True)]})):
+            (self.dispatch / "jobs.json").write_text(text)
+            ids = self.board.lane_detail("reviewer", self.now)["jobs"]
+            self.assertEqual(ids[-1], "20261019-000002-bbbbbb", text)
+            self.assertNotIn("../x", ids)
+        sel = self.board.lane_detail("reviewer", self.now, job=self.job_id(6))["sel"]
+        self.assertEqual((sel["model"], sel["cost"], sel["elapsed"]), ("", None, None))
+
+    def test_the_demo_lane_has_two_packets_and_a_pending_job(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            demo.build(Path(tmp))
+            board = d.Dashboard(Path(tmp), d.DOCS_ROOT / "roles", demo.PROJECT, demo=True)
+            detail = board.lane_detail("developer")
+            self.assertGreaterEqual(len(detail["jobs"]), 3)
+            self.assertTrue(detail["pending"])                     # the running job writes its packet when it ends
+            self.assertEqual(detail["sel"]["state"], "running")
+            with_packets = [j for j in detail["jobs"] if not board.lane_detail("developer", job=j)["packet"].startswith("(no packet")]
+            self.assertGreaterEqual(len(with_packets), 2)
+            for job in with_packets:
+                self.assertIn(f"job {job}", board.lane_detail("developer", job=job)["packet"].split("\n")[0])
+
+    def test_the_monitor_steps_with_buttons_and_brackets_and_draws_text_only(self):
+        js, html = (UI / "app.js").read_text(), (UI / "index.html").read_text()
+        for ident in ("mon-older", "mon-newer", "mon-pos", "mon-nav"):
+            self.assertIn(f'id="{ident}"', html)
+        self.assertIn('e.key === "["', js)
+        self.assertIn('e.key === "]"', js)
+        body = js[js.index("function pendingView"):js.index("const transcriptLine")]
+        self.assertNotIn("innerHTML", body)
+        self.assertIn('el("span", "pending-v", v)', body)
 
 
 class PageTests(unittest.TestCase):

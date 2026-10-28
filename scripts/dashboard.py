@@ -116,6 +116,7 @@ from urllib.parse import parse_qs, urlsplit
 import approvals
 import dashboard_controls as dc
 import dashboard_demo as demo
+import dashboard_jobs as jobs_mod
 import dashboard_labels as labels
 import dashboard_outbox as ob
 import dashboard_service as ds
@@ -277,6 +278,10 @@ def broker_event(rec: dict) -> dict | None:
 
 # --------------------------------------------------------------------------
 # State
+
+class NoSuchJob(LookupError):
+    """/api/lane?job= named a job that did not run on that lane."""
+
 
 class Dashboard:
     def __init__(self, state: Path, roles: Path, project: str, demo: bool = False, paths=None):
@@ -465,16 +470,48 @@ class Dashboard:
         return broker_event(rec)
 
     def lane_detail(self, name: str, now: float | None = None, job: str = "") -> dict | None:
-        """One lane's transcript and packet. With a valid job id (the OUTBOX rows), the packet is that job's."""
+        """One lane's transcript, its past jobs (newest first, `jobs`: ids) and the packet of one
+        of them (`job`: the id asked for, else the newest; `sel`: what is known about it). None if
+        there is no such lane; NoSuchJob if the job did not run on it."""
         now = time.time() if now is None else now
         with self.lock:
             self.refresh()
             lane = next((x for x in self.watch.lanes if x.name == name), None)
             if lane is None:
                 return None
+            known = jobs_mod.lane_jobs(self.state, lane, self.watch.audit.jobs)
+            if job and job not in known:
+                raise NoSuchJob(f"job {job} did not run on lane {name}")
+            ids = jobs_mod.newest(known, job)
+            pick = job or (ids[0] if ids else "")
             out = self.lane_json(lane, now, FULL)
-            out["packet"] = self.job_packet(job) if job else self.watch.packet_text(lane)
+            out["jobs"] = ids
+            if pick:
+                out["job"] = pick   # the job whose packet this is (lane_json's is the lane's current one)
+            out["sel"] = self.job_sel(lane, pick, known[pick], now) if pick else None
+            out["packet"] = self.job_packet(pick) if pick else self.watch.packet_text(lane)
+            out["pending"] = bool(out["sel"] and out["sel"]["state"] == "running" and not self.job_packet_exists(pick))
         return out
+
+    def job_sel(self, lane: w.Lane, job: str, info: dict, now: float) -> dict:
+        """What the monitor's header and pending view show about one job. Display text only."""
+        status = info["status"]
+        if status == "running" and not self.watch.bridge_alive():
+            status = "interrupted"   # a job lives only in the bridge: with it down none is running
+        state = status
+        if status == "done" and lane.role == "reviewer":
+            verdict = self.verdict(job)
+            state = verdict.lower() if verdict in ("REVISE", "APPROVED") else state
+        started, elapsed = info["started"], info["elapsed"]
+        if status == "running":
+            current = lane.job and lane.job["id"] == job
+            elapsed = max(0, now - started) if started is not None else (lane.elapsed(now) if current else None)
+        return {"id": job, "state": state, "status": status, "task": info["task"],
+                "model": info["model"].replace("claude-", ""), "cost": num(info["cost"]),
+                "elapsed": None if elapsed is None else int(elapsed), "when": jobs_mod.when(started, now)}
+
+    def job_packet_exists(self, job: str) -> bool:
+        return ob.read_regular(self.state / "dispatch" / "packets" / f"{job}.md", 1) is not None
 
     def job_packet(self, job: str) -> str:
         """The review packet of one job (an id in the bridge's form: it names a file under packets/)."""
@@ -565,7 +602,11 @@ def make_handler(board: Dashboard, token: str, port: int, term: dt.Term | None =
                 if job and not ob.JOB_ID.fullmatch(job):
                     self.refuse(400, "bad job id")
                     return
-                detail = board.lane_detail(query.get("name", [""])[0], job=job)
+                try:
+                    detail = board.lane_detail(query.get("name", [""])[0], job=job)
+                except NoSuchJob:
+                    self.refuse(404, "that job did not run on this lane")
+                    return
                 if detail is None:
                     self.refuse(404, "no such lane")
                 else:

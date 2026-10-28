@@ -126,9 +126,24 @@ Each module shows:
 
 A lane keeps its number as a module and as a chip. Press it (1 to 9), or
 click the module or chip, to open the **lane monitor**: the
-full transcript (**T**) and the job's latest review packet (**P**), which has
+full transcript (**T**) and a job's review packet (**P**), which has
 the task, each branch's commits and diffstat, the tests it ran, the broker
 calls it made, its cost and the role's report. **Esc** closes it.
+
+The packet tab opens on the lane's newest job and steps back through the
+lane's past ones: **◀** (or **[**) goes to the next older job, **▶** (or **]**)
+to a newer one, down to the newest again, which the tab then follows. The
+header shows where you are (`2/7`), and the job's id, state (the reviewer's
+APPROVED or REVISE when it has one), cost and when it ran. The list is the
+newest 50 jobs of that lane, from the bridge's job list, the audit and the
+lane's own transcript; for older ones use `factory packet --list`. While the
+newest job is still running there is no packet yet, so the tab shows a
+**pending** view in its place: the job's task (the short form the job list
+keeps, never the full text), model, time run so far and cost so far (shown as
+`--` until the bridge has a figure, which is usually when the job ends).
+Stepping in the packet tab never changes the transcript, which keeps updating
+live. A job's packet opens only for the lane the job ran on; pressing a row of
+the outbox opens its job's packet the same way.
 
 Stands in for: `factory watch`, `factory logs <role>` and `factory packet
 <lane>`.

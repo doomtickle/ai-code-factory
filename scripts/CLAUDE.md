@@ -1,7 +1,7 @@
 # scripts/: Dashboard Security Rules
 
 These rules cover the dashboard: `scripts/dashboard.py`, `scripts/dashboard_controls.py`,
-`scripts/dashboard_term.py`, `scripts/patchview.py`, and the `dashboard-ui/` front-end
+`scripts/dashboard_term.py`, `scripts/patchview.py` and the other `scripts/dashboard_*.py` modules, and the `dashboard-ui/` front-end
 they serve. Read this before changing any of those files.
 
 Other files in `scripts/` (e.g. `analytics.py`, `watch.py`, `start-broker.sh`,
@@ -153,7 +153,7 @@ at, one run is cut at 5 s and a recomputation at 12 s. A link is built only from
 userinfo, query or fragment); anything else is shown as text, and the page re-checks that it is
 an https URL before it sets `href`. Every other string is drawn with `textContent`, and classes
 come from fixed maps, never from the data. A row opens that job's packet through `GET
-/api/lane?name=&job=` (the job id must match `[0-9]{8}-[0-9]{6}-[0-9a-f]{6}`, else 400; the
+/api/lane?name=&job=` (the job id must match `[0-9]{8}-[0-9]{6}-[0-9a-f]{6}`, else 400, and be a job of that lane, else 404; the
 packet is a regular file `dispatch/packets/<id>.md`, opened `O_NOFOLLOW`, capped). The module acts on nothing. Demo mode runs
 no git: `FixtureGit` reads `dispatch/demo-refs.json`.
 
@@ -169,6 +169,15 @@ branch and the lane a reviewer is checking on the lane modules and chips, as the
 `reviews` in each lane of `/api/state`, derived by one module from the task text and the job's `⎇ branch` log lines. They
 add no endpoint, run no git, and are drawn with `textContent`; `lanelabel.js` is a plain served file in the allowlist,
 loaded before `app.js` and `floor.js` (no inline script).
+
+LANE JOBS (doomtickle/passdesk-ops#191, `scripts/dashboard_jobs.py`, `app.js`) let the lane monitor's PACKET tab step through a
+lane's past jobs and show a pending view for a running one. They add no endpoint: `/api/lane?name=&job=` (the #189 path, one
+`Dashboard.job_packet`) now returns `jobs` (the lane's newest 50 job ids, newest first), `job` (the one whose packet this is; none
+asked for means the newest) and `sel` (state, task, model, cost, elapsed, when), and `pending` (the job is running and has no
+packet yet). The ids come from `dispatch/jobs.json` (regular file, `O_NOFOLLOW`, capped), the audit and the lane's transcript, only
+those matching the bridge's job-id pattern; a `job` that is not one of that lane's is a 404 (`NoSuchJob`), a malformed one still a
+400, and the id is joined onto `packets/` only after it matched. Tasks are cut to one line; everything is drawn with `textContent`
+and the page sets no class or attribute from it.
 
 Anything new that lets a page act must meet the same bar: one fixed argv with no
 shell, a key in a request header (not just the cookie) on a POST or WebSocket with its
