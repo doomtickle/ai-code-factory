@@ -127,6 +127,40 @@ calls it made, its cost and the role's report. **Esc** closes it.
 Stands in for: `factory watch`, `factory logs <role>` and `factory packet
 <lane>`.
 
+## The outbox
+
+The **outbox** sits under the lanes. It has one row for every `factory/*` branch
+the dispatch bridge has imported into your project, newest first, so you can
+see at a glance what is finished and what still needs you. A row shows:
+
+- the repository, the branch and how many commits it is ahead of your current
+  `HEAD` (`+3`);
+- the reviewer's latest verdict, APPROVED or REVISE, from the reviewer packets
+  that name the branch (none if no review mentions it; `(old)` means that review
+  started before the developer's last job on the branch ended, so it may not
+  have seen the latest commits);
+- the push state: **STAGED** (a push is waiting at the write gate for your
+  approval), **PUSHED** (the gateway made the push), **FAILED** (it tried and
+  failed), or **WRITTEN** (the gateway opened a pull request for the branch but
+  has no record of the push itself);
+- the pull request or merge request, as a link, once the gateway has opened
+  one. The link is used only if it is a `https://github.com/` pull request or a
+  merge request on your configured GitLab host; anything else is shown as
+  plain text.
+
+When the branch is contained in your `HEAD` the row says **MERGED**, and when the
+import is gone it says **GONE**. Either one drops off the list a day after the
+job ended. A squash or rebase merge leaves the original commits out of `HEAD`, so
+the branch stays OPEN until you delete it (`git branch -rd`, see [Get the
+work](02-build-a-feature.md#get-the-work)).
+
+Press a row to open that job's review packet in the lane monitor. The outbox
+only displays: it can't merge, push or open anything. It asks git for a branch
+list and a commit count at most every few seconds, so a very long list is cut
+at 20 rows.
+
+Stands in for: `git branch -r | grep factory-` and `factory packet <job>`.
+
 ## The factory floor
 
 **FLOOR** in the Lanes header (or **F**) swaps the lane modules for the
@@ -501,7 +535,7 @@ factory dashboard --demo
 
 It needs no `sbx`, broker, Coordinator or `factory setup`. It shows made-up
 data (`example/app`, a few lanes, one held push, a denied broker call and a
-branch) taken from `scripts/dashboard-demo/`, with times counted from the
+branch, two outbox rows) taken from `scripts/dashboard-demo/`, with times counted from the
 moment you start it, and adds a broker call 8 seconds after the start and then
 every 20 seconds, so the factory floor has crates to move. Open the link it prints, press the floor key and
 you can see a held crate waiting at the gate and a denied one landing in the derez field.
@@ -519,7 +553,9 @@ combined with `--coordinator`, `--state`, `--project` or `--factory`;
 
 It is local: it listens only on `127.0.0.1`, refuses any request without
 this run's token, and makes no network connection of its own. Apart from
-Terminal 0 and the control unit it only reads the factory's state folder.
+Terminal 0 and the control unit it only reads the factory's state folder, and
+for the [outbox](#the-outbox) asks your project's git, read-only and with hooks
+off, which `factory/*` branches exist and how far ahead of `HEAD` they are.
 The control unit can write only a decision file (APPROVE, DECLINE) and its
 action logs, and run only `factory doctor`, `factory restart`, `factory
 update --yes` and `factory update --plan`, each after a confirm screen. The README's

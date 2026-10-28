@@ -12,6 +12,7 @@ import http.client
 import json
 import os
 import re
+import subprocess
 import tempfile
 import time
 import unittest
@@ -20,6 +21,7 @@ from unittest import mock
 
 import dashboard as d
 import dashboard_demo as demo
+import dashboard_outbox as ob
 from factory import fingerprints as fp
 from factory.context import Paths
 
@@ -636,6 +638,23 @@ class ServerTests(unittest.TestCase):
         conn.close()
         return resp, body
 
+    def test_lane_packet_by_job_id(self):
+        resp, body = self.get("/api/lane?name=developer&job=20261019-000002-bbbbbb")
+        self.assertEqual(resp.status, 200)
+        self.assertIn("reviewer job 20261019-000002-bbbbbb", json.loads(body)["packet"])
+        resp, body = self.get("/api/lane?name=developer&job=20261019-000077-abcdef")
+        self.assertEqual(resp.status, 200)
+        self.assertIn("no packet for job", json.loads(body)["packet"])
+        for bad in ("../x", "20261019-000002-bbbbbb%2f..", "x", "20261019-000002-BBBBBB"):
+            self.assertEqual(self.get(f"/api/lane?name=developer&job={bad}")[0].status, 400, bad)
+        self.assertEqual(self.get("/api/lane?name=nobody&job=20261019-000002-bbbbbb")[0].status, 404)
+        self.assertEqual(self.get("/api/lane?name=developer&job=20261019-000002-bbbbbb", cookie=False)[0].status, 403)
+
+    def test_state_carries_the_outbox(self):
+        resp, body = self.get("/api/state")
+        self.assertEqual(resp.status, 200)
+        self.assertEqual(json.loads(body)["outbox"], [])
+
     def test_token_becomes_cookie(self):
         resp, _ = self.get(f"/?token={TOKEN}", cookie=False)
         self.assertEqual(resp.status, 303)
@@ -952,6 +971,358 @@ class DocsAbsentTests(unittest.TestCase):
                     d.stop(server)
 
 
+class OutboxTests(unittest.TestCase):
+    """The OUTBOX module (doomtickle/passdesk-ops#189): imported factory/* branches, joined with
+    the reviewer's verdict, the push and the pull request, over a real throwaway git repo."""
+
+    DEV = "20261019-000001-aaaaaa"
+    REV = "20261019-000009-cccccc"
+    REV2 = "20261019-000010-dddddd"
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.fx = Fixture(Path(self.tmp.name))
+        self.proj = Path(self.tmp.name) / "proj"
+        self.proj.mkdir()
+        self.env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1", GIT_AUTHOR_NAME="Dev",
+                        GIT_AUTHOR_EMAIL="dev@example.com", GIT_COMMITTER_NAME="Dev", GIT_COMMITTER_EMAIL="dev@example.com")
+        self.git("init", "-q", "-b", "main")
+        self.base = self.commit("base")
+        self.git("checkout", "-q", "-b", "side")
+        self.commit("one")
+        self.tip = self.commit("two")
+        self.git("checkout", "-q", "main")
+        (self.fx.state / "dispatch" / "project").write_text(f"{self.proj}\n")
+        self.ref("factory-developer/factory/foo", self.tip)
+        self.board = d.Dashboard(self.fx.state, self.fx.roles, "proj")
+        self.now = self.fx.now
+        self.write_jobs([self.dev_job(self.DEV, "factory-developer/factory/foo", self.tip)])
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def git(self, *args):
+        cp = subprocess.run(["git", "-C", str(self.proj), *args], env=self.env, capture_output=True, check=True)
+        return cp.stdout.decode().strip()
+
+    def commit(self, msg):
+        self.git("commit", "-q", "--allow-empty", "-m", msg)
+        return self.git("rev-parse", "HEAD")
+
+    def ref(self, name, oid):
+        self.git("update-ref", f"refs/remotes/{name}", oid)
+
+    def dev_job(self, job, ref, commit, ago=3000, lane="developer"):
+        return {"id": job, "role": "developer", "lane": lane, "status": "done", "started": self.now - ago - 600,
+                "finished": self.now - ago, "branches": [{"repo": ".", "ref": ref, "commit": commit[:7]}]}
+
+    def rev_job(self, job, started_ago, lane="reviewer"):
+        return {"id": job, "role": "reviewer", "lane": lane, "status": "done", "started": self.now - started_ago,
+                "finished": self.now - started_ago + 60, "branches": None}
+
+    def write_jobs(self, jobs):
+        (self.fx.state / "dispatch" / "jobs.json").write_text(json.dumps({"version": 1, "jobs": jobs}))
+
+    def packet(self, job, verdict, task):
+        text = f"# reviewer job {job}: done\n\n- Lane: reviewer\n- Verdict: {verdict}\n\n## Task\n\n{task}\n\n## Report\n\nok\n"
+        (self.fx.state / "dispatch" / "packets" / f"{job}.md").write_text(text)
+
+    def audit(self, *records):
+        with open(self.fx.state / "broker" / "audit.jsonl", "a") as f:
+            for rec in records:
+                f.write(json.dumps(rec) + "\n")
+
+    def rows(self, step=0):
+        # Each call is past the cache time, so it recomputes.
+        self.now_calls = getattr(self, "now_calls", 0) + 1
+        return self.board.snapshot(self.now + self.now_calls * 100 + step)["outbox"]
+
+    def test_an_imported_branch_is_a_row(self):
+        (row,) = self.rows()
+        self.assertEqual((row["repo"], row["branch"], row["status"], row["ahead"]),
+                         ("proj", "factory-developer/factory/foo", "OPEN", 2))
+        self.assertEqual((row["verdict"], row["push"], row["pr"], row["job"], row["lane"]), ("", "", None, self.DEV, "developer"))
+        self.assertEqual(row["commit"], self.tip[:7])
+
+    def test_newest_first_and_capped(self):
+        self.ref("factory-developer/factory/bar", self.tip)
+        self.write_jobs([self.dev_job(self.DEV, "factory-developer/factory/foo", self.tip, ago=3000),
+                         self.dev_job("20261019-000002-eeeeee", "factory-developer/factory/bar", self.tip, ago=100)])
+        self.assertEqual([r["branch"] for r in self.rows()],
+                         ["factory-developer/factory/bar", "factory-developer/factory/foo"])
+        jobs = []
+        for i in range(ob.MAX_ROWS + 5):
+            self.ref(f"factory-developer/factory/b{i}", self.tip)
+            jobs.append(self.dev_job(f"20261019-{i:06d}-aaaaaa", f"factory-developer/factory/b{i}", self.tip, ago=10 + i))
+        self.write_jobs(jobs)
+        self.assertEqual(len(self.rows()), ob.MAX_ROWS)
+
+    def test_the_verdict_joins_by_exact_branch(self):
+        self.ref("factory-developer/factory/foo-bar", self.tip)
+        self.write_jobs([self.dev_job(self.DEV, "factory-developer/factory/foo", self.tip),
+                         self.dev_job("20261019-000002-eeeeee", "factory-developer/factory/foo-bar", self.tip),
+                         self.rev_job(self.REV, 1000), self.rev_job(self.REV2, 500)])
+        self.packet(self.REV, "REVISE", "Review factory-developer/factory/foo.")
+        self.packet(self.REV2, "APPROVED", "Review factory-developer/factory/foo-bar, then summarise.")
+        by = {r["branch"]: r for r in self.rows()}
+        self.assertEqual(by["factory-developer/factory/foo"]["verdict"], "REVISE")   # not foo-bar's APPROVED
+        self.assertEqual(by["factory-developer/factory/foo-bar"]["verdict"], "APPROVED")
+        self.assertFalse(by["factory-developer/factory/foo"]["stale"])
+
+    def test_the_newest_review_wins_and_an_older_one_marks_stale(self):
+        self.write_jobs([self.dev_job(self.DEV, "factory-developer/factory/foo", self.tip, ago=3000),
+                         self.rev_job(self.REV, 4000), self.rev_job(self.REV2, 1000)])
+        self.packet(self.REV, "APPROVED", "Review factory-developer/factory/foo")
+        (row,) = self.rows()
+        self.assertEqual((row["verdict"], row["stale"]), ("APPROVED", True))   # it began before the job ended
+        self.packet(self.REV2, "REVISE", "Re-review refs/remotes/factory-developer/factory/foo.")
+        (row,) = self.rows()
+        self.assertEqual((row["verdict"], row["stale"]), ("REVISE", False))
+
+    def test_only_the_packet_header_gives_a_verdict(self):
+        self.write_jobs([self.dev_job(self.DEV, "factory-developer/factory/foo", self.tip), self.rev_job(self.REV, 1000)])
+        self.packet(self.REV, "REVISE", "Review factory-developer/factory/foo\n\n- Verdict: APPROVED")
+        self.assertEqual(self.rows()[0]["verdict"], "REVISE")
+        # No verdict line, no packet, or a verdict that is neither word: none.
+        (self.fx.state / "dispatch" / "packets" / f"{self.REV}.md").write_text(
+            "# x\n\n- Verdict: MAYBE\n\n## Task\n\nReview factory-developer/factory/foo\n")
+        self.board = d.Dashboard(self.fx.state, self.fx.roles, "proj")
+        self.assertEqual(self.rows()[0]["verdict"], "")
+        (self.fx.state / "dispatch" / "packets" / f"{self.REV}.md").unlink()
+        self.board = d.Dashboard(self.fx.state, self.fx.roles, "proj")
+        self.assertEqual(self.rows()[0]["verdict"], "")
+
+    def test_a_pending_push_is_staged_only_while_its_card_lives(self):
+        self.write_jobs([self.dev_job(self.DEV, "factory-developer/factory/x", self.tip)])
+        self.ref("factory-developer/factory/x", self.tip)
+        (row,) = self.rows()   # the fixture's c0ffee card (factory/x) is pending
+        self.assertEqual(row["push"], "STAGED")
+        (self.fx.state / "broker" / "approvals" / "pending" / "c0ffee.json").unlink()
+        self.assertEqual(self.rows()[0]["push"], "")   # expired or gone: nothing to approve any more
+
+    def test_push_done_failed_and_written(self):
+        base = {"event": "approval-write-done", "branch": "factory/foo", "repo": "o/r"}
+        self.audit({**base, "ts": iso(self.now - 20), "tool": "git_push", "id": "p1", "result": "Pushed"})
+        self.assertEqual(self.rows()[0]["push"], "PUSHED")
+        self.audit({**base, "ts": iso(self.now - 10), "tool": "git_push", "id": "p2", "event": "approval-write-failed"})
+        self.assertEqual(self.rows()[0]["push"], "FAILED")
+        # A PR the gateway opened with no push on record: the branch got there some other way.
+        self.fx_state_audit_reset()
+        self.audit({**base, "ts": iso(self.now - 5), "tool": "github_create_pr", "id": "p3",
+                    "result": "Opened PR #7: https://github.com/o/r/pull/7"})
+        row = self.rows()[0]
+        self.assertEqual((row["push"], row["pr"]["label"]), ("WRITTEN", "PR #7"))
+
+    def fx_state_audit_reset(self):
+        (self.fx.state / "broker" / "audit.jsonl").write_text("")
+        self.board = d.Dashboard(self.fx.state, self.fx.roles, "proj")
+
+    def test_a_deferred_write_counts_like_an_audit_line(self):
+        self.board.outbox.git.begin()
+        writes = [{"state": "made", "target": "factory/foo", "tool": "git_push", "summary": "pushed", "at": self.now - 5, "id": "w1"}]
+        (row,) = self.board.outbox.rows(self.now + 100, [], set(), writes)
+        self.assertEqual(row["push"], "PUSHED")
+        writes[0]["state"] = "failed"
+        (row,) = self.board.outbox.rows(self.now + 200, [], set(), writes)
+        self.assertEqual(row["push"], "FAILED")
+
+    def test_a_pr_link_comes_only_from_the_audit(self):
+        self.audit({"ts": iso(self.now - 5), "tool": "github_create_pr", "event": "approval-write-done", "id": "p9",
+                    "branch": "factory/foo", "result": "Opened PR #41: https://github.com/o/r/pull/41"})
+        pr = self.rows()[0]["pr"]
+        self.assertEqual(pr, {"label": "PR #41", "url": "https://github.com/o/r/pull/41", "number": 41})
+
+    def test_a_pr_url_that_is_not_the_pr_is_text(self):
+        for result in ("Opened PR #41: https://evil.example/o/r/pull/41",
+                       "Opened PR #41: https://github.com.evil.example/o/r/pull/41",
+                       "Opened PR #41: https://user@github.com/o/r/pull/41",
+                       "Opened PR #41: https://github.com@evil.example/o/r/pull/41",
+                       "Opened PR #41: http://github.com/o/r/pull/41",
+                       "Opened PR #41: javascript:alert(1)",
+                       "Opened PR #41: https://github.com/o/r/pull/42",        # another number
+                       "Opened PR #41: https://github.com/o/r/pull/41?x=1",
+                       "Opened PR #41: https://github.com/o/r/issues/41",
+                       "Opened PR #41"):
+            self.fx_state_audit_reset()
+            self.audit({"ts": iso(self.now - 5), "tool": "github_create_pr", "event": "approval-write-done", "id": "p9",
+                        "branch": "factory/foo", "result": result})
+            self.assertEqual(self.rows()[0]["pr"], {"label": "PR #41", "url": "", "number": 41}, result)
+
+    def test_pr_url_checks(self):
+        gh, gl = "github_create_pr", "gitlab_create_mr"
+        self.assertEqual(ob.pr_url("https://github.com/o/r/pull/3", gh, ""), "https://github.com/o/r/pull/3")
+        self.assertEqual(ob.pr_url("https://gitlab.example.com/g/sub/p/-/merge_requests/3", gl, "gitlab.example.com"),
+                         "https://gitlab.example.com/g/sub/p/-/merge_requests/3")
+        for url, tool, host in (("https://gitlab.example.com/g/p/-/merge_requests/3", gl, ""),          # no host configured
+                                ("https://gitlab.other.com/g/p/-/merge_requests/3", gl, "gitlab.example.com"),
+                                ("https://gitlab.example.com/g/p/-/merge_requests/3", gh, "gitlab.example.com"),
+                                ("https://github.com/o/r/pull/3", gl, "github.com"),
+                                ("https://GitHub.com/o/r/pull/3", gh, ""),
+                                ("https://github.com:443/o/r/pull/3", gh, ""),
+                                ("https://github.com./o/r/pull/3", gh, ""),
+                                ("https://github.com/o/r/pull/3#x", gh, ""),
+                                ("https://github.com/o/r/pull/3 ", gh, ""),
+                                ("https://github.com/o/r/pull/3\n", gh, ""),
+                                ("https://github.com/o/‮r/pull/3", gh, ""),
+                                ("https://gitlab.example.com/g/../p/-/merge_requests/3", gl, "gitlab.example.com"),
+                                ("", gh, ""), (None, gh, "")):
+            self.assertEqual(ob.pr_url(url, tool, host), "", url)
+
+    def test_the_gitlab_host_comes_from_policy(self):
+        with mock.patch.object(ob.policy, "policy_value_source", return_value=('"https://GitLab.Example.com/"', "f")):
+            self.assertEqual(ob.gitlab_host(object()), "gitlab.example.com")
+        with mock.patch.object(ob.policy, "policy_value_source", return_value=('"http://gitlab.example.com"', "f")):
+            self.assertEqual(ob.gitlab_host(object()), "")
+        with mock.patch.object(ob.policy, "policy_value_source", side_effect=OSError):
+            self.assertEqual(ob.gitlab_host(object()), "")
+        self.assertEqual(ob.gitlab_host(None), "")
+
+    def test_merged_and_gone_rows_retire_themselves(self):
+        self.ref("factory-developer/factory/done", self.base)   # contained in HEAD
+        self.write_jobs([self.dev_job(self.DEV, "factory-developer/factory/foo", self.tip),
+                         self.dev_job("20261019-000002-eeeeee", "factory-developer/factory/done", self.base, ago=100),
+                         self.dev_job("20261019-000003-ffffff", "factory-developer/factory/lost", self.base, ago=200)])
+        by = {r["branch"]: r for r in self.rows()}
+        self.assertEqual(by["factory-developer/factory/done"]["status"], "MERGED")
+        self.assertEqual(by["factory-developer/factory/done"]["ahead"], 0)
+        self.assertEqual(by["factory-developer/factory/lost"]["status"], "GONE")
+        self.assertEqual(by["factory-developer/factory/foo"]["status"], "OPEN")
+        day = ob.RETIRE_SECONDS
+        self.write_jobs([self.dev_job(self.DEV, "factory-developer/factory/foo", self.tip, ago=day + 10),
+                         self.dev_job("20261019-000002-eeeeee", "factory-developer/factory/done", self.base, ago=day + 100),
+                         self.dev_job("20261019-000003-ffffff", "factory-developer/factory/lost", self.base, ago=day + 200)])
+        # Finished work that is still open stays however old it is.
+        self.assertEqual([r["branch"] for r in self.rows()], ["factory-developer/factory/foo"])
+
+    def test_merging_the_branch_turns_the_row_merged(self):
+        self.assertEqual(self.rows()[0]["status"], "OPEN")
+        self.git("merge", "-q", "--no-edit", "--no-ff", self.tip)
+        self.assertEqual(self.rows()[0]["status"], "MERGED")
+
+    def test_hostile_branch_names_are_shown_clean_and_never_reach_git(self):
+        hostile = ["factory-developer/factory/--upload-pack=touch /tmp/pwn", "-C/tmp", "factory--x/factory/y",
+                   "factory-developer/factory/-x", "factory-developer/factory/a\nb", "factory-developer/factory/$(touch pwn)",
+                   "factory-developer/factory/x;sh", "factory-developer/factory/../../etc", "refs/heads/main",
+                   "factory-developer/factory/a‮b", "factory-developer/factory/" + "a" * 400, "", 7]
+        self.write_jobs([self.dev_job(f"20261019-{i:06d}-aaaaaa", ref, self.tip, ago=10 + i) for i, ref in enumerate(hostile)])
+        seen = []
+        real = subprocess.run
+
+        def spy(argv, **kw):
+            seen.append(list(argv))
+            return real(argv, **kw)
+        with mock.patch.object(ob.subprocess, "run", spy):
+            rows = self.rows()
+        self.assertTrue(rows)
+        for row in rows:
+            self.assertEqual(row["status"], "UNCHECKED", row)
+            self.assertIsNone(row["ahead"])
+            self.assertNotIn("\n", row["branch"])
+            self.assertNotIn("‮", row["branch"])
+            self.assertLessEqual(len(row["branch"]), 160)
+        for argv in seen:
+            self.assertEqual(argv[:6], ["git", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-C"], argv)
+            self.assertIn(argv[7], ("for-each-ref", "rev-list"))
+            joined = "\0".join(argv)
+            for bad in ("upload-pack", "touch", "$(", ";sh", "\n", "etc"):
+                self.assertNotIn(bad, joined)
+        self.assertFalse(any(a[7] == "rev-list" for a in seen))   # nothing was valid enough to count
+
+    def test_git_runs_only_the_fixed_read_only_forms(self):
+        seen = []
+        real = subprocess.run
+
+        def spy(argv, **kw):
+            seen.append((list(argv), kw))
+            return real(argv, **kw)
+        with mock.patch.object(ob.subprocess, "run", spy):
+            self.rows()
+        self.assertEqual(len(seen), 2)
+        (refs, kw1), (count, kw2) = seen
+        self.assertEqual(refs[7:], ["for-each-ref", "--format=%(objectname) %(refname)", "refs/remotes/factory-developer/factory/"])
+        self.assertEqual(count[7:9], ["rev-list", "--count"])
+        self.assertRegex(count[9], r"^HEAD\.\.[0-9a-f]{40}$")
+        for kw in (kw1, kw2):
+            self.assertFalse(kw.get("shell"))
+            self.assertEqual(kw["env"]["GIT_OPTIONAL_LOCKS"], "0")
+            self.assertEqual(kw["stdin"], subprocess.DEVNULL)
+            self.assertFalse([k for k in kw["env"] if k.startswith("GIT_") and k not in ("GIT_OPTIONAL_LOCKS", "GIT_TERMINAL_PROMPT", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM", "GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL")])
+
+    def test_git_hooks_and_the_environment_are_inert(self):
+        hook = self.proj / ".git" / "hooks" / "reference-transaction"
+        hook.write_text(f"#!/bin/sh\ntouch {self.tmp.name}/hook-ran\n")
+        hook.chmod(0o755)
+        self.git("config", "core.fsmonitor", f"touch {self.tmp.name}/fsmonitor-ran")
+        with mock.patch.dict(os.environ, {"GIT_DIR": "/nonexistent", "GIT_WORK_TREE": "/nonexistent"}):
+            (row,) = self.rows()
+        self.assertEqual(row["status"], "OPEN")
+        self.assertFalse((Path(self.tmp.name) / "hook-ran").exists())
+        self.assertFalse((Path(self.tmp.name) / "fsmonitor-ran").exists())
+
+    def test_the_result_is_cached_for_a_few_seconds(self):
+        calls = []
+        real = ob.subprocess.run
+
+        def spy(argv, **kw):
+            calls.append(argv)
+            return real(argv, **kw)
+        with mock.patch.object(ob.subprocess, "run", spy):
+            t = self.now + 1000
+            self.board.snapshot(t)
+            n = len(calls)
+            self.assertGreater(n, 0)
+            self.board.snapshot(t + ob.TTL - 1)
+            self.assertEqual(len(calls), n)
+            self.board.snapshot(t + ob.TTL)
+            self.assertGreater(len(calls), n)
+
+    def test_no_project_no_index_and_a_bad_index_give_no_rows_not_an_error(self):
+        (self.fx.state / "dispatch" / "project").unlink()
+        rows = self.rows()
+        self.assertEqual([r["status"] for r in rows], ["UNCHECKED"])   # listed, not checked
+        (self.fx.state / "dispatch" / "jobs.json").write_text("not json")
+        self.assertEqual(self.rows(), [])
+        (self.fx.state / "dispatch" / "jobs.json").write_text(json.dumps({"version": 2, "jobs": []}))
+        self.assertEqual(self.rows(), [])
+        (self.fx.state / "dispatch" / "jobs.json").unlink()
+        self.assertEqual(self.rows(), [])
+
+    def test_a_symlinked_index_or_packet_is_not_read(self):
+        real = self.fx.state / "dispatch" / "jobs.json"
+        other = Path(self.tmp.name) / "elsewhere.json"
+        other.write_text(real.read_text())
+        real.unlink()
+        real.symlink_to(other)
+        self.assertEqual(self.rows(), [])
+        self.assertIsNone(ob.read_regular(Path(self.tmp.name) / "nope", 10))
+
+    def test_the_lane_packet_endpoint_takes_only_a_job_id(self):
+        detail = self.board.lane_detail("developer", self.now, job="20261019-000002-bbbbbb")
+        self.assertIn("reviewer job 20261019-000002-bbbbbb", detail["packet"])
+        detail = self.board.lane_detail("developer", self.now, job="20261019-000077-abcdef")
+        self.assertIn("no packet for job", detail["packet"])
+        for bad in ("../../broker/audit", "20261019-000002-bbbbbb/../x", "x", "20261019-000002-BBBBBB"):
+            self.assertIn("no packet", self.board.lane_detail("developer", self.now, job=bad)["packet"])
+        self.assertIsNone(self.board.lane_detail("nobody", self.now, job="20261019-000002-bbbbbb"))
+
+    def test_the_demo_has_two_rows(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            demo.build(Path(tmp))
+            board = d.Dashboard(Path(tmp), d.DOCS_ROOT / "roles", demo.PROJECT, demo=True)
+            with mock.patch.object(ob.subprocess, "run", side_effect=AssertionError("the demo runs no git")):
+                rows = board.snapshot()["outbox"]
+            self.assertEqual(len(rows), 2)
+            by = {r["branch"]: r for r in rows}
+            ok = by["factory-developer/factory/greet-readme"]
+            self.assertEqual((ok["verdict"], ok["push"], ok["status"]), ("APPROVED", "PUSHED", "OPEN"))
+            self.assertEqual(ok["pr"]["url"], "https://github.com/example/app/pull/41")
+            fix = by["factory-developer-lane2/factory/greet-unicode-name"]
+            self.assertEqual((fix["verdict"], fix["push"], fix["pr"]), ("REVISE", "", None))
+            for row in rows:   # the press needs the lane to exist, and the packet to be the job's own
+                self.assertIn(row["lane"], [lane["name"] for lane in board.snapshot()["lanes"]])
+                self.assertIn(f"job {row['job']}", board.lane_detail(row["lane"], job=row["job"])["packet"].split("\n")[0])
+
+
 class PageTests(unittest.TestCase):
     def test_fonts_match_checksums(self):
         sums = (UI / "fonts" / "SHA256SUMS").read_text().split("\n")
@@ -968,6 +1339,25 @@ class PageTests(unittest.TestCase):
             js = (UI / name).read_text()
             for sink in ("innerHTML", "outerHTML", "insertAdjacentHTML", "document.write", "eval(", "new Function"):
                 self.assertNotIn(sink, js, f"{name} uses {sink}")
+
+    def test_outbox_draws_text_and_links_only_validated_urls(self):
+        js = (UI / "app.js").read_text()
+        html = (UI / "index.html").read_text()
+        self.assertIn('href="/docs/#guide-dashboard:the-outbox"', html)
+        self.assertIn('id="outbox-list"', html)
+        body = js[js.index("function obRow"):js.index("function renderOutbox")]
+        # The only href is set from the server's URL after an https-only check; classes come from fixed maps.
+        self.assertEqual(body.count(".href ="), 1)
+        self.assertLess(body.index("SAFE_URL.test(r.pr.url)"), body.index(".href ="))
+        self.assertIn('a.rel = "noopener noreferrer"', body)
+        self.assertIn('const SAFE_URL = /^https:', js)
+        for fixed in ("OB_STATUS[r.status]", "OB_VERDICT[r.verdict]", "OB_PUSH[r.push]"):
+            self.assertIn(fixed, body)
+        self.assertNotIn("className = r.", body)
+        self.assertNotIn("setAttribute", body.replace('row.setAttribute("role", "listitem")', ""))
+        # A row opens that job's packet, and the monitor fetches it by the job id the server validates.
+        self.assertIn("openMon(r.lane, r.job, obKey(r))", body)
+        self.assertIn("&job=${encodeURIComponent(monJob)}", js)
 
     def test_floor_only_displays(self):
         # The factory floor draws from the state app.js hands it: it makes no request

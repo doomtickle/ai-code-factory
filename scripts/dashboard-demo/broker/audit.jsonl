@@ -1,3 +1,6 @@
+{"ts": "{{iso:-2640}}", "tool": "git_push", "event": "approval-requested", "id": "demo0004push", "principal": "developer", "repo": "example/app", "branch": "factory/greet-readme"}
+{"ts": "{{iso:-2600}}", "role": "developer", "tool": "git_push", "event": "approval-granted", "id": "demo0004push", "repo": "example/app", "branch": "factory/greet-readme", "approver": "you", "queued": true}
+{"ts": "{{iso:-2596}}", "tool": "git_push", "event": "approval-write-done", "id": "demo0004push", "repo": "example/app", "branch": "factory/greet-readme", "result": "Pushed 3 commit(s) to example/app:factory/greet-readme (3f9c1ab)."}
 {"ts": "{{iso:-2460}}", "tool": "github_create_pr", "event": "approval-requested", "id": "demo0000pr", "principal": "developer", "repo": "example/app", "branch": "factory/greet-readme"}
 {"ts": "{{iso:-2400}}", "role": "developer", "tool": "github_create_pr", "event": "approval-granted", "id": "demo0000pr", "repo": "example/app", "branch": "factory/greet-readme", "approver": "you", "queued": true}
 {"ts": "{{iso:-2398}}", "tool": "github_create_pr", "event": "approval-write-done", "id": "demo0000pr", "repo": "example/app", "branch": "factory/greet-readme", "result": "Opened PR #41: https://github.com/example/app/pull/41"}

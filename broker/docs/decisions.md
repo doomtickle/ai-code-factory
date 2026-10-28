@@ -2,6 +2,36 @@
 
 Dated entries, for the user to review. Newest first.
 
+## 2026-10-28
+
+- **The dashboard's OUTBOX asks git two fixed questions and never gives git a name.**
+  doomtickle/passdesk-ops#189. The module (`scripts/dashboard_outbox.py`) lists the refs the
+  bridge imported with one `for-each-ref --format=%(objectname) %(refname)` over the
+  `refs/remotes/factory-<lane>/factory/` namespaces, and counts each branch with `rev-list
+  --count HEAD..<object id>`. That is `rev-list --count`, not the `merge-base --is-ancestor` the
+  issue suggested: one run gives both "merged" (0) and "commits ahead" (the row's number). The
+  only thing passed to git from a record is a full object id the listing itself printed, so a
+  hostile branch name (a leading `-`, a newline, `..`, shell characters) is shown as an UNCHECKED
+  row and reaches no argv; the ref is only compared with the listing's names. Both forms are in
+  `CLAUDE.md` and `scripts/CLAUDE.md`. Results are cached 8 s, capped at 20 rows (40 branches, 5 s
+  a run, 12 s a recomputation), and demo mode reads `dispatch/demo-refs.json` instead (it runs no
+  git).
+- **Push state is read from what the gateway recorded, and STAGED needs a live card.** A push is
+  STAGED only while its approval card is still pending (an expired card shows nothing, because
+  nobody can approve it), PUSHED or FAILED when the gateway's write finished (the audit line or
+  the deferred-writes list), and WRITTEN when a PR/MR was opened for the branch with no push on
+  record. A link is built only from the gateway's own `Opened PR #N: <url>` result and only if it
+  is a `github.com` pull request, or a merge request on the policy's GitLab host, with the same
+  number; the page checks again before setting `href`. A verdict is the newest reviewer packet
+  whose Task section names the exact branch (a prefix such as `foo` vs `foo-bar` does not match);
+  it is marked old when that review began before the developer's job ended.
+- **Rows retire on what git can see, a day after the job.** MERGED (contained in `HEAD`) and GONE
+  (the ref no longer exists) rows drop a day after their job ended; an OPEN row stays. A squash or
+  rebase merge never makes a branch MERGED, so the row stays until the owner deletes the imported
+  ref; detecting that would need a patch-id comparison per branch, which is more git than the
+  state view should run. The module sits under the lane strip in the Lanes bay (the issue allowed
+  bay or rail; the rail is full), and a row opens the job's packet through `/api/lane?job=`.
+
 ## 2026-10-27
 
 - **The dashboard's SETUP screen rides in the polled control-unit state, cached for 5 s, and

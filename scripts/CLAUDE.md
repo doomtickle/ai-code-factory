@@ -21,7 +21,7 @@ factory checkout, rendered once at start-up by `docs.py` `build_served()` with C
 JS as separate files, held in memory, served under the same CSP minus `frame-src`, no
 git run and no `file://` links), and is GET-only on its main port.
 
-Its state view only reads the state folder; at start-up it starts the browser opener
+Its state view reads the state folder, plus the OUTBOX's git (below); at start-up it starts the browser opener
 (fixed argv, no shell: `rundll32.exe url.dll,FileProtocolHandler <url>` then `wslview`
 on WSL, else Python's `webbrowser`; never `explorer.exe`, `cmd.exe` or
 `powershell -Command`). Agent-written text reaches the main page only as JSON and is
@@ -134,6 +134,28 @@ only named policy keys (never a credential, and a URL's user, password, query an
 cut), and every string is cleaned to one printable line and drawn as text. Anything that moves
 the security boundary (broker policy and hosts, credentials, kits) is shown there read-only,
 never edited.
+
+OUTBOX (doomtickle/passdesk-ops#189, `scripts/dashboard_outbox.py`) lists the `factory/*`
+branches the bridge imported, newest first, as `outbox` in the main page's state: the repo,
+the branch, the commits ahead of host `HEAD`, the latest reviewer verdict, the push state and
+the PR or MR. It reads `dispatch/jobs.json` and `dispatch/packets/` (regular files only, opened
+`O_NOFOLLOW`, size-capped) and the audit and deferred writes the dashboard already holds, and runs
+only two git forms, both read-only, hooks and fsmonitor off (`-c core.hooksPath=/dev/null -c
+core.fsmonitor=false`), argv list, no shell, `GIT_*` stripped, `GIT_OPTIONAL_LOCKS=0`:
+`for-each-ref --format=%(objectname) %(refname) refs/remotes/factory-<lane>/factory/` and
+`rev-list --count HEAD..<object id>`. A branch name is only compared with what `for-each-ref`
+printed and never reaches git, and the only thing passed on is a full object id the listing gave
+(`[0-9a-f]{40,64}`, so it can't be an option). A name that isn't a plain ref gives an UNCHECKED
+row and no git run. The result is cached 8 s, there are at most 20 rows and 40 branches looked
+at, one run is cut at 5 s and a recomputation at 12 s. A link is built only from the gateway's own
+`Opened PR #N: <url>` result and only when it is `https://github.com/<owner>/<repo>/pull/N` or
+`https://<the policy's GitLab host>/<project>/-/merge_requests/N` with the same number (no
+userinfo, query or fragment); anything else is shown as text, and the page re-checks that it is
+an https URL before it sets `href`. Every other string is drawn with `textContent`, and classes
+come from fixed maps, never from the data. A row opens that job's packet through `GET
+/api/lane?name=&job=` (the job id must match `[0-9]{8}-[0-9]{6}-[0-9a-f]{6}`, else 400; the
+packet is a regular file `dispatch/packets/<id>.md`, opened `O_NOFOLLOW`, capped). The module acts on nothing. Demo mode runs
+no git: `FixtureGit` reads `dispatch/demo-refs.json`.
 
 Anything new that lets a page act must meet the same bar: one fixed argv with no
 shell, a key in a request header (not just the cookie) on a POST or WebSocket with its

@@ -1161,7 +1161,9 @@ your browser. It shows:
 It is local. Apart from the terminal and the control unit, it only reads the
 state folder (lane transcripts, both audit logs, review packets, approval
 cards, and for INSPECT the stored patch), and at start-up the factory's docs,
-and makes no network connection. The
+and makes no network connection. For the outbox it also lists the imported
+`factory/*` refs of your project and counts commits ahead of `HEAD` (read-only `git`
+with hooks off, cached a few seconds; see the dashboard guide). The
 control unit writes only a decision file (approve, decline) and its action logs, and runs only
 `factory restart`, `factory update --yes`, `factory update --plan` and `factory doctor` (a fixed
 command line, never a shell; `--factory PATH` runs another `factory`); its fonts and xterm.js are

@@ -14,6 +14,9 @@ factory state folder and makes no network connection:
 and, for the SERVICE DUE lamp (dashboard_service.py), sandboxes/ and sandbox-parts/ (the
 fingerprints each sandbox was made from), the snapshots `factory start` keeps in dispatch/, and the
 factory config folder (--config) it compares them with; no command is run for it.
+The OUTBOX module (dashboard_outbox.py) also reads dispatch/jobs.json and runs two fixed,
+read-only git forms in the host project (a for-each-ref listing of the imported refs and
+rev-list --count HEAD..<object id>; hooks and fsmonitor off, no shell), cached for a few seconds.
 It reuses watch.py's transcript model and approvals.py's card reader rather
 than parsing either command's output. The main page only displays: nothing
 it can reach acts.
@@ -113,6 +116,7 @@ from urllib.parse import parse_qs, urlsplit
 import approvals
 import dashboard_controls as dc
 import dashboard_demo as demo
+import dashboard_outbox as ob
 import dashboard_service as ds
 import dashboard_term as dt
 import docs
@@ -169,6 +173,7 @@ TAIL = 40          # transcript lines per lane in /api/state (taller lane screen
 FULL = 1500        # transcript lines per lane in /api/lane
 EVENTS = 80        # event printer lines
 SERVICE_TTL = 5    # seconds between checks of the SERVICE DUE lamp
+PACKET_MAX = 2_000_000  # bytes of a job's packet /api/lane?job= serves
 WRITES_TTL = 4     # seconds between reads of approvals/done/ for the deferred-write list
 VERDICT = re.compile(r"^- Verdict: (\S+)", re.M)
 DESK_MAX = 40      # characters of a lane's desk placard (the floor slides what the glass can't show)
@@ -315,6 +320,7 @@ class Dashboard:
         self.watch = w.Watch(state / "dispatch", roles, project)
         self.broker = BrokerAudit(state / "broker" / "audit.jsonl")
         self.verdicts: dict = {}
+        self.outbox = ob.Outbox(state, project, paths, ob.FixtureGit(state) if demo else ob.HostGit(state))
         self.lock = threading.Lock()
         self._writes: tuple = (0.0, [])
 
@@ -428,6 +434,7 @@ class Dashboard:
         with self.lock:
             self.refresh()
             cards = self.cards(now)
+            calls = list(self.broker.calls)
             lanes = [self.lane_json(lane, now, TAIL) for lane in self.watch.lanes]
 
             midnight = local_midnight(now)
@@ -460,6 +467,9 @@ class Dashboard:
             events = [dict(e, t=clock(e["t"])) for e in events[-EVENTS:]]
 
         total = sum(num(rec.get("cost_usd")) or 0.0 for _, rec in jobs)
+        writes = self.writes(now)
+        # Read outside the lock, like SETUP: it runs git (cached a few seconds, bounded).
+        outbox = self.outbox.rows(now, calls, {c["id"] for c in cards}, writes)
         return {
             "now": now, "clock": clock(now), "project": self.project, "demo": self.demo,
             "bridge": self.watch.bridge_alive(),
@@ -470,7 +480,8 @@ class Dashboard:
                       "roles": [{"role": r, "cost": round(c, 4)} for r, c in sorted(roles.items(), key=lambda x: -x[1])]},
             "events": events,
             "gate": cards,
-            "writes": self.writes(now),
+            "writes": writes,
+            "outbox": outbox,
             "service": self.service(now),
         }
 
@@ -481,7 +492,8 @@ class Dashboard:
             return None
         return broker_event(rec)
 
-    def lane_detail(self, name: str, now: float | None = None) -> dict | None:
+    def lane_detail(self, name: str, now: float | None = None, job: str = "") -> dict | None:
+        """One lane's transcript and packet. With a valid job id (the OUTBOX rows), the packet is that job's."""
         now = time.time() if now is None else now
         with self.lock:
             self.refresh()
@@ -489,8 +501,15 @@ class Dashboard:
             if lane is None:
                 return None
             out = self.lane_json(lane, now, FULL)
-            out["packet"] = self.watch.packet_text(lane)
+            out["packet"] = self.job_packet(job) if job else self.watch.packet_text(lane)
         return out
+
+    def job_packet(self, job: str) -> str:
+        """The review packet of one job (an id in the bridge's form: it names a file under packets/)."""
+        raw = ob.read_regular(self.state / "dispatch" / "packets" / f"{job}.md", PACKET_MAX) if ob.JOB_ID.fullmatch(job) else None
+        if raw is None:
+            return f"(no packet for job {job} yet: it is written when the job ends)"
+        return raw.decode("utf-8", "replace")
 
 
 # --------------------------------------------------------------------------
@@ -569,7 +588,12 @@ def make_handler(board: Dashboard, token: str, port: int, term: dt.Term | None =
                 snap["cu"] = None if term_port is None else {"port": term_port}
                 self.json(snap)
             elif url.path == "/api/lane":
-                detail = board.lane_detail(parse_qs(url.query).get("name", [""])[0])
+                query = parse_qs(url.query)
+                job = query.get("job", [""])[0]
+                if job and not ob.JOB_ID.fullmatch(job):
+                    self.refuse(400, "bad job id")
+                    return
+                detail = board.lane_detail(query.get("name", [""])[0], job=job)
                 if detail is None:
                     self.refuse(404, "no such lane")
                 else:

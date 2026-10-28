@@ -26,6 +26,7 @@
   // Monitor state: the open lane, its tab, the latest /api/lane data, a request
   // sequence number (stale responses are dropped) and what the body shows now.
   let monLane = null, monTab = "transcript", monData = null, monSeq = 0, monBusy = false;
+  let monJob = "", monBack = "";  // the job whose packet the monitor shows (an OUTBOX row), and the row to return focus to
   let shown = { lane: null, tab: null, keys: [], packet: null };
   // ---------- 7-segment LCD digits, drawn as SVG
   const SEG = { a: "4,2 6,0 16,0 18,2 16,4 6,4", b: "18,3 20,5 20,15 18,17 16,15 16,5", c: "18,19 20,21 20,31 18,33 16,31 16,21",
@@ -429,9 +430,64 @@
     $("print-sub").textContent = `${events.filter(e => e.kind === "DENY").length} denied`;
   }
 
+  // ---------- outbox: finished factory/* branches (display only; a row opens that job's packet)
+  // Every string is set as text. Classes come from the fixed maps below, never from the data, and
+  // the one link is the server's own validated https PR/MR URL, re-checked here before it is used.
+  const OB_STATUS = { OPEN: "", MERGED: "merged", GONE: "gone", UNCHECKED: "unchecked" };
+  const OB_VERDICT = { APPROVED: "ob-approved", REVISE: "ob-revise" };
+  const OB_PUSH = { PUSHED: "ob-pushed", STAGED: "ob-staged", WRITTEN: "ob-written", FAILED: "ob-failed" };
+  const SAFE_URL = /^https:\/\/[A-Za-z0-9.-]+(?::[0-9]+)?\/[\x21-\x7e]*$/;
+  const obRows = new Map();  // row key -> its button, for focus
+  let obSig = "";
+  const obKey = r => `${r.job}|${r.branch}`;
+  function obRow(r) {
+    const row = el("div", `ob-row${r.status === "MERGED" || r.status === "GONE" ? " retired" : ""}`);
+    row.setAttribute("role", "listitem");
+    const btn = el("button", "ob-main");
+    btn.type = "button";
+    const lane = state.lanes.some(l => l.name === r.lane);
+    btn.disabled = !lane;
+    btn.title = lane ? "Open this job's packet" : "That lane is no longer configured";
+    btn.append(el("span", "ob-repo", r.repo), el("span", "ob-branch", r.branch),
+      el("span", "ob-ahead", r.ahead == null ? "" : `+${r.ahead}`));
+    if (OB_STATUS[r.status]) btn.append(el("span", `ob-tag ${OB_STATUS[r.status]}`, r.status));
+    else if (r.status === "UNCHECKED") btn.append(el("span", "ob-tag unchecked", "?"));
+    if (r.verdict) btn.append(el("span", `ob-tag ${OB_VERDICT[r.verdict] || ""}`, r.verdict + (r.stale ? " (old)" : "")));
+    if (r.push) btn.append(el("span", `ob-tag ${OB_PUSH[r.push] || ""}`, r.push));
+    btn.addEventListener("click", () => openMon(r.lane, r.job, obKey(r)));
+    row.append(btn);
+    obRows.set(obKey(r), btn);
+    if (r.pr) {
+      const label = String(r.pr.label || "PR");
+      if (r.pr.url && SAFE_URL.test(r.pr.url)) {
+        const a = el("a", "ob-pr", label);
+        a.href = r.pr.url; a.target = "_blank"; a.rel = "noopener noreferrer"; a.title = r.pr.url;
+        row.append(a);
+      } else {
+        row.append(el("span", "ob-pr nolink", label));
+      }
+    }
+    return row;
+  }
+  function renderOutbox() {
+    const rows = state.outbox || [];
+    const lanes = state.lanes.map(l => l.name).join(",");
+    const sig = JSON.stringify([rows, lanes]);
+    if (sig === obSig) return;
+    obSig = sig;
+    const list = $("outbox-list");
+    const back = document.activeElement && list.contains(document.activeElement)
+      ? [...obRows].find(([, b]) => b === document.activeElement) : null;
+    obRows.clear();
+    const live = rows.filter(r => r.status !== "MERGED" && r.status !== "GONE").length;
+    setText($("outbox-sub"), rows.length ? `${live} waiting` : "");
+    list.replaceChildren(...(rows.length ? rows.map(obRow) : [el("p", "ob-empty", "Nothing waiting. Finished branches land here.")]));
+    if (back && obRows.get(back[0])) obRows.get(back[0]).focus({ preventScroll: true });
+  }
+
   // ---------- monitor (one lane's transcript and review packet)
-  function openMon(name) {
-    monLane = name; monTab = "transcript"; monData = null; monBusy = false; monSeq++;
+  function openMon(name, job, back) {
+    monLane = name; monJob = job || ""; monBack = back || ""; monTab = job ? "packet" : "transcript"; monData = null; monBusy = false; monSeq++;
     shown = { lane: null, tab: null, keys: [], packet: null };
     const body = $("mon-body");
     body.replaceChildren(); body.scrollTop = 0;
@@ -443,16 +499,18 @@
   function closeMon() {
     if (!monLane) return;
     const r = cards.get(monLane);  // back to this lane's card, looked up by name
-    monLane = null; monData = null; monSeq++;
+    const row = monBack && obRows.get(monBack);  // or to the OUTBOX row that opened it
+    monLane = null; monJob = ""; monBack = ""; monData = null; monSeq++;
     $("scrim").hidden = true;
-    if (r && r.card.isConnected) r.card.focus();
+    if (row && row.isConnected) row.focus();
+    else if (r && r.card.isConnected) r.card.focus();
   }
   async function loadMon() {
     if (!monLane || monBusy) return;
     const name = monLane, seq = ++monSeq;
     monBusy = true;
     try {
-      const r = await fetch(`/api/lane?name=${encodeURIComponent(name)}`, { cache: "no-store" });
+      const r = await fetch(`/api/lane?name=${encodeURIComponent(name)}${monJob ? `&job=${encodeURIComponent(monJob)}` : ""}`, { cache: "no-store" });
       if (!r.ok) throw new Error(String(r.status));
       const data = await r.json();
       if (seq === monSeq && monLane === name) { monData = data; renderMon(); }
@@ -470,6 +528,7 @@
   function renderMon() {
     const d = monData || (state && state.lanes.find(l => l.name === monLane)) || { name: monLane, state: "idle", tail: [] };
     setText($("mon-title"), `MONITOR · ${d.name}`);
+    setText($("mon-note"), monJob ? `PACKET · job ${monJob}` : "");
     setClass($("mon-led"), `led ${LED[d.state] || ""}`);
     const st = $("mon-state"); setClass(st, `state-tag st-${d.state}`); setText(st, LABEL[d.state] || d.state);
     document.querySelectorAll(".tabkey[data-tab]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.tab === monTab)));
@@ -754,7 +813,7 @@
       if (!r.ok) throw new Error(String(r.status));
       state = await r.json();
       polledAt = Date.now();
-      renderCu(); renderHeader(); renderLanes(); renderGate(); renderSpend(); renderPaper(); renderTerm();
+      renderCu(); renderHeader(); renderLanes(); renderGate(); renderSpend(); renderPaper(); renderOutbox(); renderTerm();
       // The factory floor (floor.js) draws from the same state; it fetches nothing itself.
       document.dispatchEvent(new CustomEvent("factory:state", { detail: state }));
       if (monLane) loadMon();

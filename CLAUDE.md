@@ -84,7 +84,11 @@ socket, or host credentials. Full picture: README.md.
   above, a `for-each-ref` listing of imported refs (same flags), and for the review
   packet a read-only `log` + `diff --stat` of each imported branch vs host `HEAD`
   (same flags plus `--no-ext-diff --no-textconv`, since `.gitattributes` could name a
-  driver) — never checkout, merge, or write a working tree. The one custom host
+  driver) — never checkout, merge, or write a working tree. The dashboard's OUTBOX
+  module (`scripts/dashboard_outbox.py`) runs only two read-only forms of its own, each
+  with hooks and fsmonitor off, no shell, no inherited `GIT_*`: `for-each-ref
+  --format=%(objectname) %(refname)` over the `refs/remotes/factory-<lane>/factory/`
+  namespaces, and `rev-list --count HEAD..<object id>` (never a branch name). The one custom host
   component that acts on agents.
 - The dashboard (`scripts/dashboard.py`, `factory dashboard`) is the one host
   component listening for a browser: binds 127.0.0.1 only, requires a per-run token,
