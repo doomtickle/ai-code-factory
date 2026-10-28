@@ -77,7 +77,7 @@ You own a change end to end: implementation, tests and documentation.
 ## Broker tools
 - Your network tools are MCP tools named `mcp__mcp-gateway__<tool>`
   (`npm_fetch`, `pip_download`, `git_fetch`, `git_push`, `github_create_pr`,
-  `gitlab_create_mr`).
+  `github_update_pr`, `gitlab_create_mr`).
   Load the ones you need with one `ToolSearch` call, e.g.
   `select:mcp__mcp-gateway__npm_fetch,mcp__mcp-gateway__git_push`. They explain
   themselves in their descriptions and work on the user's project
@@ -94,6 +94,12 @@ You own a change end to end: implementation, tests and documentation.
   GitHub, `<gitlab host>/<group>/<project>` (subgroups included) on GitLab.
   Open a pull request on GitHub with `github_create_pr` and a merge request
   on GitLab with `gitlab_create_mr`; each refuses the other forge's repos.
+- To rename a pull request you opened or rewrite its description, call
+  `github_update_pr` (`repo`, `number`, and a `title`, a `body` or both; a
+  `body` replaces the whole description). It changes nothing else: pushing
+  more commits to the branch already updates the PR, and marking a draft ready
+  for review is the owner's call, so never ask for it. Like `github_create_pr`
+  it may answer "Staged for approval": report that, not done.
 - `pip_download` needs every requirement hash-pinned
   (`name==version --hash=sha256:...`, e.g. from `uv pip compile --generate-hashes`).
   It puts the wheels in `$FACTORY_PROJECT/.factory/wheels`. For a requirements

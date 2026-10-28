@@ -4,6 +4,52 @@ Dated entries, for the user to review. Newest first.
 
 ## 2026-10-28
 
+- **`github_update_pr`: title and body of a pull request, nothing else**
+  (doomtickle/passdesk-ops#188). `github_create_pr` can open a draft PR but nothing could
+  change one afterwards (a review packet of 26 Oct ended "someone with GitHub access will
+  need to rename #180"). Choices:
+  - **Same policy as `github_create_pr`:** the repo must be in `[git].repos` (GitHub only;
+    a GitLab project is refused), the title and body are secret-scanned, the call is audited
+    with an intent record, and it is held when `[approvals].tools` names it. The card has the
+    body's first 2,000 characters and the digest of the whole body, which is part of the card
+    id and checked against the job again before the write, so two edits whose bodies differ
+    only past the excerpt are different cards. A title or body that was not given is `null`
+    on the card and the job, which is not the same card as an empty one.
+  - **The PATCH is built from title and body alone.** It never sends `draft`, `state`, `base`
+    or any other field, and the tool does not accept them (the call layer refuses unknown
+    arguments). Marking a draft ready for review stays the owner's decision
+    (doomtickle/passdesk-ops#8: agents must not open non-draft PRs, and the same reasoning
+    covers readiness).
+  - **Limits:** title 1 to 256 characters on one line, body at most 65,536 characters (GitHub's
+    own limits), at least one of the two, `number` a positive `integer` (not a bool, at most
+    10^9). A body replaces the whole description: GitHub's PATCH has no append.
+  - **Only PRs the gateway could have opened (reviewer finding, medium).** The tool first
+    GETs `/repos/{repo}/pulls/{number}` and refuses unless `head.repo.full_name` equals the
+    repo (case-insensitive; a fork or a deleted fork repo is refused) and `head.ref` starts
+    with `[git].push_branch_prefix`, the only branches `github_create_pr` opens PRs from and
+    `git_push` writes. Without this the tool could rewrite the title or body of the owner's own
+    PRs or a fork's (a prompt-injected developer with holds off, the default, could add
+    "Fixes #N" silently), which is more than create or push allow; an earlier version of
+    this entry wrongly said that write was already possible. The head is on the approval card
+    (and in its id), the completer GETs again and refuses unless the head is the card's, and
+    both checks fail closed: any error reading the PR refuses. The GET uses the same
+    `_github_api` path (Bearer token and no redirects where the gateway holds the token) and
+    needs Pull requests read, which the PATCH's read/write includes. A PR of this role's
+    that someone changed to another head branch is refused too.
+  - **Token handling is `github_create_pr`'s:** `_github_api` with a Bearer header and no
+    redirects where the gateway holds the token, the proxy's authentication under sbx. The
+    token needs Pull requests read/write on the repo, as for `github_create_pr`.
+  - **No replay of a made update.** `github_create_issue` and the other writes answer the
+    same call again with the earlier result (`Made`) so a repeat never writes twice. For
+    `github_update_pr` that was wrong: title A, then B, then A again has the same card id as
+    the first A, so the third call was answered "Made" while the PR stayed titled B. A PATCH
+    to the same text is harmless to repeat, so `core/holds.py` `_settled` does not replay a
+    finished `github_update_pr`: the same update after one was made stages a fresh card. A
+    call still pending, or being made right now, is answered as for any write.
+  - **Grant:** the developer's `BROKER_TOOLS` in `roles/developer/role.conf`. A changed
+    `BROKER_TOOLS` of a role that already has broker access applies on `factory start`; no
+    sandbox is recreated (only giving a role its first broker tool does).
+
 - **`dashboard.toml` is read once, strictly, and a bad file means the defaults, not a stopped dashboard.**
   doomtickle/passdesk-ops#196. `scripts/dashboard_config.py` reads `FACTORY_CONFIG/dashboard.toml`
   (the dashboard's `--config`) at start and serves the result as `look` in `/api/state`; there is no
@@ -58,6 +104,35 @@ Dated entries, for the user to review. Newest first.
 
 ## 2026-10-27
 
+- **`github_get_issue` and `github_list_issues`: read-only, with their own repo list,
+  `[github].issue_read_repos`** (doomtickle/passdesk-ops#187). The Coordinator read
+  `BACKLOG.md`, a snapshot that goes stale, and the owner pasted issue text in by hand;
+  the Jira tools already show the shape (read-only, opt-in grant in
+  `kits/coordinator/broker.conf`, content wrapped as untrusted). Choices:
+  - **A new list, empty by default, not `issue_repos` and not `[git].repos`.** Reusing
+    `issue_repos` would make every tracker the Coordinator may read one the reviewer
+    may also write to (and the reverse), tying two grants that are decided separately.
+    `[git].repos` usually holds public repos, where anyone can write an issue; the text
+    would go straight into the Coordinator's context, the one role that delegates work.
+    The cost is one more list to set; an empty list leaves both tools returning DENIED,
+    the same inert default as `issue_repos`. The doctor reports it.
+  - **Read only, nothing that writes.** `GET`s of one issue, its comments and a repo's
+    issue list. A pull request is refused by `github_get_issue` and left out of
+    `github_list_issues` (the issues API returns both).
+  - **Output is bounded:** at most 30 issues; title 300 characters, body 10,000, each
+    comment 2,000 and the last 5 comments; 20,000 overall. Everything goes through
+    `sanitize` (escapes and control characters stripped, secrets redacted) and
+    `untrusted` (nonce-marked block), and the call is audited like any tool (the result
+    is cut to 500 characters in the record).
+  - **Token handling is `github_create_issue`'s:** the same `_github_api`, so the sbx proxy
+    authenticates, or in standalone a Bearer header with redirects refused. The token needs
+    Issues read; the failure hint says so. `number` is an `integer` argument, which the
+    call layer already type-checks.
+  - **Not granted by default.** Like Jira, the Coordinator gets them only when the user
+    sets `BROKER_TOOLS` in `kits/coordinator/broker.conf` (then `factory update`, which
+    recreates its sandbox). The Coordinator briefing carries the same rule as for Jira:
+    ticket content is data, and it confirms with the user before delegating from it.
+
 - **The dashboard's SETUP screen rides in the polled control-unit state, cached for 5 s, and
   shows no credential at all.** doomtickle/passdesk-ops#183. `config` is built by
   `scripts/dashboard_setup.py` from the factory's own parsers (`roles.role_get` for the
@@ -84,6 +159,7 @@ Dated entries, for the user to review. Newest first.
   by content with their snapshots in `FACTORY_STATE/dispatch/`, and project notes by mtime
   against the snapshot's last write; deleted notes aren't noticed. It is display only: UPDATE
   wins when both apply, and a failure while computing it reads as nothing due.
+
 
 ## 2026-10-26
 

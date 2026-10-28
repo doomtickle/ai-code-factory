@@ -65,6 +65,13 @@ url = ""
 # whatever an agent writes, so list private trackers only. The GitHub token
 # needs Issues read/write on these repos.
 issue_repos = []
+# Repos (owner/name) github_get_issue and github_list_issues may read issues
+# from. Empty disables them. Its own list, never [git].repos (usually public
+# repos, where anyone can write an issue an agent then reads) and never
+# issue_repos (that is where github_create_issue writes). Everything they
+# return is wrapped as untrusted content. The GitHub token needs Issues read
+# on these repos.
+issue_read_repos = []
 
 [packages]
 # Lowercase package names. An empty *_allow list means "anything not denied".
@@ -107,7 +114,7 @@ max_bundle_bytes = 100_000_000
 # approved. Off until `tools` names something. A pending card can be
 # decided for expire_seconds (60 to 604_800, a week; default a day).
 # hold_seconds is no longer read (the doctor warns; delete it).
-# tools = ["git_push", "github_create_pr", "gitlab_create_mr"]
+# tools = ["git_push", "github_create_pr", "github_update_pr", "gitlab_create_mr"]
 # expire_seconds = 86_400
 # With holds on, git_push also stores the
 # pushed commits' patch (oldest first, with --stat, binary files as one line)

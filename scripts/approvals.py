@@ -230,7 +230,7 @@ def write_line(item):
     """One display line for a deferred write."""
     label = {"failed": "!! FAILED", "running": "running", "made": "made"}[item["state"]]
     what = item["tool"] + (" " + item["target"] if item["target"] else "") + (" -> " + item["repo"] if item["repo"] else "")
-    if item["tool"] in ("github_create_pr", "gitlab_create_mr") and item["title"]:
+    if item["tool"] in ("github_create_pr", "github_update_pr", "gitlab_create_mr") and item["title"]:
         what += " \"{}\"".format(item["title"])
     text = "{}  {:<9} {}".format(item["id"], label, what)
     if item["state"] != "running" and item["summary"]:
@@ -257,6 +257,12 @@ def one_line(card):
             "draft " if card.get("draft", True) else "", "MR" if tool == "gitlab_create_mr" else "PR",
             clean(card.get("repo"), 100), clean(card.get("head"), 100), clean(card.get("base"), 100),
             clean(card.get("title"), 60))
+    elif tool == "github_update_pr":
+        what = "update PR #{} ({}) on {}: {}".format(
+            clean(card.get("number"), 12), clean(card.get("head"), 100), clean(card.get("repo"), 100),
+            " and ".join(p for p in ("title \"{}\"".format(clean(card.get("title"), 60))
+                                     if card.get("title") is not None else "",
+                                     "body" if card.get("body") is not None else "") if p))
     else:
         what = tool
     return "{}  {:<10} {}  ({} min left)".format(clean(card["id"], 64), who, what, minutes_left(card))

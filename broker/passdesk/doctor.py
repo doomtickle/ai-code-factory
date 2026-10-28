@@ -66,7 +66,10 @@ _TOOL_HOSTS = {
     "git_fetch": ["github.com"],
     "git_push": ["github.com"],
     "github_create_pr": ["api.github.com"],
+    "github_update_pr": ["api.github.com"],
     "github_create_issue": ["api.github.com"],
+    "github_get_issue": ["api.github.com"],
+    "github_list_issues": ["api.github.com"],
     "gitlab_create_mr": [],  # [gitlab].url's host, added by egress_hosts
     "npm_fetch": ["registry.npmjs.org"],
     "pip_download": ["pypi.org", "files.pythonhosted.org"],
@@ -82,7 +85,8 @@ _EXCHANGE_DIRS = ("incoming", "outgoing", "npm-mirror", "wheels")
 # Tools that need the "github" credential. In sbx mode this is proxy-injected
 # (never read by the gateway); in standalone mode check_standalone checks it
 # through credentials.get(), the only place that distinction matters.
-_GITHUB_TOOLS = {"git_fetch", "git_push", "github_create_pr", "github_create_issue"}
+_GITHUB_TOOLS = {"git_fetch", "git_push", "github_create_pr", "github_update_pr", "github_create_issue",
+                 "github_get_issue", "github_list_issues"}
 
 
 def _proxy_blocks_other_providers(order: list[str]) -> bool:
@@ -176,7 +180,7 @@ def _check_policy_shape(report: Report, pol: dict) -> None:
     known = {
         "web": {"allow_hosts", "max_bytes"},
         "git": {"repos", "protected_branches", "push_branch_prefix", "default_base"},
-        "github": {"issue_repos"},
+        "github": {"issue_repos", "issue_read_repos"},
         "gitlab": {"url"},
         "packages": {"npm_deny", "npm_allow", "pypi_deny", "pypi_allow", "npm_private_registry",
                      "npm_redirect_hosts"},
@@ -210,7 +214,7 @@ def _check_policy_shape(report: Report, pol: dict) -> None:
             for t in tools:
                 if t not in known_tools:
                     report.warn(f"[approvals].tools names {t}, which is not a tool; a typo?",
-                                f"tools that can be held: {', '.join(holds.SUGGESTED_TOOLS)}, github_create_issue, "
+                                f"tools that can be held: {', '.join(holds.SUGGESTED_TOOLS)}, github_update_pr, github_create_issue, "
                                 "and a plugin tool declared writes_externally")
     if isinstance(appr, dict):
         value = appr.get("expire_seconds")
@@ -361,7 +365,7 @@ def check_policy(report: Report, path: Path | None = None) -> dict | None:
     _check_policy_shape(report, pol)
     git = pol.get("git") if isinstance(pol.get("git"), dict) else {}
     if _is_str_list(git.get("repos", [])) and not git.get("repos"):
-        report.info("[git].repos is empty: git_fetch, git_push, github_create_pr and gitlab_create_mr return DENIED",
+        report.info("[git].repos is empty: git_fetch, git_push, github_create_pr, github_update_pr and gitlab_create_mr return DENIED",
                     "add the repos agents may use, e.g. repos = [\"acme/widgets\"], then rebuild the image")
     gitlab_ok = True
     try:
@@ -384,13 +388,18 @@ def check_policy(report: Report, path: Path | None = None) -> dict | None:
                         "gitlab_create_mr returns DENIED",
                         f"add projects as \"{git_tool.gitlab_host(pol)}/<group>/<project>\"")
     gh = pol.get("github") if isinstance(pol.get("github"), dict) else {}
-    issue_repos = gh.get("issue_repos", [])
-    if not _is_str_list(issue_repos) or any(not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", r)
-                                            or ".." in r for r in issue_repos):
-        report.fail("[github].issue_repos must be a list of \"owner/name\" strings")
-    elif not issue_repos:
-        report.info("[github].issue_repos is empty: github_create_issue returns DENIED",
-                    "list the repos agents may file issues in (keep it to private trackers), then rebuild the image")
+    for key, tools, hint in (
+            ("issue_repos", "github_create_issue",
+             "list the repos agents may file issues in (keep it to private trackers), then rebuild the image"),
+            ("issue_read_repos", "github_get_issue and github_list_issues",
+             "list the repos agents may read issues from (their text is untrusted; prefer repos whose issue "
+             "authors you trust), then rebuild the image")):
+        listed = gh.get(key, [])
+        if not _is_str_list(listed) or any(not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", r)
+                                           or ".." in r for r in listed):
+            report.fail(f"[github].{key} must be a list of \"owner/name\" strings")
+        elif not listed:
+            report.info(f"[github].{key} is empty: {tools} return{'s' if ' and ' not in tools else ''} DENIED", hint)
     return pol
 
 
@@ -1090,6 +1099,36 @@ def check_live(report: Report, pol: dict | None, url: str, http=_http) -> None:
             report.warn(f"GitHub answered HTTP {code} for {repo}")
 
 
+def check_live_issue_read(report: Report, pol: dict | None, granted: set[str], http=_http) -> None:
+    """With github_get_issue or github_list_issues granted, can the GitHub token
+    list issues in each [github].issue_read_repos entry? Unauthenticated, as
+    check_live's repo probe: the deployment's proxy attaches the token."""
+    tools = {"github_get_issue", "github_list_issues"} & granted
+    gh = (pol or {}).get("github") if isinstance((pol or {}).get("github"), dict) else {}
+    repos = gh.get("issue_read_repos", []) if _is_str_list(gh.get("issue_read_repos", [])) else []
+    if not tools or not repos:
+        return
+    report.section("Live")
+    for repo in repos:
+        api = f"https://api.github.com/repos/{repo}/issues?per_page=1"
+        try:
+            code, _ = http(api, headers={"Accept": "application/vnd.github+json"})
+        except (urllib.error.URLError, OSError, ValueError) as e:
+            report.fail(f"cannot reach api.github.com to check issues in {repo}: {getattr(e, 'reason', e)}",
+                        "is api.github.com in the deployment's egress allowlist? run this from where the "
+                        "broker runs")
+            return
+        if code == 200:
+            report.ok(f"issues in {repo} are readable ({', '.join(sorted(tools))})")
+        elif code in (401, 403, 404):
+            report.fail(f"GitHub returns HTTP {code} for the issues of {repo}: {', '.join(sorted(tools))} "
+                        "cannot read them",
+                        "check the owner/name; the fine-grained token needs Issues: read on this repo. "
+                        + _github_token_hint("the deployment must attach the token"))
+        else:
+            report.warn(f"GitHub answered HTTP {code} for the issues of {repo}")
+
+
 # GitLab's access levels: 30 is Developer, the least that may push a branch.
 _GITLAB_DEVELOPER = 30
 
@@ -1191,6 +1230,7 @@ def run(policy_path: Path | None = None, kits: list[Path] | None = None, live: b
     if live:
         scheme = "https" if config.TLS_CERT else "http"
         check_live(report, pol, url or f"{scheme}://127.0.0.1:{config.PORT}/mcp", http)
+        check_live_issue_read(report, pol, granted, http)
     return report
 
 
