@@ -1113,6 +1113,46 @@ class OutboxTests(unittest.TestCase):
         row = self.rows()[0]
         self.assertEqual((row["push"], row["pr"]["label"]), ("WRITTEN", "PR #7"))
 
+    def test_a_write_no_hold_stopped_is_an_ordinary_record(self):
+        # Holds are off by default: the call is logged once, decision "allow", args kept by summarize_args.
+        push = {"ts": iso(self.now - 20), "tool": "git_push", "decision": "allow", "result": "Pushed factory/foo",
+                "args": {"repo": "o/r", "branch": "factory/foo"}}
+        self.audit(push)
+        self.assertEqual(self.rows()[0]["push"], "PUSHED")
+        self.audit({**push, "ts": iso(self.now - 10), "decision": "deny", "reason": "no", "result": None})
+        self.assertEqual(self.rows()[0]["push"], "FAILED")
+        self.audit({**push, "ts": iso(self.now - 5), "decision": "error"})
+        self.assertEqual(self.rows()[0]["push"], "FAILED")
+        # A staged call and an intent record say nothing; the approval events do.
+        self.fx_state_audit_reset()
+        self.audit({**push, "decision": "staged"}, {**push, "event": "intent"})
+        self.assertEqual(self.rows()[0]["push"], "")
+
+    def test_an_unheld_pr_and_mr_give_a_validated_link(self):
+        pr = {"ts": iso(self.now - 5), "tool": "github_create_pr", "decision": "allow",
+              "args": {"repo": "o/r", "head": "factory/foo", "base": "main"},
+              "result": "Opened PR #41: https://github.com/o/r/pull/41"}
+        self.audit(pr)
+        row = self.rows()[0]
+        self.assertEqual(row["pr"], {"label": "PR #41", "url": "https://github.com/o/r/pull/41", "number": 41})
+        self.assertEqual(row["push"], "WRITTEN")
+        for result in ("Opened PR #41: https://evil.example/o/r/pull/41", "Opened PR #41: https://github.com/o/r/pull/42",
+                       "Opened PR #41: https://user@github.com/o/r/pull/41", "Opened PR #41: https://github.com/o/r/pull/41?x=1"):
+            self.fx_state_audit_reset()
+            self.audit({**pr, "result": result})
+            self.assertEqual(self.rows()[0]["pr"], {"label": "PR #41", "url": "", "number": 41}, result)
+        # A refused PR opened nothing.
+        self.fx_state_audit_reset()
+        self.audit({**pr, "decision": "deny", "result": None})
+        self.assertIsNone(self.rows()[0]["pr"])
+        # An MR links only for the configured GitLab host.
+        self.fx_state_audit_reset()
+        self.audit({"ts": iso(self.now - 5), "tool": "gitlab_create_mr", "decision": "allow",
+                    "args": {"repo": "gl.example.com/g/p", "head": "factory/foo"},
+                    "result": "Opened MR !5: https://gl.example.com/g/p/-/merge_requests/5"})
+        with mock.patch.object(ob, "gitlab_host", return_value="gl.example.com"):
+            self.assertEqual(self.rows()[0]["pr"], {"label": "MR !5", "url": "https://gl.example.com/g/p/-/merge_requests/5", "number": 5})
+
     def fx_state_audit_reset(self):
         (self.fx.state / "broker" / "audit.jsonl").write_text("")
         self.board = d.Dashboard(self.fx.state, self.fx.roles, "proj")

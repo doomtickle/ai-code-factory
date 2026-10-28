@@ -69,6 +69,7 @@ GITHUB_PR = re.compile(r"/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/pull/([0-9]{1,9})")
 GITLAB_MR = re.compile(r"/[A-Za-z0-9_./-]+/-/merge_requests/([0-9]{1,9})")
 PUSH = "git_push"
 OPENERS = ("github_create_pr", "gitlab_create_mr")
+WRITERS = (PUSH,) + OPENERS
 
 
 def read_regular(path: Path, cap: int) -> bytes | None:
@@ -310,9 +311,15 @@ class Outbox:
         for rec in calls:
             args = rec.get("args") if isinstance(rec.get("args"), dict) else {}
             branch = rec.get("branch") or args.get("branch") or args.get("head")
-            kind = {"approval-requested": "staged", "approval-queued": "staged", "approval-granted": "staged",
-                    "approval-declined": "cleared", "approval-write-done": "done",
-                    "approval-write-failed": "failed"}.get(rec.get("event"))
+            if rec.get("event") is None:
+                # A write no hold stopped (the default: [approvals].tools is empty) is an ordinary record.
+                tool, decision = rec.get("tool"), rec.get("decision")
+                kind = ("done" if decision == "allow" and tool in WRITERS
+                        else "failed" if decision in ("deny", "error") and tool == PUSH else None)
+            else:
+                kind = {"approval-requested": "staged", "approval-queued": "staged", "approval-granted": "staged",
+                        "approval-declined": "cleared", "approval-write-done": "done",
+                        "approval-write-failed": "failed"}.get(rec.get("event"))
             if kind:
                 text = rec.get("result") if kind == "done" else ""
                 add(branch, _utc(rec.get("ts")), rec.get("tool"), kind, rec.get("id"), text)
