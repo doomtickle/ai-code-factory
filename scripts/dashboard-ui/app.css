@@ -384,6 +384,12 @@ html.cu-open, html.cu-open body { overflow: hidden; }
 .paper::-webkit-scrollbar { display: none; }
 .pl { display: grid; grid-template-columns: 4.4em 3.6em minmax(0, 1fr); gap: 8px; white-space: nowrap; }
 .pl span:last-child { overflow: hidden; text-overflow: ellipsis; }
+button.pl { width: 100%; margin: 0; padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: default; }
+button.pl.act { cursor: pointer; }
+button.pl.act:hover { background: rgba(0,0,0,.12); }
+button.pl:focus-visible { outline: 2px solid var(--ink-red); outline-offset: -2px; background: rgba(0,0,0,.12); }
+.pl.open { align-items: start; }
+.pl.open span:last-child { overflow: visible; white-space: normal; overflow-wrap: anywhere; }
 .pl.red { color: var(--ink-red); }
 .pl.new { animation: feed .4s steps(3); }
 @keyframes feed { from { transform: translateY(1rem); } }

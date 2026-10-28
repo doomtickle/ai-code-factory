@@ -1520,7 +1520,7 @@ class CuScriptTests(unittest.TestCase):
                           "viewer asks with the count", "viewer: fp change cancels",
                           "decided card shows its state, keys dark", "expired card shows EXPIRED, keys dark",
                           "refusals shown as text", "decline without a reason says so", "agent strings stay text",
-                          "service keys follow the lamp"])
+                          "service keys follow the lamp", "main page may only choose the card shown"])
 
 
 class RealPageTests(unittest.TestCase):

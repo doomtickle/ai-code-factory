@@ -272,8 +272,13 @@ def broker_event(rec: dict) -> dict | None:
         bits.append("· " + approvals.clean(rec["reason"]))
     if kind == "WRITTEN" and rec.get("result"):
         bits.append("· " + approvals.clean(next((ln for ln in str(rec["result"]).splitlines() if ln.strip()), "")))
-    return {"t": utc_ts(rec.get("ts")), "kind": kind, "red": kind in ("DENY", "STAGED", "NO", "FAILED"),
-            "text": " ".join(b for b in bits if b)}
+    ev = {"t": utc_ts(rec.get("ts")), "kind": kind, "red": kind in ("DENY", "STAGED", "NO", "FAILED"),
+          "text": " ".join(b for b in bits if b)}
+    # The card an approval event is about, only if it is a plain card id (the page passes it to the control unit).
+    cid = rec.get("id")
+    if kind in ("STAGED", "OK", "NO", "WRITTEN", "FAILED") and isinstance(cid, str) and approvals.CARD_ID.fullmatch(cid):
+        ev["card_id"] = cid
+    return ev
 
 
 # --------------------------------------------------------------------------
@@ -435,7 +440,13 @@ class Dashboard:
                 text = f"{rec.get('lane') or rec.get('role')} {status} {w.fmt_secs(num(rec.get('elapsed_seconds')) or 0)}"
                 if cost is not None:
                     text += f" ${cost:.2f}"
-                events.append({"t": ts, "kind": "JOB", "red": status in ("failed", "cancelled", "interrupted"), "text": text})
+                ev = {"t": ts, "kind": "JOB", "red": status in ("failed", "cancelled", "interrupted"), "text": text}
+                # Which job, on which lane, so the line can open that lane's monitor on its packet.
+                job_id, lane_name = rec.get("job_id"), rec.get("lane")
+                if (isinstance(job_id, str) and ob.JOB_ID.fullmatch(job_id)
+                        and isinstance(lane_name, str) and ob.LANE.fullmatch(lane_name)):
+                    ev["job_id"], ev["lane"] = job_id, lane_name
+                events.append(ev)
             for rec in self.broker.calls:
                 ev = self.broker_today(rec, midnight)
                 if ev:

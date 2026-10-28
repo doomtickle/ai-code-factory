@@ -101,7 +101,10 @@ Object.assign(g, {
   setTimeout: (f, ms) => setT(f, ms), clearTimeout: id => { timers = timers.filter(t => t.id !== id); },
   setInterval: (f, ms) => setT(f, ms, ms),
 });
-g.window = { top: {}, parent: { postMessage() {} }, addEventListener() {} };
+const parent = { postMessage() {} }, listeners = [];
+g.window = { top: {}, parent, addEventListener: (t, f) => { if (t === "message") listeners.push(f); } };
+const ORIGIN = "http://127.0.0.1:1234";   // the main page, from the cu-main-port meta
+const deliver = (data, over) => listeners.forEach(f => f(Object.assign({ source: parent, origin: ORIGIN, data }, over)));
 
 const card = (over) => Object.assign({ id: "c1", tool: "git_push", role: "developer", lanes: [], repo: "o/r", branch: "factory/x",
   commits: 1, file_count: 3, files: ["a.py"], seconds_left: 600, fp: "fp1", patch: true, patch_truncated: false }, over);
@@ -308,6 +311,93 @@ const card = (over) => Object.assign({ id: "c1", tool: "git_push", role: "develo
   assert.deepStrictEqual(leds(), ["led", "led"], "anything else lights nothing");
   service = null;
   results.push("service keys follow the lamp");
+
+  // 12. The main page can ask which card to show ({type:"cu:select", id}): a display hint, nothing more.
+  calls.length = 0;
+  const two = (p = "s") => [card({ id: p + "1", fp: "f1", branch: "factory/one" }), card({ id: p + "2", fp: "f2", branch: "factory/two" })];
+  const shown = () => $("sel-n").textContent;
+  const sel = (id, over) => deliver({ type: "cu:select", id }, over);
+  cards = two();
+  await advance(2000); await advance(3000);
+  assert.strictEqual(shown(), "1/2");
+  assert.match($("deck-body").textContent, /factory\/one/);
+  $("reason").value = "typed for the first card";
+  doc.activeElement = $("deck-lcd");
+  sel("s2"); await flush();
+  assert.strictEqual(shown(), "2/2", "the asked-for card is on the glass");
+  assert.match($("deck-body").textContent, /factory\/two/);
+  assert.strictEqual($("reason").value, "", "a typed reason never carries over to another card");
+  assert.strictEqual(doc.activeElement, $("deck-lcd"), "focus did not move, least of all onto a key");
+  assert.strictEqual($("btn-approve").disabled, true, "the keys go dark, as for any card that arrives unasked");
+  assert.strictEqual($("btn-decline").disabled, true);
+  $("btn-approve").fire("click"); await flush();
+  assert.strictEqual(decisions().length, 0, "a press at once decides nothing");
+  await advance(3000);
+  assert.strictEqual($("btn-approve").disabled, false);
+  $("btn-approve").click(); await flush();
+  assert.deepStrictEqual(decisions().map(d => [d.id, d.fp, d.verdict]), [["s2", "f2", "approve"]], "a press decides the card shown, with its own fingerprint");
+
+  // Anything but exactly that, from the parent at the main origin, is ignored.
+  calls.length = 0;
+  cards = two("t");
+  await advance(2000); await advance(3000);
+  const stays = async (what, fn) => { await advance(500); const before = shown(); fn(); await flush(); assert.strictEqual(shown(), before, what); };
+  await stays("wrong sender", () => sel("t2", { source: {} }));
+  await stays("wrong origin", () => sel("t2", { origin: "http://127.0.0.1:9999" }));
+  await stays("lookalike origin", () => sel("t2", { origin: ORIGIN + ".evil.test" }));
+  await stays("wrong type", () => deliver({ type: "cu:other", id: "t2" }));
+  await stays("an extra field", () => deliver({ type: "cu:select", id: "t2", fp: "f2" }));
+  await stays("a missing field", () => deliver({ type: "cu:select" }));
+  await stays("an array", () => deliver(["cu:select", "t2"]));
+  await stays("a bare string", () => deliver("cu:select"));
+  await stays("a null", () => deliver(null));
+  await stays("an id with a path in it", () => sel("../t2"));
+  await stays("an id with markup in it", () => sel("<b>t2</b>"));
+  await stays("an id too long", () => sel("t".repeat(65)));
+  await stays("an id that is not text", () => sel(2));
+  await stays("an empty id", () => sel(""));
+  assert.strictEqual(shown(), "1/2");
+  assert.strictEqual($("flash").hidden, true, "a refused message says nothing");
+  assert.strictEqual(calls.filter(c => c[0] !== "state").length, 0, "no request came of any of it");
+
+  // A card this unit does not hold is not shown; it says so. At most one hint per 400 ms.
+  await advance(500);
+  sel("gone-card"); await flush();
+  assert.strictEqual(shown(), "1/2");
+  assert.strictEqual($("flash").textContent, "That write is no longer held.");
+  $("flash").hidden = true;
+  sel("t2"); await flush();
+  assert.strictEqual(shown(), "1/2", "a second hint inside the gap is dropped");
+  await advance(500);
+  sel("t2"); await flush();
+  assert.strictEqual(shown(), "2/2");
+  await advance(500);
+  sel("t2"); await flush();   // already on it: no new hold
+  await advance(3000);
+  assert.strictEqual($("btn-approve").disabled, false);
+  await advance(500);
+  sel("t2"); await flush();
+  assert.strictEqual($("btn-approve").disabled, false, "the card already shown is no change, so no hold");
+
+  // Not over a question being asked, a viewer or a decision in flight.
+  cards = [card({ id: "u1", fp: "f1", patch_truncated: true }), card({ id: "u2", fp: "f2" })];
+  await advance(2000); await advance(3000);
+  await advance(500);
+  const first = shown();
+  $("btn-approve").click(); await flush();
+  assert.strictEqual($("ask").hidden, false);
+  sel("u2"); await flush();
+  assert.strictEqual(shown(), first, "the question stays on its card");
+  assert.strictEqual($("ask").hidden, false);
+  $("btn-decline").click(); await flush();
+  cards = two("v");
+  await advance(2000); await advance(3000);
+  await advance(500);
+  $("btn-inspect").click(); await flush();
+  assert.strictEqual($("scr-inspect").hidden, false);
+  sel("v2"); await flush();
+  assert.strictEqual(shown(), "1/2", "the viewer keeps its card");
+  results.push("main page may only choose the card shown");
 
   Date.now = realNow;
   console.log(JSON.stringify(results));

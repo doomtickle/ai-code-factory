@@ -214,6 +214,27 @@ class SnapshotTests(unittest.TestCase):
         self.assertIn("credentialed host", deny["text"])
         self.assertEqual(events[0]["t"], "11:59:00")
 
+    def test_events_carry_the_job_and_card_they_are_about(self):
+        events = self.board.snapshot(self.fx.now)["events"]
+        job = next(e for e in events if e["kind"] == "JOB")
+        self.assertEqual((job["job_id"], job["lane"]), ("20261019-000002-bbbbbb", "reviewer"))
+        self.assertEqual(next(e for e in events if e["kind"] == "STAGED")["card_id"], "c0ffee")
+        for kind in ("DENY", "ALLOW"):
+            self.assertNotIn("card_id", next(e for e in events if e["kind"] == kind))
+            self.assertNotIn("job_id", next(e for e in events if e["kind"] == kind))
+
+    def test_job_event_ids_are_dropped_unless_well_formed(self):
+        # A job id or lane that is not the bridge's own pattern never reaches the page as an id.
+        t = self.fx.now
+        for rec in ({"job_id": "../../x", "lane": "reviewer"}, {"job_id": "20261019-000002-bbbbbb", "lane": "Bad Lane"},
+                    {"job_id": "20261019-000002-bbbbbb", "lane": None}):
+            (self.fx.state / "dispatch" / "audit.jsonl").write_text(json.dumps(dict(
+                {"ts": iso(t - 60), "event": "job-end", "role": "reviewer", "status": "done", "cost_usd": 0.5}, **rec)) + "\n")
+            board = d.Dashboard(self.fx.state, self.fx.roles, "proj")
+            job = next(e for e in board.snapshot(t)["events"] if e["kind"] == "JOB")
+            self.assertNotIn("job_id", job, rec)
+            self.assertNotIn("lane", job, rec)
+
     def test_lane_detail(self):
         detail = self.board.lane_detail("reviewer", self.fx.now)
         self.assertIn("- Verdict: REVISE", detail["packet"])
@@ -398,10 +419,21 @@ class StagedEventTests(unittest.TestCase):
         self.assertEqual((ev["kind"], ev["red"]), ("WRITTEN", False))
         self.assertTrue(ev["text"].endswith("· https://github.com/o/r/pull/9"), ev["text"])
         self.assertNotIn("second line", ev["text"])
+        self.assertEqual(ev["card_id"], "c1")
         ev = d.broker_event({"event": "approval-write-failed", "id": "c1", "tool": "git_push", "repo": "o/r",
                              "reason": "denied: branch moved"})
         self.assertEqual((ev["kind"], ev["red"]), ("FAILED", True))
         self.assertTrue(ev["text"].endswith("· denied: branch moved"), ev["text"])
+
+    def test_card_id_only_when_it_is_a_card_id(self):
+        for cid in ("../x", "a b", "", "x" * 65, 7, None, ["c1"]):
+            ev = d.broker_event({"event": "approval-requested", "id": cid, "tool": "git_push", "repo": "o/r"})
+            self.assertNotIn("card_id", ev, cid)
+        ev = d.broker_event({"event": "approval-requested", "id": "x" * 64, "tool": "git_push", "repo": "o/r"})
+        self.assertEqual(ev["card_id"], "x" * 64)
+        # A denied call is not about a card, whatever else it carries.
+        ev = d.broker_event({"tool": "web_fetch", "role": "developer", "decision": "deny", "id": "c1", "reason": "no"})
+        self.assertNotIn("card_id", ev)
 
     def test_staged_call_record_prints_nothing(self):
         # The call itself is audited with decision "staged"; its approval-requested event is the line.

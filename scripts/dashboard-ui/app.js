@@ -423,6 +423,59 @@
   }
 
   const nearBottom = (n, slack) => n.scrollHeight - n.scrollTop - n.clientHeight < slack;
+  // Printer lines are buttons (doomtickle/passdesk-ops#190). JOB opens that lane's monitor on the job's
+  // packet; STAGED, WRITTEN and FAILED point the control unit at their card (a display hint, see selectCard);
+  // DENY and FAILED open in place to their whole text. Enter or Space acts, Esc shuts an open line. The line's
+  // text is only ever set as text; the ids it carries are checked against their patterns before they are used.
+  const PL_JOB = /^[0-9]{8}-[0-9]{6}-[0-9a-f]{6}$/;
+  const PL_LANE = /^[a-z][a-z0-9-]{1,40}$/;
+  const PL_CARD = /^[A-Za-z0-9_-]{1,64}$/;
+  const PL_SELECTS = new Set(["STAGED", "WRITTEN", "FAILED"]);
+  const PL_EXPANDS = new Set(["DENY", "FAILED"]);
+  const plKey = e => `${e.t}|${e.kind}|${e.text}`;
+  const plOpen = new Set();   // keys of the lines opened in place; kept across a redraw
+  const plBtns = new Map();   // line key -> its button, for focus
+  // The one thing the main page ever says to the control unit: which card to show (see renderCu).
+  function selectCard(id) {
+    if (!cuFrame || !cuFrame.contentWindow || !cuOrigin || typeof id !== "string" || !PL_CARD.test(id)) return;
+    cuFrame.contentWindow.postMessage({ type: "cu:select", id }, cuOrigin);
+  }
+  function plLine(e, cls) {
+    const n = el("button", cls);
+    n.type = "button";
+    const key = plKey(e);
+    const job = e.kind === "JOB" && typeof e.job_id === "string" && PL_JOB.test(e.job_id)
+      && typeof e.lane === "string" && PL_LANE.test(e.lane) && state.lanes.some(l => l.name === e.lane);
+    const card = PL_SELECTS.has(e.kind) && typeof e.card_id === "string" && PL_CARD.test(e.card_id) ? e.card_id : null;
+    const expands = PL_EXPANDS.has(e.kind);
+    n.append(el("span", null, e.t.slice(0, 5)), el("span", null, e.kind), el("span", null, e.text));
+    n.title = `${e.t} ${e.kind} ${e.text}`;
+    const setOpen = on => {
+      on ? plOpen.add(key) : plOpen.delete(key);
+      n.classList.toggle("open", on);
+      n.setAttribute("aria-expanded", on ? "true" : "false");
+    };
+    if (job) {
+      n.classList.add("act");
+      n.addEventListener("click", () => openMon(e.lane, e.job_id, key));
+    } else if (card || expands) {
+      n.classList.add("act");
+      if (expands) setOpen(plOpen.has(key));
+      n.addEventListener("click", () => {
+        const on = expands && !n.classList.contains("open");
+        if (expands) setOpen(on);
+        if (card && (on || !expands)) selectCard(card);
+      });
+    } else {
+      n.tabIndex = -1;
+      n.setAttribute("aria-disabled", "true");
+    }
+    n.addEventListener("keydown", ev => {
+      if (ev.key === "Escape" && expands && n.classList.contains("open")) { ev.preventDefault(); ev.stopPropagation(); setOpen(false); }
+    });
+    plBtns.set(key, n);
+    return n;
+  }
   function renderPaper() {
     const events = state.events;
     const key = events.length ? JSON.stringify(events[events.length - 1]) + events.length : "";
@@ -431,18 +484,18 @@
     lastEvent = key;
     const paper = $("paper");
     const follow = !fresh || nearBottom(paper, 18);  // reading older lines: stay put
-    paper.replaceChildren(...events.map((e, i) => {
-      const n = el("div", `pl${e.red ? " red" : ""}${fresh && follow && i === events.length - 1 ? " new" : ""}`);
-      n.append(el("span", null, e.t.slice(0, 5)), el("span", null, e.kind), el("span", null, e.text));
-      n.title = `${e.t} ${e.kind} ${e.text}`;
-      return n;
-    }));
+    const back = document.activeElement && paper.contains(document.activeElement)
+      ? [...plBtns].find(([, b]) => b === document.activeElement) : null;
+    plBtns.clear();
+    paper.replaceChildren(...events.map((e, i) => plLine(e, `pl${e.red ? " red" : ""}${fresh && follow && i === events.length - 1 ? " new" : ""}`)));
+    for (const k of [...plOpen]) if (!plBtns.has(k)) plOpen.delete(k);   // lines that scrolled off the paper
     if (!events.length) {
       const n = el("div", "pl");
       n.append(el("span"), el("span"), el("span", null, "-- nothing yet today --"));
       paper.append(n);
     }
     if (follow) paper.scrollTop = paper.scrollHeight;
+    if (back && plBtns.get(back[0])) plBtns.get(back[0]).focus({ preventScroll: true });
     $("print-sub").textContent = `${events.filter(e => e.kind === "DENY").length} denied`;
   }
 
@@ -515,7 +568,7 @@
   function closeMon() {
     if (!monLane) return;
     const r = cards.get(monLane);  // back to this lane's card, looked up by name
-    const row = monBack && obRows.get(monBack);  // or to the OUTBOX row that opened it
+    const row = monBack && (obRows.get(monBack) || plBtns.get(monBack));  // or to the OUTBOX row or printer line that opened it
     monLane = null; monJob = ""; monBack = ""; monData = null; monSeq++;
     $("scrim").hidden = true;
     if (row && row.isConnected) row.focus();
@@ -839,10 +892,12 @@
   // ---------- the control unit: every control the dashboard has
   // It lives on the second origin (cu.html, with its own key), framed under the
   // gate display; this page shows agent-written text, so it holds no action
-  // endpoint and no key, and never posts to the frame or reads it. The frame
-  // may say exactly three things: "cu:expand" (grow to the whole window, for
-  // its confirmation and log screens), "cu:collapse" and "cu:reload". Anything
-  // else, from anywhere else, is ignored.
+  // endpoint and no key, and never reads the frame. The frame may say exactly
+  // three things: "cu:expand" (grow to the whole window, for its confirmation
+  // and log screens), "cu:collapse" and "cu:reload". Anything else, from anywhere
+  // else, is ignored. The one thing this page says to the frame is
+  // {type: "cu:select", id: <card id>} (selectCard, from a printer line): which
+  // card to show. It decides nothing, and the unit checks it before it acts on it.
   let cuFrame = null, cuOrigin = null, cuExpanded = false;
   function setCuExpanded(on) {
     cuExpanded = on;

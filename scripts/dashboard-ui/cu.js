@@ -8,7 +8,9 @@
 // The only thing it tells the main page is one of three fixed strings over
 // postMessage: "cu:expand" and "cu:collapse" (grow the frame to the whole window
 // for the confirmation and log screens, and back) and "cu:reload" (after an
-// update changed the dashboard's page). The main page never answers.
+// update changed the dashboard's page). The one thing it hears back is
+// {type: "cu:select", id}, from its parent at the main origin: which card to show.
+// It is a display hint (see showCard) and decides nothing.
 // INSPECT shows a held push's patch (/cu/api/patch): the server reads it from
 // the broker's state, checks it against the card's digest, parses and sanitises
 // it, so this page only draws lines with textContent; nothing from the patch
@@ -367,6 +369,39 @@
     selId = c.id; selFp = c.fp;
     renderDeck();
   }
+
+  // The main page may ask which card to show: {type: "cu:select", id}, from the frame's parent
+  // at the main origin and nothing else, with exactly those two fields and an id shaped like a
+  // card id. It is a display hint. It acts on the deck only (not over a screen, an open question
+  // or a decision in flight), picks among the cards this unit already holds, never touches a
+  // decision key or focus, and treats the new card like any card that arrives unasked: the typed
+  // reason is cleared and the keys go dark for HOLD_MS. At most one in SELECT_GAP_MS, so a page
+  // can't keep the keys dark. The main page shows agent text, so it gets nothing else from here.
+  const CARD_ID = /^[A-Za-z0-9_-]{1,64}$/;
+  const SELECT_GAP_MS = 400;
+  let lastSelectAt = 0;
+  function showCard(id) {
+    if (screen !== "deck" || fault || busy || asking("deck") || !st) return;
+    const now = Date.now();
+    if (now - lastSelectAt < SELECT_GAP_MS) return;
+    lastSelectAt = now;
+    const c = cards().find(x => x.id === id);
+    if (!c) { flash("That write is no longer held.", "err"); return; }
+    if (c.id === selId && c.fp === selFp) return;
+    $("reason").value = "";
+    selId = c.id; selFp = c.fp;
+    holdKeys();
+    renderDeck();
+  }
+  window.addEventListener("message", e => {
+    if (e.source !== window.parent || e.origin !== mainOrigin) return;
+    const d = e.data;
+    if (!d || typeof d !== "object" || Array.isArray(d)) return;
+    const names = Object.keys(d);
+    if (names.length !== 2 || !names.includes("type") || !names.includes("id")) return;
+    if (d.type !== "cu:select" || typeof d.id !== "string" || !CARD_ID.test(d.id)) return;
+    showCard(d.id);
+  });
 
   const WHY = {
     gone: "Gone: that write is no longer held (decided elsewhere, or the agent gave up).",

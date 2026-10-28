@@ -20,7 +20,12 @@ async function launch(url, media, init) {
     "--disable-dev-shm-usage", "--hide-scrollbars", "--no-first-run", "--disable-extensions", "--remote-debugging-pipe",
     `--user-data-dir=${profile}`, "--window-size=1280,900", "about:blank"], { stdio: ["ignore", "ignore", "ignore", "pipe", "pipe"] });
   let next = 1, buf = "";
-  const pending = new Map(), listeners = [];
+  const pending = new Map(), listeners = [], contexts = new Map();
+  listeners.push(m => {
+    if (m.method === "Runtime.executionContextCreated") contexts.set(m.params.context.id, m.params.context);
+    else if (m.method === "Runtime.executionContextDestroyed") contexts.delete(m.params.executionContextId);
+    else if (m.method === "Runtime.executionContextsCleared") contexts.clear();
+  });
   child.stdio[4].on("data", c => {
     buf += c;
     let i;
@@ -49,6 +54,15 @@ async function launch(url, media, init) {
     sleep: ms => new Promise(r => setTimeout(r, ms)),
     async ev(expr) {
       const r = await s("Runtime.evaluate", { expression: expr, returnByValue: true, awaitPromise: true });
+      if (r.exceptionDetails) throw new Error(JSON.stringify(r.exceptionDetails));
+      return r.result.value;
+    },
+    // Evaluate in the framed control unit (a second origin on 127.0.0.1): the page itself can't reach into it.
+    async evFrame(expr) {
+      const pageOrigin = new URL(url).origin;
+      const c = [...contexts.values()].find(x => x.origin !== pageOrigin && x.origin.startsWith("http://127.0.0.1:") && x.auxData && x.auxData.isDefault);
+      if (!c) throw new Error("no framed control unit");
+      const r = await s("Runtime.evaluate", { expression: expr, contextId: c.id, returnByValue: true, awaitPromise: true });
       if (r.exceptionDetails) throw new Error(JSON.stringify(r.exceptionDetails));
       return r.result.value;
     },
@@ -151,6 +165,94 @@ async function attention(url) {
   } finally { await b.close(); }
 }
 
+// The event printer (#190): lines are buttons; JOB opens the lane's monitor on that job's packet, STAGED points the
+// control unit at its card by postMessage (one validated message, Enter or click, never a decision key), DENY opens in
+// place to its whole text and Esc shuts it again.
+const PRINTER = `(() => { const real = window.fetch.bind(window); window.__lane = []; window.__long = ""; window.__more = false;
+  window.fetch = async (u, o) => { if (String(u).startsWith("/api/lane")) window.__lane.push(String(u)); const r = await real(u, o);
+    if (!String(u).startsWith("/api/state")) return r; const j = await r.json();
+    if (window.__long) j.events.push({ t: "23:59:59", kind: "DENY", red: true, text: window.__long }, { t: "23:59:59", kind: "FAILED", red: true, text: "git_push o/r factory/x · " + window.__long, card_id: "demo0001push" });
+    if (window.__more) j.events.push({ t: "23:59:59", kind: "ALLOW", red: false, text: "a newer line" });
+    return new Response(JSON.stringify(j), { status: 200 }); }; })()`;
+
+async function printer(url) {
+  const b = await launch(url, undefined, PRINTER);
+  try {
+    for (let i = 0; i < 40 && !(await b.ev(`document.querySelectorAll("#paper button.pl").length > 3`)); i++) await b.sleep(250);
+    for (let i = 0; i < 40; i++) {
+      try { if (await b.evFrame(`!document.getElementById("scr-deck").hidden && document.getElementById("deck-body").textContent.length > 0`)) break; } catch (e) { /* not loaded yet */ }
+      await b.sleep(250);
+    }
+    await b.evFrame(`window.__msgs = []; window.addEventListener("message", e => window.__msgs.push([e.origin, JSON.stringify(e.data), e.source === window.parent]))`);
+    const msgs = () => b.evFrame(`window.__msgs`);
+    const line = (kind, has = "") => `[...document.querySelectorAll("#paper button.pl")].find(n => n.children[1].textContent === ${JSON.stringify(kind)} && n.textContent.includes(${JSON.stringify(has)}))`;
+    const focusLine = (kind, has) => b.ev(`(() => { const n = ${line(kind, has)}; n.scrollIntoView({ block: "nearest" }); n.focus(); return document.activeElement === n; })()`);
+    const origin = new URL(url).origin;
+
+    assert.strictEqual(await b.ev(`[...document.querySelectorAll("#paper .pl")].every(n => n.tagName === "BUTTON")`), true, "printer lines are buttons");
+
+    // STAGED: Enter on the focused line sends exactly one validated message; the card shown is that card.
+    assert.ok(await focusLine("STAGED", "greet-empty-name"));
+    await b.key("Enter", "Enter", "\r"); await b.sleep(300);
+    assert.deepStrictEqual(await msgs(), [[origin, '{"type":"cu:select","id":"demo0001push"}', true]]);
+    assert.match(await b.evFrame(`document.getElementById("deck-body").textContent`), /factory\/greet-empty-name/);
+    assert.ok(!["btn-approve", "btn-decline"].includes(await b.evFrame(`document.activeElement && document.activeElement.id`)), "focus is on no decision key");
+    assert.strictEqual(await b.ev(`document.activeElement.children[1].textContent`), "STAGED", "focus stays on the printer line");
+
+    // WRITTEN for a card no longer held: the unit says so and shows nothing new.
+    await b.sleep(500);
+    assert.ok(await focusLine("WRITTEN"));
+    await b.key("Enter", "Enter", "\r"); await b.sleep(300);
+    assert.strictEqual((await msgs()).length, 2);
+    assert.strictEqual(await b.evFrame(`document.getElementById("flash").textContent`), "That write is no longer held.");
+
+    // JOB: a mouse click opens that lane's monitor on that job's packet.
+    await b.ev(`(() => { const n = ${line("JOB")}; n.scrollIntoView({ block: "nearest" }); return null; })()`);
+    const at = await b.ev(`(() => { const r = ${line("JOB")}.getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2]; })()`);
+    await b.click(at[0], at[1]); await b.sleep(500);
+    assert.strictEqual(await b.ev(`document.getElementById("scrim").hidden`), false, "the monitor opened");
+    const lane = await b.ev(`window.__lane`);
+    assert.ok(lane.length && /^\/api\/lane\?name=[a-z][a-z0-9-]*&job=[0-9]{8}-[0-9a-z-]+$/.test(lane[lane.length - 1]), `lane request: ${lane}`);
+    assert.strictEqual((await msgs()).length, 2, "a JOB line tells the unit nothing");
+    await b.key("Escape", "Escape"); await b.sleep(200);
+    assert.strictEqual(await b.ev(`document.getElementById("scrim").hidden`), true);
+
+    // DENY and FAILED open in place to the whole reason, as text; Esc shuts them.
+    const long = "bundle does not exist in the workspace <img src=x onerror=alert(1)> " + "and then some more words to be sure it is long ".repeat(12);
+    await b.ev(`window.__long = ${JSON.stringify(long)}`);
+    for (let i = 0; i < 40 && !(await b.ev(`!!${line("FAILED", "onerror")}`)); i++) await b.sleep(250);
+    // The newest DENY is the mutated one: it is the last in the DOM.
+    await b.ev(`(() => { const all = [...document.querySelectorAll("#paper button.pl")].filter(n => n.children[1].textContent === "DENY"); all[all.length - 1].focus(); return null; })()`);
+    assert.strictEqual(await b.ev(`document.activeElement.textContent.includes("onerror=alert(1)")`), true);
+    assert.strictEqual(await b.ev(`document.activeElement.getAttribute("aria-expanded")`), "false");
+    assert.strictEqual((await b.ev(`(() => { const t = document.activeElement.children[2]; return t.scrollWidth > t.clientWidth; })()`)), true, "shut: the reason is cut off");
+    await b.key("Enter", "Enter", "\r"); await b.sleep(200);
+    assert.deepStrictEqual(await b.ev(`(() => { const n = document.activeElement, t = n.children[2]; return [n.getAttribute("aria-expanded"), t.scrollWidth <= t.clientWidth, getComputedStyle(t).whiteSpace, t.textContent === ${JSON.stringify(long)}, n.querySelector("img")]; })()`),
+      ["true", true, "normal", true, null], "open: wrapped, whole, still text");
+    assert.strictEqual((await msgs()).length, 2, "a DENY line tells the unit nothing");
+    await b.key("Escape", "Escape"); await b.sleep(200);
+    assert.strictEqual(await b.ev(`document.activeElement.getAttribute("aria-expanded")`), "false", "Esc shuts it");
+    assert.strictEqual(await b.ev(`document.getElementById("scrim").hidden`), true, "...and opens nothing");
+    // It stays open across the printer redrawing for a new line.
+    await b.key("Enter", "Enter", "\r"); await b.sleep(200);
+    await b.ev(`window.__more = true`);
+    for (let i = 0; i < 40 && !(await b.ev(`!![...document.querySelectorAll("#paper button.pl")].find(n => n.textContent.includes("a newer line"))`)); i++) await b.sleep(250);
+    assert.deepStrictEqual(await b.ev(`(() => { const n = document.activeElement; return [n.getAttribute("aria-expanded"), n.textContent.includes("onerror=alert(1)"), n.classList.contains("open")]; })()`),
+      ["true", true, true], "a redraw for a new line keeps the line open and focused");
+    await b.key("Escape", "Escape"); await b.sleep(100);
+
+    // FAILED: opening it also points the unit at its card; shutting it does not.
+    await b.sleep(500);
+    await b.ev(`(() => { const all = [...document.querySelectorAll("#paper button.pl")].filter(n => n.children[1].textContent === "FAILED"); const n = all[all.length - 1]; if (n.classList.contains("open")) n.click(); n.focus(); return null; })()`);
+    const before = (await msgs()).length;
+    await b.sleep(500);
+    await b.key("Enter", "Enter", "\r"); await b.sleep(300);
+    const after = await msgs();
+    assert.strictEqual(after.length, before + 1);
+    assert.strictEqual(after[after.length - 1][1], '{"type":"cu:select","id":"demo0001push"}');
+  } finally { await b.close(); }
+}
+
 async function run(url) {
   // ---- motion allowed
   let b = await launch(url);
@@ -228,4 +330,4 @@ async function run(url) {
   } finally { await b.close(); }
 }
 
-run(process.argv[2]).then(() => attention(process.argv[2])).then(() => console.log("floor browser checks passed"), e => { console.error(e.stack || e); process.exit(1); });
+run(process.argv[2]).then(() => attention(process.argv[2])).then(() => printer(process.argv[2])).then(() => console.log("floor browser checks passed"), e => { console.error(e.stack || e); process.exit(1); });

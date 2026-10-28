@@ -68,9 +68,18 @@ origin exactly, `Sec-Fetch-Site` (if sent) is `same-origin`, exactly one dashboa
 cookie matches, the key is in the `X-Factory-Control` header (compared in constant
 time), the `Content-Type` is JSON and the body is at most 8 KiB; every other method
 (`OPTIONS` included) is refused, and no response carries CORS headers. The main page
-can't script the frame (another origin) and never posts to it; the frame may tell it
+can't script the frame (another origin); the frame may tell it
 exactly three strings by `postMessage` (`cu:expand`, `cu:collapse`, `cu:reload`),
-accepted only from that frame's window and origin. Agent-written strings (card titles,
+accepted only from that frame's window and origin. The main page may tell the frame
+exactly one thing, `{type: "cu:select", id: <card id>}` (a printer line, #190), sent to
+the unit's exact origin; the unit accepts it only from `window.parent` with
+`e.origin` exactly the main origin, as a plain object with exactly those two keys and an
+id that fullmatches the card-id format (`[A-Za-z0-9_-]{1,64}`, checked on both sides). It
+is a display hint and nothing else: it acts only on the deck (not over another screen,
+an open APPROVE question or a decision in flight), only picks among the cards the unit
+already holds (an unknown id flashes a fixed "no longer held" line), at most once per
+400 ms, never presses a key or moves focus, and treats the card like one that arrived
+unasked (typed reason cleared, keys dark for the 2.5 s hold). Agent-written strings (card titles,
 branches, the action log) are inserted as text only.
 
 APPROVE and DECLINE are one press each, as `factory approvals approve` is one command:
@@ -178,6 +187,12 @@ packet yet). The ids come from `dispatch/jobs.json` (regular file, `O_NOFOLLOW`,
 those matching the bridge's job-id pattern; a `job` that is not one of that lane's is a 404 (`NoSuchJob`), a malformed one still a
 400, and the id is joined onto `packets/` only after it matched. Tasks are cut to one line; everything is drawn with `textContent`
 and the page sets no class or attribute from it.
+
+EVENT PRINTER (doomtickle/passdesk-ops#190, `app.js` `renderPaper`) lines are buttons. They add no endpoint:
+`/api/state` events carry `job_id` and `lane` on a JOB line (only when they match `JOB_ID` and the lane pattern) and
+`card_id` on approval lines (only when it fullmatches `approvals.CARD_ID`). A JOB line opens the lane monitor through the
+#191 `/api/lane?name=&job=` path; STAGED, WRITTEN and FAILED send the `cu:select` hint above; DENY and FAILED open in place
+to their whole text, still `textContent`. The page re-checks every id against its pattern before using it.
 
 Anything new that lets a page act must meet the same bar: one fixed argv with no
 shell, a key in a request header (not just the cookie) on a POST or WebSocket with its

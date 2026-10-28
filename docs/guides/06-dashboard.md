@@ -537,6 +537,20 @@ command. If the files can't be read the screen says it is unavailable.
   finished jobs, newest at the bottom. Denied, staged and failed calls,
   and failed or cancelled jobs, print in red; the header counts the denied ones. Scroll up to read older lines; the printer stays put
   until you scroll back down.
+- **Printer lines act.** Click a line, or Tab to it and press Enter:
+  - a **JOB** line opens that lane's monitor on that job's review packet
+    (Esc closes it and puts you back on the line);
+  - a **STAGED**, **WRITTEN** or **FAILED** line shows that card in the
+    control unit. It only changes which card is on the glass: nothing is
+    approved or declined, any reason you had typed is cleared, and the
+    keys stay dark for a moment, as for any card that arrives unasked. A
+    card the gateway has already written says "That write is no longer
+    held.";
+  - a **DENY** or **FAILED** line opens in place to its whole text, wrapped,
+    so you can read the reason (for example "bundle does not exist in the
+    workspace"). Press Enter again or Esc to shut it.
+
+  ALLOW, OK and NO lines don't act; hover any line for its full text.
 
 For the full report, run `factory analytics` (or `factory analytics --html`).
 
@@ -553,6 +567,7 @@ Stands in for: part of `factory analytics` and of `factory logs broker` /
 | Anywhere | `n` | Browser notifications on / off |
 | Lane monitor | `t` / `p` | Transcript / review packet |
 | Lane monitor, patch viewer | Esc | Close |
+| Event printer line | Enter / Esc | Act on the line / shut an opened line |
 | Patch viewer | `j` `k` ↓ ↑ | Next / previous file |
 | Patch viewer | `n` / `p` | Next / previous hunk |
 | A knob | arrows, PgUp, PgDn | Turn it |
