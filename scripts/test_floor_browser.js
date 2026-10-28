@@ -268,6 +268,15 @@ async function budget(url) {
     const look = () => b.ev(`(() => { const box = document.getElementById("ro-spend-box"), m = document.getElementById("budget-meter");
       return { cls: [box.classList.contains("over"), box.classList.contains("over2")], ink: getComputedStyle(box.querySelector(".seg .on")).fill,
         meter: m.className.replace("budget-meter", "").trim(), width: m.firstChild.style.width, text: document.getElementById("budget-v").textContent, tip: box.title }; })()`);
+    // Layout, not just classes: the meter must have room to show and the words beside it must not be clipped.
+    const fits = () => b.ev(`(() => { const m = document.getElementById("budget-meter"), v = document.getElementById("budget-v"), r = m.getBoundingClientRect(), f = m.firstChild.getBoundingClientRect(),
+      box = document.getElementById("budget").getBoundingClientRect(), lab = document.querySelector("#budget label"), inp = document.getElementById("budget-in").getBoundingClientRect();
+      return { meter: r.width, high: r.height, fill: f.width, valueClipped: v.scrollWidth > v.clientWidth, labelClipped: lab.scrollWidth > lab.clientWidth,
+        inside: r.right <= box.right + 0.5 && v.getBoundingClientRect().right <= box.right + 0.5 && inp.right <= box.right + 0.5 }; })()`);
+    const roomy = async (what) => { const f = await fits();
+      assert.ok(f.meter >= 60 && f.high >= 4, `${what}: the meter shows (${f.meter} x ${f.high}px)`);
+      assert.ok(!f.valueClipped && !f.labelClipped, `${what}: the words aren't clipped`);
+      assert.ok(f.inside, `${what}: everything stays inside the module`); return f; };
     const stored = () => b.ev(`JSON.parse(localStorage.getItem("fc1984-knobs") || "{}")`);
     const reload = async () => { await b.ev(`location.reload()`); await b.sleep(500); for (let i = 0; i < 40 && !(await b.ev(`window.__polls > 0`)); i++) await b.sleep(250); await b.sleep(200); };
     const typed = v => b.ev(`(() => { const i = document.getElementById("budget-in"); i.value = ${JSON.stringify(v)}; i.dispatchEvent(new Event("input")); return null; })()`);
@@ -279,6 +288,7 @@ async function budget(url) {
     let l = await look();
     assert.deepStrictEqual([l.cls, l.meter, l.width, l.text, l.tip], [[false, false], "none", "0%", "no budget", ""], "no budget: the readout stays plain");
     const plainInk = l.ink;
+    await roomy("no budget");
 
     // Type 50 with the real keys; digits and letters in the box are not lane or console keys.
     await b.ev(`document.getElementById("budget-in").focus()`);
@@ -302,11 +312,22 @@ async function budget(url) {
       assert.strictEqual(l.meter, name === "ok" ? "" : name, `spend ${cost}: meter colour`);
       assert.strictEqual(l.ink !== plainInk, name !== "ok", `spend ${cost}: the digits change colour only when tinted`);
     }
+    // The header shows cents, so the thresholds compare cents: $50.004 reads $50.00 and stays calm.
+    await setCost(50.004);
+    assert.deepStrictEqual([(await look()).cls], [[false, false]], "50.004 against 50 is not over");
+    await setCost(100.004);
+    assert.deepStrictEqual([(await look()).cls], [[true, false]], "100.004 against 50 is not past twice it");
+    await setCost(50.006);
+    assert.deepStrictEqual([(await look()).cls], [[true, false]], "50.006 reads $50.01 and is over");
     await setCost(75);
     l = await look();
     assert.deepStrictEqual([l.width, l.text, l.tip], ["75%", "$75.00 / $50.00", "Past the shift budget of $50.00"]);
     assert.strictEqual(await b.ev(`document.getElementById("budget-meter").getAttribute("aria-valuetext")`), "$75.00 of $50.00 a day");
+    const half = await roomy("budget set");
+    assert.ok(Math.abs(half.fill - half.meter * 0.75) < 2, `the fill is 75% of the meter's real width (${half.fill} of ${half.meter})`);
     const amberInk = l.ink;
+    await setCost(1234.5);
+    await roomy("a long figure");
     await setCost(120);
     l = await look();
     assert.deepStrictEqual([l.width, l.tip], ["100%", "Past twice the shift budget of $50.00"]);

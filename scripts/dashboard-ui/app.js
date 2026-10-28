@@ -421,7 +421,7 @@
   function budgetLevel(cost) { return !budget ? "" : cost > 2 * budget ? "over2" : cost > budget ? "over" : ""; }
   function renderBudget() {
     if (!state) return;
-    const cost = Number(state.totals.cost) || 0, level = budgetLevel(cost);
+    const cost = Math.round((Number(state.totals.cost) || 0) * 100) / 100, level = budgetLevel(cost);
     const box = $("ro-spend-box");
     box.classList.toggle("over", level === "over");
     box.classList.toggle("over2", level === "over2");
