@@ -73,6 +73,26 @@ starts nothing; only POWER ON does.
   muted until the replay is done.
 - When the session ends, the screen powers off. POWER ON starts it again.
 
+**FIRST SHIFT.** A line above the screen tells you what `factory start` would
+print in the terminal you started it from, since you're looking at the browser:
+
+- No Claude login stored yet: "FIRST SHIFT · 1. POWER ON and type /login · 2.
+  press RESTART". The control unit's RESTART key blinks until you've done it.
+- Login stored, but the role sandboxes aren't created yet (the state right
+  after your first `/login`): it says so, and RESTART still blinks. Press it
+  and CONFIRM; the restart creates the roles.
+- Roles exist: the same line carries any other start-up hint in one line,
+  such as sandboxes that are out of date (`factory update`) or a missing
+  GitHub token (`factory secret save github`), with "(+N more)" when there are
+  several. Jira, npm and GitLab token hints aren't checked here, because they
+  would ask your keychain; `factory start` still prints them.
+
+The line only tells you; it presses nothing. It's worked out on your machine
+from fixed text (never from anything an agent wrote), and the two `sbx` checks
+behind it run in the background every 30 seconds at most, so a slow or failing
+`sbx` leaves the last answer in place instead of flashing FIRST SHIFT. Demo
+mode never shows it.
+
 The screen tells you when it can't attach:
 
 | The screen says | What to do |

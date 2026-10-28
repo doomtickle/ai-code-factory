@@ -334,6 +334,25 @@ class DecideTests(unittest.TestCase):
         self.assertEqual(out["service"], "restart")
         self.assertNotIn("enabled-roles", json.dumps(out))
 
+    def test_state_says_when_the_first_shift_is_still_to_do(self):
+        class Source:
+            items = []
+
+            def get(self, now):
+                return self.items
+
+        src = Source()
+        self.env.board.hint_source = src
+        self.assertIs(self.state()["first_shift"], False)
+        src.items = [("login", "x")]
+        out = self.state()
+        self.assertIs(out["first_shift"], True)
+        self.assertNotIn("FIRST SHIFT", json.dumps(out))  # only the flag; the banner is the main page's
+        src.items = [("roles", "x")]
+        self.assertIs(self.state()["first_shift"], True)
+        src.items = [("github", "x")]
+        self.assertIs(self.state()["first_shift"], False)
+
     def test_state_marks_queued_cards_and_lists_deferred_writes(self):
         e = self.env
         card = write_card(e.fx.state, "pr1", e.fx.now)

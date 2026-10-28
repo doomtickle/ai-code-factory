@@ -864,7 +864,20 @@
   // roll layer, so the glass, scanlines, knobs and V-HOLD still apply (the ghost
   // copy is for the static placeholder only: a frame can't be cloned).
   let termFrame = null;
+  // The FIRST SHIFT banner, or else any other start-up hint, in one line over the terminal. The
+  // host makes every text (dashboard_hints.py); the page only picks the line, and draws it as text.
+  const FIRST_SHIFT = ["login", "roles"];
+  function renderShift() {
+    const hints = Array.isArray(state.hints) ? state.hints.filter(h => h && typeof h.text === "string") : [];
+    const first = hints.find(h => FIRST_SHIFT.includes(h.code));
+    const pick = first || hints[0];
+    const node = $("crt-shift");
+    node.hidden = !pick;
+    node.classList.toggle("first", !!first);
+    node.textContent = pick ? pick.text + (!first && hints.length > 1 ? `  (+${hints.length - 1} more)` : "") : "";
+  }
   function renderTerm() {
+    renderShift();
     const t = state.term;
     $("lamp-term").className = !t ? "led" : t.running ? "led g" : t.reason === "elsewhere" ? "led a" : "led";
     if (!t) {
@@ -884,7 +897,7 @@
     termFrame.setAttribute("referrerpolicy", "no-referrer");
     crtBody.hidden = true;
     roll.classList.add("live");
-    roll.insertBefore(termFrame, roll.firstChild);
+    roll.insertBefore(termFrame, crtBody);
   }
   // A click on the tube's glass or bezel (outside the frame) hands the keyboard to the terminal.
   tube.addEventListener("click", () => { if (termFrame) termFrame.focus(); });

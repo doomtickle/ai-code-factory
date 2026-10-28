@@ -96,7 +96,11 @@ note: no Claude login is stored yet, so these role sandboxes were not created: d
   Type /login in the Coordinator (POWER ON on the dashboard), then run 'factory start' again (or press RESTART on the dashboard).
 ```
 
-Do exactly that:
+Do exactly that. The dashboard says it too: until you have, Terminal 0 carries
+a **FIRST SHIFT** banner above the screen, "FIRST SHIFT · 1. POWER ON and type
+/login · 2. press RESTART", and the control unit's RESTART key blinks. After
+the login, while the role sandboxes aren't created yet, the banner says so
+and RESTART keeps blinking. Both go away once the roles exist.
 
 1. On the dashboard, press **POWER ON** under the Coordinator's screen (Terminal
    0, on the left), type `/login` there and sign in with your Claude

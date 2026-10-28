@@ -332,7 +332,8 @@
     $("svc-setup").disabled = !!fault || !st;
     setClass($("led-doctor"), `led${run ? " a blink" : ""}`);
     const due = st && st.service;  // the header's SERVICE DUE lamp: light the key that applies it
-    setClass($("led-restart"), `led${run ? " a blink" : due === "restart" ? " a" : ""}`);
+    const first = !!(st && st.first_shift);  // FIRST SHIFT (#181): the first /login or RESTART is still to do
+    setClass($("led-restart"), `led${run || first ? " a blink" : due === "restart" ? " a" : ""}`);
     setClass($("led-update"), `led${run ? " a blink" : due === "update" ? " a" : ""}`);
     const showLog = !fault && !!a.name && a.phase !== "idle";
     $("svc-log").hidden = !showLog;

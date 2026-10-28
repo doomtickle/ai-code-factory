@@ -12,7 +12,8 @@ those requests reach:
   state    the held writes (with each card's fingerprint, and whether the
            gateway has staged it), the recent deferred writes the gateway made
            on approval (display only: made, failed, running), the bound
-           project, the current service action and `config`, the effective
+           project, the current service action, `first_shift` (whether the
+           first /login or RESTART is still to do: RESTART blinks) and `config`, the effective
            configuration for the SETUP screen (dashboard_setup.py: read-only,
            from the factory's own parsers, no secrets, cached SETUP_TTL seconds)
   decide   approve or decline one held write: one press, a file write through
@@ -241,12 +242,13 @@ class Controls:
             writes = self.board.writes(now)  # display only: deferred writes the gateway made (or failed)
         # These two read and hash files, so they run outside board.lock (each caches its own result).
         service = self.board.service(now)["due"]  # display only: which service key's LED to light
+        first_shift = self.board.first_shift(now)  # display only: RESTART blinks until the first RESTART is done
         config = self.setup(now)
         project = self.bound()
         with self.lock:
             action = self.action_json()
         return 200, {"now": now, "project": project, "bound": bool(project), "cards": cards, "writes": writes,
-                     "service": service, "action": action, "config": config}
+                     "service": service, "first_shift": first_shift, "action": action, "config": config}
 
     def setup_source(self) -> tuple:
         """(factory.context.Paths, project name) the SETUP screen reads; paths None when there is none."""

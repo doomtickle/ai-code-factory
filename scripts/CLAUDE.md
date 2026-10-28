@@ -194,6 +194,17 @@ EVENT PRINTER (doomtickle/passdesk-ops#190, `app.js` `renderPaper`) lines are bu
 #191 `/api/lane?name=&job=` path; STAGED, WRITTEN and FAILED send the `cu:select` hint above; DENY and FAILED open in place
 to their whole text, still `textContent`. The page re-checks every id against its pattern before using it.
 
+FIRST SHIFT (doomtickle/passdesk-ops#181, `scripts/dashboard_hints.py`, `factory/hints.py`) puts `factory start`'s
+start-up hints on the main page: `hints` in `/api/state` (`[{code, text}]`, fixed host strings cleaned to one
+printable line, at most 6; the first-login states carry a fixed banner) and `first_shift` in the control unit's
+state, which makes its RESTART LED blink (`cu.js`). The page draws one line over Terminal 0 with `textContent`;
+nothing acts, and Terminal 0's rules above are unchanged. Two checks run `sbx`, and only these fixed argv forms:
+`sbx secret ls` (the Claude login, the GitHub token) and `sbx ls -q` (the role sandboxes). `Probe`, a factory
+`Context` that refuses any other argv, cuts each at 5 s and runs each once per refresh; a background thread
+refreshes at most every 30 s, one at a time, never on a request and never under the board's lock, and a failed
+or timed-out call keeps the last answer (so a hiccup never shows FIRST SHIFT). The stale-sandbox hint reuses the
+SERVICE DUE cache (files only). Keychain checks are left out. Demo mode has no source and shows none.
+
 Anything new that lets a page act must meet the same bar: one fixed argv with no
 shell, a key in a request header (not just the cookie) on a POST or WebSocket with its
 `Origin` checked, kept out of reach of the page that shows agent-written content, and a

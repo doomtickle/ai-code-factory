@@ -7,7 +7,7 @@ order (see docs/py-cli-migration.md for the differences). Arguments are ignored,
 import json
 import os
 
-from factory import approvals, keychain, policy, roles, sbx
+from factory import approvals, hints, policy, roles, sbx
 from factory.commands.roles import lanes_label
 from factory.context import FactoryError, bound_project
 
@@ -51,11 +51,9 @@ def dispatch_pid(ctx):
 def warn_missing(ctx, service, message):
     """Warn MESSAGE if the keychain has no SERVICE; if it is locked or unavailable, say that
     instead, since whether SERVICE is stored can't be told."""
-    found = keychain.has(ctx, service)
-    if found == keychain.NOT_STORED:
-        ctx.warn(message)
-    elif found != keychain.FOUND:
-        ctx.warn("the keychain is locked or unavailable, so %s couldn't be checked; unlock it and run this again" % service)
+    text = hints.missing_message(ctx, service, message)
+    if text:
+        ctx.warn(text)
 
 
 def sandbox_rows(ctx):

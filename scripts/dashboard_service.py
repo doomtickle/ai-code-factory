@@ -48,10 +48,9 @@ def _names(folder: Path, suffix: str) -> list:
         return []
 
 
-def stale_lines(paths: Paths) -> list:
-    """'factory-broker: kit changed' for each out-of-date sandbox with a recorded fingerprint."""
-    return [f"{clean(name)}: {clean(fingerprints.stale_reason(paths, name))}"
-            for name in fingerprints.recorded_sandboxes(paths) if fingerprints.is_stale(paths, name)]
+def stale_names(paths: Paths) -> list:
+    """The sandboxes with a recorded fingerprint that is out of date."""
+    return [name for name in fingerprints.recorded_sandboxes(paths) if fingerprints.is_stale(paths, name)]
 
 
 def restart_lines(paths: Paths, project: str) -> list:
@@ -86,13 +85,17 @@ def restart_lines(paths: Paths, project: str) -> list:
 
 
 def service(paths: Paths | None, project: str) -> dict:
-    """{"due": "update" | "restart" | None, "lines": [...]} for the header lamp."""
+    """{"due": "update" | "restart" | None, "lines": [...], "stale": [...]} for the header lamp.
+    "stale" (the out-of-date sandbox names, for the FIRST SHIFT hints) stays inside the dashboard."""
+    nothing: dict = {"due": None, "lines": [], "stale": []}
     if paths is None:
-        return {"due": None, "lines": []}
+        return nothing
     try:
-        update, restart = stale_lines(paths), restart_lines(paths, project)
+        names, restart = stale_names(paths), restart_lines(paths, project)
+        update = [f"{clean(n)}: {clean(fingerprints.stale_reason(paths, n))}" for n in names]
     except Exception:  # a lamp must not take the state view down; a broken fixture reads as nothing due
-        return {"due": None, "lines": []}
+        return nothing
+    stale = [clean(n) for n in names]
     if update:  # UPDATE re-runs the start as well, so the restart lines would only repeat it
-        return {"due": "update", "lines": update[:8]}
-    return {"due": "restart" if restart else None, "lines": restart[:8]}
+        return {"due": "update", "lines": update[:8], "stale": stale}
+    return {"due": "restart" if restart else None, "lines": restart[:8], "stale": []}

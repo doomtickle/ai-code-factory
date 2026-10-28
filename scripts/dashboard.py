@@ -14,6 +14,8 @@ factory state folder and makes no network connection:
 and, for the SERVICE DUE lamp (dashboard_service.py), sandboxes/ and sandbox-parts/ (the
 fingerprints each sandbox was made from), the snapshots `factory start` keeps in dispatch/, and the
 factory config folder (--config) it compares them with; no command is run for it.
+The FIRST SHIFT banner and start-up hints (dashboard_hints.py) run only `sbx secret ls` and `sbx ls -q`,
+in a background thread every 30 s at most, each cut off after 5 s, never for a request.
 The OUTBOX module (dashboard_outbox.py) also reads dispatch/jobs.json and runs two fixed,
 read-only git forms in the host project (a for-each-ref listing of the imported refs and
 rev-list --count HEAD..<object id>; hooks and fsmonitor off, no shell), cached for a few seconds.
@@ -116,6 +118,7 @@ from urllib.parse import parse_qs, urlsplit
 import approvals
 import dashboard_controls as dc
 import dashboard_demo as demo
+import dashboard_hints as dh
 import dashboard_jobs as jobs_mod
 import dashboard_labels as labels
 import dashboard_outbox as ob
@@ -289,10 +292,11 @@ class NoSuchJob(LookupError):
 
 
 class Dashboard:
-    def __init__(self, state: Path, roles: Path, project: str, demo: bool = False, paths=None):
+    def __init__(self, state: Path, roles: Path, project: str, demo: bool = False, paths=None, hint_source=None):
         self.state, self.project, self.demo = state, project, demo
         self.paths = paths  # factory.context.Paths for the SERVICE DUE lamp; None (demo): never due
-        self._service: tuple = (0.0, {"due": None, "lines": []})
+        self.hint_source = hint_source  # dashboard_hints.Hints (its .get(now)); None: no start-up hints
+        self._service: tuple = (0.0, {"due": None, "lines": [], "stale": []})
         self.watch = w.Watch(state / "dispatch", roles, project)
         self.broker = BrokerAudit(state / "broker" / "audit.jsonl")
         self.verdicts: dict = {}
@@ -342,6 +346,18 @@ class Dashboard:
             cached = ds.service(self.paths, self.project)
             self._service = (now, cached)
         return {"due": cached["due"], "lines": list(cached["lines"])}
+
+    def hints(self, now: float) -> list:
+        """The FIRST SHIFT banner and start-up hints (dashboard_hints.py): [{"code", "text"}]. The
+        sbx-derived part is a cached background result; the out-of-date sandboxes come from the
+        SERVICE DUE lamp's cache. Nothing here runs a command for the request."""
+        if self.hint_source is None or self.demo:
+            return []
+        self.service(now)
+        return dh.compose(list(self._service[1].get("stale", [])), self.hint_source.get(now))
+
+    def first_shift(self, now: float) -> bool:
+        return dh.first_shift(self.hints(now))
 
     def cards(self, now: float, fp: bool = False) -> list:
         """The pending approval cards. A card's principal is the broker token's
@@ -471,6 +487,7 @@ class Dashboard:
             "writes": writes,
             "outbox": outbox,
             "service": self.service(now),
+            "hints": self.hints(now),
         }
 
     @staticmethod
@@ -784,7 +801,8 @@ def _serve(args, term) -> int:
     if not args.demo:
         root = args.roles.resolve().parent
         paths = ds.Paths(str(root), str(args.config or ds.Paths.from_environ(str(root)).config), str(args.state))
-    board = Dashboard(args.state, args.roles, args.project or "(no project)", demo=args.demo, paths=paths)
+    board = Dashboard(args.state, args.roles, args.project or "(no project)", demo=args.demo, paths=paths,
+                      hint_source=None if args.demo else dh.Hints(paths))
     if not board.watch.lanes:
         print("no roles or transcripts found", file=sys.stderr)
         return 1

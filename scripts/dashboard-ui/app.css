@@ -168,6 +168,10 @@ a.tabkey { display: inline-block; text-decoration: none; }
 .crt .sub { color: var(--t-tool); text-shadow: var(--crt-fx), 0 0 3px rgba(99, 220, 236, .35); padding-left: 1.4em; }
 .crt .banner { border: 1px solid var(--dim); padding: 6px 10px; display: inline-block; margin-bottom: 12px; }
 .crt .c-held { color: var(--t-held); }
+/* The FIRST SHIFT / start-up hint line above Terminal 0 (#181): one line, host-made text */
+.crt .shift { flex: none; margin: 0; padding: 6px 12px; border-bottom: 1px solid var(--dim); overflow-wrap: anywhere; }
+.crt .shift::before { content: "● "; }
+.crt .shift.first { font-weight: 700; animation: lcdblink 1.2s steps(1) infinite; }
 .crt-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 6px 0; flex-wrap: wrap; }
 /* Front-panel controls under the tube: knurled knobs with an index mark, a badge */
 .knobs { display: flex; align-items: flex-start; gap: 12px; }
@@ -445,7 +449,7 @@ button.pl:focus-visible { outline: 2px solid var(--ink-red); outline-offset: -2p
 .tabkey[aria-pressed="true"] { transform: translateY(2px); box-shadow: 0 1px 0 var(--key-lo); background: linear-gradient(180deg, #ffb35c, var(--stripe-1)); }
 
 @media (prefers-reduced-motion: reduce) {
-  .led.blink, .lcd-text .k-held, .gate-lcd .states .st-staged, .crt::after, .pl.new { animation: none !important; }
+  .led.blink, .crt .shift.first, .lcd-text .k-held, .gate-lcd .states .st-staged, .crt::after, .pl.new { animation: none !important; }
   .lane.entering, .lane.entering .lcd-text, .lane.leaving, .standby.entering, .chip.entering, .chip.entering .led { animation: none !important; }
   .crt::before { display: none; }
   .crt-roll.rolling { animation: none; transform: translateY(var(--roll-still, 0)); }
