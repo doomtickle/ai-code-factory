@@ -13,7 +13,8 @@ factory state folder and makes no network connection:
   broker/audit.jsonl, broker/approvals/pending/, broker/project
 and, for the SERVICE DUE lamp (dashboard_service.py), sandboxes/ and sandbox-parts/ (the
 fingerprints each sandbox was made from), the snapshots `factory start` keeps in dispatch/, and the
-factory config folder (--config) it compares them with; no command is run for it.
+factory config folder (--config) it compares them with; no command is run for it. It reads
+dashboard.toml from that folder once at start (dashboard_config.py), for the page's nameplate, shift names, defaults and role colours.
 The FIRST SHIFT banner and start-up hints (dashboard_hints.py) run only `sbx secret ls` and `sbx ls -q`,
 in a background thread every 30 s at most, each cut off after 5 s, never for a request.
 The OUTBOX module (dashboard_outbox.py) also reads dispatch/jobs.json and runs two fixed,
@@ -116,6 +117,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 import approvals
+import dashboard_config as dcfg
 import dashboard_controls as dc
 import dashboard_demo as demo
 import dashboard_hints as dh
@@ -140,6 +142,7 @@ STATIC = {
     "/theme.css": ("theme.css", "text/css; charset=utf-8"),
     "/app.js": ("app.js", "text/javascript; charset=utf-8"),
     "/lanelabel.js": ("lanelabel.js", "text/javascript; charset=utf-8"),
+    "/look.js": ("look.js", "text/javascript; charset=utf-8"),
     "/floor.css": ("floor.css", "text/css; charset=utf-8"),
     "/floor.js": ("floor.js", "text/javascript; charset=utf-8"),
     "/sound.js": ("sound.js", "text/javascript; charset=utf-8"),
@@ -296,8 +299,12 @@ class NoSuchJob(LookupError):
 
 
 class Dashboard:
-    def __init__(self, state: Path, roles: Path, project: str, demo: bool = False, paths=None, hint_source=None):
+    def __init__(self, state: Path, roles: Path, project: str, demo: bool = False, paths=None, hint_source=None,
+                 look=None, look_problem: str = ""):
         self.state, self.project, self.demo = state, project, demo
+        # dashboard.toml, read once at start (dashboard_config.py): served as `look`; a refused file is the
+        # defaults plus look_problem, which the SETUP screen shows.
+        self.look, self.look_problem = look or dcfg.defaults(), look_problem
         self.paths = paths  # factory.context.Paths for the SERVICE DUE lamp; None (demo): never due
         self.hint_source = hint_source  # dashboard_hints.Hints (its .get(now)); None: no start-up hints
         self._service: tuple = (0.0, {"due": None, "lines": [], "stale": []})
@@ -505,7 +512,7 @@ class Dashboard:
         # Read outside the lock, like SETUP: it runs git (cached a few seconds, bounded).
         outbox = self.outbox.rows(now, calls, {c["id"] for c in cards}, writes)
         return {
-            "now": now, "clock": clock(now), "project": self.project, "demo": self.demo,
+            "now": now, "clock": clock(now), "project": self.project, "demo": self.demo, "look": self.look,
             "bridge": self.watch.bridge_alive(),
             "totals": {"cost": round(total, 4), "jobs": len(jobs),
                        "running": sum(1 for lane in lanes if lane["state"] in ("running", "held"))},
@@ -832,8 +839,14 @@ def _serve(args, term) -> int:
     if not args.demo:
         root = args.roles.resolve().parent
         paths = ds.Paths(str(root), str(args.config or ds.Paths.from_environ(str(root)).config), str(args.state))
+    # Demo mode reads no real config: today's defaults.
+    look, look_problem = dcfg.defaults(), ""
+    if not args.demo:
+        look, look_problem = dcfg.load(paths.config)
+        if look_problem:
+            print(f"warning: dashboard.toml ignored, showing the defaults: {look_problem}", file=sys.stderr)
     board = Dashboard(args.state, args.roles, args.project or "(no project)", demo=args.demo, paths=paths,
-                      hint_source=None if args.demo else dh.Hints(paths))
+                      hint_source=None if args.demo else dh.Hints(paths), look=look, look_problem=look_problem)
     if not board.watch.lanes:
         print("no roles or transcripts found", file=sys.stderr)
         return 1

@@ -376,6 +376,88 @@ async function budget(url) {
   } finally { await b.close(); }
 }
 
+// dashboard.toml (#196): the page's own poll is rewritten so /api/state carries whatever look the test keeps in
+// sessionStorage ("look"), standing in for a real file. Everything is read back from the page.
+const LOOK = `(() => { const real = window.fetch.bind(window); window.__polls = 0;
+  window.fetch = async (u, o) => { const r = await real(u, o); if (!String(u).startsWith("/api/state")) return r;
+    const j = await r.json(); const raw = sessionStorage.getItem("look"); if (raw) j.look = JSON.parse(raw); window.__polls++; return new Response(JSON.stringify(j), { status: 200 }); }; })()`;
+
+async function lookFile(url) {
+  const b = await launch(url, undefined, LOOK);
+  try {
+    const poll = async () => { const n = await b.ev(`window.__polls`); for (let i = 0; i < 40 && (await b.ev(`window.__polls`)) <= n; i++) await b.sleep(250); await b.sleep(150); };
+    const setLook = async v => { await b.ev(`sessionStorage.setItem("look", ${JSON.stringify(JSON.stringify(v))})`); await poll(); await poll(); };
+    const reload = async () => { await b.ev(`location.reload()`); await b.sleep(500); for (let i = 0; i < 40 && !(await b.ev(`window.__polls > 0`)); i++) await b.sleep(250); await b.sleep(300); };
+    const stored = () => b.ev(`JSON.parse(localStorage.getItem("fc1984-knobs") || "{}")`);
+    const crt = () => b.ev(`document.querySelector('.knob[data-knob="crt"]').getAttribute("aria-valuenow")`);
+    const plantName = () => b.ev(`document.getElementById("plant-name").textContent`);
+    const colours = () => b.ev(`(() => {
+      const named = (sel, pick) => [...document.querySelectorAll(sel)].filter(n => pick(n)).map(n => n.style.getPropertyValue("--hue") || n.style.color || "");
+      return { station: named(".fl .st", n => n.querySelector(".name").textContent.startsWith("developer")),
+        station2: named(".fl .st", n => n.querySelector(".name").textContent.startsWith("reviewer")),
+        glow: [...document.querySelectorAll(".fl .st")].filter(n => n.querySelector(".name").textContent.startsWith("developer")).map(n => n.style.getPropertyValue("--glow")),
+        lane: named(".lane-name", n => n.textContent.startsWith("developer")),
+        spend: named("#roles .role-row .silk", n => n.textContent === "developer"),
+        inlineStyleAttrOnPlain: [...document.querySelectorAll(".lane-name")].filter(n => !n.textContent.startsWith("developer")).map(n => n.getAttribute("style") || "") }; })()`);
+    for (let i = 0; i < 40 && !(await b.ev(`window.__polls > 0`)); i++) await b.sleep(250);
+    await floorOn(b);
+
+    // No look: today's page.
+    assert.strictEqual(await plantName(), "LOIS", "default nameplate");
+    assert.strictEqual(await crt(), "3", "default CRT");
+    assert.strictEqual(await b.ev(`document.getElementById("sound-key").getAttribute("aria-pressed")`), "false", "sound off by default");
+    assert.match(await b.ev(`document.querySelector(".fl .big").textContent`), /^LOIS WORKS$/, "default plate");
+    assert.match(await b.ev(`document.querySelector(".fl .dim").textContent`), /^(DAY|SWING|NIGHT) SHIFT/, "default shift names");
+    const plain = await colours();
+    const every = (a, v) => a.length > 0 && a.every(x => x === v);
+    assert.ok([plain.station, plain.lane, plain.spend].every(a => every(a, "")), `no colours without a look: ${JSON.stringify(plain)}`);
+
+    // A look: the nameplate, the plate, the shift names and the CRT default follow it; the CRT is not stored.
+    const LOOK1 = { plant: "NORTH WORKS 24 CHARS OK", shifts: ["early", "late", "graveyard"], crt: 7, sound: true, colors: { developer: "#d08cff" } };
+    await setLook(LOOK1);
+    assert.strictEqual(await plantName(), "NORTH WORKS 24 CHARS OK", "the nameplate follows plant");
+    assert.strictEqual(await b.ev(`document.querySelector(".fl .big").textContent`), "NORTH WORKS 24 CHARS OK", "the floor's plate follows plant");
+    assert.match(await b.ev(`document.querySelector(".fl .dim").textContent`), /^(EARLY|LATE|GRAVEYARD) SHIFT · THE FLOOR/, "the shift names follow shifts");
+    assert.strictEqual(await crt(), "7", "the CRT knob starts at the configured level");
+    assert.strictEqual((await stored()).crt, undefined, "...without storing it as the browser's own choice");
+    let c = await colours();
+    assert.ok(every(c.station, "#d08cff") && every(c.lane, "rgb(208, 140, 255)") && every(c.spend, "rgb(208, 140, 255)") && every(c.glow, "rgba(208, 140, 255, .5)"), `the role's colour on the station, lane name and spend row: ${JSON.stringify(c)}`);
+    assert.ok(every(c.station2, ""), "another role keeps its own hue");
+    assert.deepStrictEqual(c.inlineStyleAttrOnPlain.filter(x => x), [], "a role without a colour gets no style");
+    const fit = await b.ev(`(() => { const h = document.getElementById("plant-name"), p = document.querySelector(".fl .big"), f = document.getElementById("floor").getBoundingClientRect(), r = p.getBoundingClientRect(), n = h.getBoundingClientRect(), badge = h.closest(".badge").getBoundingClientRect();
+      return { head: n.right <= badge.right + 0.5 && h.scrollWidth <= h.clientWidth + 1, plate: r.right <= f.right && r.left >= f.left }; })()`);
+    assert.deepStrictEqual(fit, { head: true, plate: true }, "a 24-character plant fits the header and the floor");
+
+    // Bad values from a bad server (or a tampered state) are dropped by the page, not drawn.
+    await setLook({ plant: "<img src=x onerror=alert(1)> ", shifts: ["a", "b"], crt: 11, sound: "yes", colors: { developer: "red; background:url(//evil)", Reviewer: "#ffffff" } });
+    c = await colours();
+    assert.strictEqual(await plantName(), "LOIS", "an unprintable plant is ignored");
+    assert.strictEqual(await crt(), "3", "an out-of-range CRT is ignored");
+    assert.ok([c.station, c.lane, c.spend, c.station2].every(a => every(a, "")), `a bad colour or role name is ignored: ${JSON.stringify(c)}`);
+    assert.strictEqual(await b.ev(`document.querySelector(".fl .big").textContent`), "LOIS WORKS");
+
+    // The browser's own CRT choice wins over the file, and the reset goes to the file's level.
+    await setLook(LOOK1);
+    await b.ev(`document.querySelector('.knob[data-knob="crt"]').focus()`);
+    await b.key("ArrowUp", "ArrowUp"); await b.sleep(150);
+    assert.deepStrictEqual([await crt(), (await stored()).crt], ["8", 8], "turning the knob stores the browser's own level");
+    await setLook({ ...LOOK1, crt: 2 });
+    assert.strictEqual(await crt(), "8", "a remembered level wins over the file");
+    await b.key("Home", "Home"); await b.sleep(150);
+    assert.strictEqual(await crt(), "2", "Home goes to the configured level");
+
+    // Sound: on from the file only for a browser with no choice of its own; a choice is kept.
+    await b.ev(`localStorage.clear()`);
+    await reload();
+    assert.strictEqual(await b.ev(`document.getElementById("sound-key").getAttribute("aria-pressed")`), "true", "sound = true starts the SOUND key on");
+    await b.ev(`document.getElementById("sound-key").click()`); await b.sleep(150);
+    assert.strictEqual(await b.ev(`document.getElementById("sound-key").getAttribute("aria-pressed")`), "false");
+    await reload();
+    assert.strictEqual(await b.ev(`document.getElementById("sound-key").getAttribute("aria-pressed")`), "false", "a remembered off beats sound = true");
+    assert.strictEqual(await crt(), "2", "after clearing storage, the file's level (2, the last look served) again");
+  } finally { await b.close(); }
+}
+
 async function run(url) {
   // ---- motion allowed
   let b = await launch(url);
@@ -453,4 +535,4 @@ async function run(url) {
   } finally { await b.close(); }
 }
 
-run(process.argv[2]).then(() => attention(process.argv[2])).then(() => printer(process.argv[2])).then(() => budget(process.argv[2])).then(() => console.log("floor browser checks passed"), e => { console.error(e.stack || e); process.exit(1); });
+run(process.argv[2]).then(() => attention(process.argv[2])).then(() => printer(process.argv[2])).then(() => budget(process.argv[2])).then(() => lookFile(process.argv[2])).then(() => console.log("floor browser checks passed"), e => { console.error(e.stack || e); process.exit(1); });

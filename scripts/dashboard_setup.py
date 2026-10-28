@@ -226,11 +226,15 @@ def briefing(config: dict | None, paths, repos: list | None, now: float) -> dict
     }
 
 
-def setup(paths, project: str) -> dict | None:
-    """build(), or None when there is no config to read (no paths) or reading it failed."""
+def setup(paths, project: str, look_problem: str = "") -> dict | None:
+    """build() plus the dashboard.toml row (`look`: is there a file, and why it was refused, if it was),
+    or None when there is no config to read (no paths) or reading it failed."""
     if paths is None:
         return None
     try:
-        return build(paths, project)
+        out = build(paths, project)
+        out["look"] = {"file": os.path.isfile(os.path.join(paths.config, "dashboard.toml")),
+                       "problem": clean(look_problem, 400)}
+        return out
     except Exception:  # a screen must not take the state view down; a broken fixture reads as unavailable
         return None

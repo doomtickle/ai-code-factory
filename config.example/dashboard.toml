@@ -1,0 +1,37 @@
+# Example dashboard look. `factory config init` copies this folder to
+# ~/.config/ai-code-factory/ ($XDG_CONFIG_HOME/ai-code-factory/ if you set
+# it). Every line below is a commented placeholder, so the copy changes
+# nothing until you uncomment a line and fill in your own value.
+#
+# `factory dashboard` reads this file once, when it starts: restart the
+# dashboard to see a change. It only changes how the page looks and what its
+# knobs start at. Nothing here is run, and nothing here touches the broker,
+# the roles or any permission. A mistake (an unknown key, a bad colour, a
+# number out of range) makes the dashboard ignore the whole file and show its
+# defaults; the reason is in its log and on the SETUP screen.
+#
+# Put these four before the [roles.colors] table. Strings are one line of
+# printable ASCII, in "double" or 'single' quotes, without escapes.
+
+# The nameplate in the header and the plate on the floor (up to 24 characters).
+# Default: LOIS in the header, LOIS WORKS on the floor.
+# plant = "LOIS WORKS"
+
+# The names of the floor's three shifts, in the order day, swing, night (up to
+# 16 characters each, on one line).
+# shifts = ["day", "swing", "night"]
+
+# The CRT knob's starting level, a whole number from 0 (flat) to 10, until this
+# browser remembers a level of its own (turn the knob once). Default: 3.
+# crt = 3
+
+# Whether the SOUND key starts on (true or false), until this browser remembers
+# a choice of its own (press the key once). Default: false.
+# sound = false
+
+# A colour for a role on the floor and in the lane and spend modules, as
+# "#rrggbb". The name is a role name (lowercase letters, digits and dashes). A
+# role without one keeps its own hue: the built-in roles their fixed one, any
+# other role a hue chosen from its name.
+# [roles.colors]
+# designer = "#d08cff"

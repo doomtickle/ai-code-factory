@@ -2,8 +2,9 @@
 // floor events floor.js announces on document, and (#192) for the two attention events
 // app.js announces: a write held (the alert horn) and a job finished (a ding). Off until the SOUND key (or S) is
 // pressed; the choice is kept in this browser. Display only: it listens, makes no
-// request, loads no audio file and reads nothing from an event but its type, so
-// agent-written text never reaches it. Tones come from Web Audio oscillators.
+// request, loads no audio file and reads nothing from a cue event but its type, so
+// agent-written text never reaches it. Tones come from Web Audio oscillators. The one other thing it reads is
+// `sound` in the state's `look` (dashboard.toml's default, #196), once, through look.js's checks.
 "use strict";
 
 (() => {
@@ -91,6 +92,17 @@
   try { if (localStorage.getItem(STORE) === "1") setOn(true, false); } catch (e) { /* no storage: off */ }
   // A remembered "on" stays silent until the first click or key press lets the browser start audio.
   for (const t of ["pointerdown", "keydown"]) document.addEventListener(t, () => { if (on && (!ctx || ctx.state !== "running")) wake(); }, { passive: true });
+
+  // dashboard.toml's `sound = true` (look.js has checked it) turns it on once, from the first state, but only for a browser
+  // that has never chosen: a remembered "off" or "on" wins. It starts as silent as a remembered "on" until a click or key.
+  let looked = false;
+  document.addEventListener("factory:state", e => {
+    if (looked || !e.detail) return;
+    looked = true;
+    let chosen = true;
+    try { chosen = localStorage.getItem(STORE) !== null; } catch (err) { /* no storage: nothing is remembered */ chosen = false; }
+    if (!chosen && !on && window.FactoryLook && window.FactoryLook.read(e.detail.look).sound === true) setOn(true, false);
+  });
 
   for (const name of FLOOR) document.addEventListener(`factory-floor:${name}`, () => cue(name));
   for (const name of ATTENTION) document.addEventListener(`factory-attention:${name}`, () => cue(name));

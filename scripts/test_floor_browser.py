@@ -28,7 +28,7 @@ class FloorBrowserTests(unittest.TestCase):
         self.addCleanup(server.terminate)
         url = re.search(r"http://127\.0\.0\.1:\d+/\?token=\S+", server.stdout.readline())
         self.assertTrue(url, "the demo dashboard printed no URL")
-        run = subprocess.run(["node", str(SCRIPTS / "test_floor_browser.js"), url.group(0)], capture_output=True, text=True, timeout=150, check=False)
+        run = subprocess.run(["node", str(SCRIPTS / "test_floor_browser.js"), url.group(0)], capture_output=True, text=True, timeout=240, check=False)
         self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
 
 

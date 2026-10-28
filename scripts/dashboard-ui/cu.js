@@ -648,6 +648,11 @@
       tail.push(applyTag(nt.applies));
       out.push(row(f.name, "", ...tail));
     }
+
+    const lk = cfg.look && typeof cfg.look === "object" ? cfg.look : {};
+    out.push(H("Dashboard look", "dashboard.toml"));
+    if (lk.problem) out.push(P("ind k-err", `  ✕ ignored, the defaults show: ${str(lk.problem)}`), P("ind k-dim", "  Fix the file, then restart factory dashboard."));
+    else out.push(P("k-dim", lk.file ? "  Read when factory dashboard started: the nameplate, shift names, defaults and role colours." : "  No dashboard.toml in the config folder: the defaults show."));
     return out;
   }
 

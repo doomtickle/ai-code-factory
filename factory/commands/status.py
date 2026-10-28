@@ -15,14 +15,14 @@ from factory.context import FactoryError, bound_project
 BROKER_PORT = 18765
 
 # Folders of local settings that make the config folder count as "set up" (besides
-# policy.toml and enabled-roles).
+# policy.toml, enabled-roles and dashboard.toml).
 SETTINGS_FOLDERS = ("broker-kit", "roles", "projects", "plugins")
 
 
 def local_settings_present(paths):
-    """True if the config folder holds any local settings: policy.toml or enabled-roles, or
-    a broker-kit/, roles/, projects/ or plugins/ folder."""
-    if os.path.isfile(os.path.join(paths.config, "policy.toml")) or os.path.isfile(os.path.join(paths.config, "enabled-roles")):
+    """True if the config folder holds any local settings: policy.toml, enabled-roles or dashboard.toml,
+    or a broker-kit/, roles/, projects/ or plugins/ folder."""
+    if any(os.path.isfile(os.path.join(paths.config, f)) for f in ("policy.toml", "enabled-roles", "dashboard.toml")):
         return True
     return any(os.path.isdir(os.path.join(paths.config, d)) for d in SETTINGS_FOLDERS)
 

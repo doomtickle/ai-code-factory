@@ -148,6 +148,13 @@ def policy_toml_string(paths, section, key):
     raw = policy_value(paths, section, key)
     if not raw:
         return None
+    return toml_string(raw)
+
+
+def toml_string(raw):
+    """The text of a one-line TOML string value as read from a file ("basic" without escapes, or
+    'literal', then optionally a # comment); ValueError for anything else. FACTORY_CONFIG/dashboard.toml
+    (scripts/dashboard_config.py) reads its strings through this too."""
     m = _BASIC_STRING.fullmatch(raw) or _LITERAL_STRING.fullmatch(raw)
     if m is None:
         raise ValueError(raw)

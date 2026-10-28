@@ -12,6 +12,13 @@
     if (text != null) n.textContent = String(text);
     return n;
   };
+  // dashboard.toml (look.js reads state.look): a custom role's colour goes on its name as a CSS value, set with
+  // style.setProperty (the CSP has no inline style) and only when it is a validated #rrggbb.
+  let look = FactoryLook.read(null);
+  function tint(node, role) {
+    const c = look.colors.get(role);
+    if (c) node.style.setProperty("color", c); else node.style.removeProperty("color");
+  }
   const NS = "http://www.w3.org/2000/svg";
   const svgEl = (tag, attrs) => { const n = document.createElementNS(NS, tag); for (const k in attrs) n.setAttribute(k, attrs[k]); return n; };
   const usd = v => (v == null ? "--" : "$" + Number(v).toFixed(2));
@@ -102,7 +109,8 @@
     const stat = label => { const s = el("div", "stat"); s.title = label; const v = el("span", "val"); s.append(el("span", "silk", label), v); stats.append(s); return v; };
     r.model = stat("Model"); r.cost = stat("Cost"); r.ctx = stat("Ctx");
     r.tbox = el("div", "lcd seg-box"); r.tbox.dataset.name = name; r.segText = null;
-    top.append(r.led, el("span", "lane-name", name), r.tag, r.ref, stats, r.tbox, r.key);
+    r.nameEl = el("span", "lane-name", name);
+    top.append(r.led, r.nameEl, r.tag, r.ref, stats, r.tbox, r.key);
     r.card.append(top, r.lcd);
     r.card.addEventListener("click", () => openMon(name));
     return r;
@@ -114,6 +122,7 @@
     return typeof lane.branch === "string" ? lane.branch : "";
   }
   function updateCard(r, lane, i) {
+    tint(r.nameEl, lane.role);
     setClass(r.card, `lane plate${lane.state === "idle" ? " idle" : ""}`);
     setClass(r.led, `led ${LED[lane.state] || ""}`);
     setClass(r.tag, `state-tag st-${lane.state}`);
@@ -481,7 +490,9 @@
       const segs = el("div", "segs");
       const lit = r.cost > 0 ? Math.max(1, Math.round(r.cost / max * 20)) : 0;
       for (let k = 0; k < 20; k++) segs.append(el("i", k < lit ? "on" : null));
-      row.append(el("span", "silk", r.role), segs, el("span", "v", usd(r.cost)));
+      const who = el("span", "silk", r.role);
+      tint(who, r.role);
+      row.append(who, segs, el("span", "v", usd(r.cost)));
       return row;
     }));
     $("spend-sub").textContent = `${state.totals.jobs} jobs today`;
@@ -856,14 +867,15 @@
   const DETENT = 12;           // V-HOLD locks within this many steps of centre
   // Each knob's range and its reset value. The centred ones sweep -100..100; CRT
   // sweeps 0 (flat, no tube at all) to 10 (a full, worn CRT) and starts at 3.
-  const KNOBS = { bright: [-100, 100, 0], contrast: [-100, 100, 0], vhold: [-100, 100, 0], crt: [0, 10, 3] };
+  const CRT_HOME = 3, KNOBS = { bright: [-100, 100, 0], contrast: [-100, 100, 0], vhold: [-100, 100, 0], crt: [0, 10, CRT_HOME] };
   const knobVals = {};
   for (const k in KNOBS) knobVals[k] = KNOBS[k][2];
+  const mine = {};   // the knobs this browser remembers; the rest follow the defaults (dashboard.toml sets CRT's)
   const clampKnob = (name, v) => Math.max(KNOBS[name][0], Math.min(KNOBS[name][1], v));
   try {
     const saved = JSON.parse(localStorage.getItem(KNOB_KEY) || "{}");
     // A value outside the knob's range is from an older layout of the panel: keep the default.
-    for (const k in knobVals) if (saved && Number.isFinite(saved[k]) && saved[k] === clampKnob(k, saved[k])) knobVals[k] = saved[k];
+    for (const k in knobVals) if (saved && Number.isFinite(saved[k]) && saved[k] === clampKnob(k, saved[k])) knobVals[k] = mine[k] = saved[k];
   } catch (e) { /* no storage: defaults */ }
   const tube = $("coord-crt"), roll = $("crt-roll"), ghost = $("crt-ghost"), crtBody = $("crt-body");
   const reduceMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -936,14 +948,25 @@
       k.setAttribute("aria-valuenow", String(Math.round(val)));
       k.setAttribute("aria-valuetext", name === "vhold" ? holdText(val) : name === "crt" ? (val ? `${Math.round(val)} of 10` : "flat") : `${Math.round(val)}`);
     });
-    try { localStorage.setItem(KNOB_KEY, JSON.stringify(Object.assign({}, knobVals, { budget }))); } catch (e) { /* fine */ }
+    try { localStorage.setItem(KNOB_KEY, JSON.stringify(Object.assign({}, mine, { budget }))); } catch (e) { /* fine */ }
   }
   function setKnob(name, value) {
-    knobVals[name] = clampKnob(name, Math.round(value));
+    knobVals[name] = mine[name] = clampKnob(name, Math.round(value));
     applyKnobs();
   }
+  // The look from dashboard.toml, once per state: the nameplate, and the CRT knob's default (and its reset) until
+  // this browser has its own. The shift names and the floor's plate are floor.js's, the sound default sound.js's.
+  function applyLook() {
+    look = FactoryLook.read(state && state.look);
+    setText($("plant-name"), look.plant || "LOIS");
+    const crt = look.crt == null ? CRT_HOME : look.crt;
+    if (KNOBS.crt[2] !== crt) {
+      KNOBS.crt[2] = crt;
+      if (!("crt" in mine)) { knobVals.crt = crt; applyKnobs(); }
+    }
+  }
   document.querySelectorAll(".knob[data-knob]").forEach(k => {
-    const name = k.dataset.knob, [lo, hi, home] = KNOBS[name];
+    const name = k.dataset.knob, [lo, hi] = KNOBS[name], home = () => KNOBS[name][2];  // CRT's home follows dashboard.toml
     const travel = (hi - lo) / 200;  // the same drag turns every knob by the same angle
     const unit = Math.max(1, (hi - lo) / 40);  // one arrow press or wheel notch: 5 of 200, 1 of 10
     let drag = null;
@@ -963,11 +986,11 @@
     k.addEventListener("pointerup", end);
     k.addEventListener("pointercancel", end);
     k.addEventListener("wheel", e => { e.preventDefault(); setKnob(name, knobVals[name] - Math.sign(e.deltaY) * unit); }, { passive: false });
-    k.addEventListener("dblclick", () => setKnob(name, home));
+    k.addEventListener("dblclick", () => setKnob(name, home()));
     k.addEventListener("keydown", e => {
       const step = { ArrowUp: unit, ArrowRight: unit, ArrowDown: -unit, ArrowLeft: -unit, PageUp: 4 * unit, PageDown: -4 * unit }[e.key];
       if (step != null) { e.preventDefault(); e.stopPropagation(); setKnob(name, knobVals[name] + step); }
-      else if (e.key === "Home") { e.preventDefault(); e.stopPropagation(); setKnob(name, home); }
+      else if (e.key === "Home") { e.preventDefault(); e.stopPropagation(); setKnob(name, home()); }
       else if (e.key === "End") { e.preventDefault(); e.stopPropagation(); setKnob(name, hi); }
     });
   });
@@ -1168,6 +1191,7 @@
       if (!r.ok) throw new Error(String(r.status));
       state = await r.json();
       polledAt = Date.now();
+      applyLook();
       renderCu(); renderHeader(); renderLanes(); renderGate(); renderSpend(); renderPaper(); renderOutbox(); renderBriefing(); renderTerm(); attention();
       // The factory floor (floor.js) draws from the same state; it fetches nothing itself.
       document.dispatchEvent(new CustomEvent("factory:state", { detail: state }));

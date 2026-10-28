@@ -1683,7 +1683,7 @@ class PageTests(unittest.TestCase):
         self.assertEqual(licenses, {"OFL-VT323.txt", "OFL-BarlowCondensed.txt", "OFL-DotGothic16.txt"})
 
     def test_no_html_sinks(self):
-        for name in ("app.js", "floor.js", "sound.js", "radio.js", "lanelabel.js"):
+        for name in ("app.js", "floor.js", "sound.js", "radio.js", "lanelabel.js", "look.js"):
             js = (UI / name).read_text()
             for sink in ("innerHTML", "outerHTML", "insertAdjacentHTML", "document.write", "eval(", "new Function"):
                 self.assertNotIn(sink, js, f"{name} uses {sink}")
@@ -1850,8 +1850,14 @@ class PageTests(unittest.TestCase):
         # floor events: no request, no audio file, nothing read from an event, off by default.
         js = (UI / "sound.js").read_text()
         for call in ("fetch(", "XMLHttpRequest", "WebSocket", "EventSource", "sendBeacon", "postMessage", ".src", "href",
-                     "new Audio", "<audio", "decodeAudioData", "createMediaElementSource", "textContent", "e.detail", "dispatchEvent"):
+                     "new Audio", "<audio", "decodeAudioData", "createMediaElementSource", "textContent", "dispatchEvent"):
             self.assertNotIn(call, js, f"sound.js uses {call}")
+        # #196: the one thing read from an event's detail is `look.sound` of the page's own state (through look.js),
+        # in the one factory:state listener; the cue events are still read for their type alone.
+        listener = js[js.index('document.addEventListener("factory:state"'):js.index("for (const name of FLOOR)")]
+        self.assertEqual(js.count("e.detail"), listener.count("e.detail"))
+        self.assertIn("FactoryLook.read(e.detail.look).sound === true", listener)
+        self.assertNotRegex(listener, r"cue\(|play\(|wake\(")
         for name in ("passed", "confiscated", "docked", "held", "done"):
             self.assertIn(name, js)
         self.assertIn("document.addEventListener(`factory-floor:${name}`, () => cue(name));", js)
@@ -1960,6 +1966,23 @@ class PageTests(unittest.TestCase):
         body = app[app.index("function laneRef"):app.index("function makeChip")]
         for call in ("fetch(", "innerHTML"):
             self.assertNotIn(call, body)
+
+    def test_the_look_is_one_shared_script_that_sets_colours_only_through_the_style_api(self):
+        # #196: dashboard.toml's values reach the page as `look` in /api/state; look.js re-checks them
+        # and every colour is set with style.setProperty (the CSP has no inline style), never a class or HTML.
+        html = (UI / "index.html").read_text()
+        self.assertEqual(d.STATIC["/look.js"], ("look.js", "text/javascript; charset=utf-8"))
+        tag = '<script src="/look.js" defer></script>'
+        self.assertEqual(html.count(tag), 1)
+        self.assertLess(html.index(tag), html.index('<script src="/app.js" defer></script>'))
+        self.assertLess(html.index(tag), html.index('<script src="/floor.js" defer></script>'))
+        self.assertNotIn("style=", html)
+        for name in ("app.js", "floor.js", "sound.js", "look.js"):
+            js = (UI / name).read_text()
+            self.assertNotRegex(js, r"\.style\.(color|cssText)\s*=|setAttribute\(\s*[\"']style", name)
+            self.assertNotRegex(js, r"className\s*[+]?=\s*[^\"'\s]*look", name)
+        self.assertIn("setProperty", (UI / "app.js").read_text())
+        self.assertIn("setProperty", (UI / "floor.js").read_text())
 
     def test_page_obeys_its_csp(self):
         html = (UI / "index.html").read_text()
