@@ -304,11 +304,13 @@ another window:
 | a call is let through | a soft blip |
 | a call is confiscated | a low buzz and thud |
 | a branch is docked | a rising two-note chime |
+| a write is held for you | the alert horn: four square-wave notes |
+| a job finished | a short, high ding |
 
 The tones are synthesised in your browser: no audio file, no request, nothing
 from the event's text. They are quiet, and at most four play a second: a burst
-of calls gives one cue, the most serious of the burst (confiscated, then
-docked, then passed). They play whether or not the floor is shown. The key
+of calls gives one cue, the most serious of the burst (a held write, then
+confiscated, docked, a finished job, passed). They play whether or not the floor is shown. The key
 remembers your choice in this browser. Browsers only start audio after you
 click or press a key, so a page that reloads with sound on stays silent until
 your first click or key press. If the browser has no Web Audio, the key is
@@ -323,6 +325,33 @@ nothing from the page or the events), quieter than they are, and a **RADIO**
 key appears next to SOUND while it plays: press it to turn the radio off. The
 choice is remembered in this browser, and, as with sound, a page that reloads
 with the radio on stays silent until your first click or key press.
+
+### Attention
+
+Jobs run for minutes, so the dashboard tab is often behind another window. Three
+signals say when something needs you, all worked out in the page from the state
+it already polls (no request, nothing sent anywhere):
+
+- **Title and icon.** While a write waits for a decision the title reads
+  `(1 held) LOIS FC-1984` and the tab icon carries a red count; jobs that
+  finished while the tab was not in front add `· 2 done`. The finished-jobs
+  count clears when you come back to the tab; the held count goes when the
+  write is decided.
+- **Cues.** With SOUND on, a newly held write sounds the alert horn and a
+  finished job a short ding, under the same key and the same limit of four
+  cues a second as the floor events.
+- **Notifications.** The **NOTIFY** key next to SOUND (or `n`) turns on browser
+  notifications for the same two events. The browser asks permission when you
+  press the key and never on load; if you refuse, the key greys out until you
+  allow it in the browser's settings. A notification appears only while the tab
+  is not in front, and says just `Write held · git_push` or `Job finished ·
+  developer`: a fixed kind, then a tool from a fixed list or a lane name that
+  matches the lane pattern, never text an agent wrote. The key's choice is
+  remembered in this browser, and it only counts while the permission is still
+  granted. A browser without notifications greys the key out.
+
+`factory dashboard --demo` shows a held write at once, so the title badge is
+there to see.
 
 ## Write gate and the control unit
 
@@ -500,6 +529,7 @@ Stands in for: part of `factory analytics` and of `factory logs broker` /
 | Anywhere | `1`–`9` | Open that lane's monitor |
 | Anywhere | `f` | Factory floor on / off |
 | Anywhere | `s` | Sound on / off |
+| Anywhere | `n` | Browser notifications on / off |
 | Lane monitor | `t` / `p` | Transcript / review packet |
 | Lane monitor, patch viewer | Esc | Close |
 | Patch viewer | `j` `k` ↓ ↑ | Next / previous file |

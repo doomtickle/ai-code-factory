@@ -1,5 +1,6 @@
 // The sound layer (doomtickle/passdesk-ops#162): short synthesized cues for the three
-// floor events floor.js announces on document. Off until the SOUND key (or S) is
+// floor events floor.js announces on document, and (#192) for the two attention events
+// app.js announces: a write held (the alert horn) and a job finished (a ding). Off until the SOUND key (or S) is
 // pressed; the choice is kept in this browser. Display only: it listens, makes no
 // request, loads no audio file and reads nothing from an event but its type, so
 // agent-written text never reaches it. Tones come from Web Audio oscillators.
@@ -12,7 +13,9 @@
   if (!AC) { key.disabled = true; return; }
   const STORE = "fc1984-sound";
   const GAP = 0.25;   // seconds between cues: at most four a second, a burst coalesces to one trailing cue
-  const RANK = { passed: 0, docked: 1, confiscated: 2 };
+  const FLOOR = ["passed", "docked", "confiscated"];
+  const ATTENTION = ["held", "done"];
+  const RANK = { passed: 0, done: 1, docked: 2, confiscated: 3, held: 4 };   // a burst plays its most serious cue
 
   let on = false, ctx = null, master = null, lastAt = -Infinity, pending = null, timer = 0;
 
@@ -34,6 +37,8 @@
     passed: t => note("sine", 880, 0, t, 0.09, 0.5),                                // soft blip
     confiscated: t => { note("sawtooth", 120, 55, t, 0.3, 0.45); note("sine", 70, 40, t, 0.25, 0.9); },   // low buzz and thud
     docked: t => { note("sine", 523.25, 0, t, 0.14, 0.5); note("sine", 783.99, 0, t + 0.11, 0.2, 0.5); },  // rising two-note chime
+    done: t => note("sine", 1318.5, 0, t, 0.22, 0.45),                              // short high ding
+    held: t => { note("square", 440, 0, t, 0.16, 0.4); note("square", 330, 0, t + 0.2, 0.16, 0.4); note("square", 440, 0, t + 0.4, 0.16, 0.4); note("square", 330, 0, t + 0.6, 0.3, 0.4); },   // alert horn
   };
 
   // Only a user gesture may create or resume the context (autoplay rules); a cue that
@@ -87,5 +92,6 @@
   // A remembered "on" stays silent until the first click or key press lets the browser start audio.
   for (const t of ["pointerdown", "keydown"]) document.addEventListener(t, () => { if (on && (!ctx || ctx.state !== "running")) wake(); }, { passive: true });
 
-  for (const name of Object.keys(RANK)) document.addEventListener(`factory-floor:${name}`, () => cue(name));
+  for (const name of FLOOR) document.addEventListener(`factory-floor:${name}`, () => cue(name));
+  for (const name of ATTENTION) document.addEventListener(`factory-attention:${name}`, () => cue(name));
 })();

@@ -6,12 +6,15 @@
 // do too, and it wears glasses. Job titles wider than the console glass slide, clipped to it;
 // short ones and everything under prefers-reduced-motion stay still (ellipsis + tooltip).
 // It also types the Konami code to check the factory radio badge (radio.js) shows, hides and remembers.
+// The attention signals (#192, app.js) are driven by rewriting the /api/state the page polls: the title and
+// favicon badge, the cues' events, the jobs-done count clearing on focus, and the NOTIFY key (a stubbed
+// Notification: permission asked only from the key, a body of fixed words and validated names only).
 "use strict";
 const { spawn } = require("node:child_process");
 const assert = require("node:assert");
 const fs = require("node:fs"), os = require("node:os"), path = require("node:path");
 
-async function launch(url, media) {
+async function launch(url, media, init) {
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), "floor-test."));
   const child = spawn(process.env.FACTORY_SHOT_CHROME || "chrome-headless-shell", ["--headless", "--no-sandbox", "--disable-gpu",
     "--disable-dev-shm-usage", "--hide-scrollbars", "--no-first-run", "--disable-extensions", "--remote-debugging-pipe",
@@ -38,6 +41,7 @@ async function launch(url, media) {
   await s("Page.enable"); await s("Runtime.enable");
   await s("Emulation.setDeviceMetricsOverride", { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
   if (media) await s("Emulation.setEmulatedMedia", { features: media });
+  if (init) await s("Page.addScriptToEvaluateOnNewDocument", { source: init });
   const loaded = new Promise(r => { const f = m => { if (m.method === "Page.loadEventFired") { listeners.splice(listeners.indexOf(f), 1); r(); } }; listeners.push(f); });
   await s("Page.navigate", { url });
   await loaded;
@@ -59,7 +63,7 @@ async function launch(url, media) {
     async close() {
       child.kill("SIGKILL");
       await new Promise(r => child.once("exit", r));
-      fs.rmSync(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+      try { fs.rmSync(profile, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 }); } catch (e) { /* Chrome still flushing its profile: a leftover temp folder is harmless */ }
     },
   };
 }
@@ -69,6 +73,82 @@ async function floorOn(b) {
   await b.ev(`document.getElementById("floor-key").click()`);
   for (let i = 0; i < 40 && !(await b.ev(`document.querySelectorAll(".fl .st").length >= 5`)); i++) await b.sleep(250);
   await b.sleep(500);
+}
+
+// The page's own poll, with /api/state rewritten by window.__mut(state) and counted in window.__polls.
+const HOOK = `(() => { const real = window.fetch.bind(window); window.__polls = 0; window.__mut = null;
+  window.fetch = async (u, o) => { const r = await real(u, o); if (!String(u).startsWith("/api/state")) return r;
+    const j = await r.json(); if (window.__mut) window.__mut(j); window.__polls++; return new Response(JSON.stringify(j), { status: 200 }); };
+  window.__events = []; for (const n of ["held", "done"]) document.addEventListener("factory-attention:" + n, () => window.__events.push(n));
+  window.__asked = 0; window.__notes = [];
+  window.Notification = class { constructor(t, o) { window.__notes.push([t, o && o.body]); } close() {} static permission = "default";
+    static requestPermission(cb) { window.__asked++; Notification.permission = "granted"; if (cb) cb("granted"); return Promise.resolve("granted"); } };
+  document.hasFocus = () => false; })()`;
+
+async function attention(url) {
+  const b = await launch(url, undefined, HOOK);
+  try {
+    const poll = async () => { const n = await b.ev(`window.__polls`); for (let i = 0; i < 40 && (await b.ev(`window.__polls`)) <= n; i++) await b.sleep(250); };
+    const title = () => b.ev(`document.title`);
+    for (let i = 0; i < 40 && !(await b.ev(`window.__polls > 0`)); i++) await b.sleep(250);
+    await b.sleep(300);
+    assert.strictEqual(await title(), "(1 held) LOIS FC-1984", "the demo's held write badges the title");
+    assert.strictEqual(await b.ev(`window.__asked`), 0, "permission is never asked on load");
+    assert.deepStrictEqual(await b.ev(`window.__events`), [], "the first poll's state is history, not an event");
+    const icon = await b.ev(`document.querySelector('link[rel="icon"]').href`);
+    assert.ok(icon.startsWith("data:image/png;base64,"), "the favicon is a canvas-drawn data URL");
+    const pixel = (x, y) => b.ev(`new Promise(r => { const i = new Image(); i.onload = () => { const c = document.createElement("canvas"); c.width = c.height = 32;
+      const g = c.getContext("2d"); g.drawImage(i, 0, 0); r([...g.getImageData(${x}, ${y}, 1, 1).data]); }; i.src = document.querySelector('link[rel="icon"]').href; })`);
+    const [r, g] = await pixel(27, 27);
+    assert.ok(r > 200 && g < 100, `the favicon carries a red held badge (${r},${g})`);
+
+    // A job finishing while the tab is behind another window counts, and focus clears it.
+    await b.ev(`(() => { window.__phase = "running"; window.__mut = j => { const l = j.lanes[0]; l.state = window.__phase; if (window.__name) l.name = window.__name;
+      for (const x of (window.__extra || [])) j.gate.push(Object.assign({}, j.gate[0], x)); }; return null; })()`);
+    await poll();
+    await b.ev(`window.__phase = "done"`);
+    await poll(); await b.sleep(100);
+    assert.strictEqual(await title(), "(1 held · 1 done) LOIS FC-1984", "a finished job adds to the badge");
+    assert.deepStrictEqual(await b.ev(`window.__events`), ["done"]);
+    await b.ev(`document.hasFocus = () => true; window.dispatchEvent(new Event("focus"))`);
+    assert.strictEqual(await title(), "(1 held) LOIS FC-1984", "focus clears the finished-jobs count");
+    await b.ev(`window.__phase = "running"`); await poll();
+    await b.ev(`window.__phase = "done"`); await poll();
+    assert.strictEqual(await title(), "(1 held) LOIS FC-1984", "a job that ends while the tab is watched isn't counted");
+    assert.deepStrictEqual(await b.ev(`window.__events`), ["done", "done"], "...but still makes its cue");
+
+    // A new held write: the cue fires once for it, the badge counts both.
+    await b.ev(`window.__extra = [{ id: "demo-extra-1", tool: "git_push" }]`);
+    await poll(); await b.sleep(100);
+    assert.strictEqual(await title(), "(2 held) LOIS FC-1984");
+    assert.deepStrictEqual(await b.ev(`window.__events.filter(e => e === "held")`), ["held"]);
+    await poll();
+    assert.deepStrictEqual(await b.ev(`window.__events.filter(e => e === "held")`), ["held"], "a card already seen doesn't cue again");
+
+    // NOTIFY: nothing until the key is pressed, then a notification only while the tab is behind.
+    assert.strictEqual(await b.ev(`document.getElementById("notify-key").getAttribute("aria-pressed")`), "false");
+    await b.ev(`document.getElementById("notify-key").click()`); await b.sleep(100);
+    assert.deepStrictEqual(await b.ev(`[window.__asked, document.getElementById("notify-key").getAttribute("aria-pressed"), localStorage.getItem("fc1984-notify")]`), [1, "true", "1"]);
+    await b.ev(`window.__extra = [{ id: "demo-extra-1", tool: "git_push" }, { id: "demo-extra-2", tool: "<img src=x onerror=alert(1)>" }]`);
+    await poll(); await b.sleep(100);
+    assert.deepStrictEqual(await b.ev(`window.__notes`), [], "no notification while the tab is focused");
+    await b.ev(`document.hasFocus = () => false; window.__extra = [{ id: "demo-extra-1", tool: "git_push" }, { id: "demo-extra-2", tool: "<img src=x onerror=alert(1)>" }, { id: "demo-extra-3", tool: "gitlab_create_mr" }]`);
+    await poll(); await b.sleep(100);
+    assert.deepStrictEqual(await b.ev(`window.__notes`), [["LOIS", "Write held · gitlab_create_mr"]], "a fixed tool name, nothing else");
+    await b.ev(`window.__extra = [{ id: "demo-extra-1", tool: "git_push" }, { id: "demo-extra-2" }, { id: "demo-extra-3" }, { id: "demo-extra-4", tool: "<b>evil</b>" }]`);
+    await poll(); await b.sleep(100);
+    assert.deepStrictEqual((await b.ev(`window.__notes`))[1], ["LOIS", "Write held · write"], "a tool outside the fixed list is just a write");
+    await b.ev(`window.__name = "Evil<b>name"; window.__phase = "running"`); await poll();
+    await b.ev(`window.__phase = "done"`); await poll(); await b.sleep(100);
+    assert.deepStrictEqual((await b.ev(`window.__notes`))[2], ["LOIS", "Job finished · lane"], "a lane name outside the pattern is just a lane");
+    await b.ev(`window.__name = null; window.__phase = "running"`); await poll();
+    await b.ev(`window.__phase = "done"`); await poll(); await b.sleep(100);
+    const notes = await b.ev(`window.__notes`);
+    assert.ok(/^Job finished · [a-z][a-z0-9-]+$/.test(notes[3][1]), `a lane name: ${notes[3]}`);
+    assert.ok(notes.every(n => n[0] === "LOIS" && /^(Write held · [a-z_]+|Job finished · [a-z][a-z0-9-]*)$/.test(n[1])), `notification bodies: ${JSON.stringify(notes)}`);
+    await b.ev(`document.getElementById("notify-key").click()`);
+    assert.strictEqual(await b.ev(`localStorage.getItem("fc1984-notify")`), "0", "the key turns notifications off and remembers it");
+  } finally { await b.close(); }
 }
 
 async function run(url) {
@@ -148,4 +228,4 @@ async function run(url) {
   } finally { await b.close(); }
 }
 
-run(process.argv[2]).then(() => console.log("floor browser checks passed"), e => { console.error(e.stack || e); process.exit(1); });
+run(process.argv[2]).then(() => attention(process.argv[2])).then(() => console.log("floor browser checks passed"), e => { console.error(e.stack || e); process.exit(1); });

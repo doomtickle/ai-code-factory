@@ -157,6 +157,13 @@ come from fixed maps, never from the data. A row opens that job's packet through
 packet is a regular file `dispatch/packets/<id>.md`, opened `O_NOFOLLOW`, capped). The module acts on nothing. Demo mode runs
 no git: `FixtureGit` reads `dispatch/demo-refs.json`.
 
+ATTENTION (doomtickle/passdesk-ops#192, `app.js`, with the cues in `sound.js`) is display only and adds no
+endpoint: the title and favicon badge, the cues and the optional notifications come from `/api/state`
+diffs the page already polls. Only counts, a fixed tool list and the lane-name pattern ever reach the
+title, the favicon (drawn on a canvas, so the main page's CSP has `img-src 'self' data:` and nothing wider)
+or a `Notification`; agent-written text never does. Notification permission is asked only from the NOTIFY
+key's click, never on load.
+
 Anything new that lets a page act must meet the same bar: one fixed argv with no
 shell, a key in a request header (not just the cookie) on a POST or WebSocket with its
 `Origin` checked, kept out of reach of the page that shows agent-written content, and a

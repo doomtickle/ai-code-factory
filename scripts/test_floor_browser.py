@@ -1,7 +1,8 @@
 """The factory floor in a real browser (headless Chrome) against `factory dashboard --demo`:
 every station takes a click, Enter and Space and opens its lane's monitor (a regression:
 the glass overlay once lay over the stations and swallowed them), workers wear glasses,
-and long job titles slide while short ones and reduced motion stay still. The browser
+and long job titles slide while short ones and reduced motion stay still. It also checks the
+attention signals (title/favicon badge, cues, NOTIFY). The browser
 steps are in test_floor_browser.js. Skipped when node or chrome-headless-shell is missing.
 
   python3 -m unittest discover -s scripts -p 'test_floor_browser.py' -v

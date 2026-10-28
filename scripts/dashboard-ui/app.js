@@ -600,6 +600,7 @@
     }
     if (e.key === "f" || e.key === "F") { $("floor-key").click(); return; }
     if (e.key === "s" || e.key === "S") { $("sound-key").click(); return; }
+    if (e.key === "n" || e.key === "N") { notifyKey.click(); return; }
     const n = parseInt(e.key, 10);
     if (state && n >= 1 && n <= Math.min(9, state.lanes.length)) openMon(state.lanes[n - 1].name);
   });
@@ -806,6 +807,105 @@
     else if (e.data === "cu:reload") location.reload();
   });
 
+  // ---------- attention: title and favicon badge, cues, notifications (doomtickle/passdesk-ops#192)
+  // Derived from the state polled above, no request of its own. Only counts and two fixed
+  // sets ever reach the title, the favicon or a notification: lane names that match the
+  // lane pattern and tool names from a fixed list; agent-written text never does.
+  const TOOLS = new Set(["git_push", "github_create_pr", "gitlab_create_mr", "github_create_issue"]);
+  const LANE_NAME = /^[a-z][a-z0-9-]{1,40}$/;
+  const ENDED = new Set(["done", "approved", "revise", "failed", "cancelled", "idle"]);
+  const NOTIFY_STORE = "fc1984-notify";
+  const BASE_TITLE = document.title;
+  const notifyKey = $("notify-key");
+  let seenHeld = null, laneStates = null, doneCount = 0, notifyOn = false, badge = "";
+  const attended = () => document.visibilityState === "visible" && document.hasFocus();
+
+  function paintFavicon(held, done) {
+    try {
+      const c = document.createElement("canvas");
+      c.width = c.height = 32;
+      const g = c.getContext("2d");
+      if (!g) return;
+      g.fillStyle = "#26272a"; g.fillRect(0, 0, 32, 32);                       // the case
+      g.fillStyle = "#161719"; g.fillRect(3, 3, 26, 26);                       // the face
+      g.fillStyle = held ? "#ffae1a" : "#4dff6a"; g.fillRect(9, 9, 14, 14);    // the lamp: amber while a write is held
+      if (held || done) {
+        g.fillStyle = held ? "#ff4433" : "#e2701f";
+        g.beginPath(); g.arc(22, 22, 10, 0, 2 * Math.PI); g.fill();
+        g.fillStyle = "#fff"; g.font = "bold 15px sans-serif"; g.textAlign = "center"; g.textBaseline = "middle";
+        g.fillText(String(Math.min(held || done, 9)), 22, 23);
+      }
+      let link = document.querySelector('link[rel="icon"]');
+      if (!link) { link = document.createElement("link"); link.rel = "icon"; link.type = "image/png"; document.head.append(link); }
+      link.href = c.toDataURL("image/png");
+    } catch (e) { /* no canvas: the title still carries the badge */ }
+  }
+  function paintBadge() {
+    const held = state ? state.gate.filter(x => x.decided !== "approve" && x.decided !== "decline").length : 0;
+    const bits = [held ? `${held} held` : "", doneCount ? `${doneCount} done` : ""].filter(Boolean);
+    const next = bits.join(" · ");
+    if (next === badge) return;
+    badge = next;
+    document.title = next ? `(${next}) ${BASE_TITLE}` : BASE_TITLE;
+    paintFavicon(held, doneCount);
+  }
+  function notify(body) {
+    if (!notifyOn || attended()) return;
+    try {
+      const n = new Notification("LOIS", { body, tag: "factory-attention", silent: true });
+      n.onclick = () => { window.focus(); n.close(); };
+    } catch (e) { /* a browser that refuses: the badge is enough */ }
+  }
+  function attention() {
+    const held = state.gate.filter(x => x.decided !== "approve" && x.decided !== "decline");
+    const ids = new Set(held.map(x => String(x.id)));
+    const fresh = held.filter(x => seenHeld && !seenHeld.has(String(x.id)));
+    seenHeld = ids;
+    const finished = [];
+    const now = new Map(state.lanes.map(l => [l.name, l.state]));
+    if (laneStates) for (const [name, st] of now) {
+      const was = laneStates.get(name);
+      if ((was === "running" || was === "held") && ENDED.has(st)) finished.push(LANE_NAME.test(name) ? name : "lane");
+    }
+    laneStates = now;
+    if (!attended()) doneCount += finished.length;
+    paintBadge();
+    if (fresh.length) {
+      document.dispatchEvent(new CustomEvent("factory-attention:held"));
+      const tools = [...new Set(fresh.map(x => TOOLS.has(x.tool) ? x.tool : "write"))];
+      notify(fresh.length > 1 ? `${fresh.length} writes held` : `Write held · ${tools[0]}`);
+    }
+    if (finished.length) {
+      document.dispatchEvent(new CustomEvent("factory-attention:done"));
+      notify(finished.length > 1 ? `${finished.length} jobs finished` : `Job finished · ${finished[0]}`);
+    }
+  }
+  function clearDone() { if (attended() && doneCount) { doneCount = 0; paintBadge(); } }
+  window.addEventListener("focus", clearDone);
+  document.addEventListener("visibilitychange", clearDone);
+
+  // NOTIFY: permission is asked only here, from the key's click, never on load.
+  function setNotify(v, save) {
+    notifyOn = v;
+    notifyKey.setAttribute("aria-pressed", String(v));
+    if (save) { try { localStorage.setItem(NOTIFY_STORE, v ? "1" : "0"); } catch (e) { /* no storage: this tab only */ } }
+  }
+  if (typeof Notification === "undefined") notifyKey.disabled = true;
+  else {
+    notifyKey.addEventListener("click", () => {
+      if (notifyOn) { setNotify(false, true); return; }
+      if (Notification.permission === "denied") { notifyKey.disabled = true; notifyKey.title = "Notifications are blocked in this browser's settings"; return; }
+      if (Notification.permission === "granted") { setNotify(true, true); return; }
+      const done = p => { if (p === "granted") setNotify(true, true); else if (p === "denied") notifyKey.disabled = true; };
+      try {
+        const p = Notification.requestPermission(done);
+        if (p && p.then) p.then(done, () => {});
+      } catch (e) { /* no prompt: stays off */ }
+    });
+    // A remembered "on" counts only while the permission is still granted; nothing is asked here.
+    try { if (localStorage.getItem(NOTIFY_STORE) === "1" && Notification.permission === "granted") setNotify(true, false); } catch (e) { /* off */ }
+  }
+
   // ---------- polling
   async function poll() {
     try {
@@ -813,7 +913,7 @@
       if (!r.ok) throw new Error(String(r.status));
       state = await r.json();
       polledAt = Date.now();
-      renderCu(); renderHeader(); renderLanes(); renderGate(); renderSpend(); renderPaper(); renderOutbox(); renderTerm();
+      renderCu(); renderHeader(); renderLanes(); renderGate(); renderSpend(); renderPaper(); renderOutbox(); renderTerm(); attention();
       // The factory floor (floor.js) draws from the same state; it fetches nothing itself.
       document.dispatchEvent(new CustomEvent("factory:state", { detail: state }));
       if (monLane) loadMon();

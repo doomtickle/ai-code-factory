@@ -141,7 +141,7 @@ STATIC = {
     "/fonts/dotgothic16.woff2": ("fonts/dotgothic16.woff2", "font/woff2"),
 }
 CSP = ("default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; connect-src 'self'; "
-       "img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
+       "img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
 
 
 def page_csp(term_port: int | None = None) -> str:

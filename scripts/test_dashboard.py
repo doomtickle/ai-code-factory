@@ -1533,9 +1533,11 @@ class PageTests(unittest.TestCase):
         for call in ("fetch(", "XMLHttpRequest", "WebSocket", "EventSource", "sendBeacon", "postMessage", ".src", "href",
                      "new Audio", "<audio", "decodeAudioData", "createMediaElementSource", "textContent", "e.detail", "dispatchEvent"):
             self.assertNotIn(call, js, f"sound.js uses {call}")
-        for name in ("passed", "confiscated", "docked"):
+        for name in ("passed", "confiscated", "docked", "held", "done"):
             self.assertIn(name, js)
         self.assertIn("document.addEventListener(`factory-floor:${name}`, () => cue(name));", js)
+        self.assertIn("document.addEventListener(`factory-attention:${name}`, () => cue(name));", js)   # #192: held write, finished job
+        self.assertIn('const ATTENTION = ["held", "done"];', js)
         self.assertIn("let on = false,", js)                                  # off until the key is pressed
         self.assertIn('if (localStorage.getItem(STORE) === "1") setOn(true, false);', js)
         self.assertRegex(js, r"try \{ if \(localStorage\.getItem\(STORE\)")      # storage may be blocked
@@ -1544,6 +1546,33 @@ class PageTests(unittest.TestCase):
         self.assertEqual(js.count("new AC()"), 1)
         self.assertEqual(js.count("wake()"), 3)   # its definition, the key's click, the first-gesture hook
         self.assertIn("GAP = 0.25", js)
+
+    def test_attention_signals_are_wired(self):
+        # #192: the badge, cues and notifications come from the state the page polls; only counts,
+        # a fixed tool list and the lane-name pattern reach the title, favicon or a notification.
+        js = (UI / "app.js").read_text()
+        html = (UI / "index.html").read_text()
+        body = js[js.index("// ---------- attention"):js.index("// ---------- polling")]
+        for call in ("fetch(", "XMLHttpRequest", "WebSocket", "sendBeacon", "postMessage", "innerHTML", "location"):
+            self.assertNotIn(call, body, f"the attention block uses {call}")
+        self.assertIn("renderTerm(); attention();", js)
+        self.assertIn('const TOOLS = new Set(["git_push", "github_create_pr", "gitlab_create_mr", "github_create_issue"]);', body)
+        self.assertIn("const LANE_NAME = /^[a-z][a-z0-9-]{1,40}$/;", body)
+        # The one thing agent-controlled that reaches a notification is a name that passed those two checks.
+        self.assertEqual(re.findall(r"new Notification\(([^;]*)\);", body), ['"LOIS", { body, tag: "factory-attention", silent: true }'])
+        self.assertIn("TOOLS.has(x.tool) ? x.tool : \"write\"", body)
+        self.assertIn('LANE_NAME.test(name) ? name : "lane"', body)
+        # Permission is asked in one place, the key's click handler, never on load.
+        self.assertEqual(js.count("requestPermission("), 1)
+        self.assertLess(body.index('notifyKey.addEventListener("click"'), body.index("requestPermission("))
+        self.assertIn('if (localStorage.getItem(NOTIFY_STORE) === "1" && Notification.permission === "granted") setNotify(true, false);', body)
+        self.assertIn('if (typeof Notification === "undefined") notifyKey.disabled = true;', body)
+        self.assertIn('if (e.key === "n" || e.key === "N") { notifyKey.click(); return; }', js)
+        self.assertLess(js.index('e.key === "p") setTab'), js.index("notifyKey.click(); return;"))
+        self.assertRegex(html, r'<button class="tabkey notify-key" type="button" id="notify-key" aria-pressed="false">Notify</button>')
+        # The favicon is a data: image drawn on a canvas, so the page's CSP allows img-src data: and nothing wider.
+        self.assertIn("img-src 'self' data:;", d.CSP)
+        self.assertNotIn("img-src *", d.CSP)
 
     def test_sound_key_is_wired(self):
         html = (UI / "index.html").read_text()
