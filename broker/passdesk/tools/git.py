@@ -688,21 +688,52 @@ def _body_digest(body: str | None) -> str | None:
     return None if body is None else hashlib.sha256(body.encode()).hexdigest()
 
 
+def _pr_head(repo: str, number: int, policy: dict) -> str:
+    """The branch a pull request is from, if it is one the gateway could have
+    pushed: GETs the PR and refuses unless its head is a branch of `repo`
+    itself (not a fork) that starts with [git].push_branch_prefix, the only
+    branches github_create_pr opens PRs from. Fails closed: any error reading
+    the PR refuses the edit."""
+    token = github_token()
+    try:
+        pr = _github_api("GET", f"/repos/{repo}/pulls/{number}", token)
+    except urllib.error.HTTPError as e:
+        raise Denied(_github_api_failure(e, repo, token is not None, "Pull requests read")) from None
+    except (OSError, ValueError) as e:
+        raise Denied(f"could not read {repo}#{number} to check its head ({type(e).__name__}); nothing was written") from None
+    head = pr.get("head") if isinstance(pr, dict) else None
+    head_repo = head.get("repo") if isinstance(head, dict) else None
+    full_name = head_repo.get("full_name") if isinstance(head_repo, dict) else None
+    ref = head.get("ref") if isinstance(head, dict) else None
+    if not isinstance(full_name, str) or not isinstance(ref, str) or not ref:
+        raise Denied(f"GitHub returned no usable head for {repo}#{number}; nothing was written")
+    if full_name.lower() != repo.lower():
+        raise Denied(f"{repo}#{number} is from a fork ({sanitize(full_name, 100)}); github_update_pr edits only "
+                     "pull requests from a branch of the repo itself; nothing was written")
+    prefix = policy["git"].get("push_branch_prefix", config.DEFAULT_PUSH_BRANCH_PREFIX)
+    if prefix and not ref.startswith(prefix):
+        raise Denied(f"{repo}#{number} is not from a branch starting with {prefix!r} (its head is "
+                     f"{sanitize(ref, 100)!r}); github_update_pr edits only pull requests the gateway could have "
+                     "opened; nothing was written")
+    return ref
+
+
 def tool_github_update_pr(args: dict, policy: dict) -> str:
-    """Change a pull request's title and/or body, and nothing else: never its
-    draft flag, state or base (readiness stays the owner's,
-    doomtickle/passdesk-ops#8)."""
+    """Change the title and/or body of a pull request from one of the
+    gateway's own push branches, and nothing else: never its draft flag,
+    state or base (readiness stays the owner's, doomtickle/passdesk-ops#8)."""
     repo = check_repo(args["repo"], policy)
     if remote_of(repo, policy).forge != "github":
         raise Denied(f"{repo} is a GitLab project: github_update_pr edits GitHub pull requests only")
     number = _pr_number(args["number"])
     title, body = _pr_edit(args.get("title"), args.get("body"))
+    head = _pr_head(repo, number, policy)
     # As the create card: the body's start, and the whole body's digest, so two
     # updates whose bodies differ only past the excerpt never share a card.
-    require_approval({"tool": "github_update_pr", "repo": repo, "number": number, "title": title,
+    require_approval({"tool": "github_update_pr", "repo": repo, "number": number, "head": head, "title": title,
                       "body": None if body is None else body[:2000], "body_sha256": _body_digest(body),
                       "body_chars": None if body is None else len(body)},
-                     job={"repo": repo, "number": number, "title": title, "body": body})
+                     job={"repo": repo, "number": number, "head": head, "title": title, "body": body})
     return _edit_pr(repo, number, title, body)[1]
 
 
@@ -737,11 +768,15 @@ def complete_github_update_pr(job: dict, card: dict, policy: dict) -> str:
         if value is not None and not isinstance(value, str):
             raise Denied(f"the staged write's {key} is not text; nothing was written")
     title, body = _pr_edit(title, body)
-    _job_matches(job, card, ("repo", "number", "title"))
+    _job_matches(job, card, ("repo", "number", "head", "title"))
     excerpt = None if body is None else body[:2000]
     if card.get("body") != excerpt or card.get("body_sha256") != _body_digest(body) \
             or card.get("body_chars") != (None if body is None else len(body)):
         raise Denied("the staged write's body does not match its approval card; nothing was written")
+    # The PR may have changed since it was staged: what the person approved
+    # is an edit of this head, so the live head must be that one.
+    if _pr_head(repo, number, policy) != card.get("head"):
+        raise Denied(f"{repo}#{number} is not from the branch its approval card shows; nothing was written")
     ok, text = _edit_pr(repo, number, title, body)
     if not ok:
         raise Denied(text)

@@ -258,8 +258,8 @@ def one_line(card):
             clean(card.get("repo"), 100), clean(card.get("head"), 100), clean(card.get("base"), 100),
             clean(card.get("title"), 60))
     elif tool == "github_update_pr":
-        what = "update PR #{} on {}: {}".format(
-            clean(card.get("number"), 12), clean(card.get("repo"), 100),
+        what = "update PR #{} ({}) on {}: {}".format(
+            clean(card.get("number"), 12), clean(card.get("head"), 100), clean(card.get("repo"), 100),
             " and ".join(p for p in ("title \"{}\"".format(clean(card.get("title"), 60))
                                      if card.get("title") is not None else "",
                                      "body" if card.get("body") is not None else "") if p))

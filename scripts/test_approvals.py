@@ -423,12 +423,12 @@ class CleanTests(unittest.TestCase):
 class UpdateCardTests(unittest.TestCase):
     def test_one_line_says_what_changes_and_shows_no_draft_flag(self):
         base = {"id": "abcdef0123456789", "tool": "github_update_pr", "principal": "developer", "repo": "acme/widgets",
-                "number": 7, "title": "New\x1b[2J title", "body": None, "expires": time.time() + 600}
+                "number": 7, "head": "factory/topic", "title": "New\x1b[2J title", "body": None, "expires": time.time() + 600}
         line = approvals.one_line(base)
-        self.assertIn('update PR #7 on acme/widgets: title "New[2J title"', line)
+        self.assertIn('update PR #7 (factory/topic) on acme/widgets: title "New[2J title"', line)
         self.assertNotIn("draft", line)
         self.assertNotIn("\x1b", line)
-        self.assertTrue(approvals.one_line({**base, "title": None, "body": "b"}).find("update PR #7 on acme/widgets: body") > 0)
+        self.assertTrue(approvals.one_line({**base, "title": None, "body": "b"}).find("update PR #7 (factory/topic) on acme/widgets: body") > 0)
         self.assertIn('title "New[2J title" and body', approvals.one_line({**base, "body": "b"}))
 
     def test_write_line_shows_the_title_of_an_update(self):

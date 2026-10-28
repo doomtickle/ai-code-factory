@@ -23,18 +23,29 @@ Dated entries, for the user to review. Newest first.
   - **Limits:** title 1 to 256 characters on one line, body at most 65,536 characters (GitHub's
     own limits), at least one of the two, `number` a positive `integer` (not a bool, at most
     10^9). A body replaces the whole description: GitHub's PATCH has no append.
-  - **Any PR in an allowlisted repo, not only ones this role opened.** Telling them apart
-    needs a read of the PR (and a trusted notion of "mine" the gateway does not have). The
-    write was already possible: `git_push` can add commits to any `factory/*` branch and the
-    same token opens PRs; an approver sees the number and the new text on the card.
+  - **Only PRs the gateway could have opened (reviewer finding, medium).** The tool first
+    GETs `/repos/{repo}/pulls/{number}` and refuses unless `head.repo.full_name` equals the
+    repo (case-insensitive; a fork or a deleted fork repo is refused) and `head.ref` starts
+    with `[git].push_branch_prefix`, the only branches `github_create_pr` opens PRs from and
+    `git_push` writes. Without this the tool could rewrite the title or body of the owner's own
+    PRs or a fork's (a prompt-injected developer with holds off, the default, could add
+    "Fixes #N" silently), which is more than create or push allow; an earlier version of
+    this entry wrongly said that write was already possible. The head is on the approval card
+    (and in its id), the completer GETs again and refuses unless the head is the card's, and
+    both checks fail closed: any error reading the PR refuses. The GET uses the same
+    `_github_api` path (Bearer token and no redirects where the gateway holds the token) and
+    needs Pull requests read, which the PATCH's read/write includes. A PR of this role's
+    that someone changed to another head branch is refused too.
   - **Token handling is `github_create_pr`'s:** `_github_api` with a Bearer header and no
     redirects where the gateway holds the token, the proxy's authentication under sbx. The
     token needs Pull requests read/write on the repo, as for `github_create_pr`.
-  - **Known quirk:** a card's id is a hash of its content, and a made write's result is kept,
-    so with holds on an update identical to an earlier one that was already made (title A, then
-    B, then A again) is answered with that earlier result and sends nothing. Any change to the
-    text makes a new card. Not worth a nonce: the same rule keeps a repeated call from
-    writing twice.
+  - **No replay of a made update.** `github_create_issue` and the other writes answer the
+    same call again with the earlier result (`Made`) so a repeat never writes twice. For
+    `github_update_pr` that was wrong: title A, then B, then A again has the same card id as
+    the first A, so the third call was answered "Made" while the PR stayed titled B. A PATCH
+    to the same text is harmless to repeat, so `core/holds.py` `_settled` does not replay a
+    finished `github_update_pr`: the same update after one was made stages a fresh card. A
+    call still pending, or being made right now, is answered as for any write.
   - **Grant:** the developer's `BROKER_TOOLS` in `roles/developer/role.conf`. A changed
     `BROKER_TOOLS` of a role that already has broker access applies on `factory start`; no
     sandbox is recreated (only giving a role its first broker tool does).

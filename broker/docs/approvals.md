@@ -35,7 +35,10 @@ Passdesk Pro plugin and moved into core, licence removed, on 2026-10-21
   labels are confirmed to exist. The PR, MR and issue cards show the
   body's first 2,000 characters and carry the whole body's `body_sha256`
   (the PR and MR cards also `body_chars`; a `github_update_pr` card has
-  `title` and `body` only for what it changes); the digest is part of the card
+  `title` and `body` only for what it changes, and the PR's `head` branch,
+  which the gateway read from GitHub and checked: the PR must be from a
+  branch of the repo itself starting with `[git].push_branch_prefix`,
+  checked again before the write); the digest is part of the card
   id and checked against the job before the write, so two calls whose
   bodies differ only past the excerpt are different cards. The
   hold covers only the tools `[approvals] tools` lists; nothing is held
@@ -175,7 +178,10 @@ content that actually gets pushed is still pinned by `head` and
   nothing new was staged.`). A made write answers so for as long as its
   done record exists, however long ago it was made: a fresh card,
   approved again, would make the write a second time (a duplicate
-  issue). A declined write answers so for `expire_seconds` after it
+  issue). The exception is `github_update_pr`: repeating a PATCH is harmless,
+  and a replay would report success after title A, then B, then A again
+  left the PR titled B, so the same update after one was made stages a
+  fresh card. A declined write answers so for `expire_seconds` after it
   finished; after that, or after a failure or an expiry (or once a made
   write's done record is deleted), the same call stages a fresh card for
   a person to decide again. The done record counts only if its stored `id` is the card's. A pending card with no

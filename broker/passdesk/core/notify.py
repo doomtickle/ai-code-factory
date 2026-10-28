@@ -70,7 +70,7 @@ def summary(card: dict, cid: str, expires_in_minutes: int) -> str:
         changes = [f"title to \"{(card.get('title') or '')[:120]}\"" if card.get("title") is not None else "",
                    "the body" if card.get("body") is not None else ""]
         what = (f"{who} wants to change {' and '.join(c for c in changes if c)} of pull request "
-                f"#{card.get('number')} on {card.get('repo')}")
+                f"#{card.get('number')} on {card.get('repo')} (head {card.get('head')})")
     else:
         what = f"{who} wants to run {card['tool']}"
     prefix = f"Passdesk approval {cid}: "

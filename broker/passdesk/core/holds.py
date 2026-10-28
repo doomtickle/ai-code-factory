@@ -72,7 +72,7 @@ _STABLE_FIELDS = {
     "github_create_pr": ("tool", "principal", "repo", "head", "base", "title", "body", "body_sha256", "draft"),
     "gitlab_create_mr": ("tool", "principal", "repo", "head", "base", "title", "body", "body_sha256", "draft"),
     # An absent title or body is None, which is not the same card as an empty one.
-    "github_update_pr": ("tool", "principal", "repo", "number", "title", "body", "body_sha256"),
+    "github_update_pr": ("tool", "principal", "repo", "number", "head", "title", "body", "body_sha256"),
     "github_create_issue": ("tool", "principal", "repo", "title", "body", "body_sha256", "labels"),
 }
 # What a deployment that wants holds usually lists (the README's example);
@@ -384,7 +384,9 @@ def _settled(cid: str, now: float, expire: int) -> None:
     second issue); being made, or declined (for `expire` seconds after it
     finished), it raises Denied. Either way nothing is written twice and a
     decline is not just asked again. A failure, an expiry or a decline past
-    that window lets a fresh card be staged (returns). Only a done/ record that
+    that window lets a fresh card be staged (returns). A made github_update_pr
+    is never replayed: repeating a PATCH is harmless, and a replay would
+    report success after A, then B, then A again left the PR titled B. Only a done/ record that
     is this card counts: its stored id is cid (the record's own fields,
     the decision and the result, are not part of the card's id)."""
     done = _read(_path("done", cid))
@@ -395,7 +397,7 @@ def _settled(cid: str, now: float, expire: int) -> None:
         raise Denied(f"this exact write was approved (approval {cid}) and the gateway is making it now; nothing "
                      f"new was staged. Its outcome is recorded with the approval (`factory approvals`).")
     finished = done.get("finished")
-    if write == "done":
+    if write == "done" and done.get("tool") != "github_update_pr":
         result = filters.sanitize(str(done.get("result") or ""), _RESULT_MAX)
         raise Made(f"Made by the gateway at {_iso(_timestamp(finished, now))} once approved (approval {cid}); "
                    f"this call staged and sent nothing new. The write's result:\n{result}", cid)

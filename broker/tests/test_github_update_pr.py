@@ -11,7 +11,7 @@ from unittest import mock
 
 from passdesk import doctor
 from passdesk.core import approvals, config, credentials, holds, notify, protocol, registry
-from passdesk.core.errors import Denied, Made, Staged
+from passdesk.core.errors import Denied, Staged
 from passdesk.tools import git
 
 from .base import FAKE_GH, POLICY, Base, _FakeHTTPResponse, fake_http_error
@@ -19,20 +19,37 @@ from .base import FAKE_GH, POLICY, Base, _FakeHTTPResponse, fake_http_error
 TOKEN = "TESTONLY_" + "k5" * 20
 ARGS = {"repo": "acme/widgets", "number": 7, "title": "Better title", "body": "Why:\n- it is better"}
 UPDATED = b'{"number": 7, "html_url": "https://github.com/acme/widgets/pull/7", "draft": true}'
+def pr_json(full_name="acme/widgets", ref="factory/topic", **extra):
+    head = {"ref": ref, "repo": None if full_name is None else {"full_name": full_name}}
+    return json.dumps({"number": 7, "head": head, **extra}).encode()
+
+
+PR = pr_json()
 GITLAB_POLICY = {**POLICY, "gitlab": {"url": "https://gitlab.example.com/"},
                  "git": {**POLICY["git"], "repos": ["acme/widgets", "gitlab.example.com/grp/proj"]}}
 
 
 class Fake:
-    """Answers GitHub API requests with `answer`, or raises `error`."""
+    """Answers a GitHub GET (the PR's head) with `pr` and a PATCH with
+    `answer`, or raises `error` for a PATCH (`get_error` for a GET)."""
 
-    def __init__(self, answer=UPDATED, error=None):
+    def __init__(self, answer=UPDATED, error=None, pr=PR, get_error=None):
         self.requests = []
         self.answer = answer
         self.error = error
+        self.pr = pr
+        self.get_error = get_error
+
+    @property
+    def patches(self):
+        return [r for r in self.requests if r.get_method() == "PATCH"]
 
     def __call__(self, req, timeout):
         self.requests.append(req)
+        if req.get_method() == "GET":
+            if self.get_error is not None:
+                raise self.get_error
+            return _FakeHTTPResponse(self.pr)
         if self.error is not None:
             raise self.error
         return _FakeHTTPResponse(self.answer)
@@ -82,7 +99,7 @@ class StandaloneUpdateTests(HoldMixin, Base):
         fake = Fake()
         out = self.run_tool(ARGS, fake)
         self.assertEqual(out, "Updated PR #7 (title and body): https://github.com/acme/widgets/pull/7")
-        [req] = fake.requests
+        [req] = fake.patches
         self.assertEqual((req.get_method(), req.full_url), ("PATCH", "https://api.github.com/repos/acme/widgets/pulls/7"))
         self.assertEqual(req.get_header("Authorization"), f"Bearer {TOKEN}")
         self.assertEqual(json.loads(req.data), {"title": "Better title", "body": "Why:\n- it is better"})
@@ -93,11 +110,11 @@ class StandaloneUpdateTests(HoldMixin, Base):
             with self.subTest(args=args):
                 fake = Fake()
                 self.run_tool({"repo": "acme/widgets", "number": 7, **args}, fake)
-                self.assertEqual(json.loads(fake.requests[0].data), sent)
+                self.assertEqual(json.loads(fake.patches[0].data), sent)
         # Even if more arguments reach the function, the payload is built from title and body alone.
         fake = Fake()
         self.run_tool({**ARGS, "draft": False, "state": "closed", "base": "main", "head": "x"}, fake)
-        self.assertEqual(set(json.loads(fake.requests[0].data)), {"title", "body"})
+        self.assertEqual(set(json.loads(fake.patches[0].data)), {"title", "body"})
 
     def test_the_call_layer_refuses_other_fields_and_wrong_types(self):
         with mock.patch.object(protocol, "principal_tools", return_value={"github_update_pr"}), \
@@ -149,7 +166,7 @@ class StandaloneUpdateTests(HoldMixin, Base):
             with self.subTest(title=title), self.assertRaises(Denied):
                 self.run_tool({**ARGS, "title": title}, fake)
         self.run_tool({**ARGS, "title": "x" * 256}, fake)
-        self.assertEqual(len(fake.requests), 1)
+        self.assertEqual(len(fake.patches), 1)
 
     def test_body_size_cap_and_secret_scan(self):
         fake = Fake()
@@ -161,7 +178,7 @@ class StandaloneUpdateTests(HoldMixin, Base):
         self.assertNotIn(FAKE_GH, str(cm.exception))
         self.assertEqual((fake.requests, self.cards), ([], []))
         self.run_tool({**ARGS, "body": "x" * 65536}, fake)  # exactly the cap
-        self.assertEqual(len(fake.requests), 1)
+        self.assertEqual(len(fake.patches), 1)
 
     def test_the_approval_card_carries_the_whole_bodys_digest_and_absent_is_not_empty(self):
         body = "x" * 3000
@@ -196,7 +213,7 @@ class StandaloneUpdateTests(HoldMixin, Base):
         fake = Fake()
         with self.assertRaises(Denied):
             self.run_tool(ARGS, fake)
-        self.assertEqual(fake.requests, [])
+        self.assertEqual(fake.patches, [])
 
     def test_a_held_update_is_staged_and_made_by_the_gateway_once_on_approval(self):
         self.held()
@@ -206,22 +223,22 @@ class StandaloneUpdateTests(HoldMixin, Base):
         cid = cm.exception.cid
         self.assertTrue(cm.exception.text.startswith(f"Staged for approval (id {cid}); nothing has been sent yet."))
         self.assertIn("update of pull request #7 on acme/widgets", cm.exception.text)
-        self.assertEqual(fake.requests, [])
+        self.assertEqual(fake.patches, [])
         self.approve(cid)
         with mock.patch.object(git.NO_REDIRECT_OPENER, "open", side_effect=fake):
             holds.sweep_idle()
             holds.sweep_idle()
-        [req] = fake.requests
+        [req] = fake.patches
         self.assertEqual((req.get_method(), req.full_url), ("PATCH", "https://api.github.com/repos/acme/widgets/pulls/7"))
         self.assertEqual(json.loads(req.data), {"title": "Better title", "body": "Why:\n- it is better"})
         self.assertEqual(req.get_header("Authorization"), f"Bearer {TOKEN}")
         done = self.done(cid)
         self.assertEqual((done["write"], done["result"]),
                          ("done", "Updated PR #7 (title and body): https://github.com/acme/widgets/pull/7"))
-        # The same call again returns the result and sends nothing new.
-        with self.assertRaises(Made):
+        # The same call again is a fresh card (a repeated PATCH is harmless), not a replay.
+        with self.assertRaises(Staged):
             self.run_tool(ARGS, fake)
-        self.assertEqual(len(fake.requests), 1)
+        self.assertEqual(len(fake.patches), 1)
 
     def test_a_staged_title_only_update_sends_no_body(self):
         self.held()
@@ -231,7 +248,7 @@ class StandaloneUpdateTests(HoldMixin, Base):
         self.approve(cm.exception.cid)
         with mock.patch.object(git.NO_REDIRECT_OPENER, "open", side_effect=fake):
             holds.sweep_idle()
-        self.assertEqual(json.loads(fake.requests[0].data), {"title": "Only the title"})
+        self.assertEqual(json.loads(fake.patches[0].data), {"title": "Only the title"})
         self.assertEqual(self.done(cm.exception.cid)["result"],
                          "Updated PR #7 (title): https://github.com/acme/widgets/pull/7")
 
@@ -255,7 +272,155 @@ class StandaloneUpdateTests(HoldMixin, Base):
                     holds.sweep_idle()
                 self.assertEqual(self.done(cid)["write"], "failed")
                 (config.STATE / "approvals" / "done" / f"{cid}.json").unlink()
-        self.assertEqual(fake.requests, [])
+        self.assertEqual(fake.patches, [])
+
+    def test_the_pr_is_read_first_with_the_same_token_and_no_redirects(self):
+        fake = Fake()
+        self.run_tool(ARGS, fake)
+        [get, patch] = fake.requests
+        self.assertEqual((get.get_method(), get.full_url), ("GET", "https://api.github.com/repos/acme/widgets/pulls/7"))
+        self.assertEqual(get.get_header("Authorization"), f"Bearer {TOKEN}")
+        self.assertIsNone(get.data)
+        self.assertEqual(patch.get_method(), "PATCH")
+        self.assertEqual(self.cards[-1]["head"], "factory/topic")
+
+    def test_a_head_without_the_push_prefix_is_refused(self):
+        for ref in ("main", "feature/x", "xfactory/topic", "Factory/topic"):
+            with self.subTest(ref=ref):
+                fake = Fake(pr=pr_json(ref=ref))
+                with self.assertRaises(Denied) as cm:
+                    self.run_tool(ARGS, fake)
+                self.assertIn("factory/", str(cm.exception))
+                self.assertEqual((fake.patches, self.cards), ([], []))
+
+    def test_a_head_from_a_fork_is_refused_even_with_the_prefix(self):
+        for full_name in ("mallory/widgets", "acme/widgets-fork", "acme/widgets2", None):
+            with self.subTest(full_name=full_name):
+                fake = Fake(pr=pr_json(full_name=full_name))
+                with self.assertRaises(Denied):
+                    self.run_tool(ARGS, fake)
+                self.assertEqual((fake.patches, self.cards), ([], []))
+        fake = Fake(pr=pr_json(full_name="mallory/widgets"))
+        with self.assertRaises(Denied) as cm:
+            self.run_tool(ARGS, fake)
+        self.assertIn("fork", str(cm.exception))
+
+    def test_the_head_repo_is_compared_without_regard_to_case(self):
+        fake = Fake(pr=pr_json(full_name="ACME/Widgets"))
+        self.assertIn("Updated PR #7", self.run_tool(ARGS, fake))
+        self.assertEqual(len(fake.patches), 1)
+
+    def test_an_unreadable_pr_fails_closed(self):
+        bad = (Fake(get_error=fake_http_error(404, b"Not Found")), Fake(get_error=fake_http_error(500, b"boom")),
+               Fake(get_error=urllib.error.URLError("no route")), Fake(get_error=TimeoutError("slow")),
+               Fake(pr=b"not json"), Fake(pr=b"[]"), Fake(pr=b'{"number": 7}'), Fake(pr=b'{"head": null}'),
+               Fake(pr=b'{"head": {"ref": "factory/x"}}'), Fake(pr=b'{"head": {"ref": "factory/x", "repo": null}}'),
+               Fake(pr=b'{"head": {"ref": "factory/x", "repo": {"full_name": 5}}}'),
+               Fake(pr=b'{"head": {"ref": 5, "repo": {"full_name": "acme/widgets"}}}'),
+               Fake(pr=pr_json(ref="")))
+        for fake in bad:
+            with self.subTest(pr=fake.pr, error=fake.get_error), self.assertRaises(Denied):
+                self.run_tool(ARGS, fake)
+            self.assertEqual((fake.patches, self.cards), ([], []))
+
+    def test_a_get_error_names_the_credential_and_does_not_leak_the_token(self):
+        fake = Fake(get_error=fake_http_error(403, f"denied for {TOKEN}".encode()))
+        with self.assertRaises(Denied) as cm:
+            self.run_tool(ARGS, fake)
+        self.assertIn("HTTP 403", str(cm.exception))
+        self.assertNotIn(TOKEN, str(cm.exception))
+
+    def test_the_completer_reads_the_head_again_before_the_patch(self):
+        self.held()
+        fake = Fake()
+        with self.assertRaises(Staged) as cm:
+            self.run_tool(ARGS, fake)
+        cid = cm.exception.cid
+        self.approve(cid)
+        # The PR now comes from a fork / another branch / cannot be read: nothing is written.
+        for later in (Fake(pr=pr_json(full_name="mallory/widgets")), Fake(pr=pr_json(ref="main")),
+                      Fake(pr=pr_json(ref="factory/other")), Fake(get_error=fake_http_error(404, b"Not Found")),
+                      Fake(get_error=urllib.error.URLError("no route"))):
+            with self.subTest(pr=later.pr, error=later.get_error):
+                path = config.STATE / "approvals" / "done" / f"{cid}.json"
+                if path.exists():
+                    path.unlink()
+                    self.approve(cid)
+                with mock.patch.object(git.NO_REDIRECT_OPENER, "open", side_effect=later):
+                    holds.sweep_idle()
+                self.assertEqual(self.done(cid)["write"], "failed")
+                self.assertEqual(later.patches, [])
+                self.assertEqual([r.get_method() for r in later.requests], ["GET"])
+                # a failed write leaves nothing to approve again; stage it afresh
+                with self.assertRaises(Staged):
+                    self.run_tool(ARGS, fake)
+                self.approve(cid)
+        # With the head as it was, the same staged write is made.
+        path = config.STATE / "approvals" / "done" / f"{cid}.json"
+        path.unlink()
+        self.approve(cid)
+        ok = Fake()
+        with mock.patch.object(git.NO_REDIRECT_OPENER, "open", side_effect=ok):
+            holds.sweep_idle()
+        self.assertEqual(self.done(cid)["write"], "done")
+        self.assertEqual([r.get_method() for r in ok.requests], ["GET", "PATCH"])
+
+    def test_a_staged_job_whose_head_does_not_match_its_card_is_never_made(self):
+        self.held()
+        fake = Fake()
+        with self.assertRaises(Staged) as cm:
+            self.run_tool(ARGS, fake)
+        cid = cm.exception.cid
+        path = config.STATE / "approvals" / "queued" / f"{cid}.json"
+        rec = json.loads(path.read_text())
+        path.write_text(json.dumps({**rec, "job": {**rec["job"], "head": "main"}}))
+        self.approve(cid)
+        with mock.patch.object(git.NO_REDIRECT_OPENER, "open", side_effect=fake):
+            holds.sweep_idle()
+        self.assertEqual(self.done(cid)["write"], "failed")
+        self.assertEqual(fake.patches, [])
+
+    def test_a_refused_head_stages_no_card_even_when_held(self):
+        self.held()
+        fake = Fake(pr=pr_json(ref="main"))
+        with self.assertRaises(Denied):
+            self.run_tool(ARGS, fake)
+        self.assertFalse(list((config.STATE / "approvals" / "pending").glob("*.json")))
+
+    def test_a_then_b_then_a_again_stages_a_fresh_card_and_sets_the_title(self):
+        self.held()
+        titles = []
+
+        def update(title):
+            fake = Fake()
+            with self.assertRaises(Staged) as cm:
+                self.run_tool({**ARGS, "title": title}, fake)
+            cid = cm.exception.cid
+            self.approve(cid)
+            with mock.patch.object(git.NO_REDIRECT_OPENER, "open", side_effect=fake):
+                holds.sweep_idle()
+            self.assertEqual(self.done(cid)["write"], "done")
+            [patch] = fake.patches
+            titles.append(json.loads(patch.data)["title"])
+            return cid
+
+        first = update("A")
+        update("B")
+        again = update("A")
+        self.assertEqual(titles, ["A", "B", "A"])
+        self.assertEqual(again, first)
+
+    def test_a_made_update_is_not_replayed_as_made(self):
+        self.held()
+        fake = Fake()
+        with self.assertRaises(Staged) as cm:
+            self.run_tool(ARGS, fake)
+        self.approve(cm.exception.cid)
+        with mock.patch.object(git.NO_REDIRECT_OPENER, "open", side_effect=fake):
+            holds.sweep_idle()
+        self.assertEqual(self.done(cm.exception.cid)["write"], "done")
+        with self.assertRaises(Staged):
+            self.run_tool(ARGS, fake)
 
     def test_a_staged_update_is_checked_against_the_policy_again(self):
         self.held()
@@ -268,7 +433,7 @@ class StandaloneUpdateTests(HoldMixin, Base):
                 mock.patch.object(git.NO_REDIRECT_OPENER, "open", side_effect=fake):
             holds.sweep_idle()
         self.assertEqual(self.done(cm.exception.cid)["write"], "failed")
-        self.assertEqual(fake.requests, [])
+        self.assertEqual(fake.patches, [])
 
     def test_http_errors_are_reported_with_a_hint_and_never_leak_the_token(self):
         out = self.run_tool(ARGS, Fake(error=fake_http_error(403, f"denied for {TOKEN}".encode())))
@@ -313,14 +478,16 @@ class ProxyModeUpdateTests(Base):
                 mock.patch.object(git.NO_REDIRECT_OPENER, "open", side_effect=AssertionError("changed opener")):
             out = git.tool_github_update_pr(ARGS, POLICY)
         self.assertIn("Updated PR #7", out)
-        [req] = fake.requests
-        self.assertEqual(req.get_method(), "PATCH")
-        self.assertIsNone(req.get_header("Authorization"))
+        [get, patch] = fake.requests
+        self.assertEqual((get.get_method(), patch.get_method()), ("GET", "PATCH"))
+        self.assertIsNone(get.get_header("Authorization"))
+        self.assertIsNone(patch.get_header("Authorization"))
 
     def test_an_auth_error_points_at_the_deployments_credential(self):
         with mock.patch.object(urllib.request, "urlopen", side_effect=fake_http_error(401, b"Bad credentials")):
-            out = git.tool_github_update_pr(ARGS, POLICY)
-        self.assertIn("supplied by the deployment (with sbx: sbx secret set github", out)
+            with self.assertRaises(Denied) as cm:
+                git.tool_github_update_pr(ARGS, POLICY)
+        self.assertIn("supplied by the deployment (with sbx: sbx secret set github", str(cm.exception))
 
 
 class ProtocolUpdateTests(Base):
@@ -365,9 +532,10 @@ class DoctorUpdateTests(Base):
 class CardDisplayTests(Base):
     def test_the_webhook_summary_names_what_changes(self):
         card = {"tool": "github_update_pr", "principal": "developer", "repo": "acme/widgets", "number": 7,
-                "title": "New", "body": None, "body_sha256": None}
+                "head": "factory/topic", "title": "New", "body": None, "body_sha256": None}
         text = notify.summary(card, "abc", 5)
-        self.assertIn("developer wants to change title to \"New\" of pull request #7 on acme/widgets", text)
+        self.assertIn("developer wants to change title to \"New\" of pull request #7 on acme/widgets "
+                      "(head factory/topic)", text)
         text = notify.summary({**card, "title": None, "body": "b"}, "abc", 5)
         self.assertIn("change the body of pull request #7", text)
         text = notify.summary({**card, "body": "b"}, "abc", 5)
