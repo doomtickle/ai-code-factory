@@ -1089,7 +1089,7 @@
   // Derived from the state polled above, no request of its own. Only counts and two fixed
   // sets ever reach the title, the favicon or a notification: lane names that match the
   // lane pattern and tool names from a fixed list; agent-written text never does.
-  const TOOLS = new Set(["git_push", "github_create_pr", "gitlab_create_mr", "github_create_issue"]);
+  const TOOLS = new Set(["git_push", "github_create_pr", "github_update_pr", "gitlab_create_mr", "github_create_issue"]);
   const LANE_NAME = /^[a-z][a-z0-9-]{1,40}$/;
   const ENDED = new Set(["done", "approved", "revise", "failed", "cancelled", "idle"]);
   const NOTIFY_STORE = "fc1984-notify";

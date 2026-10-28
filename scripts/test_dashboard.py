@@ -1881,7 +1881,7 @@ class PageTests(unittest.TestCase):
         for call in ("fetch(", "XMLHttpRequest", "WebSocket", "sendBeacon", "postMessage", "innerHTML", "location"):
             self.assertNotIn(call, body, f"the attention block uses {call}")
         self.assertIn("renderTerm(); attention();", js)
-        self.assertIn('const TOOLS = new Set(["git_push", "github_create_pr", "gitlab_create_mr", "github_create_issue"]);', body)
+        self.assertIn('const TOOLS = new Set(["git_push", "github_create_pr", "github_update_pr", "gitlab_create_mr", "github_create_issue"]);', body)
         self.assertIn("const LANE_NAME = /^[a-z][a-z0-9-]{1,40}$/;", body)
         # The one thing agent-controlled that reaches a notification is a name that passed those two checks.
         self.assertEqual(re.findall(r"new Notification\(([^;]*)\);", body), ['"LOIS", { body, tag: "factory-attention", silent: true }'])
