@@ -34,12 +34,15 @@ import time
 from pathlib import Path
 
 import dashboard_controls as dc
+from dashboard_service import Paths
 
 FIXTURE = Path(__file__).resolve().parent / "dashboard-demo"
 PROJECT = "DEMO"
 REFUSED = "demo mode: this dashboard shows made-up data and nothing here acts"
 TOKEN = re.compile(r"\{\{(clock|iso|epoch|patch_sha256):([^{}]*)\}\}")
 PATCHES = ("broker", "approvals", "patches")
+DEMO_REPOS = ("app", "docs")  # empty repos made under setup/project/ for the shift briefing
+SETUP = "setup"  # the fixture's factory checkout (root/) and config folder (config/), for the SETUP screen
 # What the ticker appends (cycled): the printer's ALLOW and DENY lines, and the floor's crates.
 TICKS = (
     {"role": "developer", "tool": "web_fetch", "decision": "deny", "args": {"url": "https://paste.example.net/raw/x2"},
@@ -93,6 +96,9 @@ def build(dest: Path, now: float | None = None, fixture: Path = FIXTURE) -> None
     (dest / "broker").mkdir(parents=True, exist_ok=True)
     (dest / "dispatch" / "pid").write_text(f"{os.getpid()}\n", encoding="utf-8")
     (dest / "broker" / "project").write_text(PROJECT + "\n", encoding="utf-8")
+    # The shift briefing lists the project's repos with the real lister, which wants a .git in each.
+    for repo in DEMO_REPOS:
+        (dest / SETUP / "project" / repo / ".git").mkdir(parents=True, exist_ok=True)
 
 
 def start_ticker(dest: Path, interval: float = 20.0, first: float = 8.0) -> threading.Event:
@@ -116,9 +122,13 @@ def start_ticker(dest: Path, interval: float = 20.0, first: float = 8.0) -> thre
 
 
 class DemoControls(dc.Controls):
-    """The control unit with every action refused: it can show the cards and the
-    fixture's patch (the same read-only paths as a real run, inside the temp
-    folder) but can't write a decision or start a command."""
+    """The control unit with every action refused: it can show the cards, the
+    fixture's patch and the fixture's configuration (the same read-only paths as
+    a real run, inside the temp folder) but can't write a decision or start a command."""
+
+    def setup_source(self) -> tuple:
+        base = self.state / SETUP
+        return Paths(str(base / "root"), str(base / "config"), str(self.state)), self.board.project
 
     def api_decide(self, body: dict) -> tuple:
         raise dc.Refused(403, REFUSED)

@@ -10,9 +10,8 @@ warning, since update itself recreates those sandboxes next.
 import os
 import re
 
-from factory import fingerprints, launch, policy, preflight, repos, roles, sbx
+from factory import hints as factory_hints, launch, preflight, repos, roles, sbx
 from factory.commands import runstate, wrappers
-from factory.commands.status import warn_missing
 from factory.context import FactoryError, bound_project
 
 USAGE = "usage: factory start [dir] [--no-ui] [--layout web]"
@@ -63,49 +62,12 @@ def require_project_commits(ctx, project):
                                "then run 'factory start' again." % (folder, folder))
 
 
-def _fields(line):
-    """awk's default fields: split on runs of spaces and tabs."""
-    return [f for f in re.split("[ \t]+", line) if f]
-
-
 def hints(ctx):
     """Warnings about what the factory still needs: sandboxes out of date, the first Claude
-    login, and the credentials the configured broker tools need."""
-    paths = ctx.paths
-    if not ctx.environ.get("FACTORY_UPDATING"):
-        stale = fingerprints.stale_sandboxes(ctx)
-        if stale:
-            ctx.warn("out of date (made from an older image or kit): %s; run 'factory update' to recreate them"
-                     % " ".join(stale))
-    if not sbx.claude_login_stored(ctx):
-        ctx.warn("first time: type /login in the Coordinator (POWER ON on the dashboard) to sign in with your Claude "
-                 "subscription, then run 'factory start' again (or press RESTART on the dashboard) to create the role "
-                 "sandboxes")
-    if policy.git_push_enabled(paths):
-        lines = ctx.capture(["sbx", "secret", "ls"]).out.rstrip("\n").split("\n")
-        if any(f[:1] == ["(global)"] and f[2:3] == ["github"] for f in map(_fields, lines)):
-            ctx.warn("a global GitHub token is stored, so sbx injects it for every sandbox, not just the broker. Run "
-                     "'factory secret save github', then remove the global one: sbx secret rm github")
-        elif policy.github_repos_listed(paths) and not any(" github " in line for line in lines):
-            ctx.warn("git push/PR is enabled but no GitHub token is stored: run 'factory secret save github' (see "
-                     "README: Enabling git push and pull requests)")
-    if policy.any_jira_tool_granted(paths):
-        warn_missing(ctx, "factory-jira",
-                     "Jira tools are granted but no token is stored in the keychain (see README: Enabling Jira)")
-        if not policy.jira_cloud_id_set(paths):
-            ctx.warn("Jira tools are granted but [jira].cloud_id is not set; set it in %s/policy.toml (see README: "
-                     "Enabling Jira)" % paths.config)
-    if policy.npm_private_registry_needs_token(paths):
-        warn_missing(ctx, "factory-npm-registry",
-                     "npm_fetch can't download private npm packages until a token is stored in the keychain (see "
-                     "README: Enabling a private npm registry)")
-    if policy.gitlab_needs_token(paths):
-        warn_missing(ctx, "factory-gitlab",
-                     "[gitlab].url is set but no GitLab token is stored: run 'factory secret save gitlab' (see README: "
-                     "Enabling GitLab)")
-    why = policy.gitlab_mr_unheld(paths)
-    if why:
-        ctx.warn("GitLab merge requests open without approval: %s (see README: Enabling approvals)" % why)
+    login, and the credentials the configured broker tools need (factory/hints.py, which the
+    dashboard's FIRST SHIFT banner shares)."""
+    for _, text in factory_hints.collect(ctx):
+        ctx.warn(text)
 
 
 def onboarding_hints(ctx, args):

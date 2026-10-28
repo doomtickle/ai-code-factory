@@ -1,7 +1,8 @@
 """The factory floor in a real browser (headless Chrome) against `factory dashboard --demo`:
 every station takes a click, Enter and Space and opens its lane's monitor (a regression:
 the glass overlay once lay over the stations and swallowed them), workers wear glasses,
-and long job titles slide while short ones and reduced motion stay still. The browser
+and long job titles slide while short ones and reduced motion stay still. It also checks the
+attention signals (title/favicon badge, cues, NOTIFY). The browser
 steps are in test_floor_browser.js. Skipped when node or chrome-headless-shell is missing.
 
   python3 -m unittest discover -s scripts -p 'test_floor_browser.py' -v
@@ -27,7 +28,7 @@ class FloorBrowserTests(unittest.TestCase):
         self.addCleanup(server.terminate)
         url = re.search(r"http://127\.0\.0\.1:\d+/\?token=\S+", server.stdout.readline())
         self.assertTrue(url, "the demo dashboard printed no URL")
-        run = subprocess.run(["node", str(SCRIPTS / "test_floor_browser.js"), url.group(0)], capture_output=True, text=True, timeout=150, check=False)
+        run = subprocess.run(["node", str(SCRIPTS / "test_floor_browser.js"), url.group(0)], capture_output=True, text=True, timeout=240, check=False)
         self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
 
 

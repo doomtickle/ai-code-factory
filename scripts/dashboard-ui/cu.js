@@ -8,7 +8,9 @@
 // The only thing it tells the main page is one of three fixed strings over
 // postMessage: "cu:expand" and "cu:collapse" (grow the frame to the whole window
 // for the confirmation and log screens, and back) and "cu:reload" (after an
-// update changed the dashboard's page). The main page never answers.
+// update changed the dashboard's page). The one thing it hears back is
+// {type: "cu:select", id}, from its parent at the main origin: which card to show.
+// It is a display hint (see showCard) and decides nothing.
 // INSPECT shows a held push's patch (/cu/api/patch): the server reads it from
 // the broker's state, checks it against the card's digest, parses and sanitises
 // it, so this page only draws lines with textContent; nothing from the patch
@@ -69,14 +71,15 @@
   // ---------- screens
   // Each screen is a node and whether it needs the frame expanded to the whole
   // window. Switching to one that does tells the main page "cu:expand", and back
-  // "cu:collapse". The settings screen registers here later; settings that move
-  // the security boundary (broker policy and hosts, credentials) are shown there
-  // read-only, never edited from a browser.
+  // "cu:collapse". The setup screen shows the effective configuration read-only;
+  // settings that move the security boundary (broker policy and hosts,
+  // credentials) are never edited from a browser.
   const SCREENS = {
     deck: { node: $("scr-deck"), expanded: false },      // gate deck and service row (compact, in the rail)
     confirm: { node: $("scr-console"), expanded: true },  // what RESTART / UPDATE would do, and CONFIRM
     log: { node: $("scr-console"), expanded: true },      // the running action's output
     inspect: { node: $("scr-inspect"), expanded: true },  // a held push's patch, and the gate's keys
+    setup: { node: $("scr-console"), expanded: true },    // the effective configuration (read-only)
   };
   let screen = null, expanded = false;
   function go(name) {
@@ -233,6 +236,7 @@
   function renderDeck() {
     renderDeckOnly();
     if (screen === "inspect") syncInspect();
+    if (screen === "setup") renderSetup();
   }
   function renderDeckOnly() {
     const body = $("deck-body");
@@ -325,9 +329,12 @@
     $("svc-restart").title = st && !bound ? "No project is bound to the factory: start it once with factory start" : "";
     $("svc-update").disabled = !!fault || !st || run;
     $("svc-doctor").disabled = !!fault || !st || run;
+    $("svc-setup").disabled = !!fault || !st;
     setClass($("led-doctor"), `led${run ? " a blink" : ""}`);
-    setClass($("led-restart"), `led${run ? " a blink" : ""}`);
-    setClass($("led-update"), `led${run ? " a blink" : ""}`);
+    const due = st && st.service;  // the header's SERVICE DUE lamp: light the key that applies it
+    const first = !!(st && st.first_shift);  // FIRST SHIFT (#181): the first /login or RESTART is still to do
+    setClass($("led-restart"), `led${run || first ? " a blink" : due === "restart" ? " a" : ""}`);
+    setClass($("led-update"), `led${run ? " a blink" : due === "update" ? " a" : ""}`);
     const showLog = !fault && !!a.name && a.phase !== "idle";
     $("svc-log").hidden = !showLog;
     setClass($("led-log"), `led${run ? " a blink" : a.phase === "done" ? " g" : a.phase === "failed" ? " r" : ""}`);
@@ -363,6 +370,39 @@
     selId = c.id; selFp = c.fp;
     renderDeck();
   }
+
+  // The main page may ask which card to show: {type: "cu:select", id}, from the frame's parent
+  // at the main origin and nothing else, with exactly those two fields and an id shaped like a
+  // card id. It is a display hint. It acts on the deck only (not over a screen, an open question
+  // or a decision in flight), picks among the cards this unit already holds, never touches a
+  // decision key or focus, and treats the new card like any card that arrives unasked: the typed
+  // reason is cleared and the keys go dark for HOLD_MS. At most one in SELECT_GAP_MS, so a page
+  // can't keep the keys dark. The main page shows agent text, so it gets nothing else from here.
+  const CARD_ID = /^[A-Za-z0-9_-]{1,64}$/;
+  const SELECT_GAP_MS = 400;
+  let lastSelectAt = 0;
+  function showCard(id) {
+    if (screen !== "deck" || fault || busy || asking("deck") || !st) return;
+    const now = Date.now();
+    if (now - lastSelectAt < SELECT_GAP_MS) return;
+    lastSelectAt = now;
+    const c = cards().find(x => x.id === id);
+    if (!c) { flash("That write is no longer held.", "err"); return; }
+    if (c.id === selId && c.fp === selFp) return;
+    $("reason").value = "";
+    selId = c.id; selFp = c.fp;
+    holdKeys();
+    renderDeck();
+  }
+  window.addEventListener("message", e => {
+    if (e.source !== window.parent || e.origin !== mainOrigin) return;
+    const d = e.data;
+    if (!d || typeof d !== "object" || Array.isArray(d)) return;
+    const names = Object.keys(d);
+    if (names.length !== 2 || !names.includes("type") || !names.includes("id")) return;
+    if (d.type !== "cu:select" || typeof d.id !== "string" || !CARD_ID.test(d.id)) return;
+    showCard(d.id);
+  });
 
   const WHY = {
     gone: "Gone: that write is no longer held (decided elsewhere, or the agent gave up).",
@@ -529,6 +569,121 @@
     }, () => {
       if (svc && svc.seq === seq && screen === "confirm") refused("Lost the dashboard: nothing was checked or run.", false);
     });
+  }
+
+  // ---------- the setup screen: the effective configuration, read-only (st.config)
+  // Built on the host from the factory's own parsers (dashboard_setup.py); nothing here
+  // can change a setting. Every string goes in with textContent.
+  const APPLIES = { START: "factory start", UPDATE: "factory update" };
+  const SOURCES = { REPO: "REPO", LOCAL: "LOCAL" };
+  const num = n => (Number.isFinite(Number(n)) ? Number(n).toLocaleString("en-US") : "?");
+  const span = (cls, text) => el("span", cls, text);
+  const applyTag = a => span("k-cmd", `  → ${APPLIES[a] ? a : "?"}`);
+  let setupKey = null;
+
+  function row(label, value, ...tail) {
+    const p = el("p", "ind");
+    p.append(span(null, `  ${str(label).padEnd(19)} `), value === "" || value == null ? span("k-dim", "(empty)") : span(null, str(value)), ...tail);
+    return p;
+  }
+
+  function roleBlock(r) {
+    const out = [];
+    const tags = [r.on ? "on" : "off", r.optional ? "optional" : null, r.override ? "local override" : null].filter(Boolean).join(" · ");
+    out.push(H(str(r.name), tags));
+    if (!r.on) out.push(P("k-dim", "  Switched off in enabled-roles: no sandbox, so none of this is applied."));
+    for (const k of list(r.keys).filter(x => x && typeof x === "object")) {
+      const local = k.source === "LOCAL";
+      const tail = [span(local ? "k-warn" : "k-dim", `  ${SOURCES[k.source] || "?"}`)];
+      if (local && str(k.repo) !== str(k.value)) tail.push(span("k-dim", ` (repo: ${str(k.repo) || "empty"})`));
+      tail.push(applyTag(k.applies));
+      out.push(row(k.key, k.value, ...tail));
+    }
+    for (const k of list(r.fixed).filter(x => x && typeof x === "object")) {
+      const tail = [span("k-dim", "  FIXED"), applyTag(k.applies)];
+      if (k.note) tail.push(span("k-dim", ` (${str(k.note)})`));
+      out.push(row(k.key, k.value, ...tail));
+    }
+    for (const name of list(r.ignored)) out.push(P("ind k-err", `  ✕ ${str(name)} in the override isn't allowed: factory start refuses it`));
+    if (r.instructions_chars != null) {
+      out.push(P(`ind ${r.over ? "k-err" : "k-dim"}`, `  instructions + notes  ${num(r.instructions_chars)} of ${num(c().notes && c().notes.limit)} characters${r.over ? " · OVER: the bridge refuses this role's tasks" : ""}`));
+    }
+    return out;
+  }
+  const c = () => (st && st.config && typeof st.config === "object" ? st.config : null);
+
+  function setupBlocks() {
+    const cfg = c();
+    if (!cfg) return [P("k-dim", "No configuration to show: this dashboard was started without the factory's config folder.")];
+    const out = [P("k-dim", "Read-only. REPO is the committed roles/<name>/role.conf, LOCAL a value your override in the config folder puts on top of it, FIXED a value no override can change. → START is factory start, → UPDATE is factory update.")];
+    for (const r of list(cfg.roles).filter(x => x && typeof x === "object")) out.push(...roleBlock(r));
+
+    const en = cfg.enabled || {};
+    out.push(H("Optional roles", "enabled-roles"));
+    const optional = list(cfg.roles).filter(r => r && r.optional);
+    if (!optional.length) out.push(P("k-dim", "  No role is optional."));
+    for (const r of optional) out.push(row(r.name, r.on ? "ON" : "OFF", span("k-dim", `  ${en.file ? "enabled-roles file" : "no enabled-roles file"}`), applyTag(en.applies)));
+    for (const n of list(en.unknown)) out.push(P("ind k-err", `  ✕ ${str(n)} is named in enabled-roles but is not a role: factory start refuses it`));
+
+    const ap = cfg.approvals || {}, rp = cfg.repos || {}, gl = cfg.gitlab || {}, co = cfg.coordinator || {};
+    out.push(H("Broker policy", cfg.local_policy ? "local policy.toml" : "repo policy.toml only"));
+    const src = o => span(o.source === "LOCAL" ? "k-warn" : "k-dim", `  ${SOURCES[o.source] || "NOT SET"}`);
+    const tools = list(ap.tools);
+    out.push(row("held tools", tools.join(", "), src(ap), applyTag(ap.applies)));
+    if (!tools.length) out.push(P("ind k-dim", "                      (nothing is held: the gateway makes every write at once)"));
+    out.push(row("hold expires after", ap.expire_seconds ? `${str(ap.expire_seconds)} s` : "", span("k-dim", ap.expire_seconds ? `  ${SOURCES[ap.expire_source] || "?"}` : "  default one day"), applyTag(ap.applies)));
+    const repos = list(rp.list);
+    out.push(row("allowed repos", repos.join(", "), src(rp), applyTag(rp.applies)));
+    if (!repos.length) out.push(P("ind k-dim", "                      (git tools are off until [git].repos names a repo)"));
+    out.push(row("GitLab url", gl.url, src(gl), applyTag(gl.applies)));
+    out.push(row("Coordinator tools", list(co.broker_tools).join(" "), span("k-dim", "  kits/coordinator/broker.conf"), applyTag(co.applies)));
+
+    const nt = cfg.notes || {};
+    out.push(H("Project notes", str(nt.project) || "no project"));
+    const files = list(nt.files).filter(x => x && typeof x === "object");
+    if (!files.length) out.push(P("k-dim", `  No notes file for ${str(nt.project) || "this project"} in the config folder's projects/.`));
+    for (const f of files) {
+      const tail = [span(f.over ? "k-err" : "k-dim", `  ${num(f.chars)} of ${num(nt.limit)} characters${f.over ? " · OVER" : ""}`)];
+      if (f.read === false) tail.push(span("k-dim", " · role off, not read"));
+      tail.push(applyTag(nt.applies));
+      out.push(row(f.name, "", ...tail));
+    }
+
+    const lk = cfg.look && typeof cfg.look === "object" ? cfg.look : {};
+    out.push(H("Dashboard look", "dashboard.toml"));
+    if (lk.problem) out.push(P("ind k-err", `  ✕ ignored, the defaults show: ${str(lk.problem)}`), P("ind k-dim", "  Fix the file, then restart factory dashboard."));
+    else out.push(P("k-dim", lk.file ? "  Read when factory dashboard started: the nameplate, shift names, defaults and role colours." : "  No dashboard.toml in the config folder: the defaults show."));
+    return out;
+  }
+
+  function renderSetup() {
+    const k = JSON.stringify(st ? st.config : null);
+    if (k === setupKey) return;
+    setupKey = k;
+    const keep = conBody.scrollTop;
+    conBody.replaceChildren(P("banner", "Setup · effective configuration"), ...setupBlocks());
+    conBody.scrollTop = keep;
+    moreCue();
+  }
+
+  function openSetup() {
+    if (fault || !st) return;
+    lastKey = $("svc-setup");
+    svcSeq++;
+    svc = null;
+    go("setup");
+    setText($("con-title"), "SETUP · CONFIGURATION");
+    const t = $("con-state");
+    setClass(t, "state-tag st-check");
+    setText(t, "Read-only");
+    setClass($("con-led"), "led g");
+    setText($("con-project"), str(st.project));
+    setText($("con-note"), "Edit the files, then run the command shown.");
+    keys("Close", null, false);
+    setupKey = null;
+    renderSetup();
+    conBody.scrollTop = 0;
+    cancelKey.focus();
   }
 
   function renderConfirm(d) {
@@ -1056,12 +1211,13 @@
 
   // ---------- leaving the monitor
   function closeConsole() {
-    if (screen !== "confirm" && screen !== "log") return;
+    if (screen !== "confirm" && screen !== "log" && screen !== "setup") return;
     svcSeq++;           // a pending prepare or run answer is dropped
     svc = null;
     clearTimeout(logTimer); logTimer = 0;
     go("deck");
     renderDeck();
+    setupKey = null;
     const back = lastKey && !lastKey.disabled && !lastKey.hidden ? lastKey : $("btn-approve").disabled ? $("deck-lcd") : $("btn-approve");
     back.focus();
   }
@@ -1070,6 +1226,7 @@
   $("svc-restart").addEventListener("click", () => openService("restart"));
   $("svc-update").addEventListener("click", () => openService("update"));
   $("svc-doctor").addEventListener("click", () => openService("doctor"));
+  $("svc-setup").addEventListener("click", openSetup);
   $("svc-log").addEventListener("click", () => { lastKey = $("svc-log"); openLog(false); });
 
   // The monitor and the inspector are modal: Esc backs out, Tab stays inside.
@@ -1092,7 +1249,7 @@
       if (move) { e.preventDefault(); move(); }
       return;
     }
-    if (screen !== "confirm" && screen !== "log") return;
+    if (screen !== "confirm" && screen !== "log" && screen !== "setup") return;
     if (e.key === "Escape") { e.preventDefault(); closeConsole(); return; }
     if (e.key !== "Tab") return;
     const items = [conBody, cancelKey, goKey].filter(n => !n.hidden && !n.disabled);

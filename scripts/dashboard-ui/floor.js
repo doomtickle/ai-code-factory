@@ -67,7 +67,7 @@
   const MAX_CRATES = 14, SPEED = 110;        // crates in flight at once; units per second
   const MAX_PARKED = 4, MAX_BINNED = 5;      // crates drawn at the gate; confiscated crates kept in the derez field
 
-  let on = false, state = null, primed = false;
+  let on = false, state = null, primed = false, look = FactoryLook.read(null);
   let svg = null, layout = "", stations = new Map(), parts = {};
   const seen = new Set(), branchSeen = new Map();
   const laneSeen = new Map();   // lane name -> { state, task, pair } as of the previous poll
@@ -160,7 +160,8 @@
     for (const [x, y] of [[9, 9], [W - 9, 9], [9, H - 9], [W - 9, H - 9]]) {
       svg.append(S("circle", { cx: x, cy: y, r: 3.5 }, "screw-rim"), S("circle", { cx: x, cy: y, r: 2.2 }, "screw"), L(x - 1.5, y, x + 1.5, y, "screw-slot"));
     }
-    svg.append(T(16, 17, "LOIS WORKS", "silk big"));
+    parts.plant = T(16, 17, "LOIS WORKS", "silk big");   // dashboard.toml's plant, when set
+    svg.append(parts.plant);
     parts.signTop = T(16, 26, "", "silk dim");
     svg.append(parts.signTop);
     svg.append(S("rect", { x: W - 128, y: 7, width: 112, height: 19, rx: 1.5 }, "lcd-bezel"), S("rect", { x: W - 127, y: 8, width: 110, height: 17, rx: 1, fill: "url(#fl-lcd)" }, "lcd-glass"));
@@ -368,10 +369,7 @@
 
   // Placard text. All of it is agent-written (the server only trims it), so it goes in as text.
   const CHAR_W = 1.8;   // scene units per character of the placard font
-  const devTag = name => {
-    const m = /^developer(?:-lane(\d+))?$/.exec(name);
-    return m ? `DEV ${m[1] || 1}` : clip(name.toUpperCase(), 8);
-  };
+  const { reviewTag } = window.FactoryLabels;   // lanelabel.js: the same "DEV 2" tag the lane modules wear
   // The rendered width of a text node, or an estimate while it isn't laid out (floor hidden).
   const width = (node, s) => {
     let w = 0;
@@ -412,7 +410,7 @@
     st.sig = sig;
     const maxW = 34;
     st.card.setAttribute("class", "card");   // measured on screen: a hidden card has no text length
-    const job = show(st, st.cardJob, desk, maxW, slide), tag = show(st, st.cardTag, reviews ? `▸ ${devTag(reviews)}` : "", maxW, slide);
+    const job = show(st, st.cardJob, desk, maxW, slide), tag = show(st, st.cardTag, reviewTag(reviews), maxW, slide);
     // One line sits in the middle of the glass; two share it.
     const top = Number(st.cardBg.getAttribute("y"));
     st.cardJob.setAttribute("y", tag ? top + 4.6 : top + 6.6);
@@ -450,6 +448,9 @@
       const reviewing = watched.has(lane.name);
       const cls = `st hue-${hue(lane.role)} s-${s}${reviewing ? " reviewed" : ""}`;
       if (st.g.getAttribute("class") !== cls) st.g.setAttribute("class", cls);
+      const own = look.colors.get(lane.role);   // a role dashboard.toml gives a colour; the others keep their hue-N
+      if (own) { st.g.style.setProperty("--hue", own); st.g.style.setProperty("--glow", FactoryLook.glow(own)); }
+      else { st.g.style.removeProperty("--hue"); st.g.style.removeProperty("--glow"); }
       placard(st, lane);
       showPark(st);
       const desk = typeof lane.desk === "string" && lane.desk ? `, ${lane.desk}` : "";
@@ -472,7 +473,10 @@
     const shift = hr >= 7 && hr < 17 ? "day" : (hr >= 17 && hr < 20) || (hr >= 5 && hr < 7) ? "dusk" : "night";
     svg.setAttribute("class", `fl ${shift}${state.totals && state.totals.running ? " working" : ""}${motionOff.matches ? " still" : ""}`);
     const t = state.totals || {};
-    parts.signTop.textContent = `${shift === "night" ? "NIGHT SHIFT" : shift === "dusk" ? "SWING SHIFT" : "DAY SHIFT"} · THE FLOOR · FC-1984`;
+    // dashboard.toml may rename the three shifts (day, swing, night) and the plant; look.js has checked both.
+    const shiftNames = look.shifts || ["day", "swing", "night"], plant = look.plant || "LOIS WORKS";
+    if (parts.plant.textContent !== plant) parts.plant.textContent = plant;
+    parts.signTop.textContent = `${shiftNames[shift === "night" ? 2 : shift === "dusk" ? 1 : 0].toUpperCase()} SHIFT · THE FLOOR · FC-1984`;
     parts.signBot.textContent = `JOBS ${t.jobs ?? 0} · RUN ${t.running ?? 0} · $${Number(t.cost || 0).toFixed(2)}`;
 
     const attached = !!(state.term && state.term.running);
@@ -741,6 +745,7 @@
   document.addEventListener("factory:state", e => {
     state = e.detail;
     if (!state || typeof state !== "object") return;
+    look = FactoryLook.read(state.look);
     if (on) draw();
     play();
   });

@@ -11,6 +11,15 @@ The state view is read-only. To build it, it reads files under the
 factory state folder and makes no network connection:
   dispatch/logs/<lane>.log, dispatch/audit.jsonl, dispatch/packets/, dispatch/pid
   broker/audit.jsonl, broker/approvals/pending/, broker/project
+and, for the SERVICE DUE lamp (dashboard_service.py), sandboxes/ and sandbox-parts/ (the
+fingerprints each sandbox was made from), the snapshots `factory start` keeps in dispatch/, and the
+factory config folder (--config) it compares them with; no command is run for it. It reads
+dashboard.toml from that folder once at start (dashboard_config.py), for the page's nameplate, shift names, defaults and role colours.
+The FIRST SHIFT banner and start-up hints (dashboard_hints.py) run only `sbx secret ls` and `sbx ls -q`,
+in a background thread every 30 s at most, each cut off after 5 s, never for a request.
+The OUTBOX module (dashboard_outbox.py) also reads dispatch/jobs.json and runs two fixed,
+read-only git forms in the host project (a for-each-ref listing of the imported refs and
+rev-list --count HEAD..<object id>; hooks and fsmonitor off, no shell), cached for a few seconds.
 It reuses watch.py's transcript model and approvals.py's card reader rather
 than parsing either command's output. The main page only displays: nothing
 it can reach acts.
@@ -108,11 +117,20 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 import approvals
+import dashboard_config as dcfg
 import dashboard_controls as dc
 import dashboard_demo as demo
+import dashboard_hints as dh
+import dashboard_jobs as jobs_mod
+import dashboard_labels as labels
+import dashboard_outbox as ob
+import dashboard_service as ds
+import dashboard_setup
 import dashboard_term as dt
 import docs
 import watch as w
+from factory.context import Paths, bound_project
+from factory.repos import project_repos
 
 UI = Path(__file__).resolve().parent / "dashboard-ui"
 DOCS_ROOT = Path(__file__).resolve().parent.parent  # the factory checkout
@@ -123,6 +141,8 @@ STATIC = {
     "/app.css": ("app.css", "text/css; charset=utf-8"),
     "/theme.css": ("theme.css", "text/css; charset=utf-8"),
     "/app.js": ("app.js", "text/javascript; charset=utf-8"),
+    "/lanelabel.js": ("lanelabel.js", "text/javascript; charset=utf-8"),
+    "/look.js": ("look.js", "text/javascript; charset=utf-8"),
     "/floor.css": ("floor.css", "text/css; charset=utf-8"),
     "/floor.js": ("floor.js", "text/javascript; charset=utf-8"),
     "/sound.js": ("sound.js", "text/javascript; charset=utf-8"),
@@ -133,7 +153,7 @@ STATIC = {
     "/fonts/dotgothic16.woff2": ("fonts/dotgothic16.woff2", "font/woff2"),
 }
 CSP = ("default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; connect-src 'self'; "
-       "img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
+       "img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
 
 
 def page_csp(term_port: int | None = None) -> str:
@@ -164,12 +184,11 @@ COOKIE = "factory_dashboard"  # prefix: the cookie is COOKIE_<port> (see cookie_
 TAIL = 40          # transcript lines per lane in /api/state (taller lane screens)
 FULL = 1500        # transcript lines per lane in /api/lane
 EVENTS = 80        # event printer lines
+BRIEFING_TTL = 5   # seconds between rebuilds of the STANDBY plate's shift briefing
+SERVICE_TTL = 5    # seconds between checks of the SERVICE DUE lamp
+PACKET_MAX = 2_000_000  # bytes of a job's packet /api/lane?job= serves
 WRITES_TTL = 4     # seconds between reads of approvals/done/ for the deferred-write list
 VERDICT = re.compile(r"^- Verdict: (\S+)", re.M)
-DESK_MAX = 40      # characters of a lane's desk placard (the floor slides what the glass can't show)
-TOPIC = re.compile(r"(?:(?<=\.\.)|(?<=\borigin/)|(?<![\w./-]))(?:factory-[A-Za-z0-9-]+/)?factory/([A-Za-z0-9][A-Za-z0-9._-]*)")
-DEV_REF = re.compile(r"(?<![\w-])factory-(developer(?:-lane[0-9]+)?)/factory/")
-TASK_LABEL = re.compile(r"^(?:(?:repo|repository|project)\s*:\s*[^\s;]*[^\s.;][.;]?\s*|(?:task|goal)\s*:\s*)", re.IGNORECASE)
 
 
 # --------------------------------------------------------------------------
@@ -198,38 +217,6 @@ def num(value) -> float | None:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
     return float(value) if math.isfinite(value) else None
-
-
-def desk_label(brief: str) -> str:
-    """A few words (at most DESK_MAX characters) for what a job is about: the
-    topic of the first factory/<topic> branch the task names, else the first
-    words of its first non-empty line without a leading "Repo: x." label. One
-    clean line: only printable characters, no markup, "" when nothing is left."""
-    text = str(brief or "")
-    m = TOPIC.search(text)
-    if m:
-        words = re.sub(r"[-_.]+", " ", m.group(1)).split()
-    else:
-        first = next((ln for ln in text.splitlines() if ln.strip()), "")
-        first = "".join(ch if ch.isprintable() else " " for ch in first)
-        first = TASK_LABEL.sub("", first.strip(), count=1)
-        words = re.sub(r"[`*_#<>\[\]{}|\\]+", " ", first).split()
-    label = ""
-    for word in words:
-        word = "".join(ch for ch in word if ch.isprintable())
-        nxt = f"{label} {word}".strip()
-        if len(nxt) > DESK_MAX:
-            label = label or word[:DESK_MAX - 1] + "…"
-            break
-        label = nxt
-    return label
-
-
-def reviewed_lane(brief: str) -> str:
-    """The developer lane a task points a reviewer at: the lane in the first
-    factory-<lane>/factory/ ref (the form the bridge imports branches as), else ""."""
-    m = DEV_REF.search(str(brief or ""))
-    return m.group(1) if m else ""
 
 
 # --------------------------------------------------------------------------
@@ -295,19 +282,37 @@ def broker_event(rec: dict) -> dict | None:
         bits.append("· " + approvals.clean(rec["reason"]))
     if kind == "WRITTEN" and rec.get("result"):
         bits.append("· " + approvals.clean(next((ln for ln in str(rec["result"]).splitlines() if ln.strip()), "")))
-    return {"t": utc_ts(rec.get("ts")), "kind": kind, "red": kind in ("DENY", "STAGED", "NO", "FAILED"),
-            "text": " ".join(b for b in bits if b)}
+    ev = {"t": utc_ts(rec.get("ts")), "kind": kind, "red": kind in ("DENY", "STAGED", "NO", "FAILED"),
+          "text": " ".join(b for b in bits if b)}
+    # The card an approval event is about, only if it is a plain card id (the page passes it to the control unit).
+    cid = rec.get("id")
+    if kind in ("STAGED", "OK", "NO", "WRITTEN", "FAILED") and isinstance(cid, str) and approvals.CARD_ID.fullmatch(cid):
+        ev["card_id"] = cid
+    return ev
 
 
 # --------------------------------------------------------------------------
 # State
 
+class NoSuchJob(LookupError):
+    """/api/lane?job= named a job that did not run on that lane."""
+
+
 class Dashboard:
-    def __init__(self, state: Path, roles: Path, project: str, demo: bool = False):
+    def __init__(self, state: Path, roles: Path, project: str, demo: bool = False, paths=None, hint_source=None,
+                 look=None, look_problem: str = ""):
         self.state, self.project, self.demo = state, project, demo
+        # dashboard.toml, read once at start (dashboard_config.py): served as `look`; a refused file is the
+        # defaults plus look_problem, which the SETUP screen shows.
+        self.look, self.look_problem = look or dcfg.defaults(), look_problem
+        self.paths = paths  # factory.context.Paths for the SERVICE DUE lamp; None (demo): never due
+        self.hint_source = hint_source  # dashboard_hints.Hints (its .get(now)); None: no start-up hints
+        self._service: tuple = (0.0, {"due": None, "lines": [], "stale": []})
+        self._briefing: tuple = (0.0, None)
         self.watch = w.Watch(state / "dispatch", roles, project)
         self.broker = BrokerAudit(state / "broker" / "audit.jsonl")
         self.verdicts: dict = {}
+        self.outbox = ob.Outbox(state, project, paths, ob.FixtureGit(state) if demo else ob.HostGit(state))
         self.lock = threading.Lock()
         self._writes: tuple = (0.0, [])
 
@@ -344,6 +349,52 @@ class Dashboard:
             cached = approvals.read_writes(self.state / "broker", now)
             self._writes = (now, cached)
         return [dict(w) for w in cached]
+
+    def service(self, now: float) -> dict:
+        """The SERVICE DUE lamp (dashboard_service.py), recomputed at most every SERVICE_TTL seconds:
+        it hashes the kits and stats the config folder."""
+        at, cached = self._service
+        if now - at >= SERVICE_TTL or now < at:
+            cached = ds.service(self.paths, self.project)
+            self._service = (now, cached)
+        return {"due": cached["due"], "lines": list(cached["lines"])}
+
+    def briefing_source(self) -> tuple:
+        """(factory.context.Paths, the project's folder) the shift briefing reads; paths None when there is none.
+        Demo mode reads the fixture's setup/ folder and the empty repos dashboard_demo.build made there."""
+        if self.demo:
+            base = self.state / demo.SETUP
+            return Paths(str(base / "root"), str(base / "config"), str(self.state)), str(base / "project")
+        if self.paths is None:
+            return None, ""
+        folder = bound_project(self.paths)
+        return self.paths, folder if os.path.basename(folder.rstrip("/")) == self.project else ""
+
+    def briefing(self, now: float) -> dict | None:
+        """The STANDBY plate's shift briefing (dashboard_setup.briefing), rebuilt at most every BRIEFING_TTL
+        seconds. It reads config and lists the project folder, so it runs outside board.lock."""
+        at, cached = self._briefing
+        if now - at >= BRIEFING_TTL or now < at:
+            paths, folder = self.briefing_source()
+            cached = None
+            if paths is not None:
+                config = dashboard_setup.setup(paths, self.project)
+                repos = project_repos(folder) if folder else None
+                cached = dashboard_setup.briefing(config, paths, repos, now)
+            self._briefing = (now, cached)
+        return cached
+
+    def hints(self, now: float) -> list:
+        """The FIRST SHIFT banner and start-up hints (dashboard_hints.py): [{"code", "text"}]. The
+        sbx-derived part is a cached background result; the out-of-date sandboxes come from the
+        SERVICE DUE lamp's cache. Nothing here runs a command for the request."""
+        if self.hint_source is None or self.demo:
+            return []
+        self.service(now)
+        return dh.compose(list(self._service[1].get("stale", [])), self.hint_source.get(now))
+
+    def first_shift(self, now: float) -> bool:
+        return dh.first_shift(self.hints(now))
 
     def cards(self, now: float, fp: bool = False) -> list:
         """The pending approval cards. A card's principal is the broker token's
@@ -396,15 +447,21 @@ class Dashboard:
                 if verdict in ("REVISE", "APPROVED"):
                     state = verdict.lower()
         model = str(rec.get("model") or (job or {}).get("model") or "")
-        brief = str((job or {}).get("brief") or (job or {}).get("task") or "") if state != "idle" else ""
+        job_brief = str((job or {}).get("brief") or (job or {}).get("task") or "")
+        brief = job_brief if state != "idle" else ""
+        # The log's branch lines for this job only (an idle lane keeps its last job's branch).
+        entries = list(lane.entries)
+        first = max((i for i, e in enumerate(entries) if e.kind == "start"), default=0)
+        branches = [e.text for e in entries[first:] if e.kind == "branch"]
         return {
             "name": lane.name, "role": lane.role, "state": state,
             "job": (job or {}).get("id"), "task": (job or {}).get("task", ""),
-            "desk": desk_label(brief), "reviews": reviewed_lane(brief) if lane.role == "reviewer" else "",
+            "desk": labels.desk_label(brief), "reviews": labels.reviewed_lane(brief) if lane.role == "reviewer" else "",
+            "branch": labels.lane_branch(job_brief, branches) if lane.role == "developer" else "",
             "model": model.replace("claude-", ""), "effort": rec.get("effort"),
             "elapsed": lane.elapsed(now), "ended": (job or {}).get("ended"),
             "cost": num(rec.get("cost_usd")), "context_tokens": num(rec.get("context_tokens")),
-            "tail": [{"ts": e.ts, "kind": e.kind, "text": e.text} for e in list(lane.entries)[-tail:]],
+            "tail": [{"ts": e.ts, "kind": e.kind, "text": e.text} for e in entries[-tail:]],
         }
 
     def snapshot(self, now: float | None = None) -> dict:
@@ -412,6 +469,7 @@ class Dashboard:
         with self.lock:
             self.refresh()
             cards = self.cards(now)
+            calls = list(self.broker.calls)
             lanes = [self.lane_json(lane, now, TAIL) for lane in self.watch.lanes]
 
             midnight = local_midnight(now)
@@ -435,7 +493,13 @@ class Dashboard:
                 text = f"{rec.get('lane') or rec.get('role')} {status} {w.fmt_secs(num(rec.get('elapsed_seconds')) or 0)}"
                 if cost is not None:
                     text += f" ${cost:.2f}"
-                events.append({"t": ts, "kind": "JOB", "red": status in ("failed", "cancelled", "interrupted"), "text": text})
+                ev = {"t": ts, "kind": "JOB", "red": status in ("failed", "cancelled", "interrupted"), "text": text}
+                # Which job, on which lane, so the line can open that lane's monitor on its packet.
+                job_id, lane_name = rec.get("job_id"), rec.get("lane")
+                if (isinstance(job_id, str) and ob.JOB_ID.fullmatch(job_id)
+                        and isinstance(lane_name, str) and ob.LANE.fullmatch(lane_name)):
+                    ev["job_id"], ev["lane"] = job_id, lane_name
+                events.append(ev)
             for rec in self.broker.calls:
                 ev = self.broker_today(rec, midnight)
                 if ev:
@@ -444,8 +508,11 @@ class Dashboard:
             events = [dict(e, t=clock(e["t"])) for e in events[-EVENTS:]]
 
         total = sum(num(rec.get("cost_usd")) or 0.0 for _, rec in jobs)
+        writes = self.writes(now)
+        # Read outside the lock, like SETUP: it runs git (cached a few seconds, bounded).
+        outbox = self.outbox.rows(now, calls, {c["id"] for c in cards}, writes)
         return {
-            "now": now, "clock": clock(now), "project": self.project, "demo": self.demo,
+            "now": now, "clock": clock(now), "project": self.project, "demo": self.demo, "look": self.look,
             "bridge": self.watch.bridge_alive(),
             "totals": {"cost": round(total, 4), "jobs": len(jobs),
                        "running": sum(1 for lane in lanes if lane["state"] in ("running", "held"))},
@@ -454,7 +521,11 @@ class Dashboard:
                       "roles": [{"role": r, "cost": round(c, 4)} for r, c in sorted(roles.items(), key=lambda x: -x[1])]},
             "events": events,
             "gate": cards,
-            "writes": self.writes(now),
+            "writes": writes,
+            "outbox": outbox,
+            "service": self.service(now),
+            "hints": self.hints(now),
+            "briefing": self.briefing(now),
         }
 
     @staticmethod
@@ -464,16 +535,56 @@ class Dashboard:
             return None
         return broker_event(rec)
 
-    def lane_detail(self, name: str, now: float | None = None) -> dict | None:
+    def lane_detail(self, name: str, now: float | None = None, job: str = "") -> dict | None:
+        """One lane's transcript, its past jobs (newest first, `jobs`: ids) and the packet of one
+        of them (`job`: the id asked for, else the newest; `sel`: what is known about it). None if
+        there is no such lane; NoSuchJob if the job did not run on it."""
         now = time.time() if now is None else now
         with self.lock:
             self.refresh()
             lane = next((x for x in self.watch.lanes if x.name == name), None)
             if lane is None:
                 return None
+            known = jobs_mod.lane_jobs(self.state, lane, self.watch.audit.jobs)
+            if job and job not in known:
+                raise NoSuchJob(f"job {job} did not run on lane {name}")
+            ids = jobs_mod.newest(known, job)
+            pick = job or (ids[0] if ids else "")
             out = self.lane_json(lane, now, FULL)
-            out["packet"] = self.watch.packet_text(lane)
+            out["jobs"] = ids
+            if pick:
+                out["job"] = pick   # the job whose packet this is (lane_json's is the lane's current one)
+            out["sel"] = self.job_sel(lane, pick, known[pick], now) if pick else None
+            out["packet"] = self.job_packet(pick) if pick else self.watch.packet_text(lane)
+            out["pending"] = bool(out["sel"] and out["sel"]["state"] == "running" and not self.job_packet_exists(pick))
         return out
+
+    def job_sel(self, lane: w.Lane, job: str, info: dict, now: float) -> dict:
+        """What the monitor's header and pending view show about one job. Display text only."""
+        status = info["status"]
+        if status == "running" and not self.watch.bridge_alive():
+            status = "interrupted"   # a job lives only in the bridge: with it down none is running
+        state = status
+        if status == "done" and lane.role == "reviewer":
+            verdict = self.verdict(job)
+            state = verdict.lower() if verdict in ("REVISE", "APPROVED") else state
+        started, elapsed = info["started"], info["elapsed"]
+        if status == "running":
+            current = lane.job and lane.job["id"] == job
+            elapsed = max(0, now - started) if started is not None else (lane.elapsed(now) if current else None)
+        return {"id": job, "state": state, "status": status, "task": info["task"],
+                "model": info["model"].replace("claude-", ""), "cost": num(info["cost"]),
+                "elapsed": None if elapsed is None else int(elapsed), "when": jobs_mod.when(started, now)}
+
+    def job_packet_exists(self, job: str) -> bool:
+        return ob.read_regular(self.state / "dispatch" / "packets" / f"{job}.md", 1) is not None
+
+    def job_packet(self, job: str) -> str:
+        """The review packet of one job (an id in the bridge's form: it names a file under packets/)."""
+        raw = ob.read_regular(self.state / "dispatch" / "packets" / f"{job}.md", PACKET_MAX) if ob.JOB_ID.fullmatch(job) else None
+        if raw is None:
+            return f"(no packet for job {job} yet: it is written when the job ends)"
+        return raw.decode("utf-8", "replace")
 
 
 # --------------------------------------------------------------------------
@@ -552,7 +663,16 @@ def make_handler(board: Dashboard, token: str, port: int, term: dt.Term | None =
                 snap["cu"] = None if term_port is None else {"port": term_port}
                 self.json(snap)
             elif url.path == "/api/lane":
-                detail = board.lane_detail(parse_qs(url.query).get("name", [""])[0])
+                query = parse_qs(url.query)
+                job = query.get("job", [""])[0]
+                if job and not ob.JOB_ID.fullmatch(job):
+                    self.refuse(400, "bad job id")
+                    return
+                try:
+                    detail = board.lane_detail(query.get("name", [""])[0], job=job)
+                except NoSuchJob:
+                    self.refuse(404, "that job did not run on this lane")
+                    return
                 if detail is None:
                     self.refuse(404, "no such lane")
                 else:
@@ -669,6 +789,8 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="factory dashboard", description=__doc__.splitlines()[0])
     ap.add_argument("--state", type=Path, help="the factory state folder (holds dispatch/ and broker/)")
     ap.add_argument("--roles", type=Path, help="the factory's roles/ folder")
+    ap.add_argument("--config", type=Path, help="the factory config folder, for the SERVICE DUE lamp "
+                    "(default: FACTORY_CONFIG's usual place under XDG_CONFIG_HOME)")
     ap.add_argument("--project", default="", help="the project the factory runs on (for the header)")
     ap.add_argument("--port", type=int, default=0, help="port on 127.0.0.1 (default: any free port)")
     ap.add_argument("--no-open", action="store_true", help="print the URL without opening a browser")
@@ -680,7 +802,7 @@ def main(argv=None) -> int:
                     help="show made-up data from scripts/dashboard-demo/, with no factory running; nothing acts")
     args = ap.parse_args(argv)
     if args.demo:
-        given = [f for f, v in (("--state", args.state), ("--project", args.project),
+        given = [f for f, v in (("--state", args.state), ("--project", args.project), ("--config", args.config),
                                 ("--coordinator", args.coordinator), ("--factory", args.factory)) if v]
         if given:
             ap.error(f"--demo shows built-in sample data and has no state folder, project, Coordinator terminal "
@@ -713,7 +835,18 @@ def main(argv=None) -> int:
 
 
 def _serve(args, term) -> int:
-    board = Dashboard(args.state, args.roles, args.project or "(no project)", demo=args.demo)
+    paths = None
+    if not args.demo:
+        root = args.roles.resolve().parent
+        paths = ds.Paths(str(root), str(args.config or ds.Paths.from_environ(str(root)).config), str(args.state))
+    # Demo mode reads no real config: today's defaults.
+    look, look_problem = dcfg.defaults(), ""
+    if not args.demo:
+        look, look_problem = dcfg.load(paths.config)
+        if look_problem:
+            print(f"warning: dashboard.toml ignored, showing the defaults: {look_problem}", file=sys.stderr)
+    board = Dashboard(args.state, args.roles, args.project or "(no project)", demo=args.demo, paths=paths,
+                      hint_source=None if args.demo else dh.Hints(paths), look=look, look_problem=look_problem)
     if not board.watch.lanes:
         print("no roles or transcripts found", file=sys.stderr)
         return 1

@@ -1,7 +1,7 @@
 # scripts/: Dashboard Security Rules
 
 These rules cover the dashboard: `scripts/dashboard.py`, `scripts/dashboard_controls.py`,
-`scripts/dashboard_term.py`, `scripts/patchview.py`, and the `dashboard-ui/` front-end
+`scripts/dashboard_term.py`, `scripts/patchview.py` and the other `scripts/dashboard_*.py` modules, and the `dashboard-ui/` front-end
 they serve. Read this before changing any of those files.
 
 Other files in `scripts/` (e.g. `analytics.py`, `watch.py`, `start-broker.sh`,
@@ -21,7 +21,7 @@ factory checkout, rendered once at start-up by `docs.py` `build_served()` with C
 JS as separate files, held in memory, served under the same CSP minus `frame-src`, no
 git run and no `file://` links), and is GET-only on its main port.
 
-Its state view only reads the state folder; at start-up it starts the browser opener
+Its state view reads the state folder, plus the OUTBOX's git (below); at start-up it starts the browser opener
 (fixed argv, no shell: `rundll32.exe url.dll,FileProtocolHandler <url>` then `wslview`
 on WSL, else Python's `webbrowser`; never `explorer.exe`, `cmd.exe` or
 `powershell -Command`). Agent-written text reaches the main page only as JSON and is
@@ -68,9 +68,18 @@ origin exactly, `Sec-Fetch-Site` (if sent) is `same-origin`, exactly one dashboa
 cookie matches, the key is in the `X-Factory-Control` header (compared in constant
 time), the `Content-Type` is JSON and the body is at most 8 KiB; every other method
 (`OPTIONS` included) is refused, and no response carries CORS headers. The main page
-can't script the frame (another origin) and never posts to it; the frame may tell it
+can't script the frame (another origin); the frame may tell it
 exactly three strings by `postMessage` (`cu:expand`, `cu:collapse`, `cu:reload`),
-accepted only from that frame's window and origin. Agent-written strings (card titles,
+accepted only from that frame's window and origin. The main page may tell the frame
+exactly one thing, `{type: "cu:select", id: <card id>}` (a printer line, #190), sent to
+the unit's exact origin; the unit accepts it only from `window.parent` with
+`e.origin` exactly the main origin, as a plain object with exactly those two keys and an
+id that fullmatches the card-id format (`[A-Za-z0-9_-]{1,64}`, checked on both sides). It
+is a display hint and nothing else: it acts only on the deck (not over another screen,
+an open APPROVE question or a decision in flight), only picks among the cards the unit
+already holds (an unknown id flashes a fixed "no longer held" line), at most once per
+400 ms, never presses a key or moves focus, and treats the card like one that arrived
+unasked (typed reason cleared, keys dark for the 2.5 s hold). Agent-written strings (card titles,
 branches, the action log) are inserted as text only.
 
 APPROVE and DECLINE are one press each, as `factory approvals approve` is one command:
@@ -127,9 +136,101 @@ without seeing N files?" with CANCEL and CONFIRM APPROVE (dark for 1 s), and the
 changing or going cancels the question.
 
 An unexpected exception in any control is a 500 with a fixed message, and only its
-type is logged. Settings, when they come, go in the control unit too, and anything
-that moves the security boundary (broker policy and hosts, credentials, kits) is shown
-there read-only, never edited.
+type is logged. SETUP (doomtickle/passdesk-ops#183) shows the effective configuration read-only: `config`
+in the unit's state, built by `scripts/dashboard_setup.py` from the factory's parsers, cached
+a few seconds and read outside the board's lock. It adds no endpoint and runs nothing; it takes
+only named policy keys (never a credential, and a URL's user, password, query and fragment are
+cut), and every string is cleaned to one printable line and drawn as text. Anything that moves
+the security boundary (broker policy and hosts, credentials, kits) is shown there read-only,
+never edited.
+
+OUTBOX (doomtickle/passdesk-ops#189, `scripts/dashboard_outbox.py`) lists the `factory/*`
+branches the bridge imported, newest first, as `outbox` in the main page's state: the repo,
+the branch, the commits ahead of host `HEAD`, the latest reviewer verdict, the push state and
+the PR or MR. It reads `dispatch/jobs.json` and `dispatch/packets/` (regular files only, opened
+`O_NOFOLLOW`, size-capped) and the audit and deferred writes the dashboard already holds, and runs
+only two git forms, both read-only, hooks and fsmonitor off (`-c core.hooksPath=/dev/null -c
+core.fsmonitor=false`), argv list, no shell, `GIT_*` stripped, `GIT_OPTIONAL_LOCKS=0`:
+`for-each-ref --format=%(objectname) %(refname) refs/remotes/factory-<lane>/factory/` and
+`rev-list --count HEAD..<object id>`. A branch name is only compared with what `for-each-ref`
+printed and never reaches git, and the only thing passed on is a full object id the listing gave
+(`[0-9a-f]{40,64}`, so it can't be an option). A name that isn't a plain ref gives an UNCHECKED
+row and no git run. The result is cached 8 s, there are at most 20 rows and 40 branches looked
+at, one run is cut at 5 s and a recomputation at 12 s. A link is built only from the gateway's own
+`Opened PR #N: <url>` result and only when it is `https://github.com/<owner>/<repo>/pull/N` or
+`https://<the policy's GitLab host>/<project>/-/merge_requests/N` with the same number (no
+userinfo, query or fragment); anything else is shown as text, and the page re-checks that it is
+an https URL before it sets `href`. Every other string is drawn with `textContent`, and classes
+come from fixed maps, never from the data. A row opens that job's packet through `GET
+/api/lane?name=&job=` (the job id must match `[0-9]{8}-[0-9]{6}-[0-9a-f]{6}`, else 400, and be a job of that lane, else 404; the
+packet is a regular file `dispatch/packets/<id>.md`, opened `O_NOFOLLOW`, capped). The module acts on nothing. Demo mode runs
+no git: `FixtureGit` reads `dispatch/demo-refs.json`.
+
+ATTENTION (doomtickle/passdesk-ops#192, `app.js`, with the cues in `sound.js`) is display only and adds no
+endpoint: the title and favicon badge, the cues and the optional notifications come from `/api/state`
+diffs the page already polls. Only counts, a fixed tool list and the lane-name pattern ever reach the
+title, the favicon (drawn on a canvas, so the main page's CSP has `img-src 'self' data:` and nothing wider)
+or a `Notification`; agent-written text never does. Notification permission is asked only from the NOTIFY
+key's click, never on load.
+
+SHIFT BUDGET (doomtickle/passdesk-ops#195, `app.js` `renderBudget`) is display only and adds no endpoint or `/api/state` field:
+a dollars-a-day figure typed on the spend module and kept in this browser (`localStorage`, in the knobs' `fc1984-knobs` entry,
+validated as a finite number from 0 to 100000, otherwise ignored; 0 or empty is no budget) that tints the header's spend readout
+(a class from a fixed pair, amber past the figure, red past twice it) and fills a meter. It sends nothing and stops nothing.
+
+DASHBOARD LOOK (doomtickle/passdesk-ops#196, `scripts/dashboard_config.py`, `dashboard-ui/look.js`) is
+`FACTORY_CONFIG/dashboard.toml` (the dashboard's `--config`): a nameplate and floor plate, three shift names, the CRT
+and sound defaults and a colour per role. It is read once at start and served as `look` in `/api/state`; it adds no
+endpoint, runs nothing and reads nothing else. The reader is strict (an unknown key or table, a repeated key, a bad
+value, a symlink or non-regular file, a file over 16 KiB or non-UTF-8 text refuses the whole file, opened `O_NOFOLLOW`
+and non-blocking, read capped) and reuses `factory/policy.py`'s string reader; a refusal logs to stderr, shows the
+defaults and appears on SETUP (`config.look`), and never stops the dashboard. Demo mode reads no real config. `look.js`
+checks every field again in the browser; a colour reaches the page only as a validated `#rrggbb` through
+`style.setProperty` (the CSP has no inline style and keeps none), strings only through `textContent`, and nothing from
+the file becomes a class name, attribute or HTML. `crt` and `sound` only start the knob and the key until the
+browser has a choice of its own.
+
+LANE LABELS (doomtickle/passdesk-ops#194, `scripts/dashboard_labels.py`, `dashboard-ui/lanelabel.js`) put a developer's
+branch and the lane a reviewer is checking on the lane modules and chips, as the floor already did: `branch`, `desk` and
+`reviews` in each lane of `/api/state`, derived by one module from the task text and the job's `⎇ branch` log lines. They
+add no endpoint, run no git, and are drawn with `textContent`; `lanelabel.js` is a plain served file in the allowlist,
+loaded before `app.js` and `floor.js` (no inline script).
+
+LANE JOBS (doomtickle/passdesk-ops#191, `scripts/dashboard_jobs.py`, `app.js`) let the lane monitor's PACKET tab step through a
+lane's past jobs and show a pending view for a running one. They add no endpoint: `/api/lane?name=&job=` (the #189 path, one
+`Dashboard.job_packet`) now returns `jobs` (the lane's newest 50 job ids, newest first), `job` (the one whose packet this is; none
+asked for means the newest) and `sel` (state, task, model, cost, elapsed, when), and `pending` (the job is running and has no
+packet yet). The ids come from `dispatch/jobs.json` (regular file, `O_NOFOLLOW`, capped), the audit and the lane's transcript, only
+those matching the bridge's job-id pattern; a `job` that is not one of that lane's is a 404 (`NoSuchJob`), a malformed one still a
+400, and the id is joined onto `packets/` only after it matched. Tasks are cut to one line; everything is drawn with `textContent`
+and the page sets no class or attribute from it.
+
+EVENT PRINTER (doomtickle/passdesk-ops#190, `app.js` `renderPaper`) lines are buttons. They add no endpoint:
+`/api/state` events carry `job_id` and `lane` on a JOB line (only when they match `JOB_ID` and the lane pattern) and
+`card_id` on approval lines (only when it fullmatches `approvals.CARD_ID`). A JOB line opens the lane monitor through the
+#191 `/api/lane?name=&job=` path; STAGED, WRITTEN and FAILED send the `cu:select` hint above; DENY and FAILED open in place
+to their whole text, still `textContent`. The page re-checks every id against its pattern before using it.
+
+FIRST SHIFT (doomtickle/passdesk-ops#181, `scripts/dashboard_hints.py`, `factory/hints.py`) puts `factory start`'s
+start-up hints on the main page: `hints` in `/api/state` (`[{code, text}]`, fixed host strings cleaned to one
+printable line, at most 6; the first-login states carry a fixed banner) and `first_shift` in the control unit's
+state, which makes its RESTART LED blink (`cu.js`). The page draws one line over Terminal 0 with `textContent`;
+nothing acts, and Terminal 0's rules above are unchanged. Two checks run `sbx`, and only these fixed argv forms:
+`sbx secret ls` (the Claude login, the GitHub token) and `sbx ls -q` (the role sandboxes). `Probe`, a factory
+`Context` that refuses any other argv, cuts each at 5 s and runs each once per refresh; a background thread
+refreshes at most every 30 s, one at a time, never on a request and never under the board's lock, and a failed
+or timed-out call keeps the last answer (so a hiccup never shows FIRST SHIFT). The stale-sandbox hint reuses the
+SERVICE DUE cache (files only). Keychain checks are left out. Demo mode has no source and shows none.
+
+SHIFT BRIEFING (doomtickle/passdesk-ops#182, `dashboard_setup.briefing`, `app.js` `renderBriefing`) turns the STANDBY plate
+into a briefing: `briefing` in `/api/state`, the subset of the SETUP `config` (one builder, `dashboard_setup.setup`, not a second
+parser) plus the project's repos from `factory/repos.py` `project_repos` on the bound project folder (read from
+`broker/project` and used only if its basename is the dashboard's project). It holds host-derived facts only: the project name,
+the repos' names (at most 12), each notes file's name, role and size (never its contents), each role's lanes and whether it is on,
+the `[approvals].tools` names, the notes path to create, and one example prompt from the fixed `PROMPTS` list. No credential, no
+`[git].repos`, no GitLab URL, no expiry. It adds no endpoint and runs no command; it is built outside the board's lock, cached
+5 s (`BRIEFING_TTL`), every string cleaned to one printable line and drawn with `textContent`, no class or attribute from it. Demo
+mode reads the fixture's `setup/` folder and the empty `.git` folders `dashboard_demo.build` makes under `setup/project/`.
 
 Anything new that lets a page act must meet the same bar: one fixed argv with no
 shell, a key in a request header (not just the cookie) on a POST or WebSocket with its
@@ -146,7 +247,8 @@ rule above. It reads no `FACTORY_STATE` or broker state and refuses `--state`,
 inside the checkout, removed when the dashboard exits; the ticker appends audit records
 only there. There is no Terminal 0. Its control unit is `DemoControls`: `decide`,
 `prepare` and `run` raise `Refused(403)` before any decision file, token or host command,
-and `argv()` raises. `state`, `log` and `patch` are inherited unchanged, so INSPECT reads
+and `argv()` raises. `state`, `log` and `patch` are inherited unchanged (SETUP reads the
+fixture's `setup/` folder through `setup_source()`), so INSPECT reads
 the fixture's patch through the same `read_patch` path (digest-named, `O_NOFOLLOW`,
 SHA-256 checked) inside the temp folder. Keep it that way: demo code must never add a
 write outside that folder or a way to start a command.

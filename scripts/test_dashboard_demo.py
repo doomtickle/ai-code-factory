@@ -154,6 +154,14 @@ class SnapshotTests(unittest.TestCase):
             "developer": ("greet empty name", ""), "developer-lane2": ("", ""), "developer-lane3": ("Tidy the packaging metadata, changelog", ""),
             "reviewer": ("greet empty name", "developer"), "reviewer-lane2": ("greet readme", "developer-lane2")})
 
+    def test_lane_branches(self):
+        # #194: developers carry their branch (the task's, else the log's), reviewers the lane they check.
+        lanes = {lane["name"]: lane for lane in self.snap["lanes"]}
+        self.assertEqual({n: lane["branch"] for n, lane in lanes.items()}, {
+            "developer": "factory/greet-empty-name", "developer-lane2": "factory/greet-readme", "developer-lane3": "",
+            "reviewer": "", "reviewer-lane2": ""})
+        self.assertEqual(lanes["developer-lane2"]["state"], "idle")  # a chip keeps its last branch
+
     def test_a_staged_push_a_deny_and_a_branch(self):
         card = self.snap["gate"][0]
         self.assertEqual((card["tool"], card["repo"], card["branch"], card["role"]),
@@ -275,6 +283,43 @@ class RefusalTests(unittest.TestCase):
         patch.write_text("not the card's patch\n")
         status, out = self.env.post("patch", {"id": card["id"], "fp": card["fp"]})
         self.assertEqual((status, out["error"]), (409, "patch does not match its card"))
+
+
+class SetupTests(unittest.TestCase):
+    def setUp(self):
+        self.env = Env(self.addCleanup)
+
+    def test_the_demo_shows_the_fixtures_configuration(self):
+        cfg = self.env.post("state")[1]["config"]
+        self.assertEqual(cfg["project"], "DEMO")
+        roles = {r["name"]: r for r in cfg["roles"]}
+        self.assertEqual(sorted(roles), ["developer", "researcher", "reviewer"])
+        model = next(k for k in roles["developer"]["keys"] if k["key"] == "MODEL")
+        self.assertEqual((model["value"], model["source"], model["repo"]), ("claude-haiku-5-5", "LOCAL", "claude-sonnet-5-5"))
+        self.assertEqual((roles["researcher"]["optional"], roles["researcher"]["on"]), (True, False))
+        self.assertEqual(cfg["approvals"]["tools"], ["git_push", "github_create_pr"])
+        self.assertEqual((cfg["gitlab"]["url"], cfg["repos"]["source"]), ("https://gitlab.example.com/", "LOCAL"))
+        self.assertEqual([f["name"] for f in cfg["notes"]["files"]], ["DEMO.md", "DEMO.developer.md"])
+
+    def test_the_demo_shows_a_shift_briefing_from_the_fixture(self):
+        b = self.env.board.snapshot(self.env.now)["briefing"]
+        self.assertEqual((b["project"], b["repos"], b["repos_known"]), ("DEMO", list(demo.DEMO_REPOS), True))
+        self.assertEqual([f["name"] for f in b["notes"]["files"]], ["DEMO.md", "DEMO.developer.md"])
+        self.assertEqual(b["holds"]["tools"], ["git_push", "github_create_pr"])
+        self.assertEqual([(r["name"], r["on"]) for r in b["roles"]],
+                         [("developer", True), ("researcher", False), ("reviewer", True)])
+
+    def test_it_reads_the_temp_copy_never_the_checkout_or_real_config(self):
+        paths, project = self.env.controls.setup_source()
+        self.assertEqual(project, "DEMO")
+        for p in (paths.root, paths.config, paths.state):
+            self.assertEqual(os.path.commonpath([os.path.realpath(p), os.path.realpath(self.env.state)]),
+                             os.path.realpath(self.env.state), p)
+
+    def test_the_fixture_has_nothing_real_in_it(self):
+        blob = "".join(p.read_text(encoding="utf-8") for p in (demo.FIXTURE / "setup").rglob("*") if p.is_file())
+        for word in ("doomtickle", "passdesk", "daron", "@gmail", "api_key", "secret", "password"):
+            self.assertNotIn(word, blob.lower())
 
 
 def dc_actions():

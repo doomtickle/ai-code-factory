@@ -84,6 +84,12 @@ class PolicyValueTest(PolicyTest):
         self.assertEqual(policy.policy_value(self.paths, "approvals", "tools"), '["mine"]')
         self.assertEqual(policy.policy_value(self.paths, "gitlab", "url"), '"https://base"')
 
+    def test_the_source_names_the_file_the_value_came_from(self):
+        self.write_policy("[approvals]\ntools = [\"base\"]\n[gitlab]\nurl = \"https://base\"\n", "[approvals]\ntools = [\"mine\"]\n")
+        self.assertEqual(policy.policy_value_source(self.paths, "approvals", "tools"), ('["mine"]', "local"))
+        self.assertEqual(policy.policy_value_source(self.paths, "gitlab", "url"), ('"https://base"', "repo"))
+        self.assertEqual(policy.policy_value_source(self.paths, "git", "repos"), (None, None))
+
     def test_an_empty_value_is_set_but_empty(self):
         self.write_policy("[gitlab]\nurl =\n", None)
         self.assertEqual(policy.policy_value(self.paths, "gitlab", "url"), "")

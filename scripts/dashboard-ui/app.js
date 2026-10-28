@@ -12,6 +12,13 @@
     if (text != null) n.textContent = String(text);
     return n;
   };
+  // dashboard.toml (look.js reads state.look): a custom role's colour goes on its name as a CSS value, set with
+  // style.setProperty (the CSP has no inline style) and only when it is a validated #rrggbb.
+  let look = FactoryLook.read(null);
+  function tint(node, role) {
+    const c = look.colors.get(role);
+    if (c) node.style.setProperty("color", c); else node.style.removeProperty("color");
+  }
   const NS = "http://www.w3.org/2000/svg";
   const svgEl = (tag, attrs) => { const n = document.createElementNS(NS, tag); for (const k in attrs) n.setAttribute(k, attrs[k]); return n; };
   const usd = v => (v == null ? "--" : "$" + Number(v).toFixed(2));
@@ -26,6 +33,7 @@
   // Monitor state: the open lane, its tab, the latest /api/lane data, a request
   // sequence number (stale responses are dropped) and what the body shows now.
   let monLane = null, monTab = "transcript", monData = null, monSeq = 0, monBusy = false;
+  let monJob = "", monBack = "";  // the job whose packet the monitor shows ("" = the lane's newest, followed live), and the OUTBOX row to return focus to
   let shown = { lane: null, tab: null, keys: [], packet: null };
   // ---------- 7-segment LCD digits, drawn as SVG
   const SEG = { a: "4,2 6,0 16,0 18,2 16,4 6,4", b: "18,3 20,5 20,15 18,17 16,15 16,5", c: "18,19 20,21 20,31 18,33 16,31 16,21",
@@ -95,22 +103,35 @@
     r.card.setAttribute("aria-label", `Open lane ${name}`);
     const top = el("div", "lane-top");
     r.led = el("span", "led"); r.tag = el("span", "state-tag"); r.key = el("span", "keycap key");
+    r.ref = el("span", "lane-ref");
     r.lcd = el("div", "lcd lcd-text"); r.lcdKey = null;
     const stats = el("div", "lane-stats");
     const stat = label => { const s = el("div", "stat"); s.title = label; const v = el("span", "val"); s.append(el("span", "silk", label), v); stats.append(s); return v; };
     r.model = stat("Model"); r.cost = stat("Cost"); r.ctx = stat("Ctx");
     r.tbox = el("div", "lcd seg-box"); r.tbox.dataset.name = name; r.segText = null;
-    top.append(r.led, el("span", "lane-name", name), r.tag, stats, r.tbox, r.key);
+    r.nameEl = el("span", "lane-name", name);
+    top.append(r.led, r.nameEl, r.tag, r.ref, stats, r.tbox, r.key);
     r.card.append(top, r.lcd);
     r.card.addEventListener("click", () => openMon(name));
     return r;
   }
 
+  // A developer's branch (pink, as the transcript's branch lines) or the lane a reviewer is checking; text only.
+  function laneRef(lane) {
+    if (lane.role === "reviewer") return FactoryLabels.reviewTag(lane.reviews);
+    return typeof lane.branch === "string" ? lane.branch : "";
+  }
   function updateCard(r, lane, i) {
+    tint(r.nameEl, lane.role);
     setClass(r.card, `lane plate${lane.state === "idle" ? " idle" : ""}`);
     setClass(r.led, `led ${LED[lane.state] || ""}`);
     setClass(r.tag, `state-tag st-${lane.state}`);
     setText(r.tag, LABEL[lane.state] || lane.state);
+    const ref = laneRef(lane);
+    r.ref.hidden = !ref;
+    setClass(r.ref, `lane-ref${lane.role === "reviewer" ? " rev" : ""}`);
+    setText(r.ref, ref);
+    if (r.ref.title !== ref) r.ref.title = ref;
     r.key.hidden = i >= 9;
     setText(r.key, i < 9 ? i + 1 : "");
     const lcdKey = JSON.stringify([lane.state, lane.ended, lane.tail.map(entryKey)]);
@@ -134,7 +155,8 @@
     c.chip.type = "button";
     c.chip.dataset.name = name;
     c.led = el("span", "led"); c.key = el("span", "keycap key"); c.since = el("span", "chip-since");
-    c.chip.append(c.led, c.key, el("span", "chip-name", name), c.since);
+    c.branch = el("span", "chip-branch");
+    c.chip.append(c.led, c.key, el("span", "chip-name", name), c.branch, c.since);
     c.chip.addEventListener("click", () => openMon(name));
     return c;
   }
@@ -143,7 +165,11 @@
     setText(c.key, i < 9 ? i + 1 : "");
     const since = lane.ended ? `idle since ${lane.ended.slice(0, 5)}` : "no jobs yet";
     setText(c.since, since);
-    const label = `Open lane ${lane.name}, ${since}`;
+    const branch = lane.role === "developer" && typeof lane.branch === "string" ? lane.branch : "";
+    c.branch.hidden = !branch;
+    setText(c.branch, branch);
+    if (c.branch.title !== branch) c.branch.title = branch;
+    const label = `Open lane ${lane.name}${branch ? `, branch ${branch}` : ""}, ${since}`;
     if (c.chip.getAttribute("aria-label") !== label) c.chip.setAttribute("aria-label", label);
   }
   // Classes that play a CSS animation once, then come off (so it can play again).
@@ -261,9 +287,26 @@
     $("lamp-bridge").className = `led ${state.bridge ? "g" : "r"}`;
     const undecided = state.gate.filter(x => x.decided !== "approve" && x.decided !== "decline").length;
     $("lamp-gate").className = `led ${undecided ? "a blink" : state.gate.length ? "a" : ""}`;
+    renderService(state.service);
     setSeg($("ro-spend"), Number(state.totals.cost).toFixed(2));
+    renderBudget();
     setSeg($("ro-jobs"), String(state.totals.jobs));
     setSeg($("ro-run"), String(state.totals.running));
+  }
+
+  // SERVICE DUE: amber when a sandbox is out of date (UPDATE applies it) or a start-time setting
+  // changed (RESTART applies it). The host worked it out; the lines are text only.
+  const SERVICE_HEAD = { update: "UPDATE", restart: "RESTART" };
+  function renderService(svc) {
+    const due = svc && SERVICE_HEAD[svc.due] ? svc.due : null;
+    const lines = due && Array.isArray(svc.lines) ? svc.lines.filter(l => typeof l === "string") : [];
+    const text = !due ? "Service: nothing due"
+      : `Service due: ${SERVICE_HEAD[due]} applies it. ${lines.join("; ")}`;
+    $("lamp-service").className = `led ${due ? "a" : ""}`;
+    $("lamp-service-label").textContent = due ? `${SERVICE_HEAD[due]} due` : "Service";
+    const box = $("lamp-service-box");
+    box.title = text;
+    box.setAttribute("aria-label", text);
   }
 
   // The gate LCD is an aria-live region, so it is rebuilt only when the staged
@@ -360,6 +403,70 @@
     if (cd && gateCd) setText(cd, mmss(Math.max(0, gateCd.seconds_left - sinceSec())));
   }
 
+  // SHIFT BUDGET (doomtickle/passdesk-ops#195): dollars per day, typed on the spend module and kept in this browser
+  // with the knob values. Display only: it tints the header's spend readout (amber past the figure, red past twice
+  // it) and fills a meter whose midpoint is the budget. Nothing is sent anywhere and nothing stops a job.
+  const BUDGET_CAP = 100000;
+  const budgetOk = v => typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= BUDGET_CAP;
+  // Text from the box or storage -> dollars to the cent, 0 for none ("" and 0 both mean no budget), null for junk.
+  function parseBudget(t) {
+    const s = String(t).trim().replace(/^\$/, "");
+    if (s === "") return 0;
+    if (!/^[0-9]{1,6}(\.[0-9]{0,2})?$/.test(s)) return null;
+    const v = Math.round(Number(s) * 100) / 100;
+    return budgetOk(v) ? v : null;
+  }
+  let budget = 0;
+  try {
+    const saved = JSON.parse(localStorage.getItem("fc1984-knobs") || "{}");
+    if (saved && budgetOk(saved.budget)) budget = Math.round(saved.budget * 100) / 100;
+  } catch (e) { /* no storage: no budget */ }
+  function saveBudget() {
+    try {
+      const saved = JSON.parse(localStorage.getItem("fc1984-knobs") || "{}");
+      localStorage.setItem("fc1984-knobs", JSON.stringify(Object.assign(saved && typeof saved === "object" ? saved : {}, { budget })));
+    } catch (e) { /* no storage: this tab only */ }
+  }
+  function budgetLevel(cost) { return !budget ? "" : cost > 2 * budget ? "over2" : cost > budget ? "over" : ""; }
+  function renderBudget() {
+    if (!state) return;
+    const cost = Math.round((Number(state.totals.cost) || 0) * 100) / 100, level = budgetLevel(cost);
+    const box = $("ro-spend-box");
+    box.classList.toggle("over", level === "over");
+    box.classList.toggle("over2", level === "over2");
+    const said = !budget ? "" : level === "over2" ? `Past twice the shift budget of ${usd(budget)}`
+      : level === "over" ? `Past the shift budget of ${usd(budget)}` : `Within the shift budget of ${usd(budget)}`;
+    box.title = said;
+    const meter = $("budget-meter");
+    meter.className = `budget-meter${level ? " " + level : ""}${budget ? "" : " none"}`;
+    meter.firstChild.style.width = budget ? `${Math.min(100, cost / (2 * budget) * 100).toFixed(1)}%` : "0%";
+    meter.setAttribute("aria-valuemax", budget ? String(2 * budget) : "1");
+    meter.setAttribute("aria-valuenow", budget ? String(Math.min(cost, 2 * budget)) : "0");
+    meter.setAttribute("aria-valuetext", budget ? `${usd(cost)} of ${usd(budget)} a day` : "No budget set");
+    $("budget-v").textContent = budget ? `${usd(cost)} / ${usd(budget)}` : "no budget";
+  }
+  const budgetIn = $("budget-in");
+  const showBudget = () => { budgetIn.value = budget ? String(budget) : ""; budgetIn.removeAttribute("aria-invalid"); };
+  showBudget();
+  budgetIn.addEventListener("input", () => {
+    const v = parseBudget(budgetIn.value);
+    if (v == null) { budgetIn.setAttribute("aria-invalid", "true"); return; }  // keep the last good figure until the box is fixed
+    budgetIn.removeAttribute("aria-invalid");
+    budget = v; saveBudget(); renderBudget();
+  });
+  budgetIn.addEventListener("change", showBudget);
+  budgetIn.addEventListener("blur", showBudget);
+  budgetIn.addEventListener("keydown", e => {
+    e.stopPropagation();  // typing digits or f, s, n here is not a lane or a key on the console
+    if (e.key === "Enter" || e.key === "Escape") { e.preventDefault(); showBudget(); budgetIn.blur(); return; }
+    const step = e.key === "ArrowUp" ? 5 : e.key === "ArrowDown" ? -5 : 0;
+    if (!step) return;
+    e.preventDefault();
+    const cur = parseBudget(budgetIn.value);
+    budget = Math.max(0, Math.min(BUDGET_CAP, (cur == null ? budget : cur) + step));
+    saveBudget(); showBudget(); renderBudget();
+  });
+
   function renderSpend() {
     const hours = state.spend.hours;  // midnight to now, one column an hour
     const CELLS = 12;
@@ -383,13 +490,68 @@
       const segs = el("div", "segs");
       const lit = r.cost > 0 ? Math.max(1, Math.round(r.cost / max * 20)) : 0;
       for (let k = 0; k < 20; k++) segs.append(el("i", k < lit ? "on" : null));
-      row.append(el("span", "silk", r.role), segs, el("span", "v", usd(r.cost)));
+      const who = el("span", "silk", r.role);
+      tint(who, r.role);
+      row.append(who, segs, el("span", "v", usd(r.cost)));
       return row;
     }));
     $("spend-sub").textContent = `${state.totals.jobs} jobs today`;
   }
 
   const nearBottom = (n, slack) => n.scrollHeight - n.scrollTop - n.clientHeight < slack;
+  // Printer lines are buttons (doomtickle/passdesk-ops#190). JOB opens that lane's monitor on the job's
+  // packet; STAGED, WRITTEN and FAILED point the control unit at their card (a display hint, see selectCard);
+  // DENY and FAILED open in place to their whole text. Enter or Space acts, Esc shuts an open line. The line's
+  // text is only ever set as text; the ids it carries are checked against their patterns before they are used.
+  const PL_JOB = /^[0-9]{8}-[0-9]{6}-[0-9a-f]{6}$/;
+  const PL_LANE = /^[a-z][a-z0-9-]{1,40}$/;
+  const PL_CARD = /^[A-Za-z0-9_-]{1,64}$/;
+  const PL_SELECTS = new Set(["STAGED", "WRITTEN", "FAILED"]);
+  const PL_EXPANDS = new Set(["DENY", "FAILED"]);
+  const plKey = e => `${e.t}|${e.kind}|${e.text}`;
+  const plOpen = new Set();   // keys of the lines opened in place; kept across a redraw
+  const plBtns = new Map();   // line key -> its button, for focus
+  // The one thing the main page ever says to the control unit: which card to show (see renderCu).
+  function selectCard(id) {
+    if (!cuFrame || !cuFrame.contentWindow || !cuOrigin || typeof id !== "string" || !PL_CARD.test(id)) return;
+    cuFrame.contentWindow.postMessage({ type: "cu:select", id }, cuOrigin);
+  }
+  function plLine(e, cls) {
+    const n = el("button", cls);
+    n.type = "button";
+    const key = plKey(e);
+    const job = e.kind === "JOB" && typeof e.job_id === "string" && PL_JOB.test(e.job_id)
+      && typeof e.lane === "string" && PL_LANE.test(e.lane) && state.lanes.some(l => l.name === e.lane);
+    const card = PL_SELECTS.has(e.kind) && typeof e.card_id === "string" && PL_CARD.test(e.card_id) ? e.card_id : null;
+    const expands = PL_EXPANDS.has(e.kind);
+    n.append(el("span", null, e.t.slice(0, 5)), el("span", null, e.kind), el("span", null, e.text));
+    n.title = `${e.t} ${e.kind} ${e.text}`;
+    const setOpen = on => {
+      on ? plOpen.add(key) : plOpen.delete(key);
+      n.classList.toggle("open", on);
+      n.setAttribute("aria-expanded", on ? "true" : "false");
+    };
+    if (job) {
+      n.classList.add("act");
+      n.addEventListener("click", () => openMon(e.lane, e.job_id, key));
+    } else if (card || expands) {
+      n.classList.add("act");
+      if (expands) setOpen(plOpen.has(key));
+      n.addEventListener("click", () => {
+        const on = expands && !n.classList.contains("open");
+        if (expands) setOpen(on);
+        if (card && (on || !expands)) selectCard(card);
+      });
+    } else {
+      n.tabIndex = -1;
+      n.setAttribute("aria-disabled", "true");
+    }
+    n.addEventListener("keydown", ev => {
+      if (ev.key === "Escape" && expands && n.classList.contains("open")) { ev.preventDefault(); ev.stopPropagation(); setOpen(false); }
+    });
+    plBtns.set(key, n);
+    return n;
+  }
   function renderPaper() {
     const events = state.events;
     const key = events.length ? JSON.stringify(events[events.length - 1]) + events.length : "";
@@ -398,24 +560,130 @@
     lastEvent = key;
     const paper = $("paper");
     const follow = !fresh || nearBottom(paper, 18);  // reading older lines: stay put
-    paper.replaceChildren(...events.map((e, i) => {
-      const n = el("div", `pl${e.red ? " red" : ""}${fresh && follow && i === events.length - 1 ? " new" : ""}`);
-      n.append(el("span", null, e.t.slice(0, 5)), el("span", null, e.kind), el("span", null, e.text));
-      n.title = `${e.t} ${e.kind} ${e.text}`;
-      return n;
-    }));
+    const back = document.activeElement && paper.contains(document.activeElement)
+      ? [...plBtns].find(([, b]) => b === document.activeElement) : null;
+    plBtns.clear();
+    paper.replaceChildren(...events.map((e, i) => plLine(e, `pl${e.red ? " red" : ""}${fresh && follow && i === events.length - 1 ? " new" : ""}`)));
+    for (const k of [...plOpen]) if (!plBtns.has(k)) plOpen.delete(k);   // lines that scrolled off the paper
     if (!events.length) {
       const n = el("div", "pl");
       n.append(el("span"), el("span"), el("span", null, "-- nothing yet today --"));
       paper.append(n);
     }
     if (follow) paper.scrollTop = paper.scrollHeight;
+    if (back && plBtns.get(back[0])) plBtns.get(back[0]).focus({ preventScroll: true });
     $("print-sub").textContent = `${events.filter(e => e.kind === "DENY").length} denied`;
   }
 
+  // ---------- outbox: finished factory/* branches (display only; a row opens that job's packet)
+  // Every string is set as text. Classes come from the fixed maps below, never from the data, and
+  // the one link is the server's own validated https PR/MR URL, re-checked here before it is used.
+  const OB_STATUS = { OPEN: "", MERGED: "merged", GONE: "gone", UNCHECKED: "unchecked" };
+  const OB_VERDICT = { APPROVED: "ob-approved", REVISE: "ob-revise" };
+  const OB_PUSH = { PUSHED: "ob-pushed", STAGED: "ob-staged", WRITTEN: "ob-written", FAILED: "ob-failed" };
+  const SAFE_URL = /^https:\/\/[A-Za-z0-9.-]+(?::[0-9]+)?\/[\x21-\x7e]*$/;
+  const obRows = new Map();  // row key -> its button, for focus
+  let obSig = "";
+  const obKey = r => `${r.job}|${r.branch}`;
+  function obRow(r) {
+    const row = el("div", `ob-row${r.status === "MERGED" || r.status === "GONE" ? " retired" : ""}`);
+    row.setAttribute("role", "listitem");
+    const btn = el("button", "ob-main");
+    btn.type = "button";
+    const lane = state.lanes.some(l => l.name === r.lane);
+    btn.disabled = !lane;
+    btn.title = lane ? "Open this job's packet" : "That lane is no longer configured";
+    btn.append(el("span", "ob-repo", r.repo), el("span", "ob-branch", r.branch),
+      el("span", "ob-ahead", r.ahead == null ? "" : `+${r.ahead}`));
+    if (OB_STATUS[r.status]) btn.append(el("span", `ob-tag ${OB_STATUS[r.status]}`, r.status));
+    else if (r.status === "UNCHECKED") btn.append(el("span", "ob-tag unchecked", "?"));
+    if (r.verdict) btn.append(el("span", `ob-tag ${OB_VERDICT[r.verdict] || ""}`, r.verdict + (r.stale ? " (old)" : "")));
+    if (r.push) btn.append(el("span", `ob-tag ${OB_PUSH[r.push] || ""}`, r.push));
+    btn.addEventListener("click", () => openMon(r.lane, r.job, obKey(r)));
+    row.append(btn);
+    obRows.set(obKey(r), btn);
+    if (r.pr) {
+      const label = String(r.pr.label || "PR");
+      if (r.pr.url && SAFE_URL.test(r.pr.url)) {
+        const a = el("a", "ob-pr", label);
+        a.href = r.pr.url; a.target = "_blank"; a.rel = "noopener noreferrer"; a.title = r.pr.url;
+        row.append(a);
+      } else {
+        row.append(el("span", "ob-pr nolink", label));
+      }
+    }
+    return row;
+  }
+  function renderOutbox() {
+    const rows = state.outbox || [];
+    const lanes = state.lanes.map(l => l.name).join(",");
+    const sig = JSON.stringify([rows, lanes]);
+    if (sig === obSig) return;
+    obSig = sig;
+    const list = $("outbox-list");
+    const back = document.activeElement && list.contains(document.activeElement)
+      ? [...obRows].find(([, b]) => b === document.activeElement) : null;
+    obRows.clear();
+    const live = rows.filter(r => r.status !== "MERGED" && r.status !== "GONE").length;
+    setText($("outbox-sub"), rows.length ? `${live} waiting` : "");
+    list.replaceChildren(...(rows.length ? rows.map(obRow) : [el("p", "ob-empty", "Nothing waiting. Finished branches land here.")]));
+    if (back && obRows.get(back[0])) obRows.get(back[0]).focus({ preventScroll: true });
+  }
+
+  // ---------- STANDBY: the shift briefing (state.briefing, dashboard_setup.briefing): the project, its notes, the
+  // roles, the holds and one example work order. Host-derived facts; every string goes in with textContent.
+  let bfSig = "";
+  const num0 = v => (Number.isInteger(v) && v >= 0 ? v : 0);
+  const strs = v => (Array.isArray(v) ? v.filter(x => typeof x === "string") : []);
+  function bfRow(label, ...parts) {
+    const row = el("p", "bf-row");
+    row.append(el("span", "bf-label", label), ...parts.map(p => (typeof p === "string" ? el("span", "bf-text", p) : p)));
+    return row;
+  }
+  function renderBriefing() {
+    const box = $("briefing"), b = state.briefing;
+    const sig = JSON.stringify(b || null);
+    if (sig === bfSig) return;
+    bfSig = sig;
+    if (!b || typeof b !== "object") { box.hidden = true; box.replaceChildren(); return; }
+    const rows = [];
+    const repos = strs(b.repos), total = Math.max(num0(b.repos_total), repos.length);
+    rows.push(bfRow("Project", b.usable ? String(b.project) : "none bound: start the factory from a project folder"));
+    if (b.usable) {
+      rows.push(bfRow("Repos", !b.repos_known ? "the project folder isn't known to the dashboard"
+        : !repos.length ? "none found: rw roles need a git repo, or a folder of git repos"
+        : repos.join(", ") + (total > repos.length ? `, +${total - repos.length} more` : "")));
+      const n = b.notes || {}, files = Array.isArray(n.files) ? n.files : [];
+      if (files.length) {
+        const node = el("span", "bf-text");
+        files.forEach((f, i) => {
+          if (i) node.append(", ");
+          node.append(el("span", f.over ? "bf-bad" : "", `${f.name} ${num0(f.chars).toLocaleString("en-US")} chars${f.over ? " (over the limit)" : ""}`));
+        });
+        rows.push(bfRow("Notes", node));
+      } else {
+        rows.push(bfRow("Notes", "no project notes: roles start every task knowing only their instructions. To add some, create " + String(n.path || "")));
+      }
+    }
+    const rl = Array.isArray(b.roles) ? b.roles : [];
+    const roleNode = el("span", "bf-text");
+    rl.forEach((r, i) => {
+      if (i) roleNode.append(", ");
+      const off = r.optional && !r.on;
+      roleNode.append(el("span", off ? "bf-off" : "", `${r.name} ×${num0(r.lanes)}${r.optional ? (r.on ? " (optional, on)" : " (optional, off)") : ""}`));
+    });
+    if (rl.length) rows.push(bfRow("Roles", roleNode));
+    const h = b.holds || {}, tools = strs(h.tools);
+    rows.push(bfRow("Holds", h.on ? `on for ${tools.join(", ")}: those writes wait for your APPROVE` : "off: no write waits for your APPROVE"));
+    const order = el("div", "bf-order");
+    order.append(el("p", "bf-order-h", "Work order · to the Coordinator, in Terminal 0"), el("p", "bf-order-t", String(b.prompt || "")));
+    box.replaceChildren(...rows, order);
+    box.hidden = false;
+  }
+
   // ---------- monitor (one lane's transcript and review packet)
-  function openMon(name) {
-    monLane = name; monTab = "transcript"; monData = null; monBusy = false; monSeq++;
+  function openMon(name, job, back) {
+    monLane = name; monJob = job || ""; monBack = back || ""; monTab = job ? "packet" : "transcript"; monData = null; monBusy = false; monSeq++;
     shown = { lane: null, tab: null, keys: [], packet: null };
     const body = $("mon-body");
     body.replaceChildren(); body.scrollTop = 0;
@@ -427,16 +695,18 @@
   function closeMon() {
     if (!monLane) return;
     const r = cards.get(monLane);  // back to this lane's card, looked up by name
-    monLane = null; monData = null; monSeq++;
+    const row = monBack && (obRows.get(monBack) || plBtns.get(monBack));  // or to the OUTBOX row or printer line that opened it
+    monLane = null; monJob = ""; monBack = ""; monData = null; monSeq++;
     $("scrim").hidden = true;
-    if (r && r.card.isConnected) r.card.focus();
+    if (row && row.isConnected) row.focus();
+    else if (r && r.card.isConnected) r.card.focus();
   }
   async function loadMon() {
     if (!monLane || monBusy) return;
     const name = monLane, seq = ++monSeq;
     monBusy = true;
     try {
-      const r = await fetch(`/api/lane?name=${encodeURIComponent(name)}`, { cache: "no-store" });
+      const r = await fetch(`/api/lane?name=${encodeURIComponent(name)}${monJob ? `&job=${encodeURIComponent(monJob)}` : ""}`, { cache: "no-store" });
       if (!r.ok) throw new Error(String(r.status));
       const data = await r.json();
       if (seq === monSeq && monLane === name) { monData = data; renderMon(); }
@@ -450,21 +720,73 @@
     const body = $("mon-body");
     body.scrollTop = tab === "packet" ? 0 : body.scrollHeight;
   }
+  // The PACKET tab steps through the lane's jobs (monData.jobs, newest first). ◀ / [ go to an older job,
+  // ▶ / ] to a newer one; the newest is followed live (monJob "") so a job that starts shows its pending view.
+  const secs = n => (n == null ? "--" : n < 3600 ? `${Math.floor(n / 60)}:${String(n % 60).padStart(2, "0")}` : `${Math.floor(n / 3600)}h${String(Math.floor(n % 3600 / 60)).padStart(2, "0")}`);
+  function monPos() {
+    const jobs = (monData && monData.jobs) || [];
+    const cur = monJob || jobs[0] || "";
+    return { jobs, i: jobs.indexOf(cur) };
+  }
+  function stepJob(dir) {  // dir +1: older, -1: newer
+    if (!monLane || monTab !== "packet") return;
+    const { jobs, i } = monPos();
+    const to = i < 0 ? -1 : i + dir;
+    if (to < 0 || to >= jobs.length) return;
+    monJob = to === 0 ? "" : jobs[to];
+    monBusy = false; monSeq++;
+    renderMon();
+    loadMon();
+  }
+  function renderMonNav() {
+    const nav = $("mon-nav");
+    const sel = monData && monData.sel;
+    const show = monTab === "packet" && monData && monData.jobs && monData.jobs.length > 0;
+    nav.hidden = !show;
+    if (!show) { setText($("mon-note"), ""); return; }
+    const { jobs, i } = monPos();
+    $("mon-older").disabled = i < 0 || i >= jobs.length - 1;
+    $("mon-newer").disabled = i <= 0;
+    setText($("mon-pos"), i < 0 ? `${jobs.length} jobs` : `${i + 1}/${jobs.length}`);
+    const parts = [`job ${monData.job}`];
+    if (sel) {
+      parts.push(LABEL[sel.state] || sel.state || "?");
+      if (sel.cost != null) parts.push(usd(sel.cost));
+      if (sel.when) parts.push(sel.when);
+    }
+    setText($("mon-note"), parts.join(" · "));
+  }
+  function pendingView(sel) {
+    const box = el("div", "pending");
+    box.append(el("p", "pending-h", "JOB RUNNING"), el("p", "pending-n", "The packet is written when the job ends."));
+    const rows = [["TASK", sel.task || "--"], ["MODEL", sel.model || "--"], ["ELAPSED", secs(sel.elapsed)],
+      ["COST SO FAR", sel.cost == null ? "-- (not reported until the job ends)" : usd(sel.cost)], ["STARTED", sel.when || "--"]];
+    for (const [k, v] of rows) {
+      const row = el("div", "pending-row");
+      row.append(el("span", "pending-k", k), el("span", "pending-v", v));
+      box.append(row);
+    }
+    return box;
+  }
   const transcriptLine = e => { const n = el("div", `ln k-${e.kind}`); n.append(el("span", "ts", e.ts), el("span", "tx", lineText(e))); return n; };
   function renderMon() {
     const d = monData || (state && state.lanes.find(l => l.name === monLane)) || { name: monLane, state: "idle", tail: [] };
     setText($("mon-title"), `MONITOR · ${d.name}`);
+    renderMonNav();
     setClass($("mon-led"), `led ${LED[d.state] || ""}`);
     const st = $("mon-state"); setClass(st, `state-tag st-${d.state}`); setText(st, LABEL[d.state] || d.state);
     document.querySelectorAll(".tabkey[data-tab]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.tab === monTab)));
     const body = $("mon-body");
     const same = shown.lane === monLane && shown.tab === monTab;
     if (monTab === "packet") {
+      const pending = !!(monData && monData.pending && monData.sel);
       const text = monData ? monData.packet : "LOADING…";
-      if (same && shown.packet === text) return;
-      body.replaceChildren(el("pre", "packet", text));
-      if (!same) body.scrollTop = 0;
-      shown = { lane: monLane, tab: monTab, keys: [], packet: text };
+      const sig = pending ? JSON.stringify(["pending", monData.sel]) : `${monData ? monData.job : ""}\n${text}`;
+      if (same && shown.packet === sig) return;
+      body.replaceChildren(pending ? pendingView(monData.sel) : el("pre", "packet", text));
+      const job = monData ? monData.job : "";
+      if (!same || shown.job !== job) body.scrollTop = 0;
+      shown = { lane: monLane, tab: monTab, keys: [], packet: sig, job };
       return;
     }
     const lines = d.tail || [];
@@ -500,6 +822,8 @@
     shown = { lane: monLane, tab: monTab, keys, packet: null };
   }
   document.querySelectorAll(".tabkey[data-tab]").forEach(b => b.addEventListener("click", () => setTab(b.dataset.tab)));
+  $("mon-older").addEventListener("click", () => stepJob(1));
+  $("mon-newer").addEventListener("click", () => stepJob(-1));
   $("mon-close").addEventListener("click", closeMon);
   $("scrim").addEventListener("click", e => { if (e.target === $("scrim")) closeMon(); });
 
@@ -521,10 +845,13 @@
       else if (e.key === "Tab") trapTab(e);
       else if (e.key === "p") setTab("packet");
       else if (e.key === "t") setTab("transcript");
+      else if (e.key === "[") stepJob(1);
+      else if (e.key === "]") stepJob(-1);
       return;
     }
     if (e.key === "f" || e.key === "F") { $("floor-key").click(); return; }
     if (e.key === "s" || e.key === "S") { $("sound-key").click(); return; }
+    if (e.key === "n" || e.key === "N") { notifyKey.click(); return; }
     const n = parseInt(e.key, 10);
     if (state && n >= 1 && n <= Math.min(9, state.lanes.length)) openMon(state.lanes[n - 1].name);
   });
@@ -540,14 +867,15 @@
   const DETENT = 12;           // V-HOLD locks within this many steps of centre
   // Each knob's range and its reset value. The centred ones sweep -100..100; CRT
   // sweeps 0 (flat, no tube at all) to 10 (a full, worn CRT) and starts at 3.
-  const KNOBS = { bright: [-100, 100, 0], contrast: [-100, 100, 0], vhold: [-100, 100, 0], crt: [0, 10, 3] };
+  const CRT_HOME = 3, KNOBS = { bright: [-100, 100, 0], contrast: [-100, 100, 0], vhold: [-100, 100, 0], crt: [0, 10, CRT_HOME] };
   const knobVals = {};
   for (const k in KNOBS) knobVals[k] = KNOBS[k][2];
+  const mine = {};   // the knobs this browser remembers; the rest follow the defaults (dashboard.toml sets CRT's)
   const clampKnob = (name, v) => Math.max(KNOBS[name][0], Math.min(KNOBS[name][1], v));
   try {
     const saved = JSON.parse(localStorage.getItem(KNOB_KEY) || "{}");
     // A value outside the knob's range is from an older layout of the panel: keep the default.
-    for (const k in knobVals) if (saved && Number.isFinite(saved[k]) && saved[k] === clampKnob(k, saved[k])) knobVals[k] = saved[k];
+    for (const k in knobVals) if (saved && Number.isFinite(saved[k]) && saved[k] === clampKnob(k, saved[k])) knobVals[k] = mine[k] = saved[k];
   } catch (e) { /* no storage: defaults */ }
   const tube = $("coord-crt"), roll = $("crt-roll"), ghost = $("crt-ghost"), crtBody = $("crt-body");
   const reduceMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -620,14 +948,25 @@
       k.setAttribute("aria-valuenow", String(Math.round(val)));
       k.setAttribute("aria-valuetext", name === "vhold" ? holdText(val) : name === "crt" ? (val ? `${Math.round(val)} of 10` : "flat") : `${Math.round(val)}`);
     });
-    try { localStorage.setItem(KNOB_KEY, JSON.stringify(knobVals)); } catch (e) { /* fine */ }
+    try { localStorage.setItem(KNOB_KEY, JSON.stringify(Object.assign({}, mine, { budget }))); } catch (e) { /* fine */ }
   }
   function setKnob(name, value) {
-    knobVals[name] = clampKnob(name, Math.round(value));
+    knobVals[name] = mine[name] = clampKnob(name, Math.round(value));
     applyKnobs();
   }
+  // The look from dashboard.toml, once per state: the nameplate, and the CRT knob's default (and its reset) until
+  // this browser has its own. The shift names and the floor's plate are floor.js's, the sound default sound.js's.
+  function applyLook() {
+    look = FactoryLook.read(state && state.look);
+    setText($("plant-name"), look.plant || "LOIS");
+    const crt = look.crt == null ? CRT_HOME : look.crt;
+    if (KNOBS.crt[2] !== crt) {
+      KNOBS.crt[2] = crt;
+      if (!("crt" in mine)) { knobVals.crt = crt; applyKnobs(); }
+    }
+  }
   document.querySelectorAll(".knob[data-knob]").forEach(k => {
-    const name = k.dataset.knob, [lo, hi, home] = KNOBS[name];
+    const name = k.dataset.knob, [lo, hi] = KNOBS[name], home = () => KNOBS[name][2];  // CRT's home follows dashboard.toml
     const travel = (hi - lo) / 200;  // the same drag turns every knob by the same angle
     const unit = Math.max(1, (hi - lo) / 40);  // one arrow press or wheel notch: 5 of 200, 1 of 10
     let drag = null;
@@ -647,11 +986,11 @@
     k.addEventListener("pointerup", end);
     k.addEventListener("pointercancel", end);
     k.addEventListener("wheel", e => { e.preventDefault(); setKnob(name, knobVals[name] - Math.sign(e.deltaY) * unit); }, { passive: false });
-    k.addEventListener("dblclick", () => setKnob(name, home));
+    k.addEventListener("dblclick", () => setKnob(name, home()));
     k.addEventListener("keydown", e => {
       const step = { ArrowUp: unit, ArrowRight: unit, ArrowDown: -unit, ArrowLeft: -unit, PageUp: 4 * unit, PageDown: -4 * unit }[e.key];
       if (step != null) { e.preventDefault(); e.stopPropagation(); setKnob(name, knobVals[name] + step); }
-      else if (e.key === "Home") { e.preventDefault(); e.stopPropagation(); setKnob(name, home); }
+      else if (e.key === "Home") { e.preventDefault(); e.stopPropagation(); setKnob(name, home()); }
       else if (e.key === "End") { e.preventDefault(); e.stopPropagation(); setKnob(name, hi); }
     });
   });
@@ -664,7 +1003,20 @@
   // roll layer, so the glass, scanlines, knobs and V-HOLD still apply (the ghost
   // copy is for the static placeholder only: a frame can't be cloned).
   let termFrame = null;
+  // The FIRST SHIFT banner, or else any other start-up hint, in one line over the terminal. The
+  // host makes every text (dashboard_hints.py); the page only picks the line, and draws it as text.
+  const FIRST_SHIFT = ["login", "roles"];
+  function renderShift() {
+    const hints = Array.isArray(state.hints) ? state.hints.filter(h => h && typeof h.text === "string") : [];
+    const first = hints.find(h => FIRST_SHIFT.includes(h.code));
+    const pick = first || hints[0];
+    const node = $("crt-shift");
+    node.hidden = !pick;
+    node.classList.toggle("first", !!first);
+    node.textContent = pick ? pick.text + (!first && hints.length > 1 ? `  (+${hints.length - 1} more)` : "") : "";
+  }
   function renderTerm() {
+    renderShift();
     const t = state.term;
     $("lamp-term").className = !t ? "led" : t.running ? "led g" : t.reason === "elsewhere" ? "led a" : "led";
     if (!t) {
@@ -684,7 +1036,7 @@
     termFrame.setAttribute("referrerpolicy", "no-referrer");
     crtBody.hidden = true;
     roll.classList.add("live");
-    roll.insertBefore(termFrame, roll.firstChild);
+    roll.insertBefore(termFrame, crtBody);
   }
   // A click on the tube's glass or bezel (outside the frame) hands the keyboard to the terminal.
   tube.addEventListener("click", () => { if (termFrame) termFrame.focus(); });
@@ -692,10 +1044,12 @@
   // ---------- the control unit: every control the dashboard has
   // It lives on the second origin (cu.html, with its own key), framed under the
   // gate display; this page shows agent-written text, so it holds no action
-  // endpoint and no key, and never posts to the frame or reads it. The frame
-  // may say exactly three things: "cu:expand" (grow to the whole window, for
-  // its confirmation and log screens), "cu:collapse" and "cu:reload". Anything
-  // else, from anywhere else, is ignored.
+  // endpoint and no key, and never reads the frame. The frame may say exactly
+  // three things: "cu:expand" (grow to the whole window, for its confirmation
+  // and log screens), "cu:collapse" and "cu:reload". Anything else, from anywhere
+  // else, is ignored. The one thing this page says to the frame is
+  // {type: "cu:select", id: <card id>} (selectCard, from a printer line): which
+  // card to show. It decides nothing, and the unit checks it before it acts on it.
   let cuFrame = null, cuOrigin = null, cuExpanded = false;
   function setCuExpanded(on) {
     cuExpanded = on;
@@ -731,6 +1085,105 @@
     else if (e.data === "cu:reload") location.reload();
   });
 
+  // ---------- attention: title and favicon badge, cues, notifications (doomtickle/passdesk-ops#192)
+  // Derived from the state polled above, no request of its own. Only counts and two fixed
+  // sets ever reach the title, the favicon or a notification: lane names that match the
+  // lane pattern and tool names from a fixed list; agent-written text never does.
+  const TOOLS = new Set(["git_push", "github_create_pr", "gitlab_create_mr", "github_create_issue"]);
+  const LANE_NAME = /^[a-z][a-z0-9-]{1,40}$/;
+  const ENDED = new Set(["done", "approved", "revise", "failed", "cancelled", "idle"]);
+  const NOTIFY_STORE = "fc1984-notify";
+  const BASE_TITLE = document.title;
+  const notifyKey = $("notify-key");
+  let seenHeld = null, laneStates = null, doneCount = 0, notifyOn = false, badge = "";
+  const attended = () => document.visibilityState === "visible" && document.hasFocus();
+
+  function paintFavicon(held, done) {
+    try {
+      const c = document.createElement("canvas");
+      c.width = c.height = 32;
+      const g = c.getContext("2d");
+      if (!g) return;
+      g.fillStyle = "#26272a"; g.fillRect(0, 0, 32, 32);                       // the case
+      g.fillStyle = "#161719"; g.fillRect(3, 3, 26, 26);                       // the face
+      g.fillStyle = held ? "#ffae1a" : "#4dff6a"; g.fillRect(9, 9, 14, 14);    // the lamp: amber while a write is held
+      if (held || done) {
+        g.fillStyle = held ? "#ff4433" : "#e2701f";
+        g.beginPath(); g.arc(22, 22, 10, 0, 2 * Math.PI); g.fill();
+        g.fillStyle = "#fff"; g.font = "bold 15px sans-serif"; g.textAlign = "center"; g.textBaseline = "middle";
+        g.fillText(String(Math.min(held || done, 9)), 22, 23);
+      }
+      let link = document.querySelector('link[rel="icon"]');
+      if (!link) { link = document.createElement("link"); link.rel = "icon"; link.type = "image/png"; document.head.append(link); }
+      link.href = c.toDataURL("image/png");
+    } catch (e) { /* no canvas: the title still carries the badge */ }
+  }
+  function paintBadge() {
+    const held = state ? state.gate.filter(x => x.decided !== "approve" && x.decided !== "decline").length : 0;
+    const bits = [held ? `${held} held` : "", doneCount ? `${doneCount} done` : ""].filter(Boolean);
+    const next = bits.join(" · ");
+    if (next === badge) return;
+    badge = next;
+    document.title = next ? `(${next}) ${BASE_TITLE}` : BASE_TITLE;
+    paintFavicon(held, doneCount);
+  }
+  function notify(body) {
+    if (!notifyOn || attended()) return;
+    try {
+      const n = new Notification("LOIS", { body, tag: "factory-attention", silent: true });
+      n.onclick = () => { window.focus(); n.close(); };
+    } catch (e) { /* a browser that refuses: the badge is enough */ }
+  }
+  function attention() {
+    const held = state.gate.filter(x => x.decided !== "approve" && x.decided !== "decline");
+    const ids = new Set(held.map(x => String(x.id)));
+    const fresh = held.filter(x => seenHeld && !seenHeld.has(String(x.id)));
+    seenHeld = ids;
+    const finished = [];
+    const now = new Map(state.lanes.map(l => [l.name, l.state]));
+    if (laneStates) for (const [name, st] of now) {
+      const was = laneStates.get(name);
+      if ((was === "running" || was === "held") && ENDED.has(st)) finished.push(LANE_NAME.test(name) ? name : "lane");
+    }
+    laneStates = now;
+    if (!attended()) doneCount += finished.length;
+    paintBadge();
+    if (fresh.length) {
+      document.dispatchEvent(new CustomEvent("factory-attention:held"));
+      const tools = [...new Set(fresh.map(x => TOOLS.has(x.tool) ? x.tool : "write"))];
+      notify(fresh.length > 1 ? `${fresh.length} writes held` : `Write held · ${tools[0]}`);
+    }
+    if (finished.length) {
+      document.dispatchEvent(new CustomEvent("factory-attention:done"));
+      notify(finished.length > 1 ? `${finished.length} jobs finished` : `Job finished · ${finished[0]}`);
+    }
+  }
+  function clearDone() { if (attended() && doneCount) { doneCount = 0; paintBadge(); } }
+  window.addEventListener("focus", clearDone);
+  document.addEventListener("visibilitychange", clearDone);
+
+  // NOTIFY: permission is asked only here, from the key's click, never on load.
+  function setNotify(v, save) {
+    notifyOn = v;
+    notifyKey.setAttribute("aria-pressed", String(v));
+    if (save) { try { localStorage.setItem(NOTIFY_STORE, v ? "1" : "0"); } catch (e) { /* no storage: this tab only */ } }
+  }
+  if (typeof Notification === "undefined") notifyKey.disabled = true;
+  else {
+    notifyKey.addEventListener("click", () => {
+      if (notifyOn) { setNotify(false, true); return; }
+      if (Notification.permission === "denied") { notifyKey.disabled = true; notifyKey.title = "Notifications are blocked in this browser's settings"; return; }
+      if (Notification.permission === "granted") { setNotify(true, true); return; }
+      const done = p => { if (p === "granted") setNotify(true, true); else if (p === "denied") notifyKey.disabled = true; };
+      try {
+        const p = Notification.requestPermission(done);
+        if (p && p.then) p.then(done, () => {});
+      } catch (e) { /* no prompt: stays off */ }
+    });
+    // A remembered "on" counts only while the permission is still granted; nothing is asked here.
+    try { if (localStorage.getItem(NOTIFY_STORE) === "1" && Notification.permission === "granted") setNotify(true, false); } catch (e) { /* off */ }
+  }
+
   // ---------- polling
   async function poll() {
     try {
@@ -738,7 +1191,8 @@
       if (!r.ok) throw new Error(String(r.status));
       state = await r.json();
       polledAt = Date.now();
-      renderCu(); renderHeader(); renderLanes(); renderGate(); renderSpend(); renderPaper(); renderTerm();
+      applyLook();
+      renderCu(); renderHeader(); renderLanes(); renderGate(); renderSpend(); renderPaper(); renderOutbox(); renderBriefing(); renderTerm(); attention();
       // The factory floor (floor.js) draws from the same state; it fetches nothing itself.
       document.dispatchEvent(new CustomEvent("factory:state", { detail: state }));
       if (monLane) loadMon();

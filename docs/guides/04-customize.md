@@ -24,9 +24,18 @@ affected, after listing what each one loses and asking you.
 | Your local `policy.toml` or `broker-kit/` | `factory update` |
 | Only the lane git identity (`[git]` `author_name`, `author_email`) in your local `policy.toml` | `factory start` |
 | The Coordinator's default model or briefing (`kits/coordinator/spec.yaml`) | `factory update` |
+| `dashboard.toml` (the dashboard's look) | restart `factory dashboard` |
+
+The dashboard's **SETUP** key shows the effective value of each line above and
+which of the two commands applies it: see
+[Setup](06-dashboard.md#setup-the-configuration-in-force).
 
 > **Tip:** Not sure? `factory start` warns when a sandbox is out of date:
 > `out of date (made from an older image or kit): factory-broker; run 'factory update' to recreate them`.
+> The dashboard shows the same on its **SERVICE** lamp: amber, "UPDATE due",
+> with the sandboxes and why on hover, and the UPDATE key lit. It reads
+> "RESTART due" (RESTART lit) when a role override, `enabled-roles` or the
+> project notes changed since the last `factory start`.
 
 ## Per-project notes
 
@@ -271,6 +280,13 @@ It only turns a role on or off; tools and workspace stay in the committed
 
 `projects/<project-folder-name>.md` there holds notes for one project (its test
 command, say), added to every role's instructions on `factory start`.
+
+`dashboard.toml` there sets the dashboard's nameplate, shift names, CRT and sound
+defaults and role colours; the example is all comments. The dashboard reads it
+once when it starts, and a mistake makes it ignore the file and say why. See
+[Use the dashboard](06-dashboard.md#your-own-look-dashboardtoml). It changes how
+the page looks and nothing else, so it needs neither `factory update` nor a
+restart of the factory, only of `factory dashboard`.
 
 `plugins/<module>/` there holds broker plugins: Python packages that add tools
 to the gateway (the broker's `docs/plugin-tools.md` describes the format).
