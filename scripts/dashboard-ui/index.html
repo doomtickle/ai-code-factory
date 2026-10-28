@@ -6,6 +6,8 @@
 <title>LOIS FC-1984</title>
 <link rel="stylesheet" href="/app.css">
 <link rel="stylesheet" href="/floor.css">
+<script src="/lanelabel.js" defer></script>
+<script src="/look.js" defer></script>
 <script src="/app.js" defer></script>
 <script src="/floor.js" defer></script>
 <script src="/sound.js" defer></script>
@@ -15,7 +17,7 @@
 <div class="rack">
   <header class="plate head">
     <div class="badge">
-      <span class="name">LOIS</span>
+      <span class="name" id="plant-name">LOIS</span>
       <span class="model"><span class="stripes"></span><span class="silk">FC-1984 · Lanes Of Isolated Sandboxes</span></span>
     </div>
     <span class="dymo" id="project"></span>
@@ -23,9 +25,10 @@
       <div class="lamp"><span class="led" id="lamp-link"></span><span class="silk">Link</span></div>
       <div class="lamp"><span class="led" id="lamp-bridge"></span><span class="silk">Bridge</span></div>
       <div class="lamp"><span class="led" id="lamp-gate"></span><span class="silk">Gate</span></div>
+      <div class="lamp" id="lamp-service-box" tabindex="0"><span class="led" id="lamp-service"></span><span class="silk" id="lamp-service-label">Service</span></div>
     </div>
     <div class="readouts">
-      <div class="readout"><span class="silk">Spend today</span><div class="lcd seg-box"><span class="unit">$</span><span id="ro-spend"></span></div></div>
+      <div class="readout"><span class="silk">Spend today</span><div class="lcd seg-box" id="ro-spend-box"><span class="unit">$</span><span id="ro-spend"></span></div></div>
       <div class="readout"><span class="silk">Jobs</span><div class="lcd seg-box" id="ro-jobs"></div></div>
       <div class="readout"><span class="silk">Running</span><div class="lcd seg-box" id="ro-run"></div></div>
       <div class="readout"><span class="silk">Clock</span><div class="lcd seg-box" id="ro-clock"></div></div>
@@ -40,6 +43,7 @@
       <div class="crt-wrap">
         <div class="crt matrix" id="coord-crt">
           <div class="crt-roll" id="crt-roll">
+          <p class="shift" id="crt-shift" hidden></p>
           <div class="crt-body" id="crt-body">
             <p class="banner" id="crt-banner">TERMINAL 0 · WARMING UP</p>
             <p class="a" id="crt-note">Waiting for the dashboard…</p>
@@ -62,14 +66,22 @@
     </section>
 
     <section class="bay lanes-bay" aria-labelledby="lanes-h">
-      <div class="bay-h plate lanes-h"><span class="silk" id="lanes-h">Lanes</span><span class="rule"></span><span class="silk">Press 1–9 to open a lane · F floor · S sound · Esc closes</span><a class="help" href="/docs/#guide-dashboard:lanes" target="factory-docs" aria-label="Help: lanes">?</a><button class="tabkey floor-key" type="button" id="floor-key" aria-pressed="false" aria-controls="floor">Floor</button><a class="help" href="/docs/#guide-dashboard:the-factory-floor" target="factory-docs" aria-label="Help: the factory floor">?</a><button class="tabkey sound-key" type="button" id="sound-key" aria-pressed="false">Sound</button><button class="tabkey radio-key" type="button" id="radio-key" aria-pressed="false" hidden>Radio</button></div>
+      <div class="bay-h plate lanes-h"><span class="silk" id="lanes-h">Lanes</span><span class="rule"></span><span class="silk">Press 1–9 to open a lane · F floor · S sound · N notify · Esc closes</span><a class="help" href="/docs/#guide-dashboard:lanes" target="factory-docs" aria-label="Help: lanes">?</a><button class="tabkey floor-key" type="button" id="floor-key" aria-pressed="false" aria-controls="floor">Floor</button><a class="help" href="/docs/#guide-dashboard:the-factory-floor" target="factory-docs" aria-label="Help: the factory floor">?</a><button class="tabkey sound-key" type="button" id="sound-key" aria-pressed="false">Sound</button><button class="tabkey notify-key" type="button" id="notify-key" aria-pressed="false">Notify</button><button class="tabkey radio-key" type="button" id="radio-key" aria-pressed="false" hidden>Radio</button></div>
       <div class="lanes" id="lanes"></div>
       <!-- Nothing running: one standby panel instead of a wall of empty modules. -->
       <div class="standby plate" id="standby" hidden>
-        <div class="lcd standby-lcd"><p class="big">Standby</p><p>No jobs running. A lane powers on here when the Coordinator hands it a job.</p></div>
+        <div class="lcd standby-lcd"><p class="big">Standby</p><p>No jobs running. A lane powers on here when the Coordinator hands it a job.</p>
+          <!-- The shift briefing (app.js renderBriefing): host-derived facts, drawn as text. -->
+          <div class="briefing" id="briefing" hidden></div>
+          <p class="bf-keys">Keys: 1–9 open a lane · F floor · S sound · N notify · Enter on a printer line acts on it · Esc closes · MANUAL in the header opens the docs</p></div>
       </div>
       <!-- Idle lanes: one chip each, numbered like the modules. -->
       <div class="lane-strip" id="lane-strip" role="group" aria-label="Idle lanes" hidden></div>
+      <!-- The outbox: finished factory/* branches (app.js renderOutbox), one row each; a row opens that job's packet. -->
+      <section class="plate mod outbox" id="outbox" aria-labelledby="outbox-h">
+        <div class="mod-h"><span class="silk" id="outbox-h">Outbox</span><span class="right silk" id="outbox-sub"></span><a class="help" href="/docs/#guide-dashboard:the-outbox" target="factory-docs" aria-label="Help: outbox">?</a></div>
+        <div class="lcd outbox-lcd" id="outbox-list" role="list" aria-label="Finished branches"></div>
+      </section>
       <!-- The factory floor (floor.js): the same lanes as a panel with an amber tube, one loop track inside it, FLOOR or F toggles it. -->
       <div class="floor" id="floor" hidden></div>
     </section>
@@ -79,6 +91,14 @@
         <div class="mod-h"><span class="silk" id="spend-h">Spend / hour</span><span class="right silk" id="spend-sub"></span><a class="help" href="/docs/#guide-dashboard:spend-and-the-event-printer" target="factory-docs" aria-label="Help: spend">?</a></div>
         <div class="spend-row"><div class="bargraph" id="bargraph" role="img" aria-label="Spend per hour today"></div></div>
         <div class="roles" id="roles"></div>
+        <div class="budget" id="budget">
+          <label class="silk" for="budget-in">Shift budget $/day</label>
+          <input class="budget-in" id="budget-in" type="text" inputmode="decimal" maxlength="9" autocomplete="off" spellcheck="false" placeholder="none" title="Dollars per day; 0 or empty for no budget. Display only: nothing stops a job.">
+          <div class="budget-row">
+            <div class="budget-meter" id="budget-meter" role="meter" aria-label="Today's spend against the shift budget" aria-valuemin="0" aria-valuemax="1" aria-valuenow="0" aria-valuetext="No budget set"><i class="fill"></i><i class="tick"></i></div>
+            <span class="budget-v" id="budget-v">no budget</span>
+          </div>
+        </div>
       </section>
 
       <section class="plate mod printer" aria-labelledby="print-h">
@@ -105,6 +125,11 @@
       <span class="led" id="mon-led"></span>
       <span class="title" id="mon-title"></span>
       <span class="state-tag" id="mon-state"></span>
+      <span class="pk-nav" id="mon-nav" hidden>
+        <button class="tabkey" type="button" id="mon-older" aria-label="Older job (key [)" title="Older job ([)">&#9664;</button>
+        <span class="silk" id="mon-pos"></span>
+        <button class="tabkey" type="button" id="mon-newer" aria-label="Newer job (key ])" title="Newer job (])">&#9654;</button>
+      </span>
       <span class="silk mon-note" id="mon-note"></span>
       <span class="right">
         <button class="tabkey" type="button" data-tab="transcript" aria-pressed="true">Transcript</button>

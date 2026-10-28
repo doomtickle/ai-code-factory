@@ -167,7 +167,7 @@ class LocalSettingsTest(StatusTest):
 
     def test_each_kind_of_local_setting_counts(self):
         shown = "Local settings %s" % self.config
-        for item in ("policy.toml", "enabled-roles", "broker-kit", "roles", "projects", "plugins"):
+        for item in ("policy.toml", "enabled-roles", "dashboard.toml", "broker-kit", "roles", "projects", "plugins"):
             self.assertFalse(os.path.exists(self.config) and os.listdir(self.config), item)
             path = os.path.join(self.config, item)
             if "." in item or item == "enabled-roles":

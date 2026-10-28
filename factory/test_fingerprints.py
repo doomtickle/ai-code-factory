@@ -255,3 +255,39 @@ class StaleSandboxesTest(FingerprintFixture):
     def test_without_sbx_nothing_is_stale(self):
         os.remove(os.path.join(self.tmp, "bin", "sbx"))
         self.assertEqual(self.stale(), [])
+
+
+class StaleReasonTest(FingerprintFixture):
+    def test_recording_keeps_the_lines_the_digest_is_taken_of(self):
+        fingerprints.record_sandbox_fingerprint(self.paths, "factory-dev")
+        with open(fingerprints.parts_file(self.paths, "factory-dev"), "rb") as f:
+            self.assertEqual(f.read(), fingerprints.fingerprint_text(self.paths, "factory-dev"))
+        self.assertEqual(os.listdir(os.path.join(self.state, "sandboxes")), ["factory-dev"])
+
+    def test_recorded_and_stale_without_asking_sbx(self):
+        self.assertEqual(fingerprints.recorded_sandboxes(self.paths), [])
+        for name in SANDBOXES:
+            fingerprints.record_sandbox_fingerprint(self.paths, name)
+        self.assertEqual(fingerprints.recorded_sandboxes(self.paths), [BROKER, COORDINATOR, "factory-dev", "factory-rev"])
+        self.assertFalse(any(fingerprints.is_stale(self.paths, n) for n in SANDBOXES))
+        self.write("repo/roles/dev/kit/new.txt", "x")
+        self.assertEqual([n for n in SANDBOXES if fingerprints.is_stale(self.paths, n)], ["factory-dev"])
+
+    def test_the_reason_names_each_input_that_changed(self):
+        for name in SANDBOXES:
+            fingerprints.record_sandbox_fingerprint(self.paths, name)
+        self.write("repo/roles/dev/kit/new.txt", "x")
+        self.write("repo/roles/dev/role.conf", 'TEMPLATE="developer"\nWORKSPACE="rw"\nBROKER_TOOLS=""\n')
+        self.write("state/ai-code-factory/images/factory-developer-v3.id", "sha256:rebuilt\n")
+        self.write("config/ai-code-factory/broker-kit/hosts.yaml", "x\n")
+        self.write("config/ai-code-factory/plugins/extra/__init__.py", "")
+        self.assertEqual(fingerprints.stale_reason(self.paths, "factory-dev"),
+                         "access to broker tools changed, image rebuilt (template), kit changed")
+        self.assertEqual(fingerprints.stale_reason(self.paths, BROKER),
+                         "broker-kit/ changed, broker plugins changed")
+
+    def test_without_recorded_lines_the_reason_is_general(self):
+        fingerprints.record_sandbox_fingerprint(self.paths, "factory-rev")
+        os.remove(fingerprints.parts_file(self.paths, "factory-rev"))
+        self.assertEqual(fingerprints.stale_reason(self.paths, "factory-rev"),
+                         "made from an older image, kit or setting")

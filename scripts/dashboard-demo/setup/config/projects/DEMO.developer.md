@@ -1,0 +1,1 @@
+- Commit messages: imperative, under 72 characters

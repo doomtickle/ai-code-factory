@@ -43,7 +43,15 @@ underneath them.
 - **Lamps:** LINK is green while the page can reach the dashboard (red and
   blinking when it can't). BRIDGE is green while the dispatch bridge runs,
   the part that hands the Coordinator's jobs to the roles. GATE blinks amber
-  while a write is held for you.
+  while a write is held for you. SERVICE goes amber and reads **UPDATE due**
+  when a sandbox is out of date (made from an older image or kit): hover it
+  for the sandboxes and why, e.g. `factory-broker: broker-kit/ changed`; the
+  control unit's UPDATE key lights too. It reads **RESTART due** when a
+  setting read at start-up changed since the last `factory start` (a role
+  override file, `enabled-roles`, or your project notes), and RESTART lights.
+  Dark means nothing is due. It only tells you; you press the key (the
+  control unit asks first). It reads files, so a sandbox made before the
+  factory recorded fingerprints isn't named; `factory start` still warns.
 - **Readouts:** today's spend in dollars, today's job count, the jobs running
   now, and the clock.
 - **MANUAL** opens these docs in a tab of their own. The **?** on each module
@@ -64,6 +72,26 @@ starts nothing; only POWER ON does.
 - A tab you open later replays the recent output first, with its keyboard
   muted until the replay is done.
 - When the session ends, the screen powers off. POWER ON starts it again.
+
+**FIRST SHIFT.** A line above the screen tells you what `factory start` would
+print in the terminal you started it from, since you're looking at the browser:
+
+- No Claude login stored yet: "FIRST SHIFT · 1. POWER ON and type /login · 2.
+  press RESTART". The control unit's RESTART key blinks until you've done it.
+- Login stored, but the role sandboxes aren't created yet (the state right
+  after your first `/login`): it says so, and RESTART still blinks. Press it
+  and CONFIRM; the restart creates the roles.
+- Roles exist: the same line carries any other start-up hint in one line,
+  such as sandboxes that are out of date (`factory update`) or a missing
+  GitHub token (`factory secret save github`), with "(+N more)" when there are
+  several. Jira, npm and GitLab token hints aren't checked here, because they
+  would ask your keychain; `factory start` still prints them.
+
+The line only tells you; it presses nothing. It's worked out on your machine
+from fixed text (never from anything an agent wrote), and the two `sbx` checks
+behind it run in the background every 30 seconds at most, so a slow or failing
+`sbx` leaves the last answer in place instead of flashing FIRST SHIFT. Demo
+mode never shows it.
 
 The screen tells you when it can't attach:
 
@@ -97,8 +125,31 @@ move over to make room. Ten minutes after its job ends it powers down into
 the strip below.
 
 The **strip** under the modules has a chip for every idle lane, with its
-number and when its last job ended. With nothing running, the bay shows
-STANDBY above it.
+number, the branch its developer last worked on (dim) and when its last job
+ended. With nothing running, the bay shows
+STANDBY above it, as a **shift briefing**. It reads only what is already on
+this machine, changes nothing, and refreshes every few seconds:
+
+- **Project.** The folder `factory start` is bound to, and its git repos (the
+  same list the developer clones). A project that isn't a git repo or a folder
+  of them shows none: the developer can't work in it.
+- **Notes.** The project's notes files (`projects/<folder>.md` and
+  `projects/<folder>.<role>.md` in your config folder) with their sizes. The
+  contents never appear here. Without any, it reads "no project notes: roles
+  start every task knowing only their instructions" and gives the path to
+  create. Notes are read at `factory start`; see [Make it yours](04-customize.md).
+- **Roles.** Each role with its number of lanes; an optional role shows
+  whether it is on.
+- **Holds.** Whether held writes are on, and for which tools (`[approvals]`).
+  Credentials, the allowed repos and the GitLab address aren't shown; the
+  [Setup](#setup-the-configuration-in-force) screen has the rest.
+- **A work order.** One example task to give the Coordinator in Terminal 0,
+  picked from a short fixed list (the first is the slugify task from the
+  [first session](01-first-session.md#6-give-the-coordinator-a-small-first-task)).
+  It changes once a day, and nothing sends it for you.
+- **Keys.** The keys of the [Keys](#keys) table.
+
+If the configuration can't be read, only the first line of STANDBY shows.
 
 Each module shows:
 
@@ -106,18 +157,72 @@ Each module shows:
   for changes), DONE or APPROVED (green), CANCELLED, FAILED or INTERRUPTED (red: the job was cut off
   by a restart, update or disconnect; a lane only shows RUN while the dispatch
   bridge is up and the job is live);
+- on a developer's header, the `factory/<topic>` branch it is on, in pink like
+  the transcript's branch lines: the branch the task names, else the first
+  branch the bridge logged for the job. On a reviewer's, a `▸ DEV 2` tag naming
+  the developer lane it is reviewing. The factory floor's console glass shows
+  the same tag, and both read one derivation, so they can't disagree;
 - the live tail of its transcript, with tool calls, errors, branches and held
   writes in their own colours;
 - its model, cost, context size, and the time the job has run (or took).
 
 A lane keeps its number as a module and as a chip. Press it (1 to 9), or
 click the module or chip, to open the **lane monitor**: the
-full transcript (**T**) and the job's latest review packet (**P**), which has
+full transcript (**T**) and a job's review packet (**P**), which has
 the task, each branch's commits and diffstat, the tests it ran, the broker
 calls it made, its cost and the role's report. **Esc** closes it.
 
+The packet tab opens on the lane's newest job and steps back through the
+lane's past ones: **◀** (or **[**) goes to the next older job, **▶** (or **]**)
+to a newer one, down to the newest again, which the tab then follows. The
+header shows where you are (`2/7`), and the job's id, state (the reviewer's
+APPROVED or REVISE when it has one), cost and when it ran. The list is the
+newest 50 jobs of that lane, from the bridge's job list, the audit and the
+lane's own transcript; for older ones use `factory packet --list`. While the
+newest job is still running there is no packet yet, so the tab shows a
+**pending** view in its place: the job's task (the short form the job list
+keeps, never the full text), model, time run so far and cost so far (shown as
+`--` until the bridge has a figure, which is usually when the job ends).
+Stepping in the packet tab never changes the transcript, which keeps updating
+live. A job's packet opens only for the lane the job ran on; pressing a row of
+the outbox opens its job's packet the same way.
+
 Stands in for: `factory watch`, `factory logs <role>` and `factory packet
 <lane>`.
+
+## The outbox
+
+The **outbox** sits under the lanes. It has one row for every `factory/*` branch
+the dispatch bridge has imported into your project, newest first, so you can
+see at a glance what is finished and what still needs you. A row shows:
+
+- the repository, the branch and how many commits it is ahead of your current
+  `HEAD` (`+3`);
+- the reviewer's latest verdict, APPROVED or REVISE, from the reviewer packets
+  that name the branch (none if no review mentions it; `(old)` means that review
+  started before the developer's last job on the branch ended, so it may not
+  have seen the latest commits);
+- the push state: **STAGED** (a push is waiting at the write gate for your
+  approval), **PUSHED** (the gateway made the push), **FAILED** (it tried and
+  failed), or **WRITTEN** (the gateway opened a pull request for the branch but
+  has no record of the push itself);
+- the pull request or merge request, as a link, once the gateway has opened
+  one. The link is used only if it is a `https://github.com/` pull request or a
+  merge request on your configured GitLab host; anything else is shown as
+  plain text.
+
+When the branch is contained in your `HEAD` the row says **MERGED**, and when the
+import is gone it says **GONE**. Either one drops off the list a day after the
+job ended. A squash or rebase merge leaves the original commits out of `HEAD`, so
+the branch stays OPEN until you delete it (`git branch -rd`, see [Get the
+work](02-build-a-feature.md#get-the-work)).
+
+Press a row to open that job's review packet in the lane monitor. The outbox
+only displays: it can't merge, push or open anything. It asks git for a branch
+list and a commit count at most every few seconds, so a very long list is cut
+at 20 rows.
+
+Stands in for: `git branch -r | grep factory-` and `factory packet <job>`.
 
 ## The factory floor
 
@@ -253,7 +358,7 @@ document.addEventListener("factory-floor:confiscated", e => {
 
 ### Sound
 
-Off by default. The **SOUND** key next to FLOOR in the Lanes header (or `s`)
+Off by default (`sound = true` in [your `dashboard.toml`](#your-own-look-dashboardtoml) starts it on for a browser that has made no choice). The **SOUND** key next to FLOOR in the Lanes header (or `s`)
 turns on a short cue for each floor event, so you can hear the factory from
 another window:
 
@@ -262,11 +367,13 @@ another window:
 | a call is let through | a soft blip |
 | a call is confiscated | a low buzz and thud |
 | a branch is docked | a rising two-note chime |
+| a write is held for you | the alert horn: four square-wave notes |
+| a job finished | a short, high ding |
 
 The tones are synthesised in your browser: no audio file, no request, nothing
 from the event's text. They are quiet, and at most four play a second: a burst
-of calls gives one cue, the most serious of the burst (confiscated, then
-docked, then passed). They play whether or not the floor is shown. The key
+of calls gives one cue, the most serious of the burst (a held write, then
+confiscated, docked, a finished job, passed). They play whether or not the floor is shown. The key
 remembers your choice in this browser. Browsers only start audio after you
 click or press a key, so a page that reloads with sound on stays silent until
 your first click or key press. If the browser has no Web Audio, the key is
@@ -281,6 +388,33 @@ nothing from the page or the events), quieter than they are, and a **RADIO**
 key appears next to SOUND while it plays: press it to turn the radio off. The
 choice is remembered in this browser, and, as with sound, a page that reloads
 with the radio on stays silent until your first click or key press.
+
+### Attention
+
+Jobs run for minutes, so the dashboard tab is often behind another window. Three
+signals say when something needs you, all worked out in the page from the state
+it already polls (no request, nothing sent anywhere):
+
+- **Title and icon.** While a write waits for a decision the title reads
+  `(1 held) LOIS FC-1984` and the tab icon carries a red count; jobs that
+  finished while the tab was not in front add `· 2 done`. The finished-jobs
+  count clears when you come back to the tab; the held count goes when the
+  write is decided.
+- **Cues.** With SOUND on, a newly held write sounds the alert horn and a
+  finished job a short ding, under the same key and the same limit of four
+  cues a second as the floor events.
+- **Notifications.** The **NOTIFY** key next to SOUND (or `n`) turns on browser
+  notifications for the same two events. The browser asks permission when you
+  press the key and never on load; if you refuse, the key greys out until you
+  allow it in the browser's settings. A notification appears only while the tab
+  is not in front, and says just `Write held · git_push` or `Job finished ·
+  developer`: a fixed kind, then a tool from a fixed list or a lane name that
+  matches the lane pattern, never text an agent wrote. The key's choice is
+  remembered in this browser, and it only counts while the permission is still
+  granted. A browser without notifications greys the key out.
+
+`factory dashboard --demo` shows a held write at once, so the title badge is
+there to see.
 
 ## Write gate and the control unit
 
@@ -401,20 +535,112 @@ terminal, so anything that asks for a password fails instead of waiting. If
 an update needs `sudo` (to install tools, say), run `factory update` in a
 terminal.
 
-The **SETUP** plate is a placeholder; settings will go there.
-
 Stands in for: `factory doctor`, `factory restart`, `factory update` and
 `factory update --plan`.
+
+### Your own look: dashboard.toml
+
+`dashboard.toml` in your config folder (`~/.config/ai-code-factory/`; `factory
+config init` writes a commented example) sets how the page looks. The
+dashboard reads it once when it starts, so restart `factory dashboard` to see a
+change. Every key is optional:
+
+```toml
+plant = "LOIS WORKS"                    # the header's nameplate and the floor's plate, up to 24 characters
+shifts = ["day", "swing", "night"]      # the floor's three shift names, up to 16 characters each
+crt = 3                                 # the CRT knob's starting level, 0 to 10
+sound = false                           # whether the SOUND key starts on
+[roles.colors]
+designer = "#d08cff"                    # a role's colour on the floor, its lane module and the spend rows
+```
+
+- `crt` and `sound` are only the starting values. Once you turn the knob or press
+  SOUND, this browser remembers your choice and the file no longer changes it
+  (the knob's reset goes to the file's level).
+- A role without a colour keeps its own: a built-in role its fixed one, any
+  other role a colour chosen from its name. Role names are the usual
+  lowercase letters, digits and dashes.
+- The nameplate, the floor plate and the shift names are plain text, one line
+  of printable ASCII, in `"double"` or `'single'` quotes without escapes. A
+  colour must be `#rrggbb`. Values are one per line, the `shifts` list too.
+- Nothing in it is run, and it cannot touch the broker, a role or a permission.
+- It is strict. An unknown key or table, a bad colour, a number out of range,
+  a key set twice, a file over 16 KiB, a symlink or text that is not UTF-8
+  makes the dashboard ignore the whole file, show the defaults, print a
+  warning naming the file, line and key, and show the same reason on the
+  SETUP screen. The dashboard still starts. With no file you get the defaults.
+  `--demo` never reads your file.
+
+### Setup: the configuration in force
+
+The **SETUP** key opens a read-only screen of the configuration the factory
+will use, read on this machine with the same code `factory start` uses. It
+changes nothing and has no keys but **CLOSE**; edit the files as
+[Make it yours](04-customize.md) describes. It refreshes every few seconds
+while open.
+
+- **Roles.** One block per role: whether it is on (an optional role is on only
+  if it is listed in `enabled-roles`), and `MODEL`, `MODELS`, `EFFORT`,
+  `LANES`, `MAX_SESSION_TOKENS`, `MAX_TURNS` and `MAX_JOB_SECONDS`, each
+  marked **REPO** (from the role's own `role.conf`) or **LOCAL** (your
+  override in `roles/<role>.conf`). A LOCAL line also shows the value it
+  replaced. `WORKSPACE`, `TEMPLATE` and `BROKER_TOOLS` are marked **FIXED**:
+  an override can't change them, and a block says so if your override file
+  tries.
+- **Optional roles** and the names in `enabled-roles` (a name that matches no
+  role is flagged).
+- **Gateway.** The held tools and their expiry (`[approvals]`), the allowed
+  repos (`[git].repos`), the GitLab address if one is set (without any user
+  name, password or query), each marked REPO or LOCAL by the file it came
+  from, and the Coordinator's broker tools.
+- **Project notes.** The notes files for the project the dashboard is bound to,
+  and for each running role its instructions plus the notes against the
+  20,000-character limit. A role over it is flagged: the dispatch
+  bridge refuses that role's tasks.
+- **Dashboard look.** Whether `dashboard.toml` was read at start-up, or the
+  reason it was ignored. It does not show the values; the page itself does.
+
+Each line ends with the command that applies a change to it, **START** or
+**UPDATE**, as in the table in [Make it yours](04-customize.md#which-command-applies-a-change).
+Tokens, passwords and other credentials are never shown, and it never runs a
+command. If the files can't be read the screen says it is unavailable.
 
 ## Spend and the event printer
 
 - **Spend / hour:** today's cost as a bar per hour since midnight, then per
   role, with today's job count.
+- **Shift budget:** under the role bars, type the dollars per day you want to
+  stay inside (for example `50`; `$12.50` works, cents at most, up to
+  100000). The meter beside it fills against today's spend with the budget at
+  its midpoint tick, and the **Spend today** readout in the header turns amber
+  once spend is past the figure and red once it is past twice the figure
+  (exactly at the figure or at twice it doesn't tip over). Up and Down in the
+  box step by 5. Empty or `0` means no budget: nothing tints. A figure the box
+  can't read is marked and the last good one stays. It is kept in this browser
+  with the knob settings (`localStorage`), so it isn't shared between browsers
+  or machines, and a stored value that isn't a sane number is ignored. It only
+  colours the display: nothing stops, holds or cancels a job. It doesn't show
+  per-job cost: the bridge records a job's cost when the job ends, so a
+  running job has none to compare yet.
 - **Event printer:** today's broker calls (allowed, denied, staged and
   decided), the gateway's deferred writes (WRITTEN, or FAILED in red) and
   finished jobs, newest at the bottom. Denied, staged and failed calls,
   and failed or cancelled jobs, print in red; the header counts the denied ones. Scroll up to read older lines; the printer stays put
   until you scroll back down.
+- **Printer lines act.** Click a line, or Tab to it and press Enter:
+  - a **JOB** line opens that lane's monitor on that job's review packet
+    (Esc closes it and puts you back on the line);
+  - a **STAGED**, **WRITTEN** or **FAILED** line shows that card in the
+    control unit. It only changes which card is on the glass: nothing is
+    approved or declined, any reason you had typed is cleared, and the
+    keys stay dark for a moment, as for any card that arrives unasked. A
+    card the gateway has already written says "That write is no longer
+    held.";
+  - a **DENY** or **FAILED** line opens in place to its whole text, wrapped,
+    so you can read the reason (for example "bundle does not exist in the
+    workspace"). Press Enter again or Esc to shut it.
+
+  ALLOW, OK and NO lines don't act; hover any line for its full text.
 
 For the full report, run `factory analytics` (or `factory analytics --html`).
 
@@ -428,8 +654,10 @@ Stands in for: part of `factory analytics` and of `factory logs broker` /
 | Anywhere | `1`–`9` | Open that lane's monitor |
 | Anywhere | `f` | Factory floor on / off |
 | Anywhere | `s` | Sound on / off |
+| Anywhere | `n` | Browser notifications on / off |
 | Lane monitor | `t` / `p` | Transcript / review packet |
 | Lane monitor, patch viewer | Esc | Close |
+| Event printer line | Enter / Esc | Act on the line / shut an opened line |
 | Patch viewer | `j` `k` ↓ ↑ | Next / previous file |
 | Patch viewer | `n` / `p` | Next / previous hunk |
 | A knob | arrows, PgUp, PgDn | Turn it |
@@ -463,7 +691,7 @@ factory dashboard --demo
 
 It needs no `sbx`, broker, Coordinator or `factory setup`. It shows made-up
 data (`example/app`, a few lanes, one held push, a denied broker call and a
-branch) taken from `scripts/dashboard-demo/`, with times counted from the
+branch, two outbox rows) taken from `scripts/dashboard-demo/`, with times counted from the
 moment you start it, and adds a broker call 8 seconds after the start and then
 every 20 seconds, so the factory floor has crates to move. Open the link it prints, press the floor key and
 you can see a held crate waiting at the gate and a denied one landing in the derez field.
@@ -471,7 +699,8 @@ you can see a held crate waiting at the gate and a denied one landing in the der
 Demo mode is display only. It never reads your real state folder: it copies
 the fixture into a fresh temporary folder and deletes it when you press
 Ctrl-C. Terminal 0 is off, APPROVE, DECLINE, RESTART, UPDATE and DIAG answer
-that nothing here acts, and INSPECT shows the fixture's patch. The same
+that nothing here acts, INSPECT shows the fixture's patch, and SETUP shows
+the fixture's configuration (`scripts/dashboard-demo/setup/`), not yours. It also ignores your `dashboard.toml` and shows the defaults. The same
 token, cookie and content rules apply as for a real run. `--demo` can't be
 combined with `--coordinator`, `--state`, `--project` or `--factory`;
 `--no-open` and `--port N` work as usual.
@@ -480,7 +709,9 @@ combined with `--coordinator`, `--state`, `--project` or `--factory`;
 
 It is local: it listens only on `127.0.0.1`, refuses any request without
 this run's token, and makes no network connection of its own. Apart from
-Terminal 0 and the control unit it only reads the factory's state folder.
+Terminal 0 and the control unit it only reads the factory's state folder, and
+for the [outbox](#the-outbox) asks your project's git, read-only and with hooks
+off, which `factory/*` branches exist and how far ahead of `HEAD` they are.
 The control unit can write only a decision file (APPROVE, DECLINE) and its
 action logs, and run only `factory doctor`, `factory restart`, `factory
 update --yes` and `factory update --plan`, each after a confirm screen. The README's

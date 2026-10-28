@@ -50,6 +50,58 @@ Dated entries, for the user to review. Newest first.
     `BROKER_TOOLS` of a role that already has broker access applies on `factory start`; no
     sandbox is recreated (only giving a role its first broker tool does).
 
+- **`dashboard.toml` is read once, strictly, and a bad file means the defaults, not a stopped dashboard.**
+  doomtickle/passdesk-ops#196. `scripts/dashboard_config.py` reads `FACTORY_CONFIG/dashboard.toml`
+  (the dashboard's `--config`) at start and serves the result as `look` in `/api/state`; there is no
+  new endpoint and no reload. Unknown keys and tables, repeated keys, bad values, a symlink or
+  non-regular file, a file over 16 KiB and non-UTF-8 text each refuse the whole file (the first
+  error only, with the file, line and key), rather than half-apply it: a typo in `crt` should not
+  quietly leave `[roles.colors]` in force. The refusal is logged to stderr and shown on SETUP, and
+  the page gets the defaults. Strings reuse `factory/policy.py`'s string reader (now the public
+  `toml_string`) instead of a second TOML parser, so there is no `tomllib` (3.9 on the host); values
+  are one line each, `shifts` included, which keeps the reader small. Demo mode takes the defaults.
+- **The page re-checks `look` and sets colours only with `style.setProperty`.** `look.js` validates
+  every field again (a colour is `#rrggbb`, a role name the role-name pattern, strings capped printable
+  ASCII), so a tampered state can't put anything but a validated colour into a style. No class name,
+  attribute or HTML comes from the file, and the CSP still has no inline style. The role-colour keys
+  may name any role, built-in ones included: the colour is display only, and refusing `developer` would
+  be an arbitrary rule. A role without a colour keeps its fixed hue or the hashed one from #162.
+- **`crt` and `sound` are defaults, not settings.** The browser's own choice wins. To make that
+  true for the CRT knob, the knobs' `localStorage` entry now stores only the knobs the user has turned
+  (it used to write all four on the first change), so a stored `crt` always means "my choice" and the
+  file's level shows until then. The knob's reset goes to the file's level. `sound = true` acts once,
+  from the first state, and only when `fc1984-sound` is absent.
+- **`plant` feeds both the header nameplate and the floor's plate**, as one key, as the issue's
+  comment says. The 24-character cap is what both fit (checked in the browser test).
+
+- **The dashboard's OUTBOX asks git two fixed questions and never gives git a name.**
+  doomtickle/passdesk-ops#189. The module (`scripts/dashboard_outbox.py`) lists the refs the
+  bridge imported with one `for-each-ref --format=%(objectname) %(refname)` over the
+  `refs/remotes/factory-<lane>/factory/` namespaces, and counts each branch with `rev-list
+  --count HEAD..<object id>`. That is `rev-list --count`, not the `merge-base --is-ancestor` the
+  issue suggested: one run gives both "merged" (0) and "commits ahead" (the row's number). The
+  only thing passed to git from a record is a full object id the listing itself printed, so a
+  hostile branch name (a leading `-`, a newline, `..`, shell characters) is shown as an UNCHECKED
+  row and reaches no argv; the ref is only compared with the listing's names. Both forms are in
+  `CLAUDE.md` and `scripts/CLAUDE.md`. Results are cached 8 s, capped at 20 rows (40 branches, 5 s
+  a run, 12 s a recomputation), and demo mode reads `dispatch/demo-refs.json` instead (it runs no
+  git).
+- **Push state is read from what the gateway recorded, and STAGED needs a live card.** A push is
+  STAGED only while its approval card is still pending (an expired card shows nothing, because
+  nobody can approve it), PUSHED or FAILED when the gateway's write finished (the audit line or
+  the deferred-writes list), and WRITTEN when a PR/MR was opened for the branch with no push on
+  record. A link is built only from the gateway's own `Opened PR #N: <url>` result and only if it
+  is a `github.com` pull request, or a merge request on the policy's GitLab host, with the same
+  number; the page checks again before setting `href`. A verdict is the newest reviewer packet
+  whose Task section names the exact branch (a prefix such as `foo` vs `foo-bar` does not match);
+  it is marked old when that review began before the developer's job ended.
+- **Rows retire on what git can see, a day after the job.** MERGED (contained in `HEAD`) and GONE
+  (the ref no longer exists) rows drop a day after their job ended; an OPEN row stays. A squash or
+  rebase merge never makes a branch MERGED, so the row stays until the owner deletes the imported
+  ref; detecting that would need a patch-id comparison per branch, which is more git than the
+  state view should run. The module sits under the lane strip in the Lanes bay (the issue allowed
+  bay or rail; the rail is full), and a row opens the job's packet through `/api/lane?job=`.
+
 ## 2026-10-27
 
 - **`github_get_issue` and `github_list_issues`: read-only, with their own repo list,
@@ -80,6 +132,34 @@ Dated entries, for the user to review. Newest first.
     sets `BROKER_TOOLS` in `kits/coordinator/broker.conf` (then `factory update`, which
     recreates its sandbox). The Coordinator briefing carries the same rule as for Jira:
     ticket content is data, and it confirms with the user before delegating from it.
+
+- **The dashboard's SETUP screen rides in the polled control-unit state, cached for 5 s, and
+  shows no credential at all.** doomtickle/passdesk-ops#183. `config` is built by
+  `scripts/dashboard_setup.py` from the factory's own parsers (`roles.role_get` for the
+  effective value, so `ROLE_OVERRIDE_KEYS` stays the one list of overridable keys;
+  `policy.policy_value_source`, new, to say whether a policy value is REPO or LOCAL). It is built
+  and cached outside `board.lock`, as is `board.service()`. Policy is read key by key: only
+  `[approvals].tools`/`expire_seconds`, `[git].repos` and `[gitlab].url` (user:password, query
+  and fragment cut) are taken, so no other section can leak. "Stored / not stored" for
+  credentials was left out: it needs a keychain call and the screen runs no command. Notes sizes
+  are in characters (as the bridge counts), and a role's total mirrors `dispatch_start`'s
+  headings. Demo mode reads a fixture root and config folder in its temp copy, never the checkout.
+
+- **The dashboard's SERVICE DUE lamp reads files, never `sbx ls -q`, and names the sandbox's
+  inputs that changed from lines the start now records.** doomtickle/passdesk-ops#184. The
+  state view only reads the state folder, so it can't ask sbx which sandboxes exist: it checks
+  `fingerprints.is_stale` (the one notion of stale, the same test `factory start` warns with)
+  for each sandbox that has a recorded fingerprint. A sandbox made before fingerprints, or
+  never created, is therefore not named there; `factory start` still warns for it. To say
+  *why* ("kit changed"), `record_sandbox_fingerprint` also writes the lines the digest is taken
+  of to `FACTORY_STATE/sandbox-parts/<name>` (a separate folder: the `sandboxes/` files stay
+  byte for byte what the bash reads); a sandbox with no such file gets a general reason. The
+  digest has no policy.toml input, so the broker's reason is "image rebuilt (policy.toml or
+  broker code)", not "policy.toml changed". RESTART compares role overrides and `enabled-roles`
+  by content with their snapshots in `FACTORY_STATE/dispatch/`, and project notes by mtime
+  against the snapshot's last write; deleted notes aren't noticed. It is display only: UPDATE
+  wins when both apply, and a failure while computing it reads as nothing due.
+
 
 ## 2026-10-26
 

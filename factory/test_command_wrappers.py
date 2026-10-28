@@ -48,8 +48,8 @@ class WrapperTest(CommandTest):
         self.bind("/home/me/code/my-app/\n")
         self.run_command("dashboard", "--no-open", "--port", "8123")
         self.assertEqual([a for a, _ in self.execs], [self.script("dashboard.py") + [
-            "--state", self.state, "--roles", os.path.join(self.root, "roles"), "--project", "my-app",
-            "--coordinator", "factory-coordinator", "--no-open", "--port", "8123"]])
+            "--state", self.state, "--roles", os.path.join(self.root, "roles"),
+            "--config", self.paths.config, "--project", "my-app", "--coordinator", "factory-coordinator", "--no-open", "--port", "8123"]])
 
     def test_gui_is_dashboard(self):
         self.assertIs(COMMANDS["gui"], COMMANDS["dashboard"])

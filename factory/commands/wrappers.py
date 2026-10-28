@@ -35,5 +35,6 @@ def dashboard(ctx, args):
     if "--demo" in args:
         return ctx.exec(script_argv(ctx, "dashboard.py", "--roles", roles) + args)
     return ctx.exec(script_argv(
-        ctx, "dashboard.py", "--state", p.state, "--roles", roles, "--project", basename(bound_project(p)),
+        ctx, "dashboard.py", "--state", p.state, "--roles", roles, "--config", p.config,
+        "--project", basename(bound_project(p)),
         "--coordinator", COORDINATOR_SANDBOX) + args)

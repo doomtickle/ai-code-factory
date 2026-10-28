@@ -20,6 +20,7 @@ import unittest
 from unittest import mock
 
 from factory import fingerprints
+from factory import hints as factory_hints
 from factory.cli import COMMANDS, INTERNAL, main
 from factory.commands import runstate, start
 from factory.context import FactoryError
@@ -319,6 +320,29 @@ class HintsTest(StartTest):
         self.assertEqual(self.hints(FACTORY_UPDATING="1"), "")
         fingerprints.record_sandbox_fingerprint(self.paths, "factory-reviewer")
         self.assertEqual(self.hints(FACTORY_UPDATING=""), warning.replace(" factory-reviewer", ""))
+
+    def test_the_dashboard_asks_for_the_same_list_with_its_own_options(self):
+        """factory/hints.py is the one source: hints() prints collect(), and the dashboard's FIRST SHIFT
+        banner passes the stale names it already has, skips the keychain and asks about the roles."""
+        self.write("repo/kits/coordinator/broker.conf", 'BROKER_TOOLS="jira_my_issues"\n')
+        codes = lambda **kw: [c for c, _ in factory_hints.collect(self.ctx(), **kw)]
+        self.assertEqual(codes(stale=[], keychain_checks=False), ["login", "config"])
+        self.login()
+        self.keychain(stored=("factory-jira",))
+        self.assertEqual(codes(stale=["factory-broker"]), ["stale", "config"])
+        self.assertEqual(self.hints(), "  ! Jira tools are granted but [jira].cloud_id is not set; set it in %s/policy.toml "
+                                       "(see README: Enabling Jira)\n" % self.config)
+
+    def test_roles_not_created_yet_is_asked_only_when_wanted(self):
+        self.login()
+        self.write("sbx/names", "factory-coordinator\n")
+        self.assertEqual(factory_hints.collect(self.ctx(), stale=[]), [])
+        out = factory_hints.collect(self.ctx(), stale=[], roles=True)
+        self.assertEqual([c for c, _ in out], ["roles"])
+        self.assertIn("press RESTART on the dashboard", out[0][1])
+        names = "".join("factory-%s\n" % r for r in ("coordinator", "developer", "reviewer"))
+        self.write("sbx/names", names)
+        self.assertEqual(factory_hints.collect(self.ctx(), stale=[], roles=True), [])
 
     def test_github(self):
         global_token = ("  ! a global GitHub token is stored, so sbx injects it for every sandbox, not just the broker. "
