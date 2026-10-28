@@ -27,20 +27,21 @@ Passdesk Pro plugin and moved into core, licence removed, on 2026-10-21
   passed (bundle verified, every commit secret-scanned, limits applied) and
   calls `require` *outside* the tool lock, so staging never blocks another
   role's git call; unheld, it then re-takes the lock, confirms the ref it
-  validated is unchanged, and pushes. `github_create_pr` and
-  `gitlab_create_mr` call `require` after the title and body pass the
-  secret scan (`gitlab_create_mr` also after confirming the gateway holds a
+  validated is unchanged, and pushes. `github_create_pr`,
+  `github_update_pr` and `gitlab_create_mr` call `require` after the title
+  and body pass the secret scan (`gitlab_create_mr` also after confirming the gateway holds a
   `gitlab` token), and
   `github_create_issue` after its title, body and labels pass it and the
   labels are confirmed to exist. The PR, MR and issue cards show the
   body's first 2,000 characters and carry the whole body's `body_sha256`
-  (the PR and MR cards also `body_chars`); the digest is part of the card
+  (the PR and MR cards also `body_chars`; a `github_update_pr` card has
+  `title` and `body` only for what it changes); the digest is part of the card
   id and checked against the job before the write, so two calls whose
   bodies differ only past the excerpt are different cards. The
   hold covers only the tools `[approvals] tools` lists; nothing is held
   until that list names something (the usual list is `git_push`,
-  `github_create_pr` and `gitlab_create_mr`; add `github_create_issue` to
-  hold issues too).
+  `github_create_pr` and `gitlab_create_mr`; add `github_update_pr` to hold
+  title and body edits too, and `github_create_issue` to hold issues).
 
 - **The patch to inspect** (doomtickle/passdesk-ops#113). Only when a hook
   is installed, `git_push` writes the pushed commits' patch to
@@ -134,7 +135,9 @@ content that actually gets pushed is still pinned by `head` and
   branch, base, the verified head and the bundle's digest; the verified
   ref stays in the gateway's private mirror at `<REF_NAMESPACE>/<branch>`),
   `github_create_pr` and `gitlab_create_mr` (repo, head, base, title as
-  sent, the whole body, draft), `github_create_issue` (repo, title, the
+  sent, the whole body, draft), `github_update_pr` (repo, number, the new
+  title and/or whole body; what was not given is absent and never sent),
+  `github_create_issue` (repo, title, the
   whole body, the labels as GitHub spells them) and a plugin tool declared
   `writes_externally` (its arguments, `core/registry.py`). A held tool with
   no job or no completer is refused with nothing staged.

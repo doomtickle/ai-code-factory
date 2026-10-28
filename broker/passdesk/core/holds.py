@@ -71,6 +71,8 @@ _STABLE_FIELDS = {
     # excerpt), so bodies that differ only past it are different cards.
     "github_create_pr": ("tool", "principal", "repo", "head", "base", "title", "body", "body_sha256", "draft"),
     "gitlab_create_mr": ("tool", "principal", "repo", "head", "base", "title", "body", "body_sha256", "draft"),
+    # An absent title or body is None, which is not the same card as an empty one.
+    "github_update_pr": ("tool", "principal", "repo", "number", "title", "body", "body_sha256"),
     "github_create_issue": ("tool", "principal", "repo", "title", "body", "body_sha256", "labels"),
 }
 # What a deployment that wants holds usually lists (the README's example);
@@ -347,6 +349,8 @@ def _what(card: dict) -> str:
     if tool in ("github_create_pr", "gitlab_create_mr"):
         noun = "merge request" if tool == "gitlab_create_mr" else "pull request"
         return f"{noun} {card.get('head')} -> {card.get('base')} on {card.get('repo')}"
+    if tool == "github_update_pr":
+        return f"update of pull request #{card.get('number')} on {card.get('repo')}"
     if tool == "github_create_issue":
         return f"issue on {card.get('repo')}"
     return f"{tool} call"

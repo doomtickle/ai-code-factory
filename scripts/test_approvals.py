@@ -420,6 +420,24 @@ class CleanTests(unittest.TestCase):
         self.assertEqual(approvals.clean("  a \t\n b  "), "a b")
 
 
+class UpdateCardTests(unittest.TestCase):
+    def test_one_line_says_what_changes_and_shows_no_draft_flag(self):
+        base = {"id": "abcdef0123456789", "tool": "github_update_pr", "principal": "developer", "repo": "acme/widgets",
+                "number": 7, "title": "New\x1b[2J title", "body": None, "expires": time.time() + 600}
+        line = approvals.one_line(base)
+        self.assertIn('update PR #7 on acme/widgets: title "New[2J title"', line)
+        self.assertNotIn("draft", line)
+        self.assertNotIn("\x1b", line)
+        self.assertTrue(approvals.one_line({**base, "title": None, "body": "b"}).find("update PR #7 on acme/widgets: body") > 0)
+        self.assertIn('title "New[2J title" and body', approvals.one_line({**base, "body": "b"}))
+
+    def test_write_line_shows_the_title_of_an_update(self):
+        item = approvals.write_record(done_rec(tool="github_update_pr", title="Renamed", head=None, branch=None,
+                                               result="Updated PR #7 (title): https://github.com/acme/widgets/pull/7"),
+                                      "abcdef0123456789")
+        self.assertIn('github_update_pr -> acme/widgets "Renamed"', approvals.write_line(item))
+
+
 class DeferredWriteTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()

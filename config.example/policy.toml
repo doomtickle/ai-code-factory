@@ -72,5 +72,5 @@ repos = []
 # To be told when something is waiting, save a Slack, Discord or ntfy webhook
 # URL with `factory secret save approvals-webhook`.
 # [approvals]
-# tools = ["git_push", "github_create_pr", "gitlab_create_mr"]
+# tools = ["git_push", "github_create_pr", "github_update_pr", "gitlab_create_mr"]
 # expire_seconds = 86400

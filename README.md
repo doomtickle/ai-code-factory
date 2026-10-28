@@ -604,7 +604,7 @@ it and confirms with you before delegating.
 ### Enabling approvals
 
 With holds on, every held write (`git_push`, `github_create_pr`,
-`gitlab_create_mr`, and `github_create_issue` or a plugin tool if you list
+`gitlab_create_mr`, and `github_update_pr`, `github_create_issue` or a plugin tool if you list
 them) is **staged** for a person: the broker records a card (what, who, how
 many commits and files, the secret-scan result) and the exact write it
 verified, and the agent's call returns at once with "Staged for approval
@@ -625,7 +625,8 @@ tools to hold.
 1. In your local `policy.toml` (Local settings), set
    `[approvals] tools = ["git_push", "github_create_pr", "gitlab_create_mr"]`
    (`config.example/policy.toml` has the commented table). Add
-   `"github_create_issue"` to hold the reviewer's issues too.
+   `"github_update_pr"` to hold the developer's title and description edits
+   too, and `"github_create_issue"` for the reviewer's issues.
 2. Run `factory update`: it bakes the policy into the broker image and
    recreates the broker. `factory doctor` then reports holds on, the tools,
    pending cards and whether a webhook is set.
@@ -677,7 +678,7 @@ do rather than by job title:
 
 | Role | Does | Project access | Lanes | Broker tools |
 |---|---|---|---|---|
-| developer | implements the change, writes and runs its tests, updates the docs | read-only; works in its own clones, hands back `factory/*` branches | 3 | `npm_fetch`, `pip_download`, `git_fetch`, `git_push`, `github_create_pr`, `gitlab_create_mr` |
+| developer | implements the change, writes and runs its tests, updates the docs | read-only; works in its own clones, hands back `factory/*` branches | 3 | `npm_fetch`, `pip_download`, `git_fetch`, `git_push`, `github_create_pr`, `github_update_pr`, `gitlab_create_mr` |
 | reviewer | independent check of correctness, tests, security and docs; runs the tests; APPROVED / REVISE; files issues when asked | read-only | 2 | `npm_fetch`, `github_create_issue` |
 | researcher (optional, off by default) | looks things up on the web and reports with sources | read-only | 1 | `web_fetch` (`gemini_flash_query` as an opt-in) |
 
@@ -952,7 +953,7 @@ Edit its `role.conf` and instructions, then run `factory start` again. It create
 the sandbox, and the Coordinator sees the new role in `list_roles`.
 
 **Change a role:** edit instructions, `BROKER_TOOLS`, `LANES`, `MODEL`, `MODELS`, `EFFORT`, `MAX_SESSION_TOKENS`, `MAX_TURNS` or `MAX_JOB_SECONDS` and run `factory start`
-again. All of these take effect from the next task:
+again (a role that already has broker tools gets a changed `BROKER_TOOLS`, say a new tool such as `github_update_pr`, on `factory start`; no sandbox is recreated). All of these take effect from the next task:
 `factory start` copies the instructions into the state folder and the bridge
 reads that copy, so a role editing this repo can't change prompts on its own. Kit, image, project access and
 whether the role has broker access at all are fixed when the sandbox is created,
@@ -993,6 +994,7 @@ sandbox (sandboxes are never deleted automatically).
 | `git_fetch` | Fetches a branch into a private mirror and hands it to the agent as a bundle in `.factory/incoming/` |
 | `git_push` | Takes a bundle the developer wrote from its clone to `.factory/outgoing/` (size-capped, copied once into the broker), checks branch rules, secret-scans every commit's patch (binary files included), message and author/committer, pushes |
 | `github_create_pr` | Opens a (draft) PR; title and body are secret-scanned; refuses GitLab projects |
+| `github_update_pr` | Changes the title and/or body of a PR in `[git].repos` (a body replaces the whole description); secret-scanned, body capped at 65,536 characters; sends nothing else, so never the draft state, `state` or base; held when `[approvals].tools` names it; refuses GitLab projects |
 | `gitlab_create_mr` | Opens a (draft) GitLab merge request (the title gets `Draft: `); title and body are secret-scanned; refuses GitHub repos |
 | `github_create_issue` | Files an issue in a repo on `[github].issue_repos` (existing labels only); title and body are secret-scanned |
 | `github_get_issue` | One issue in a repo on `[github].issue_read_repos`: title, state, labels, body, recent comments; read-only; output marked untrusted |

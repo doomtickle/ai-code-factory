@@ -1,4 +1,4 @@
-"""git_fetch, git_push, github_create_pr, gitlab_create_mr, github_create_issue. Network git
+"""git_fetch, git_push, github_create_pr, github_update_pr, gitlab_create_mr, github_create_issue. Network git
 runs only in the broker's private mirrors; code crosses into the workspace as git bundles.
 
 Two forges. A [git].repos entry is a GitHub repo ("owner/name") or, when
@@ -24,7 +24,7 @@ only, gitlab_create_mr as a Bearer header through NO_REDIRECT_OPENER, and it
 is redacted everywhere. Neither forge's token is ever sent to the other.
 
 Held writes (doomtickle/passdesk-ops#170): git_push, github_create_pr,
-gitlab_create_mr and github_create_issue pass the approval point a job (the
+github_update_pr, gitlab_create_mr and github_create_issue pass the approval point a job (the
 checked arguments of their write) and register a completer (complete_*). A
 held write is staged at once and, on approval, made by the gateway itself
 from that job: never from the agent's workspace, and only after the job is
@@ -654,6 +654,100 @@ def complete_github_create_pr(job: dict, card: dict, policy: dict) -> str:
     return text
 
 
+
+_PR_TITLE_MAX = 256  # GitHub's limit
+_PR_BODY_MAX = 65536  # GitHub's limit
+_PR_NUMBER_MAX = 10**9
+
+
+def _pr_number(value: object) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or not 0 < value <= _PR_NUMBER_MAX:
+        raise Denied("number must be a positive pull request number")
+    return value
+
+
+def _pr_edit(title: object, body: object) -> tuple[str | None, str | None]:
+    """The new title and body of a pull request update (None: leave it as it
+    is), checked as the tool and, again, the completer check them."""
+    if title is None and body is None:
+        raise Denied("give a new title, a new body or both")
+    if title is not None:
+        if not isinstance(title, str) or not title.strip() or len(title) > _PR_TITLE_MAX:
+            raise Denied(f"PR title must be 1-{_PR_TITLE_MAX} characters")
+        if _TITLE_BAD_RE.search(title):
+            raise Denied("PR title must be a single line with no control characters")
+        block_outbound_secrets("PR title", title)
+    if body is not None:
+        if not isinstance(body, str) or len(body) > _PR_BODY_MAX:
+            raise Denied(f"PR body must be text of at most {_PR_BODY_MAX} characters")
+        block_outbound_secrets("PR body", body)
+    return title, body
+
+
+def _body_digest(body: str | None) -> str | None:
+    return None if body is None else hashlib.sha256(body.encode()).hexdigest()
+
+
+def tool_github_update_pr(args: dict, policy: dict) -> str:
+    """Change a pull request's title and/or body, and nothing else: never its
+    draft flag, state or base (readiness stays the owner's,
+    doomtickle/passdesk-ops#8)."""
+    repo = check_repo(args["repo"], policy)
+    if remote_of(repo, policy).forge != "github":
+        raise Denied(f"{repo} is a GitLab project: github_update_pr edits GitHub pull requests only")
+    number = _pr_number(args["number"])
+    title, body = _pr_edit(args.get("title"), args.get("body"))
+    # As the create card: the body's start, and the whole body's digest, so two
+    # updates whose bodies differ only past the excerpt never share a card.
+    require_approval({"tool": "github_update_pr", "repo": repo, "number": number, "title": title,
+                      "body": None if body is None else body[:2000], "body_sha256": _body_digest(body),
+                      "body_chars": None if body is None else len(body)},
+                     job={"repo": repo, "number": number, "title": title, "body": body})
+    return _edit_pr(repo, number, title, body)[1]
+
+
+def _edit_pr(repo: str, number: int, title: str | None, body: str | None) -> tuple[bool, str]:
+    """PATCH the pull request with the title and/or body given, never another
+    field: (True, "Updated PR ...") or, for an HTTP error, (False, the error
+    with a hint). Raises Denied for an unexpected answer."""
+    payload = {k: v for k, v in (("title", title), ("body", body)) if v is not None}
+    # Read at the write, so one made after approval uses the current token.
+    token = github_token()
+    try:
+        pr = _github_api("PATCH", f"/repos/{repo}/pulls/{number}", token, payload)
+    except urllib.error.HTTPError as e:
+        return False, _github_api_failure(e, repo, token is not None, "Pull requests read/write")
+    if not isinstance(pr, dict) or not isinstance(pr.get("number"), int):
+        raise Denied(f"GitHub returned an unexpected response for {repo}#{number}")
+    what = " and ".join(k for k in payload)
+    return True, f"Updated PR #{pr['number']} ({what}): {sanitize(str(pr.get('html_url', '')), 300)}"
+
+
+def complete_github_update_pr(job: dict, card: dict, policy: dict) -> str:
+    """Update a staged pull request the person approved (core/holds.py runs
+    it) from the arguments github_update_pr checked and stored, checked
+    again against the policy and the card. Raises Denied if a check fails or
+    GitHub refuses it."""
+    repo = check_repo(_job_str(job, "repo"), policy)
+    if remote_of(repo, policy).forge != "github":
+        raise Denied(f"{repo} is not on the forge this staged write is for; nothing was written")
+    number = _pr_number(job.get("number"))
+    title, body = job.get("title"), job.get("body")
+    for key, value in (("title", title), ("body", body)):
+        if value is not None and not isinstance(value, str):
+            raise Denied(f"the staged write's {key} is not text; nothing was written")
+    title, body = _pr_edit(title, body)
+    _job_matches(job, card, ("repo", "number", "title"))
+    excerpt = None if body is None else body[:2000]
+    if card.get("body") != excerpt or card.get("body_sha256") != _body_digest(body) \
+            or card.get("body_chars") != (None if body is None else len(body)):
+        raise Denied("the staged write's body does not match its approval card; nothing was written")
+    ok, text = _edit_pr(repo, number, title, body)
+    if not ok:
+        raise Denied(text)
+    return text
+
+
 _MR_TITLE_MAX = 255  # GitLab's limit
 _MR_BODY_MAX = 65536  # GitHub's PR body limit; GitLab's own (1 MiB) is far more than an approver can read
 # Title prefixes GitLab documents as marking a merge request a draft.
@@ -906,6 +1000,7 @@ _STAGED_NOTE = (" If the deployment holds it for approval, the result starts \"S
 
 approvals.register_deferred("git_push", complete_git_push)
 approvals.register_deferred("github_create_pr", complete_github_create_pr)
+approvals.register_deferred("github_update_pr", complete_github_update_pr)
 approvals.register_deferred("gitlab_create_mr", complete_gitlab_create_mr)
 approvals.register_deferred("github_create_issue", complete_github_create_issue)
 
@@ -928,6 +1023,15 @@ register({
                          {"repo": {"type": "string"}, "head": {"type": "string"}, "base": {"type": "string"},
                           "title": {"type": "string"}, "body": {"type": "string"},
                           "draft": {"type": "boolean"}}, ["repo", "head", "title"]),
+    "github_update_pr": (tool_github_update_pr, "Change the title and/or body of a pull request on an "
+                         "allowlisted GitHub repo. Give at least one. Title and body are secret-scanned. "
+                         "Nothing else about the pull request can be changed: not its draft state, "
+                         "state or base branch." + _STAGED_NOTE,
+                         {"repo": {"type": "string", "description": "owner/name"},
+                          "number": {"type": "integer", "description": "pull request number"},
+                          "title": {"type": "string", "description": "one line, at most 256 characters"},
+                          "body": {"type": "string", "description": "Markdown; replaces the whole body"}},
+                         ["repo", "number"]),
     "gitlab_create_mr": (tool_gitlab_create_mr, "Open a merge request on an allowlisted GitLab project "
                          "(<gitlab host>/<group>/<project>). Title, body and branch names are secret-scanned. "
                          "Draft by default (the title gets GitLab's \"Draft: \" prefix)." + _STAGED_NOTE,

@@ -15,7 +15,7 @@ get direct network egress; every tool call goes through Passdesk, which:
   secrets, caps size, marks fetched content as untrusted)
 - writes an audit record for every call, plus an "intent" record *before*
   running a tool that writes to an external system (`git_push`,
-  `github_create_pr`, `gitlab_create_mr`, `github_create_issue`), so the attempt is on record even if the call fails
+  `github_create_pr`, `github_update_pr`, `gitlab_create_mr`, `github_create_issue`), so the attempt is on record even if the call fails
   partway through. A call that writes externally is refused if that intent
   record can't be written.
 
@@ -214,10 +214,11 @@ then:
   to no other host. It is never on a command line or written to disk; git
   runs with `http.followRedirects=false`, no credential helper, and every
   `GIT_TRACE*`/`GIT_CURL_VERBOSE` switch removed from its environment.
-- `github_create_pr` and `github_create_issue` send `Authorization: Bearer
+- `github_create_pr`, `github_update_pr` and `github_create_issue` send `Authorization: Bearer
   <token>` to `api.github.com` and refuse redirects, like every
   authenticated call. `github_create_issue` needs the token to have Issues
-  read/write on the repos in `[github].issue_repos`.
+  read/write on the repos in `[github].issue_repos`; `github_update_pr` needs
+  Pull requests read/write on the repos in `[git].repos`, like `github_create_pr`.
 - `github_get_issue` and `github_list_issues` are read-only and send the same
   Bearer header (or rely on the proxy) the same way; they need Issues read on
   the repos in `[github].issue_read_repos`, a list of its own (not

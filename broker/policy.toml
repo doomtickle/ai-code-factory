@@ -114,7 +114,7 @@ max_bundle_bytes = 100_000_000
 # approved. Off until `tools` names something. A pending card can be
 # decided for expire_seconds (60 to 604_800, a week; default a day).
 # hold_seconds is no longer read (the doctor warns; delete it).
-# tools = ["git_push", "github_create_pr", "gitlab_create_mr"]
+# tools = ["git_push", "github_create_pr", "github_update_pr", "gitlab_create_mr"]
 # expire_seconds = 86_400
 # With holds on, git_push also stores the
 # pushed commits' patch (oldest first, with --stat, binary files as one line)

@@ -66,7 +66,7 @@ If you ask it which lanes are busy, it calls `list_roles`, which shows each
 lane's state:
 
 ```text
-- developer [3 lanes: developer busy (20261017-150102-1a2b3c), developer-lane2 busy (20261017-150104-4d5e6f), developer-lane3 idle]: Implements features and fixes, writes and runs the tests, and updates the docs (edits private git clones; network tools: npm_fetch, pip_download, git_fetch, git_push, github_create_pr, gitlab_create_mr; model: claude-sonnet-5-5; can also run on: claude-haiku-5-5, opus)
+- developer [3 lanes: developer busy (20261017-150102-1a2b3c), developer-lane2 busy (20261017-150104-4d5e6f), developer-lane3 idle]: Implements features and fixes, writes and runs the tests, and updates the docs (edits private git clones; network tools: npm_fetch, pip_download, git_fetch, git_push, github_create_pr, github_update_pr, gitlab_create_mr; model: claude-sonnet-5-5; can also run on: claude-haiku-5-5, opus)
 ```
 
 ## Watch each lane

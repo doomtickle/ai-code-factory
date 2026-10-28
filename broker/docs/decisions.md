@@ -2,6 +2,43 @@
 
 Dated entries, for the user to review. Newest first.
 
+## 2026-10-28
+
+- **`github_update_pr`: title and body of a pull request, nothing else**
+  (doomtickle/passdesk-ops#188). `github_create_pr` can open a draft PR but nothing could
+  change one afterwards (a review packet of 26 Oct ended "someone with GitHub access will
+  need to rename #180"). Choices:
+  - **Same policy as `github_create_pr`:** the repo must be in `[git].repos` (GitHub only;
+    a GitLab project is refused), the title and body are secret-scanned, the call is audited
+    with an intent record, and it is held when `[approvals].tools` names it. The card has the
+    body's first 2,000 characters and the digest of the whole body, which is part of the card
+    id and checked against the job again before the write, so two edits whose bodies differ
+    only past the excerpt are different cards. A title or body that was not given is `null`
+    on the card and the job, which is not the same card as an empty one.
+  - **The PATCH is built from title and body alone.** It never sends `draft`, `state`, `base`
+    or any other field, and the tool does not accept them (the call layer refuses unknown
+    arguments). Marking a draft ready for review stays the owner's decision
+    (doomtickle/passdesk-ops#8: agents must not open non-draft PRs, and the same reasoning
+    covers readiness).
+  - **Limits:** title 1 to 256 characters on one line, body at most 65,536 characters (GitHub's
+    own limits), at least one of the two, `number` a positive `integer` (not a bool, at most
+    10^9). A body replaces the whole description: GitHub's PATCH has no append.
+  - **Any PR in an allowlisted repo, not only ones this role opened.** Telling them apart
+    needs a read of the PR (and a trusted notion of "mine" the gateway does not have). The
+    write was already possible: `git_push` can add commits to any `factory/*` branch and the
+    same token opens PRs; an approver sees the number and the new text on the card.
+  - **Token handling is `github_create_pr`'s:** `_github_api` with a Bearer header and no
+    redirects where the gateway holds the token, the proxy's authentication under sbx. The
+    token needs Pull requests read/write on the repo, as for `github_create_pr`.
+  - **Known quirk:** a card's id is a hash of its content, and a made write's result is kept,
+    so with holds on an update identical to an earlier one that was already made (title A, then
+    B, then A again) is answered with that earlier result and sends nothing. Any change to the
+    text makes a new card. Not worth a nonce: the same rule keeps a repeated call from
+    writing twice.
+  - **Grant:** the developer's `BROKER_TOOLS` in `roles/developer/role.conf`. A changed
+    `BROKER_TOOLS` of a role that already has broker access applies on `factory start`; no
+    sandbox is recreated (only giving a role its first broker tool does).
+
 ## 2026-10-27
 
 - **`github_get_issue` and `github_list_issues`: read-only, with their own repo list,

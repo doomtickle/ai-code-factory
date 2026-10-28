@@ -8,6 +8,7 @@ web_fetch
 git_fetch
 git_push
 github_create_pr
+github_update_pr
 gitlab_create_mr
 github_create_issue
 github_get_issue

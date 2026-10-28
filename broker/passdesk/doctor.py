@@ -66,6 +66,7 @@ _TOOL_HOSTS = {
     "git_fetch": ["github.com"],
     "git_push": ["github.com"],
     "github_create_pr": ["api.github.com"],
+    "github_update_pr": ["api.github.com"],
     "github_create_issue": ["api.github.com"],
     "github_get_issue": ["api.github.com"],
     "github_list_issues": ["api.github.com"],
@@ -84,8 +85,8 @@ _EXCHANGE_DIRS = ("incoming", "outgoing", "npm-mirror", "wheels")
 # Tools that need the "github" credential. In sbx mode this is proxy-injected
 # (never read by the gateway); in standalone mode check_standalone checks it
 # through credentials.get(), the only place that distinction matters.
-_GITHUB_TOOLS = {"git_fetch", "git_push", "github_create_pr", "github_create_issue", "github_get_issue",
-                 "github_list_issues"}
+_GITHUB_TOOLS = {"git_fetch", "git_push", "github_create_pr", "github_update_pr", "github_create_issue",
+                 "github_get_issue", "github_list_issues"}
 
 
 def _proxy_blocks_other_providers(order: list[str]) -> bool:
@@ -213,7 +214,7 @@ def _check_policy_shape(report: Report, pol: dict) -> None:
             for t in tools:
                 if t not in known_tools:
                     report.warn(f"[approvals].tools names {t}, which is not a tool; a typo?",
-                                f"tools that can be held: {', '.join(holds.SUGGESTED_TOOLS)}, github_create_issue, "
+                                f"tools that can be held: {', '.join(holds.SUGGESTED_TOOLS)}, github_update_pr, github_create_issue, "
                                 "and a plugin tool declared writes_externally")
     if isinstance(appr, dict):
         value = appr.get("expire_seconds")
@@ -364,7 +365,7 @@ def check_policy(report: Report, path: Path | None = None) -> dict | None:
     _check_policy_shape(report, pol)
     git = pol.get("git") if isinstance(pol.get("git"), dict) else {}
     if _is_str_list(git.get("repos", [])) and not git.get("repos"):
-        report.info("[git].repos is empty: git_fetch, git_push, github_create_pr and gitlab_create_mr return DENIED",
+        report.info("[git].repos is empty: git_fetch, git_push, github_create_pr, github_update_pr and gitlab_create_mr return DENIED",
                     "add the repos agents may use, e.g. repos = [\"acme/widgets\"], then rebuild the image")
     gitlab_ok = True
     try:
