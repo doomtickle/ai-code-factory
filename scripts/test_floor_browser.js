@@ -67,6 +67,10 @@ async function launch(url, media, init) {
       if (r.exceptionDetails) throw new Error(JSON.stringify(r.exceptionDetails));
       return r.result.value;
     },
+    async resize(width, height = 900) {
+      await s("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile: false });
+      await new Promise(r => setTimeout(r, 300));
+    },
     async click(x, y) {
       for (const type of ["mouseMoved", "mousePressed", "mouseReleased"])
         await s("Input.dispatchMouseEvent", { type, x, y, button: "left", buttons: type === "mousePressed" ? 1 : 0, clickCount: 1 });
@@ -272,11 +276,16 @@ async function budget(url) {
     const fits = () => b.ev(`(() => { const m = document.getElementById("budget-meter"), v = document.getElementById("budget-v"), r = m.getBoundingClientRect(), f = m.firstChild.getBoundingClientRect(),
       box = document.getElementById("budget").getBoundingClientRect(), lab = document.querySelector("#budget label"), inp = document.getElementById("budget-in").getBoundingClientRect();
       return { meter: r.width, high: r.height, fill: f.width, valueClipped: v.scrollWidth > v.clientWidth, labelClipped: lab.scrollWidth > lab.clientWidth,
-        inside: r.right <= box.right + 0.5 && v.getBoundingClientRect().right <= box.right + 0.5 && inp.right <= box.right + 0.5 }; })()`);
+        sizes: "module " + Math.round(box.width) + "px, value " + v.scrollWidth + "/" + v.clientWidth + ", label " + lab.scrollWidth + "/" + lab.clientWidth,
+        inside: r.right <= box.right + 0.5 && v.getBoundingClientRect().right <= box.right + 0.5 && inp.right <= box.right + 0.5,
+        // The rail can be a fixed height with its modules clipping (overflow: hidden): the last line must end inside.
+        foot: (() => { const mod = m.closest(".mod"), edge = mod.getBoundingClientRect().bottom - parseFloat(getComputedStyle(mod).borderBottomWidth);
+          return { ok: v.getBoundingClientRect().bottom <= edge + 0.5, said: "value bottom " + Math.round(v.getBoundingClientRect().bottom) + ", module clips at " + Math.round(edge) }; })() }; })()`);
     const roomy = async (what) => { const f = await fits();
       assert.ok(f.meter >= 60 && f.high >= 4, `${what}: the meter shows (${f.meter} x ${f.high}px)`);
-      assert.ok(!f.valueClipped && !f.labelClipped, `${what}: the words aren't clipped`);
-      assert.ok(f.inside, `${what}: everything stays inside the module`); return f; };
+      assert.ok(!f.valueClipped && !f.labelClipped, `${what}: the words aren't clipped (${f.sizes})`);
+      assert.ok(f.inside, `${what}: everything stays inside the module (${f.sizes})`);
+      assert.ok(f.foot.ok, `${what}: nothing is cut off at the module's foot (${f.foot.said})`); return f; };
     const stored = () => b.ev(`JSON.parse(localStorage.getItem("fc1984-knobs") || "{}")`);
     const reload = async () => { await b.ev(`location.reload()`); await b.sleep(500); for (let i = 0; i < 40 && !(await b.ev(`window.__polls > 0`)); i++) await b.sleep(250); await b.sleep(200); };
     const typed = v => b.ev(`(() => { const i = document.getElementById("budget-in"); i.value = ${JSON.stringify(v)}; i.dispatchEvent(new Event("input")); return null; })()`);
@@ -326,8 +335,18 @@ async function budget(url) {
     const half = await roomy("budget set");
     assert.ok(Math.abs(half.fill - half.meter * 0.75) < 2, `the fill is 75% of the meter's real width (${half.fill} of ${half.meter})`);
     const amberInk = l.ink;
-    await setCost(1234.5);
-    await roomy("a long figure");
+    // Desktop widths (#195): the spend module sits in the 3-column rail above 1280px and in the wrapped rail at 1280.
+    // A long figure must not squeeze the meter or clip; the window returns to 1280 for the rest.
+    const meters = {};
+    for (const cost of [75, 1234.5]) {
+      await setCost(cost);
+      for (const w of [1280, 1500, 1920]) {
+        await b.resize(w);
+        meters[`${cost}@${w}`] = Math.round((await roomy(`$${cost} at ${w}px`)).meter);
+      }
+    }
+    console.log(`budget meter width (px) by spend@viewport: ${JSON.stringify(meters)}`);
+    await b.resize(1280);
     await setCost(120);
     l = await look();
     assert.deepStrictEqual([l.width, l.tip], ["100%", "Past twice the shift budget of $50.00"]);

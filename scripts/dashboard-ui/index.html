@@ -94,8 +94,10 @@
         <div class="budget" id="budget">
           <label class="silk" for="budget-in">Shift budget $/day</label>
           <input class="budget-in" id="budget-in" type="text" inputmode="decimal" maxlength="9" autocomplete="off" spellcheck="false" placeholder="none" title="Dollars per day; 0 or empty for no budget. Display only: nothing stops a job.">
-          <div class="budget-meter" id="budget-meter" role="meter" aria-label="Today's spend against the shift budget" aria-valuemin="0" aria-valuemax="1" aria-valuenow="0" aria-valuetext="No budget set"><i class="fill"></i><i class="tick"></i></div>
-          <span class="budget-v" id="budget-v">no budget</span>
+          <div class="budget-row">
+            <div class="budget-meter" id="budget-meter" role="meter" aria-label="Today's spend against the shift budget" aria-valuemin="0" aria-valuemax="1" aria-valuenow="0" aria-valuetext="No budget set"><i class="fill"></i><i class="tick"></i></div>
+            <span class="budget-v" id="budget-v">no budget</span>
+          </div>
         </div>
       </section>
 

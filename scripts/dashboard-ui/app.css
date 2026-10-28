@@ -391,21 +391,23 @@ html.cu-open, html.cu-open body { overflow: hidden; }
 .segs i.on { background: var(--led-amber); box-shadow: 0 0 4px var(--led-amber); }
 .role-row .v { font-family: var(--f-crt); font-size: 1.05rem; text-align: right; color: var(--silk); }
 
-/* Shift budget: label and box on one row, the meter (midpoint tick = the budget) and "$spent / $budget" below; the header readout tints past it. */
-.budget { display: grid; grid-template-columns: minmax(6em, 1fr) auto; gap: 6px 8px; align-items: center; margin-top: 9px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,.08); }
+/* Shift budget: label and box on one row; below, the meter (midpoint tick = the budget) and "$spent / $budget", which drops
+   under the meter rather than squeeze it or clip when the module is narrow. The header readout tints past the budget. */
+.budget { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 8px; align-items: center; margin-top: 9px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,.08); }
 .budget .silk { white-space: nowrap; }
 .budget-in { width: 5.2em; box-sizing: border-box; padding: 2px 5px; font-family: var(--f-crt); font-size: 1.05rem; text-align: right; border: 0; border-radius: 3px;
   color: var(--lcd-ink); background: linear-gradient(170deg, var(--lcd-bg), var(--lcd-bg-2)); box-shadow: inset 0 2px 5px rgba(0,0,0,.45), 0 0 0 2px #101112; }
 .budget-in::placeholder { color: var(--lcd-ink); opacity: .35; }
 .budget-in[aria-invalid="true"] { background: #e9a39a; }
 .budget-in:focus-visible { outline: 2px solid var(--led-amber); outline-offset: 2px; }
-.budget-meter { position: relative; min-width: 6em; height: 9px; border-radius: 2px; background: var(--led-off); overflow: hidden; }
+.budget-row { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
+.budget-meter { position: relative; flex: 1 1 4.5em; min-width: 4.5em; height: 9px; border-radius: 2px; background: var(--led-off); overflow: hidden; }
 .budget-meter .fill { position: absolute; inset: 0 auto 0 0; width: 0; background: var(--led-green); box-shadow: 0 0 5px var(--led-green); }
 .budget-meter.over .fill { background: var(--led-amber); box-shadow: 0 0 5px var(--led-amber); }
 .budget-meter.over2 .fill { background: var(--led-red); box-shadow: 0 0 5px var(--led-red); }
 .budget-meter .tick { position: absolute; left: 50%; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: var(--silk); opacity: .8; }
 .budget-meter.none .tick { display: none; }
-.budget-v { font-family: var(--f-crt); font-size: 1.05rem; color: var(--silk); white-space: nowrap; text-align: right; }
+.budget-v { font-family: var(--f-crt); font-size: 1.05rem; color: var(--silk); white-space: nowrap; margin-left: auto; }
 .lcd.over { --lcd-bg: #f3b63a; --lcd-bg-2: #dd9a14; --lcd-ink: #1c1000; }
 .lcd.over2 { --lcd-bg: #e0503f; --lcd-bg-2: #c23422; --lcd-ink: #fff4f1; }
 
