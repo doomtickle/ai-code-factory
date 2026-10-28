@@ -48,8 +48,7 @@ cp "$REPO_ROOT"/scripts/lib/*.sh "$fx/scripts/lib/"
 cp "$REPO_ROOT/scripts/start-broker.sh" "$fx/scripts/"
 cp -R "$REPO_ROOT/roles" "$fx/roles"
 cp -R "$REPO_ROOT/kits/coordinator" "$fx/kits/coordinator"
-printf '%s\n' npm_fetch pip_download git_fetch git_push github_create_pr gitlab_create_mr \
-  github_create_issue web_fetch jira_my_issues jira_get_issue > "$fx/broker/tools.txt"
+cp "$REPO_ROOT/broker/tools.txt" "$fx/broker/tools.txt"
 cat > "$fx/scripts/03-stop-factory.sh" <<'STUB'
 #!/bin/sh
 echo "stop" >> "$CALLS"
