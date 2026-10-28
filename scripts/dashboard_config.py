@@ -42,7 +42,7 @@ TOP_KEYS = ("plant", "shifts", "crt", "sound")
 COLORS_TABLE = "roles.colors"
 
 _PRINTABLE = re.compile(r"[\x20-\x7e]*")
-_HEADER = re.compile(r"\[[ \t]*([^\]]*?)[ \t]*\][ \t]*(#.*)?")
+_HEADER = re.compile(r"\[([^\]]*)\](.*)")
 _KEY_LINE = re.compile(r"([A-Za-z0-9_-]+)[ \t]*=[ \t]*(.*)")
 _INT = re.compile(r"(0|[1-9][0-9]*)[ \t]*(#.*)?")
 _BOOL = re.compile(r"(true|false)[ \t]*(#.*)?")
@@ -134,7 +134,9 @@ def parse(text: str) -> dict:
 
         if stripped.startswith("["):
             m = _HEADER.fullmatch(stripped)
-            name = m.group(1) if m else ""
+            if m and m.group(2).strip(" \t") and not m.group(2).lstrip(" \t").startswith("#"):
+                m = None
+            name = m.group(1).strip(" \t") if m else ""
             if name != COLORS_TABLE:
                 refuse(f"unknown table {('[' + name + ']') if m else stripped[:20]} (the only table is [{COLORS_TABLE}])")
             if table:

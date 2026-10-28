@@ -10,6 +10,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -60,6 +61,19 @@ class ParseTests(unittest.TestCase):
         self.refused('[server]\nport = 1\n', "line 1", "unknown table [server]")
         self.refused('[roles]\n', "unknown table [roles]")
         self.refused('[[roles.colors]]\n', "unknown table")
+
+    def test_a_header_tolerates_spaces_and_a_comment_but_not_trailing_junk(self):
+        for ok in ("[roles.colors]", "[ roles.colors ]", "[\troles.colors\t]  # c", "  [roles.colors]\t"):
+            self.assertEqual(dc.parse(ok + '\nfoo = "#aabbcc"\n')["colors"], {"foo": "#aabbcc"}, ok)
+        for bad in ("[roles.colors] x", "[roles.colors]]", "[roles .colors]", "[roles.colors"):
+            self.refused(bad + "\n", "line 1")
+
+    def test_a_hostile_header_line_is_refused_quickly(self):
+        for line in ("[" + " \t" * 8000 + "x", "[" + " \t" * 8000 + "x]" + " \t" * 8000 + "y",
+                     "[" * 16000, "[" + " " * 16000):
+            started = time.monotonic()
+            self.refused(line + "\n", "line 1")
+            self.assertLess(time.monotonic() - started, 1.0, line[:12])
 
     def test_the_colour_table_twice_and_a_key_twice(self):
         self.refused('[roles.colors]\n[roles.colors]\n', "appears twice")
