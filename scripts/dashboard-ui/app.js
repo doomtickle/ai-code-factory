@@ -554,6 +554,57 @@
     if (back && obRows.get(back[0])) obRows.get(back[0]).focus({ preventScroll: true });
   }
 
+  // ---------- STANDBY: the shift briefing (state.briefing, dashboard_setup.briefing): the project, its notes, the
+  // roles, the holds and one example work order. Host-derived facts; every string goes in with textContent.
+  let bfSig = "";
+  const num0 = v => (Number.isInteger(v) && v >= 0 ? v : 0);
+  const strs = v => (Array.isArray(v) ? v.filter(x => typeof x === "string") : []);
+  function bfRow(label, ...parts) {
+    const row = el("p", "bf-row");
+    row.append(el("span", "bf-label", label), ...parts.map(p => (typeof p === "string" ? el("span", "bf-text", p) : p)));
+    return row;
+  }
+  function renderBriefing() {
+    const box = $("briefing"), b = state.briefing;
+    const sig = JSON.stringify(b || null);
+    if (sig === bfSig) return;
+    bfSig = sig;
+    if (!b || typeof b !== "object") { box.hidden = true; box.replaceChildren(); return; }
+    const rows = [];
+    const repos = strs(b.repos), total = Math.max(num0(b.repos_total), repos.length);
+    rows.push(bfRow("Project", b.usable ? String(b.project) : "none bound: start the factory from a project folder"));
+    if (b.usable) {
+      rows.push(bfRow("Repos", !b.repos_known ? "the project folder isn't known to the dashboard"
+        : !repos.length ? "none found: rw roles need a git repo, or a folder of git repos"
+        : repos.join(", ") + (total > repos.length ? `, +${total - repos.length} more` : "")));
+      const n = b.notes || {}, files = Array.isArray(n.files) ? n.files : [];
+      if (files.length) {
+        const node = el("span", "bf-text");
+        files.forEach((f, i) => {
+          if (i) node.append(", ");
+          node.append(el("span", f.over ? "bf-bad" : "", `${f.name} ${num0(f.chars).toLocaleString("en-US")} chars${f.over ? " (over the limit)" : ""}`));
+        });
+        rows.push(bfRow("Notes", node));
+      } else {
+        rows.push(bfRow("Notes", "no project notes: roles start every task knowing only their instructions. To add some, create " + String(n.path || "")));
+      }
+    }
+    const rl = Array.isArray(b.roles) ? b.roles : [];
+    const roleNode = el("span", "bf-text");
+    rl.forEach((r, i) => {
+      if (i) roleNode.append(", ");
+      const off = r.optional && !r.on;
+      roleNode.append(el("span", off ? "bf-off" : "", `${r.name} ×${num0(r.lanes)}${r.optional ? (r.on ? " (optional, on)" : " (optional, off)") : ""}`));
+    });
+    if (rl.length) rows.push(bfRow("Roles", roleNode));
+    const h = b.holds || {}, tools = strs(h.tools);
+    rows.push(bfRow("Holds", h.on ? `on for ${tools.join(", ")}: those writes wait for your APPROVE` : "off: no write waits for your APPROVE"));
+    const order = el("div", "bf-order");
+    order.append(el("p", "bf-order-h", "Work order · to the Coordinator, in Terminal 0"), el("p", "bf-order-t", String(b.prompt || "")));
+    box.replaceChildren(...rows, order);
+    box.hidden = false;
+  }
+
   // ---------- monitor (one lane's transcript and review packet)
   function openMon(name, job, back) {
     monLane = name; monJob = job || ""; monBack = back || ""; monTab = job ? "packet" : "transcript"; monData = null; monBusy = false; monSeq++;
@@ -1052,7 +1103,7 @@
       if (!r.ok) throw new Error(String(r.status));
       state = await r.json();
       polledAt = Date.now();
-      renderCu(); renderHeader(); renderLanes(); renderGate(); renderSpend(); renderPaper(); renderOutbox(); renderTerm(); attention();
+      renderCu(); renderHeader(); renderLanes(); renderGate(); renderSpend(); renderPaper(); renderOutbox(); renderBriefing(); renderTerm(); attention();
       // The factory floor (floor.js) draws from the same state; it fetches nothing itself.
       document.dispatchEvent(new CustomEvent("factory:state", { detail: state }));
       if (monLane) loadMon();

@@ -1071,7 +1071,8 @@ your browser. It shows:
   status LED, the live tail of its transcript on an LCD (tool calls, errors,
   branches and held writes in their own colors), and its model, cost, context
   size and elapsed time. Idle lanes are chips in a strip under the modules,
-  and with nothing running the bay shows STANDBY. A lane powers on into the
+  and with nothing running the bay shows STANDBY, a shift briefing (project,
+  repos, notes, roles, holds, an example task). A lane powers on into the
   bay and down into the strip (no motion with the system's reduced-motion
   setting), and keeps its number in both forms: a digit key (or a click)
   opens the lane's full transcript and its latest review packet.

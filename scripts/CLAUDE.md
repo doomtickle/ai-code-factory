@@ -205,6 +205,16 @@ refreshes at most every 30 s, one at a time, never on a request and never under 
 or timed-out call keeps the last answer (so a hiccup never shows FIRST SHIFT). The stale-sandbox hint reuses the
 SERVICE DUE cache (files only). Keychain checks are left out. Demo mode has no source and shows none.
 
+SHIFT BRIEFING (doomtickle/passdesk-ops#182, `dashboard_setup.briefing`, `app.js` `renderBriefing`) turns the STANDBY plate
+into a briefing: `briefing` in `/api/state`, the subset of the SETUP `config` (one builder, `dashboard_setup.setup`, not a second
+parser) plus the project's repos from `factory/repos.py` `project_repos` on the bound project folder (read from
+`broker/project` and used only if its basename is the dashboard's project). It holds host-derived facts only: the project name,
+the repos' names (at most 12), each notes file's name, role and size (never its contents), each role's lanes and whether it is on,
+the `[approvals].tools` names, the notes path to create, and one example prompt from the fixed `PROMPTS` list. No credential, no
+`[git].repos`, no GitLab URL, no expiry. It adds no endpoint and runs no command; it is built outside the board's lock, cached
+5 s (`BRIEFING_TTL`), every string cleaned to one printable line and drawn with `textContent`, no class or attribute from it. Demo
+mode reads the fixture's `setup/` folder and the empty `.git` folders `dashboard_demo.build` makes under `setup/project/`.
+
 Anything new that lets a page act must meet the same bar: one fixed argv with no
 shell, a key in a request header (not just the cookie) on a POST or WebSocket with its
 `Origin` checked, kept out of reach of the page that shows agent-written content, and a

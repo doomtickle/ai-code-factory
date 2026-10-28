@@ -127,7 +127,29 @@ the strip below.
 The **strip** under the modules has a chip for every idle lane, with its
 number, the branch its developer last worked on (dim) and when its last job
 ended. With nothing running, the bay shows
-STANDBY above it.
+STANDBY above it, as a **shift briefing**. It reads only what is already on
+this machine, changes nothing, and refreshes every few seconds:
+
+- **Project.** The folder `factory start` is bound to, and its git repos (the
+  same list the developer clones). A project that isn't a git repo or a folder
+  of them shows none: the developer can't work in it.
+- **Notes.** The project's notes files (`projects/<folder>.md` and
+  `projects/<folder>.<role>.md` in your config folder) with their sizes. The
+  contents never appear here. Without any, it reads "no project notes: roles
+  start every task knowing only their instructions" and gives the path to
+  create. Notes are read at `factory start`; see [Make it yours](04-customize.md).
+- **Roles.** Each role with its number of lanes; an optional role shows
+  whether it is on.
+- **Holds.** Whether held writes are on, and for which tools (`[approvals]`).
+  Credentials, the allowed repos and the GitLab address aren't shown; the
+  [Setup](#setup-the-configuration-in-force) screen has the rest.
+- **A work order.** One example task to give the Coordinator in Terminal 0,
+  picked from a short fixed list (the first is the slugify task from the
+  [first session](01-first-session.md#6-give-the-coordinator-a-small-first-task)).
+  It changes once a day, and nothing sends it for you.
+- **Keys.** The keys of the [Keys](#keys) table.
+
+If the configuration can't be read, only the first line of STANDBY shows.
 
 Each module shows:
 

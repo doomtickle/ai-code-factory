@@ -69,7 +69,10 @@
       <div class="lanes" id="lanes"></div>
       <!-- Nothing running: one standby panel instead of a wall of empty modules. -->
       <div class="standby plate" id="standby" hidden>
-        <div class="lcd standby-lcd"><p class="big">Standby</p><p>No jobs running. A lane powers on here when the Coordinator hands it a job.</p></div>
+        <div class="lcd standby-lcd"><p class="big">Standby</p><p>No jobs running. A lane powers on here when the Coordinator hands it a job.</p>
+          <!-- The shift briefing (app.js renderBriefing): host-derived facts, drawn as text. -->
+          <div class="briefing" id="briefing" hidden></div>
+          <p class="bf-keys">Keys: 1–9 open a lane · F floor · S sound · N notify · Enter on a printer line acts on it · Esc closes · MANUAL in the header opens the docs</p></div>
       </div>
       <!-- Idle lanes: one chip each, numbered like the modules. -->
       <div class="lane-strip" id="lane-strip" role="group" aria-label="Idle lanes" hidden></div>

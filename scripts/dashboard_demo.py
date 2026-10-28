@@ -41,6 +41,7 @@ PROJECT = "DEMO"
 REFUSED = "demo mode: this dashboard shows made-up data and nothing here acts"
 TOKEN = re.compile(r"\{\{(clock|iso|epoch|patch_sha256):([^{}]*)\}\}")
 PATCHES = ("broker", "approvals", "patches")
+DEMO_REPOS = ("app", "docs")  # empty repos made under setup/project/ for the shift briefing
 SETUP = "setup"  # the fixture's factory checkout (root/) and config folder (config/), for the SETUP screen
 # What the ticker appends (cycled): the printer's ALLOW and DENY lines, and the floor's crates.
 TICKS = (
@@ -95,6 +96,9 @@ def build(dest: Path, now: float | None = None, fixture: Path = FIXTURE) -> None
     (dest / "broker").mkdir(parents=True, exist_ok=True)
     (dest / "dispatch" / "pid").write_text(f"{os.getpid()}\n", encoding="utf-8")
     (dest / "broker" / "project").write_text(PROJECT + "\n", encoding="utf-8")
+    # The shift briefing lists the project's repos with the real lister, which wants a .git in each.
+    for repo in DEMO_REPOS:
+        (dest / SETUP / "project" / repo / ".git").mkdir(parents=True, exist_ok=True)
 
 
 def start_ticker(dest: Path, interval: float = 20.0, first: float = 8.0) -> threading.Event:

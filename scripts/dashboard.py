@@ -123,9 +123,12 @@ import dashboard_jobs as jobs_mod
 import dashboard_labels as labels
 import dashboard_outbox as ob
 import dashboard_service as ds
+import dashboard_setup
 import dashboard_term as dt
 import docs
 import watch as w
+from factory.context import Paths, bound_project
+from factory.repos import project_repos
 
 UI = Path(__file__).resolve().parent / "dashboard-ui"
 DOCS_ROOT = Path(__file__).resolve().parent.parent  # the factory checkout
@@ -178,6 +181,7 @@ COOKIE = "factory_dashboard"  # prefix: the cookie is COOKIE_<port> (see cookie_
 TAIL = 40          # transcript lines per lane in /api/state (taller lane screens)
 FULL = 1500        # transcript lines per lane in /api/lane
 EVENTS = 80        # event printer lines
+BRIEFING_TTL = 5   # seconds between rebuilds of the STANDBY plate's shift briefing
 SERVICE_TTL = 5    # seconds between checks of the SERVICE DUE lamp
 PACKET_MAX = 2_000_000  # bytes of a job's packet /api/lane?job= serves
 WRITES_TTL = 4     # seconds between reads of approvals/done/ for the deferred-write list
@@ -297,6 +301,7 @@ class Dashboard:
         self.paths = paths  # factory.context.Paths for the SERVICE DUE lamp; None (demo): never due
         self.hint_source = hint_source  # dashboard_hints.Hints (its .get(now)); None: no start-up hints
         self._service: tuple = (0.0, {"due": None, "lines": [], "stale": []})
+        self._briefing: tuple = (0.0, None)
         self.watch = w.Watch(state / "dispatch", roles, project)
         self.broker = BrokerAudit(state / "broker" / "audit.jsonl")
         self.verdicts: dict = {}
@@ -346,6 +351,31 @@ class Dashboard:
             cached = ds.service(self.paths, self.project)
             self._service = (now, cached)
         return {"due": cached["due"], "lines": list(cached["lines"])}
+
+    def briefing_source(self) -> tuple:
+        """(factory.context.Paths, the project's folder) the shift briefing reads; paths None when there is none.
+        Demo mode reads the fixture's setup/ folder and the empty repos dashboard_demo.build made there."""
+        if self.demo:
+            base = self.state / demo.SETUP
+            return Paths(str(base / "root"), str(base / "config"), str(self.state)), str(base / "project")
+        if self.paths is None:
+            return None, ""
+        folder = bound_project(self.paths)
+        return self.paths, folder if os.path.basename(folder.rstrip("/")) == self.project else ""
+
+    def briefing(self, now: float) -> dict | None:
+        """The STANDBY plate's shift briefing (dashboard_setup.briefing), rebuilt at most every BRIEFING_TTL
+        seconds. It reads config and lists the project folder, so it runs outside board.lock."""
+        at, cached = self._briefing
+        if now - at >= BRIEFING_TTL or now < at:
+            paths, folder = self.briefing_source()
+            cached = None
+            if paths is not None:
+                config = dashboard_setup.setup(paths, self.project)
+                repos = project_repos(folder) if folder else None
+                cached = dashboard_setup.briefing(config, paths, repos, now)
+            self._briefing = (now, cached)
+        return cached
 
     def hints(self, now: float) -> list:
         """The FIRST SHIFT banner and start-up hints (dashboard_hints.py): [{"code", "text"}]. The
@@ -488,6 +518,7 @@ class Dashboard:
             "outbox": outbox,
             "service": self.service(now),
             "hints": self.hints(now),
+            "briefing": self.briefing(now),
         }
 
     @staticmethod

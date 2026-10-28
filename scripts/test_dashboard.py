@@ -23,6 +23,7 @@ import dashboard as d
 import dashboard_demo as demo
 import dashboard_jobs as jobs_mod
 import dashboard_outbox as ob
+import dashboard_setup
 from factory import fingerprints as fp
 from factory.context import Paths
 
@@ -1532,6 +1533,144 @@ class LaneJobsTests(unittest.TestCase):
         self.assertIn('el("span", "pending-v", v)', body)
 
 
+class BriefingTests(unittest.TestCase):
+    """The STANDBY plate's shift briefing in /api/state: host-derived facts from config and the project folder."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.base = Path(self.tmp.name)
+        self.fx = Fixture(self.base)
+        (self.fx.roles / "developer" / "role.conf").write_text('LANES="3"\nWORKSPACE="rw"\n')
+        (self.fx.roles / "researcher").mkdir()
+        (self.fx.roles / "researcher" / "role.conf").write_text('LANES="1"\nOPTIONAL="1"\n')
+        self.paths = Paths(str(self.base), str(self.base / "config"), str(self.fx.state))
+        self.project = self.base / "work" / "proj"
+        for repo in ("app", "docs"):
+            (self.project / repo / ".git").mkdir(parents=True)
+        (self.project / ".hidden" / ".git").mkdir(parents=True)
+        (self.project / "notes").mkdir()
+        (self.fx.state / "broker").mkdir(exist_ok=True)
+        (self.fx.state / "broker" / "project").write_text(f"{self.project}\n")
+        self.config("policy.toml", '[approvals]\ntools = ["git_push", "github_create_pr"]\n')
+        self.board = d.Dashboard(self.fx.state, self.fx.roles, "proj", paths=self.paths)
+
+    def config(self, rel, text):
+        path = Path(self.paths.config) / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+
+    def brief(self, board=None, now=None):
+        return (board or self.board).snapshot(now or self.fx.now)["briefing"]
+
+    def test_it_names_the_project_its_repos_roles_and_holds(self):
+        b = self.brief()
+        self.assertEqual((b["project"], b["usable"]), ("proj", True))
+        self.assertEqual((b["repos"], b["repos_total"], b["repos_known"]), (["app", "docs"], 2, True))
+        self.assertEqual([(r["name"], r["lanes"], r["optional"], r["on"]) for r in b["roles"]],
+                         [("developer", 3, False, True), ("researcher", 1, True, False), ("reviewer", 1, False, True)])
+        self.assertEqual(b["holds"], {"on": True, "tools": ["git_push", "github_create_pr"]})
+        self.assertIn(b["prompt"], dashboard_setup.PROMPTS)
+
+    def test_an_optional_role_that_is_switched_on_reads_on(self):
+        self.config("enabled-roles", "researcher\n")
+        self.assertEqual([r["on"] for r in self.brief()["roles"] if r["name"] == "researcher"], [True])
+
+    def test_holds_are_off_without_tools(self):
+        self.config("policy.toml", "[approvals]\ntools = []\n")
+        self.assertEqual(self.brief()["holds"], {"on": False, "tools": []})
+
+    def test_notes_are_named_by_role_with_sizes_and_never_their_contents(self):
+        self.config("projects/proj.md", "SHARED-NOTE-TEXT\n")
+        self.config("projects/proj.developer.md", "x" * 20_001)
+        notes = self.brief()["notes"]
+        self.assertEqual([(f["name"], f["role"], f["chars"], f["over"]) for f in notes["files"]],
+                         [("proj.md", None, 17, False), ("proj.developer.md", "developer", 20_001, True)])
+        self.assertTrue(notes["path"].endswith(os.path.join("config", "projects", "proj.md")))
+        self.assertNotIn("SHARED-NOTE-TEXT", json.dumps(self.board.snapshot(self.fx.now)))
+
+    def test_no_notes_gives_the_path_to_create_one(self):
+        notes = self.brief()["notes"]
+        self.assertEqual(notes["files"], [])
+        self.assertEqual(notes["path"], os.path.join(self.paths.config, "projects", "proj.md"))
+
+    def test_a_project_name_that_cant_name_a_notes_file_has_none(self):
+        self.config("projects/.hidden.md", "n")
+        for name in ("(no project)", ".hidden", "a/b", ""):
+            board = d.Dashboard(self.fx.state, self.fx.roles, name, paths=self.paths)
+            b = self.brief(board)
+            self.assertEqual((b["usable"], b["notes"]["usable"], b["notes"]["path"], b["notes"]["files"]),
+                             (False, False, "", []), name)
+
+    def test_repos_come_from_the_single_lister_and_are_capped(self):
+        self.assertNotIn(".hidden", self.brief()["repos"])
+        for i in range(20):
+            (self.project / f"r{i:02}" / ".git").mkdir(parents=True)
+        b = self.brief(d.Dashboard(self.fx.state, self.fx.roles, "proj", paths=self.paths))
+        self.assertEqual((len(b["repos"]), b["repos_total"]), (dashboard_setup.MAX_BRIEF_REPOS, 22))
+        self.assertEqual(b["repos"], d.project_repos(self.project)[:dashboard_setup.MAX_BRIEF_REPOS])
+
+    def test_a_project_that_is_itself_a_repo_lists_dot(self):
+        (self.project / ".git").mkdir()
+        self.assertEqual(self.brief()["repos"], ["."])
+
+    def test_a_folder_that_isnt_the_bound_project_is_unknown_not_guessed(self):
+        (self.fx.state / "broker" / "project").write_text(f"{self.base / 'work' / 'other'}\n")
+        b = self.brief()
+        self.assertEqual((b["repos"], b["repos_known"]), ([], False))
+        (self.fx.state / "broker" / "project").unlink()
+        self.assertFalse(self.brief(d.Dashboard(self.fx.state, self.fx.roles, "proj", paths=self.paths))["repos_known"])
+
+    def test_it_carries_no_credential_gitlab_url_or_git_repos_list(self):
+        self.config("policy.toml", '[approvals]\ntools = ["git_push"]\n[git]\nrepos = ["acme/secret-repo"]\n'
+                                   '[gitlab]\nurl = "https://user:hunter2@gitlab.acme.test/"\n')
+        blob = json.dumps(self.brief())
+        for word in ("secret-repo", "gitlab", "hunter2", "acme", "token", "credential", "expire"):
+            self.assertNotIn(word, blob.lower(), word)
+        self.assertEqual(set(self.brief()), {"project", "usable", "repos", "repos_total", "repos_known", "notes",
+                                             "roles", "holds", "prompt"})
+
+    def test_strings_are_one_printable_line(self):
+        (self.project / "evil\x1b[31m" / ".git").mkdir(parents=True)
+        self.assertNotRegex(json.dumps(self.brief(d.Dashboard(self.fx.state, self.fx.roles, "proj", paths=self.paths))["repos"]),
+                            r"\\u001b|[\x00-\x1f]")
+
+    def test_it_is_none_without_a_config_folder_or_when_reading_it_fails(self):
+        self.assertIsNone(self.brief(d.Dashboard(self.fx.state, self.fx.roles, "proj")))
+        with mock.patch.object(dashboard_setup, "build", side_effect=RuntimeError("boom")):
+            self.assertIsNone(self.brief(d.Dashboard(self.fx.state, self.fx.roles, "proj", paths=self.paths)))
+
+    def test_it_is_cached_and_built_outside_the_boards_lock(self):
+        seen = []
+        real = dashboard_setup.build
+
+        def build(paths, project):
+            seen.append(self.board.lock.locked())
+            return real(paths, project)
+
+        with mock.patch.object(dashboard_setup, "build", build):
+            first = self.brief(now=self.fx.now)
+            self.brief(now=self.fx.now + 1)
+            self.assertEqual(seen, [False])
+            (self.project / "late" / ".git").mkdir(parents=True)
+            self.assertEqual(self.brief(now=self.fx.now + 2), first)
+            later = self.brief(now=self.fx.now + d.BRIEFING_TTL + 1)
+            self.assertEqual(len(seen), 2)
+        self.assertIn("late", later["repos"])
+
+    def test_it_runs_no_command(self):
+        with mock.patch("subprocess.Popen", side_effect=AssertionError("a command was started")), \
+                mock.patch("subprocess.run", side_effect=AssertionError("a command was started")):
+            self.assertIsNotNone(self.brief())
+
+    def test_the_example_prompt_is_from_the_fixed_list_and_steady_within_a_day(self):
+        self.assertIn("slugify", dashboard_setup.PROMPTS[0])
+        day = 20_000 * 86400
+        self.assertEqual(dashboard_setup.example_prompt(day), dashboard_setup.example_prompt(day + 86399))
+        seen = {dashboard_setup.example_prompt(day + i * 86400) for i in range(len(dashboard_setup.PROMPTS))}
+        self.assertEqual(seen, set(dashboard_setup.PROMPTS))
+
+
 class PageTests(unittest.TestCase):
     def test_fonts_match_checksums(self):
         sums = (UI / "fonts" / "SHA256SUMS").read_text().split("\n")
@@ -1548,6 +1687,17 @@ class PageTests(unittest.TestCase):
             js = (UI / name).read_text()
             for sink in ("innerHTML", "outerHTML", "insertAdjacentHTML", "document.write", "eval(", "new Function"):
                 self.assertNotIn(sink, js, f"{name} uses {sink}")
+
+    def test_the_standby_plate_draws_the_briefing_as_text(self):
+        js = (UI / "app.js").read_text()
+        html = (UI / "index.html").read_text()
+        self.assertIn('id="briefing"', html)
+        body = js[js.index("function renderBriefing"):js.index("// ---------- monitor")]
+        self.assertNotRegex(body, r"\.(href|src|innerHTML)\s*=|setAttribute")
+        self.assertNotIn("className =", body.replace("el(", ""))
+        self.assertIn("renderBriefing();", js)
+        for key in ("1–9", "F floor", "S sound", "N notify", "MANUAL"):
+            self.assertIn(key, html)
 
     def test_outbox_draws_text_and_links_only_validated_urls(self):
         js = (UI / "app.js").read_text()

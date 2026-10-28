@@ -301,6 +301,14 @@ class SetupTests(unittest.TestCase):
         self.assertEqual((cfg["gitlab"]["url"], cfg["repos"]["source"]), ("https://gitlab.example.com/", "LOCAL"))
         self.assertEqual([f["name"] for f in cfg["notes"]["files"]], ["DEMO.md", "DEMO.developer.md"])
 
+    def test_the_demo_shows_a_shift_briefing_from_the_fixture(self):
+        b = self.env.board.snapshot(self.env.now)["briefing"]
+        self.assertEqual((b["project"], b["repos"], b["repos_known"]), ("DEMO", list(demo.DEMO_REPOS), True))
+        self.assertEqual([f["name"] for f in b["notes"]["files"]], ["DEMO.md", "DEMO.developer.md"])
+        self.assertEqual(b["holds"]["tools"], ["git_push", "github_create_pr"])
+        self.assertEqual([(r["name"], r["on"]) for r in b["roles"]],
+                         [("developer", True), ("researcher", False), ("reviewer", True)])
+
     def test_it_reads_the_temp_copy_never_the_checkout_or_real_config(self):
         paths, project = self.env.controls.setup_source()
         self.assertEqual(project, "DEMO")

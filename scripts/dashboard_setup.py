@@ -96,13 +96,17 @@ def _role(paths, name: str, on: bool) -> dict:
             "keys": keys, "fixed": fixed}
 
 
+def usable_project(project: str) -> bool:
+    """True if `project` can name a notes file: a folder name, not '(no project)', no '/', NUL or leading '.'."""
+    return bool(project) and project != NO_PROJECT and "/" not in project and "\0" not in project \
+        and not project.startswith(".")
+
+
 def _notes(paths, project: str, running: list) -> tuple:
     """(the notes block, {role: characters its instructions plus the notes come to}) for the bound project."""
     block = {"project": clean(project), "limit": NOTES_LIMIT, "applies": "START", "files": []}
     totals: dict = {}
-    usable = bool(project) and project != NO_PROJECT and "/" not in project and "\0" not in project \
-        and not project.startswith(".")
-    if not usable:
+    if not usable_project(project):
         return block, totals
     folder = os.path.join(paths.config, "projects")
     shared = _read_chars(os.path.join(folder, project + ".md"))
@@ -171,6 +175,54 @@ def build(paths, project: str) -> dict:
         "coordinator": {"broker_tools": _words(coordinator), "applies": "UPDATE"},
         "local_policy": os.path.isfile(os.path.join(paths.config, "policy.toml")),
         "notes": notes,
+    }
+
+
+PROMPTS = (
+    "Add unit tests for the slugify helper in src/utils/slug.ts: empty strings, unicode input and repeated "
+    "dashes. Don't change the helper itself. Get the tests reviewed, then tell me which branch to merge.",
+    "Read the README and the top-level folders, then tell me in five lines what this project does and how to "
+    "run its tests. Don't change any files.",
+    "Find one small function that has no tests, write tests for it on a new branch, get them reviewed, and tell "
+    "me which branch to merge.",
+)
+MAX_BRIEF_REPOS = 12
+
+
+def example_prompt(now: float) -> str:
+    """One of PROMPTS, the same all day: the first (the first-session guide's) on day 0 of each cycle."""
+    return PROMPTS[int(now // 86400) % len(PROMPTS)]
+
+
+def briefing(config: dict | None, paths, repos: list | None, now: float) -> dict | None:
+    """The STANDBY plate's shift briefing, the subset of `config` (build()) that the main page may show, plus the
+    project's repos. Facts the host derived only: sizes and names of notes files, never their contents; no
+    credential, no [git].repos, no GitLab URL. `repos` is None when the project folder is unknown."""
+    if config is None:
+        return None
+    project = config["project"]
+    usable = usable_project(project)
+    notes = config["notes"]
+    out_roles = []
+    for r in config["roles"]:
+        raw = next((k["value"] for k in r["keys"] if k["key"] == "LANES"), "")
+        try:
+            lanes = min(max(int(raw or "1"), 1), 8)
+        except ValueError:
+            lanes = 1
+        out_roles.append({"name": r["name"], "lanes": lanes, "optional": r["optional"], "on": r["on"]})
+    tools = list(config["approvals"]["tools"])
+    return {
+        "project": project, "usable": usable,
+        "repos": [clean(n, 80) for n in (repos or [])[:MAX_BRIEF_REPOS]],
+        "repos_total": len(repos or []), "repos_known": repos is not None,
+        "notes": {"usable": usable, "limit": NOTES_LIMIT,
+                  "path": clean(os.path.join(paths.config, "projects", project + ".md"), 240) if usable else "",
+                  "files": [{"name": f["name"], "role": f["role"], "chars": f["chars"], "over": f["over"]}
+                            for f in notes["files"]]},
+        "roles": out_roles,
+        "holds": {"on": bool(tools), "tools": tools},
+        "prompt": example_prompt(now),
     }
 
 
