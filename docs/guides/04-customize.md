@@ -25,6 +25,10 @@ affected, after listing what each one loses and asking you.
 | Only the lane git identity (`[git]` `author_name`, `author_email`) in your local `policy.toml` | `factory start` |
 | The Coordinator's default model or briefing (`kits/coordinator/spec.yaml`) | `factory update` |
 
+The dashboard's **SETUP** key shows the effective value of each line above and
+which of the two commands applies it: see
+[Setup](06-dashboard.md#setup-the-configuration-in-force).
+
 > **Tip:** Not sure? `factory start` warns when a sandbox is out of date:
 > `out of date (made from an older image or kit): factory-broker; run 'factory update' to recreate them`.
 > The dashboard shows the same on its **SERVICE** lamp: amber, "UPDATE due",

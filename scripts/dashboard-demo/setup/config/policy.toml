@@ -1,0 +1,7 @@
+[git]
+repos = ["example/app", "example/docs", "gitlab.example.com/team/app"]
+[gitlab]
+url = "https://gitlab.example.com/"
+[approvals]
+tools = ["git_push", "github_create_pr"]
+expire_seconds = 3600

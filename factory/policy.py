@@ -48,16 +48,23 @@ def _scan(text, section, key):
     return None
 
 
+def policy_value_source(paths, section, key):
+    """(raw value, "local" | "repo") for KEY in [SECTION], or (None, None) when neither file sets
+    it: policy_value's precedence, plus which file the value came from."""
+    for source, path in (("local", os.path.join(paths.config, "policy.toml")),
+                         ("repo", os.path.join(paths.root, "broker", "policy.toml"))):
+        if os.path.isfile(path):
+            value = _scan(read_text(path), section, key)
+            if value is not None:
+                return value, source
+    return None, None
+
+
 def policy_value(paths, section, key):
     """The raw value of KEY = ... in [SECTION] from this machine's overlay
     (FACTORY_CONFIG/policy.toml) if it sets KEY, else from broker/policy.toml: the same
     precedence as the broker's load_policy(). None if neither sets it."""
-    for path in (os.path.join(paths.config, "policy.toml"), os.path.join(paths.root, "broker", "policy.toml")):
-        if os.path.isfile(path):
-            value = _scan(read_text(path), section, key)
-            if value is not None:
-                return value
-    return None
+    return policy_value_source(paths, section, key)[0]
 
 
 def policy_string(paths, section, key):

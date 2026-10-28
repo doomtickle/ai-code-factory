@@ -127,9 +127,13 @@ without seeing N files?" with CANCEL and CONFIRM APPROVE (dark for 1 s), and the
 changing or going cancels the question.
 
 An unexpected exception in any control is a 500 with a fixed message, and only its
-type is logged. Settings, when they come, go in the control unit too, and anything
-that moves the security boundary (broker policy and hosts, credentials, kits) is shown
-there read-only, never edited.
+type is logged. SETUP (doomtickle/passdesk-ops#183) shows the effective configuration read-only: `config`
+in the unit's state, built by `scripts/dashboard_setup.py` from the factory's parsers, cached
+a few seconds and read outside the board's lock. It adds no endpoint and runs nothing; it takes
+only named policy keys (never a credential, and a URL's user, password, query and fragment are
+cut), and every string is cleaned to one printable line and drawn as text. Anything that moves
+the security boundary (broker policy and hosts, credentials, kits) is shown there read-only,
+never edited.
 
 Anything new that lets a page act must meet the same bar: one fixed argv with no
 shell, a key in a request header (not just the cookie) on a POST or WebSocket with its
@@ -146,7 +150,8 @@ rule above. It reads no `FACTORY_STATE` or broker state and refuses `--state`,
 inside the checkout, removed when the dashboard exits; the ticker appends audit records
 only there. There is no Terminal 0. Its control unit is `DemoControls`: `decide`,
 `prepare` and `run` raise `Refused(403)` before any decision file, token or host command,
-and `argv()` raises. `state`, `log` and `patch` are inherited unchanged, so INSPECT reads
+and `argv()` raises. `state`, `log` and `patch` are inherited unchanged (SETUP reads the
+fixture's `setup/` folder through `setup_source()`), so INSPECT reads
 the fixture's patch through the same `read_patch` path (digest-named, `O_NOFOLLOW`,
 SHA-256 checked) inside the temp folder. Keep it that way: demo code must never add a
 write outside that folder or a way to start a command.

@@ -409,10 +409,40 @@ terminal, so anything that asks for a password fails instead of waiting. If
 an update needs `sudo` (to install tools, say), run `factory update` in a
 terminal.
 
-The **SETUP** plate is a placeholder; settings will go there.
-
 Stands in for: `factory doctor`, `factory restart`, `factory update` and
 `factory update --plan`.
+
+### Setup: the configuration in force
+
+The **SETUP** key opens a read-only screen of the configuration the factory
+will use, read on this machine with the same code `factory start` uses. It
+changes nothing and has no keys but **CLOSE**; edit the files as
+[Make it yours](04-customize.md) describes. It refreshes every few seconds
+while open.
+
+- **Roles.** One block per role: whether it is on (an optional role is on only
+  if it is listed in `enabled-roles`), and `MODEL`, `MODELS`, `EFFORT`,
+  `LANES`, `MAX_SESSION_TOKENS`, `MAX_TURNS` and `MAX_JOB_SECONDS`, each
+  marked **REPO** (from the role's own `role.conf`) or **LOCAL** (your
+  override in `roles/<role>.conf`). A LOCAL line also shows the value it
+  replaced. `WORKSPACE`, `TEMPLATE` and `BROKER_TOOLS` are marked **FIXED**:
+  an override can't change them, and a block says so if your override file
+  tries.
+- **Optional roles** and the names in `enabled-roles` (a name that matches no
+  role is flagged).
+- **Gateway.** The held tools and their expiry (`[approvals]`), the allowed
+  repos (`[git].repos`), the GitLab address if one is set (without any user
+  name, password or query), each marked REPO or LOCAL by the file it came
+  from, and the Coordinator's broker tools.
+- **Project notes.** The notes files for the project the dashboard is bound to,
+  and for each running role its instructions plus the notes against the
+  20,000-character limit. A role over it is flagged: the dispatch
+  bridge refuses that role's tasks.
+
+Each line ends with the command that applies a change to it, **START** or
+**UPDATE**, as in the table in [Make it yours](04-customize.md#which-command-applies-a-change).
+Tokens, passwords and other credentials are never shown, and it never runs a
+command. If the files can't be read the screen says it is unavailable.
 
 ## Spend and the event printer
 
@@ -479,7 +509,8 @@ you can see a held crate waiting at the gate and a denied one landing in the der
 Demo mode is display only. It never reads your real state folder: it copies
 the fixture into a fresh temporary folder and deletes it when you press
 Ctrl-C. Terminal 0 is off, APPROVE, DECLINE, RESTART, UPDATE and DIAG answer
-that nothing here acts, and INSPECT shows the fixture's patch. The same
+that nothing here acts, INSPECT shows the fixture's patch, and SETUP shows
+the fixture's configuration (`scripts/dashboard-demo/setup/`), not yours. The same
 token, cookie and content rules apply as for a real run. `--demo` can't be
 combined with `--coordinator`, `--state`, `--project` or `--factory`;
 `--no-open` and `--port N` work as usual.

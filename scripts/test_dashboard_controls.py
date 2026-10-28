@@ -32,7 +32,9 @@ import hashlib
 import patchview
 import dashboard as d
 import dashboard_controls as dc
+import dashboard_setup
 import dashboard_term as dt
+from dashboard_service import Paths
 from test_dashboard import TOKEN, Fixture
 from test_dashboard_term import fake_term
 
@@ -1200,6 +1202,223 @@ class TermAroundActionTests(unittest.TestCase):
 # --------------------------------------------------------------------------
 # The /cu page
 
+# --------------------------------------------------------------------------
+# SETUP: the effective configuration, read-only
+
+class SetupTests(unittest.TestCase):
+    def setUp(self):
+        self.env = Env(self.addCleanup, serve=False)
+        self.root = Path(self.env.tmp.name)
+        self.config = self.root / "config"
+        self.paths = Paths(str(self.root), str(self.config), str(self.env.fx.state))
+        self.env.board.paths = self.paths
+        self.write(self.root / "roles" / "developer" / "role.conf",
+                   'TEMPLATE="developer"\nWORKSPACE="rw"\nLANES="3"\nBROKER_TOOLS="git_fetch git_push"\n'
+                   'MODEL="claude-sonnet-5-5"\nMODELS="opus"\nMAX_TURNS="200"\n')
+        self.write(self.root / "roles" / "reviewer" / "role.conf",
+                   'TEMPLATE="reviewer"\nWORKSPACE="ro"\nLANES="1"\nBROKER_TOOLS=""\nMODEL="opus"\n')
+
+    def write(self, path, text):
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+        return path
+
+    def conf(self, rel, text):
+        return self.write(self.config / rel, text)
+
+    def state(self):
+        self.env.controls._setup = (0.0, None)  # skip the cache
+        code, out = self.env.controls.api("state", {})
+        self.assertEqual(code, 200, out)
+        return out
+
+    def cfg(self):
+        return self.state()["config"]
+
+    def role(self, name):
+        return next(r for r in self.cfg()["roles"] if r["name"] == name)
+
+    def keys(self, name):
+        return {k["key"]: k for k in self.role(name)["keys"]}
+
+    def test_the_state_carries_config_built_from_the_real_parsers(self):
+        keys = self.keys("developer")
+        self.assertEqual([k["key"] for k in self.role("developer")["keys"]], list(dashboard_setup.roles.ROLE_OVERRIDE_KEYS))
+        self.assertEqual((keys["MODEL"]["value"], keys["MODEL"]["source"]), ("claude-sonnet-5-5", "REPO"))
+        self.assertEqual((keys["MAX_TURNS"]["value"], keys["EFFORT"]["value"]), ("200", ""))
+        self.assertTrue(all(k["applies"] == "START" for k in keys.values()))
+        fixed = {k["key"]: k for k in self.role("developer")["fixed"]}
+        self.assertEqual({k: (v["value"], v["applies"]) for k, v in fixed.items()},
+                         {"WORKSPACE": ("rw", "UPDATE"), "TEMPLATE": ("developer", "UPDATE"),
+                          "BROKER_TOOLS": ("git_fetch git_push", "START")})
+        self.assertIn("UPDATE", fixed["BROKER_TOOLS"]["note"])
+
+    def test_an_override_is_marked_local_with_the_repo_value_beside_it(self):
+        self.conf("roles/developer.conf", '# mine\nMODEL="claude-haiku-5-5"\nLANES="2"\nMAX_TURNS="200"\n')
+        keys = self.keys("developer")
+        self.assertEqual((keys["MODEL"]["value"], keys["MODEL"]["source"], keys["MODEL"]["repo"]),
+                         ("claude-haiku-5-5", "LOCAL", "claude-sonnet-5-5"))
+        self.assertEqual((keys["LANES"]["value"], keys["LANES"]["repo"]), ("2", "3"))
+        self.assertEqual((keys["MAX_TURNS"]["source"], keys["MAX_TURNS"]["repo"]), ("LOCAL", "200"))  # same value, still in force
+        self.assertEqual((keys["MODELS"]["source"], "repo" in keys["MODELS"]), ("REPO", False))
+        self.assertTrue(self.role("developer")["override"])
+        self.assertFalse(self.role("reviewer")["override"])
+
+    def test_the_override_can_set_only_the_overridable_keys(self):
+        self.conf("roles/developer.conf", 'WORKSPACE="ro"\nBROKER_TOOLS="web_fetch"\nTEMPLATE="reviewer"\nMODEL="opus"\n')
+        role = self.role("developer")
+        self.assertEqual({k["key"]: k["value"] for k in role["fixed"]},
+                         {"WORKSPACE": "rw", "TEMPLATE": "developer", "BROKER_TOOLS": "git_fetch git_push"})
+        self.assertEqual(role["ignored"], ["BROKER_TOOLS", "TEMPLATE", "WORKSPACE"])
+        self.assertEqual({k["key"] for k in role["keys"]}, set(dashboard_setup.roles.ROLE_OVERRIDE_KEYS))
+        self.assertEqual(self.keys("developer")["MODEL"]["source"], "LOCAL")
+
+    def test_optional_roles_and_enabled_roles(self):
+        self.write(self.root / "roles" / "researcher" / "role.conf",
+                   'OPTIONAL="1"\nTEMPLATE="reviewer"\nWORKSPACE="ro"\nBROKER_TOOLS="web_fetch"\n')
+        cfg = self.cfg()
+        self.assertEqual({r["name"]: (r["optional"], r["on"]) for r in cfg["roles"]},
+                         {"developer": (False, True), "researcher": (True, False), "reviewer": (False, True)})
+        self.assertEqual(cfg["enabled"], {"file": False, "applies": "START", "listed": [], "unknown": []})
+        self.conf("enabled-roles", "# on\nresearcher\nnot-a-role\n")
+        cfg = self.cfg()
+        self.assertEqual({r["name"]: r["on"] for r in cfg["roles"]}["researcher"], True)
+        self.assertEqual((cfg["enabled"]["file"], cfg["enabled"]["listed"], cfg["enabled"]["unknown"]),
+                         (True, ["researcher", "not-a-role"], ["not-a-role"]))
+
+    def test_a_disabled_roles_override_still_shows(self):
+        self.write(self.root / "roles" / "researcher" / "role.conf", 'OPTIONAL="1"\nTEMPLATE="reviewer"\nMODEL="sonnet"\n')
+        self.conf("roles/researcher.conf", 'MODEL="opus"\n')
+        role = self.role("researcher")
+        self.assertFalse(role["on"])
+        self.assertEqual({k["key"]: k["value"] for k in role["keys"]}["MODEL"], "opus")
+
+    def test_missing_files_read_as_nothing_set(self):
+        shutil.rmtree(self.root / "roles" / "reviewer")
+        cfg = self.cfg()  # no config folder, no policy.toml, no coordinator conf, no notes
+        self.assertEqual([r["name"] for r in cfg["roles"]], ["developer"])
+        self.assertEqual(cfg["approvals"]["tools"], [])
+        self.assertEqual((cfg["approvals"]["source"], cfg["approvals"]["expire_seconds"]), ("", ""))
+        self.assertEqual((cfg["repos"]["list"], cfg["gitlab"]["url"], cfg["coordinator"]["broker_tools"]), ([], "", []))
+        self.assertEqual((cfg["local_policy"], cfg["notes"]["files"]), (False, []))
+        shutil.rmtree(self.root / "roles")
+        self.assertEqual(self.cfg()["roles"], [])
+
+    def test_policy_values_name_the_file_they_came_from(self):
+        self.write(self.root / "broker" / "policy.toml", '[git]\nrepos = ["base/repo"]\n[gitlab]\nurl = ""\n')
+        cfg = self.cfg()
+        self.assertEqual((cfg["repos"]["list"], cfg["repos"]["source"]), (["base/repo"], "REPO"))
+        self.assertEqual(cfg["approvals"]["tools"], [])
+        self.conf("policy.toml", '[approvals]\ntools = ["git_push",\n  "github_create_pr"]\nexpire_seconds = 3600 # one hour\n'
+                  '[gitlab]\nurl = "https://oauth2:glpat-SECRET123@gitlab.example.com:8443/sub/?private_token=SECRET456#frag"\n')
+        cfg = self.cfg()
+        self.assertEqual((cfg["approvals"]["tools"], cfg["approvals"]["source"]), (["git_push", "github_create_pr"], "LOCAL"))
+        self.assertEqual((cfg["approvals"]["expire_seconds"], cfg["approvals"]["expire_source"]), ("3600", "LOCAL"))
+        self.assertEqual(cfg["repos"]["source"], "REPO")  # the overlay sets no [git].repos
+        self.assertEqual((cfg["gitlab"]["url"], cfg["local_policy"]), ("https://gitlab.example.com:8443/sub/", True))
+        self.write(self.root / "kits" / "coordinator" / "broker.conf", 'BROKER_TOOLS="jira_get_issue web_fetch"\n')
+        self.assertEqual(self.cfg()["coordinator"], {"broker_tools": ["jira_get_issue", "web_fetch"], "applies": "UPDATE"})
+
+    def test_no_secret_reaches_the_state(self):
+        self.conf("policy.toml", '[gitlab]\nurl = "https://user:PASSWORD1@gitlab.example.com/"\n'
+                  '[jira]\ncloud_id = "CLOUDID1"\napi_token = "TOKEN1"\n[packages]\nnpm_private_registry = "https://REG1.example.com/"\n'
+                  '[approvals]\nwebhook_url = "https://hooks.example.com/WEBHOOK1"\ntools = ["git_push"]\n')
+        self.conf("roles/developer.conf", 'MODEL="opus"\nANTHROPIC_API_KEY="KEY1"\n')
+        blob = json.dumps(self.state())
+        for secret in ("PASSWORD1", "CLOUDID1", "TOKEN1", "REG1", "WEBHOOK1", "KEY1"):
+            self.assertNotIn(secret, blob)
+        self.assertIn("gitlab.example.com", blob)
+
+    def test_strings_are_one_printable_line(self):
+        self.conf("roles/developer.conf", 'MODEL="ev\x1b[31mil\u202e"\nMODELS="' + "x" * 500 + '"\n')
+        keys = self.keys("developer")
+        self.assertEqual(keys["MODEL"]["value"], "ev?[31mil?")
+        self.assertEqual(len(keys["MODELS"]["value"]), 160)
+
+    def test_project_notes_with_sizes_against_the_limit(self):
+        self.write(self.root / "roles" / "developer" / "instructions.md", "i" * 1000)
+        self.write(self.root / "roles" / "reviewer" / "instructions.md", "i" * 500)
+        self.conf("projects/proj.md", "n" * 100)
+        self.conf("projects/proj.developer.md", "é" * 19_000)  # characters, not bytes
+        self.conf("projects/proj.ghost.md", "no such role")
+        self.conf("projects/other.md", "another project")
+        notes = self.cfg()["notes"]
+        self.assertEqual((notes["project"], notes["limit"], notes["applies"]), ("proj", 20_000, "START"))
+        self.assertEqual([(f["name"], f["role"], f["chars"], f["over"]) for f in notes["files"]],
+                         [("proj.md", None, 100, False), ("proj.developer.md", "developer", 19_000, False)])
+        dev = self.role("developer")
+        self.assertEqual(dev["instructions_chars"], 1000 + len("\n# This project (proj)\n") + 100
+                         + len("\n# This project (proj), for the developer\n") + 19_000)
+        self.assertTrue(dev["over"])  # 1000 + 19,000 + 100 + the headings
+        rev = self.role("reviewer")
+        self.assertEqual((rev["instructions_chars"], rev["over"]), (500 + len("\n# This project (proj)\n") + 100, False))
+        self.conf("projects/proj.md", "n" * 20_001)
+        shared = self.cfg()["notes"]["files"][0]
+        self.assertEqual((shared["chars"], shared["over"]), (20_001, True))
+
+    def test_notes_of_a_role_that_is_off_are_listed_as_not_read(self):
+        self.write(self.root / "roles" / "researcher" / "role.conf", 'OPTIONAL="1"\nTEMPLATE="reviewer"\n')
+        self.conf("projects/proj.researcher.md", "notes")
+        (f,) = self.cfg()["notes"]["files"]
+        self.assertEqual((f["name"], f["read"]), ("proj.researcher.md", False))
+
+    def test_no_bound_project_means_no_notes(self):
+        self.conf("projects/proj.md", "notes")
+        for project in ("(no project)", "", "../x", ".hidden", "a/b"):
+            self.env.board.project = project
+            self.assertEqual(self.cfg()["notes"]["files"], [], project)
+
+    def test_it_is_none_without_a_config_folder_to_read(self):
+        self.env.board.paths = None
+        self.assertIsNone(self.state()["config"])
+
+    def test_a_failure_reads_as_unavailable_not_a_500(self):
+        with mock.patch.object(dashboard_setup, "build", side_effect=RuntimeError("boom")):
+            self.assertIsNone(self.state()["config"])
+
+    def test_the_config_is_cached_and_read_outside_the_boards_lock(self):
+        ctl, board = self.env.controls, self.env.board
+        seen = []
+        real = dashboard_setup.build
+        real_service = board.service
+
+        def build(paths, project):
+            seen.append(("setup", board.lock.locked()))
+            return real(paths, project)
+
+        def service(now):
+            seen.append(("service", board.lock.locked()))
+            return real_service(now)
+
+        with mock.patch.object(dashboard_setup, "build", build), mock.patch.object(board, "service", service):
+            ctl.api("state", {})
+            ctl.api("state", {})
+            self.assertEqual([s for s in seen if s[0] == "setup"], [("setup", False)])  # built once
+            self.assertEqual({s for s in seen if s[0] == "service"}, {("service", False)})
+            self.env.clock.t += dc.SETUP_TTL + 1
+            ctl.api("state", {})
+            self.assertEqual(len([s for s in seen if s[0] == "setup"]), 2)
+
+    def test_the_screen_adds_no_endpoint_and_nothing_acts(self):
+        self.assertEqual(self.env.controls.api("config", {})[0], 404)
+        before = os.listdir(self.root)
+        with mock.patch("subprocess.Popen", side_effect=AssertionError("a command was started")):
+            self.state()
+        self.assertEqual(os.listdir(self.root), before)  # reading the config wrote nothing
+
+    def test_the_screens_code_draws_text_only(self):
+        js = (UI / "cu.js").read_text()
+        block = js[js.index("// ---------- the setup screen"):js.index("function renderConfirm(d)")]
+        self.assertNotRegex(block, r"\.title\s*=")
+        self.assertNotRegex(block, r"\.(href|src|style|dataset|innerHTML)\b")
+        self.assertNotIn("setAttribute", block)
+        self.assertNotIn("api(", block)  # it reads the polled state and makes no request
+        html = (UI / "cu.html").read_text()
+        self.assertEqual(re.findall(r'<button class="blank" type="button" id="(svc-setup)"', html), ["svc-setup"])
+        self.assertIn('$("svc-setup").addEventListener("click", openSetup);', js)
+
+
 class PageTests(unittest.TestCase):
     def setUp(self):
         self.ui = Path(tempfile.mkdtemp())
@@ -1327,7 +1546,7 @@ class RealPageTests(unittest.TestCase):
 
     def test_service_keys(self):
         html = (UI / "cu.html").read_text()
-        row = html[html.index('<div class="service"'):html.index('<div class="blank"')]
+        row = html[html.index('<div class="service"'):html.index('<!-- SETUP')]
         self.assertEqual(re.findall(r'id="svc-([a-z]+)"', row), ["doctor", "restart", "update", "log"])
         js = (UI / "cu.js").read_text()
         self.assertIn('doctor: "factory doctor"', js)

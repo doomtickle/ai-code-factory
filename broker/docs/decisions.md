@@ -4,6 +4,18 @@ Dated entries, for the user to review. Newest first.
 
 ## 2026-10-27
 
+- **The dashboard's SETUP screen rides in the polled control-unit state, cached for 5 s, and
+  shows no credential at all.** doomtickle/passdesk-ops#183. `config` is built by
+  `scripts/dashboard_setup.py` from the factory's own parsers (`roles.role_get` for the
+  effective value, so `ROLE_OVERRIDE_KEYS` stays the one list of overridable keys;
+  `policy.policy_value_source`, new, to say whether a policy value is REPO or LOCAL). It is built
+  and cached outside `board.lock`, as is `board.service()`. Policy is read key by key: only
+  `[approvals].tools`/`expire_seconds`, `[git].repos` and `[gitlab].url` (user:password, query
+  and fragment cut) are taken, so no other section can leak. "Stored / not stored" for
+  credentials was left out: it needs a keychain call and the screen runs no command. Notes sizes
+  are in characters (as the bridge counts), and a role's total mirrors `dispatch_start`'s
+  headings. Demo mode reads a fixture root and config folder in its temp copy, never the checkout.
+
 - **The dashboard's SERVICE DUE lamp reads files, never `sbx ls -q`, and names the sandbox's
   inputs that changed from lines the start now records.** doomtickle/passdesk-ops#184. The
   state view only reads the state folder, so it can't ask sbx which sandboxes exist: it checks

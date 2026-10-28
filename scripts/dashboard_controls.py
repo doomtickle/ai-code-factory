@@ -12,7 +12,9 @@ those requests reach:
   state    the held writes (with each card's fingerprint, and whether the
            gateway has staged it), the recent deferred writes the gateway made
            on approval (display only: made, failed, running), the bound
-           project and the current service action
+           project, the current service action and `config`, the effective
+           configuration for the SETUP screen (dashboard_setup.py: read-only,
+           from the factory's own parsers, no secrets, cached SETUP_TTL seconds)
   decide   approve or decline one held write: one press, a file write through
            approvals.write_decision(), the same record `factory approvals`
            writes. Exact id, and the card's fingerprint must still match.
@@ -68,6 +70,7 @@ import time
 from pathlib import Path
 
 import approvals
+import dashboard_setup
 import patchview
 
 SCRIPTS = Path(__file__).resolve().parent
@@ -75,6 +78,7 @@ FACTORY = SCRIPTS.parent / "bin" / "factory"
 ACTIONS = ("restart", "update", "doctor")
 HANGS_UP = ("restart", "update")  # the actions that stop the Coordinator's sandbox
 CONFIRM_TTL = 120      # seconds a prepared confirm token stays valid
+SETUP_TTL = 5          # seconds the SETUP screen's data is reused: it stats and reads the config folder
 PLAN_TIMEOUT = 90      # seconds `factory update --plan` may take
 LOG_CHUNK = 64 * 1024  # most bytes /cu/api/log returns at once
 MAX_REASON = 500       # characters in a decision's reason
@@ -174,6 +178,7 @@ class Controls:
         self.factory, self.clock, self.scripts = str(factory), clock, scripts
         self.approver = approver or os.environ.get("USER") or getpass.getuser()
         self.lock = threading.Lock()
+        self._setup: tuple = (0.0, None)  # (when, data) of the SETUP screen's config
         self.plan_lock = threading.Lock()  # one `factory update --plan` at a time
         self.confirm = None        # (token, action, expires) of the last prepare
         self.action = None         # name of the current/last action
@@ -234,12 +239,27 @@ class Controls:
         cards, _, _ = self.gate(now)
         with self.board.lock:
             writes = self.board.writes(now)  # display only: deferred writes the gateway made (or failed)
-            service = self.board.service(now)["due"]  # display only: which service key's LED to light
+        # These two read and hash files, so they run outside board.lock (each caches its own result).
+        service = self.board.service(now)["due"]  # display only: which service key's LED to light
+        config = self.setup(now)
         project = self.bound()
         with self.lock:
             action = self.action_json()
         return 200, {"now": now, "project": project, "bound": bool(project), "cards": cards, "writes": writes,
-                     "service": service, "action": action}
+                     "service": service, "action": action, "config": config}
+
+    def setup_source(self) -> tuple:
+        """(factory.context.Paths, project name) the SETUP screen reads; paths None when there is none."""
+        return self.board.paths, self.board.project
+
+    def setup(self, now: float) -> dict | None:
+        """The SETUP screen's data (dashboard_setup.py), rebuilt at most every SETUP_TTL seconds."""
+        at, cached = self._setup
+        if now - at >= SETUP_TTL or now < at:
+            paths, project = self.setup_source()
+            cached = dashboard_setup.setup(paths, project)
+            self._setup = (now, cached)
+        return cached
 
     def held_card(self, cid: str, fp: str) -> dict:
         """The pending card with exactly this id, if its fingerprint is still fp."""

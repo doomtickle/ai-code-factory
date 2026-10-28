@@ -1,0 +1,2 @@
+- Tests: npm test
+- Layout: src/ and tests/

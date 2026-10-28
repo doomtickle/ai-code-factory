@@ -277,6 +277,35 @@ class RefusalTests(unittest.TestCase):
         self.assertEqual((status, out["error"]), (409, "patch does not match its card"))
 
 
+class SetupTests(unittest.TestCase):
+    def setUp(self):
+        self.env = Env(self.addCleanup)
+
+    def test_the_demo_shows_the_fixtures_configuration(self):
+        cfg = self.env.post("state")[1]["config"]
+        self.assertEqual(cfg["project"], "DEMO")
+        roles = {r["name"]: r for r in cfg["roles"]}
+        self.assertEqual(sorted(roles), ["developer", "researcher", "reviewer"])
+        model = next(k for k in roles["developer"]["keys"] if k["key"] == "MODEL")
+        self.assertEqual((model["value"], model["source"], model["repo"]), ("claude-haiku-5-5", "LOCAL", "claude-sonnet-5-5"))
+        self.assertEqual((roles["researcher"]["optional"], roles["researcher"]["on"]), (True, False))
+        self.assertEqual(cfg["approvals"]["tools"], ["git_push", "github_create_pr"])
+        self.assertEqual((cfg["gitlab"]["url"], cfg["repos"]["source"]), ("https://gitlab.example.com/", "LOCAL"))
+        self.assertEqual([f["name"] for f in cfg["notes"]["files"]], ["DEMO.md", "DEMO.developer.md"])
+
+    def test_it_reads_the_temp_copy_never_the_checkout_or_real_config(self):
+        paths, project = self.env.controls.setup_source()
+        self.assertEqual(project, "DEMO")
+        for p in (paths.root, paths.config, paths.state):
+            self.assertEqual(os.path.commonpath([os.path.realpath(p), os.path.realpath(self.env.state)]),
+                             os.path.realpath(self.env.state), p)
+
+    def test_the_fixture_has_nothing_real_in_it(self):
+        blob = "".join(p.read_text(encoding="utf-8") for p in (demo.FIXTURE / "setup").rglob("*") if p.is_file())
+        for word in ("doomtickle", "passdesk", "daron", "@gmail", "api_key", "secret", "password"):
+            self.assertNotIn(word, blob.lower())
+
+
 def dc_actions():
     import dashboard_controls as dc
     return dc.ACTIONS
