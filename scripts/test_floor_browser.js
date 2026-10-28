@@ -9,6 +9,7 @@
 // The attention signals (#192, app.js) are driven by rewriting the /api/state the page polls: the title and
 // favicon badge, the cues' events, the jobs-done count clearing on focus, and the NOTIFY key (a stubbed
 // Notification: permission asked only from the key, a body of fixed words and validated names only).
+// The SHIFT BUDGET (#195): the amber/red thresholds of the header's spend readout, the meter, and the stored figure.
 "use strict";
 const { spawn } = require("node:child_process");
 const assert = require("node:assert");
@@ -253,6 +254,107 @@ async function printer(url) {
   } finally { await b.close(); }
 }
 
+// SHIFT BUDGET (#195): a dollars-a-day figure on the spend module, kept in this browser with the knob values, tints the
+// header's spend readout amber past it and red past twice it, and fills a meter. Display only. The page's own poll is
+// rewritten so today's spend is whatever window.__cost says.
+const BUDGET = `(() => { const real = window.fetch.bind(window); window.__polls = 0; window.__cost = 10;
+  window.fetch = async (u, o) => { const r = await real(u, o); if (!String(u).startsWith("/api/state")) return r;
+    const j = await r.json(); j.totals.cost = window.__cost; window.__polls++; return new Response(JSON.stringify(j), { status: 200 }); }; })()`;
+
+async function budget(url) {
+  const b = await launch(url, undefined, BUDGET);
+  try {
+    const poll = async () => { const n = await b.ev(`window.__polls`); for (let i = 0; i < 40 && (await b.ev(`window.__polls`)) <= n; i++) await b.sleep(250); await b.sleep(100); };
+    const look = () => b.ev(`(() => { const box = document.getElementById("ro-spend-box"), m = document.getElementById("budget-meter");
+      return { cls: [box.classList.contains("over"), box.classList.contains("over2")], ink: getComputedStyle(box.querySelector(".seg .on")).fill,
+        meter: m.className.replace("budget-meter", "").trim(), width: m.firstChild.style.width, text: document.getElementById("budget-v").textContent, tip: box.title }; })()`);
+    const stored = () => b.ev(`JSON.parse(localStorage.getItem("fc1984-knobs") || "{}")`);
+    const reload = async () => { await b.ev(`location.reload()`); await b.sleep(500); for (let i = 0; i < 40 && !(await b.ev(`window.__polls > 0`)); i++) await b.sleep(250); await b.sleep(200); };
+    const typed = v => b.ev(`(() => { const i = document.getElementById("budget-in"); i.value = ${JSON.stringify(v)}; i.dispatchEvent(new Event("input")); return null; })()`);
+    const setCost = async v => { await b.ev(`window.__cost = ${v}`); await poll(); };
+    for (let i = 0; i < 40 && !(await b.ev(`window.__polls > 0`)); i++) await b.sleep(250);
+
+    // No budget: nothing tints, whatever the spend.
+    await setCost(500);
+    let l = await look();
+    assert.deepStrictEqual([l.cls, l.meter, l.width, l.text, l.tip], [[false, false], "none", "0%", "no budget", ""], "no budget: the readout stays plain");
+    const plainInk = l.ink;
+
+    // Type 50 with the real keys; digits and letters in the box are not lane or console keys.
+    await b.ev(`document.getElementById("budget-in").focus()`);
+    await b.key("5", "Digit5", "5"); await b.key("0", "Digit0", "0"); await b.key("f", "KeyF", "f");
+    assert.strictEqual(await b.ev(`document.getElementById("budget-in").value`), "50f", "the keys went into the box");
+    assert.strictEqual(await b.ev(`document.getElementById("floor-key").getAttribute("aria-pressed")`), "false", "f typed in the box doesn't turn the floor on");
+    assert.strictEqual(await b.ev(`document.getElementById("scrim").hidden`), true, "a digit typed in the box opens no monitor");
+    assert.strictEqual(await b.ev(`document.getElementById("budget-in").getAttribute("aria-invalid")`), "true", "junk is flagged");
+    assert.strictEqual((await stored()).budget, 50, "junk doesn't replace the last good figure");
+    await typed("50");
+    assert.strictEqual(await b.ev(`document.getElementById("budget-in").getAttribute("aria-invalid")`), null);
+    assert.strictEqual((await stored()).budget, 50, "50 is stored");
+
+    // The thresholds: amber only past the figure (not at it), red only past twice it (not at it).
+    const cases = [[0, [false, false], "ok"], [49.99, [false, false], "ok"], [50, [false, false], "ok"], [50.01, [true, false], "over"],
+      [99.99, [true, false], "over"], [100, [true, false], "over"], [100.01, [false, true], "over2"], [500, [false, true], "over2"], [10, [false, false], "ok"]];
+    for (const [cost, cls, name] of cases) {
+      await setCost(cost);
+      l = await look();
+      assert.deepStrictEqual(l.cls, cls, `spend ${cost} against 50: classes`);
+      assert.strictEqual(l.meter, name === "ok" ? "" : name, `spend ${cost}: meter colour`);
+      assert.strictEqual(l.ink !== plainInk, name !== "ok", `spend ${cost}: the digits change colour only when tinted`);
+    }
+    await setCost(75);
+    l = await look();
+    assert.deepStrictEqual([l.width, l.text, l.tip], ["75%", "$75.00 / $50.00", "Past the shift budget of $50.00"]);
+    assert.strictEqual(await b.ev(`document.getElementById("budget-meter").getAttribute("aria-valuetext")`), "$75.00 of $50.00 a day");
+    const amberInk = l.ink;
+    await setCost(120);
+    l = await look();
+    assert.deepStrictEqual([l.width, l.tip], ["100%", "Past twice the shift budget of $50.00"]);
+    assert.notStrictEqual(l.ink, amberInk, "red digits differ from amber ones");
+
+    // It is stored with the knob values, and a knob turn keeps it.
+    await b.ev(`(() => { const k = document.querySelector('.knob[data-knob="crt"]'); k.focus(); return null; })()`);
+    await b.key("ArrowUp", "ArrowUp"); await b.sleep(100);
+    const both = await stored();
+    assert.deepStrictEqual([both.budget, both.crt], [50, 4], "budget and knob values share the stored blob");
+    await reload();
+    assert.strictEqual(await b.ev(`document.getElementById("budget-in").value`), "50", "remembered across a reload");
+    await setCost(75);
+    assert.deepStrictEqual((await look()).cls, [true, false], "...and in force");
+
+    // 0 or empty: no budget again. Arrow keys step it.
+    await typed("");
+    l = await look();
+    assert.deepStrictEqual([l.cls, l.meter, (await stored()).budget], [[false, false], "none", 0], "empty means no budget");
+    await b.ev(`document.getElementById("budget-in").focus()`);
+    await b.key("ArrowUp", "ArrowUp"); await b.sleep(100);
+    assert.strictEqual((await stored()).budget, 5, "Up steps by 5");
+    await typed("0");
+    assert.deepStrictEqual([(await look()).cls, (await stored()).budget], [[false, false], 0], "0 means no budget");
+    await typed("$12.345");
+    assert.strictEqual((await stored()).budget, 0, "three decimals are refused");
+    await typed("9999999");
+    assert.strictEqual((await stored()).budget, 0, "over the cap is refused");
+    await typed("$12.5");
+    assert.strictEqual((await stored()).budget, 12.5, "a leading $ and cents are fine");
+    await b.ev(`document.getElementById("budget-in").blur()`);
+    assert.strictEqual(await b.ev(`document.getElementById("budget-in").value`), "12.5");
+
+    // A bad stored figure is ignored (and the knob values around it still load).
+    for (const bad of ['"x"', "-5", "1e9", "null", "[1]", "true"]) {
+      await b.ev(`localStorage.setItem("fc1984-knobs", '{"crt":7,"budget":${bad.replace(/'/g, "")}}')`);
+      await reload();
+      assert.strictEqual(await b.ev(`document.getElementById("budget-in").value`), "", `stored ${bad}: no budget`);
+      await setCost(500);
+      assert.deepStrictEqual((await look()).cls, [false, false], `stored ${bad}: nothing tints`);
+      assert.strictEqual(await b.ev(`document.querySelector('.knob[data-knob="crt"]').getAttribute("aria-valuenow")`), "7", `stored ${bad}: the knobs still load`);
+    }
+    await b.ev(`localStorage.setItem("fc1984-knobs", "not json")`);
+    await reload();
+    assert.strictEqual(await b.ev(`document.getElementById("budget-in").value`), "", "unparseable storage: no budget, no crash");
+  } finally { await b.close(); }
+}
+
 async function run(url) {
   // ---- motion allowed
   let b = await launch(url);
@@ -330,4 +432,4 @@ async function run(url) {
   } finally { await b.close(); }
 }
 
-run(process.argv[2]).then(() => attention(process.argv[2])).then(() => printer(process.argv[2])).then(() => console.log("floor browser checks passed"), e => { console.error(e.stack || e); process.exit(1); });
+run(process.argv[2]).then(() => attention(process.argv[2])).then(() => printer(process.argv[2])).then(() => budget(process.argv[2])).then(() => console.log("floor browser checks passed"), e => { console.error(e.stack || e); process.exit(1); });

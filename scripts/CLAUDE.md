@@ -173,6 +173,11 @@ title, the favicon (drawn on a canvas, so the main page's CSP has `img-src 'self
 or a `Notification`; agent-written text never does. Notification permission is asked only from the NOTIFY
 key's click, never on load.
 
+SHIFT BUDGET (doomtickle/passdesk-ops#195, `app.js` `renderBudget`) is display only and adds no endpoint or `/api/state` field:
+a dollars-a-day figure typed on the spend module and kept in this browser (`localStorage`, in the knobs' `fc1984-knobs` entry,
+validated as a finite number from 0 to 100000, otherwise ignored; 0 or empty is no budget) that tints the header's spend readout
+(a class from a fixed pair, amber past the figure, red past twice it) and fills a meter. It sends nothing and stops nothing.
+
 LANE LABELS (doomtickle/passdesk-ops#194, `scripts/dashboard_labels.py`, `dashboard-ui/lanelabel.js`) put a developer's
 branch and the lane a reviewer is checking on the lane modules and chips, as the floor already did: `branch`, `desk` and
 `reviews` in each lane of `/api/state`, derived by one module from the task text and the job's `⎇ branch` log lines. They

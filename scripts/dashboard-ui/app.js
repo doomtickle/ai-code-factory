@@ -280,6 +280,7 @@
     $("lamp-gate").className = `led ${undecided ? "a blink" : state.gate.length ? "a" : ""}`;
     renderService(state.service);
     setSeg($("ro-spend"), Number(state.totals.cost).toFixed(2));
+    renderBudget();
     setSeg($("ro-jobs"), String(state.totals.jobs));
     setSeg($("ro-run"), String(state.totals.running));
   }
@@ -392,6 +393,70 @@
     const cd = document.querySelector("#gate-lcd .gate-cd");
     if (cd && gateCd) setText(cd, mmss(Math.max(0, gateCd.seconds_left - sinceSec())));
   }
+
+  // SHIFT BUDGET (doomtickle/passdesk-ops#195): dollars per day, typed on the spend module and kept in this browser
+  // with the knob values. Display only: it tints the header's spend readout (amber past the figure, red past twice
+  // it) and fills a meter whose midpoint is the budget. Nothing is sent anywhere and nothing stops a job.
+  const BUDGET_CAP = 100000;
+  const budgetOk = v => typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= BUDGET_CAP;
+  // Text from the box or storage -> dollars to the cent, 0 for none ("" and 0 both mean no budget), null for junk.
+  function parseBudget(t) {
+    const s = String(t).trim().replace(/^\$/, "");
+    if (s === "") return 0;
+    if (!/^[0-9]{1,6}(\.[0-9]{0,2})?$/.test(s)) return null;
+    const v = Math.round(Number(s) * 100) / 100;
+    return budgetOk(v) ? v : null;
+  }
+  let budget = 0;
+  try {
+    const saved = JSON.parse(localStorage.getItem("fc1984-knobs") || "{}");
+    if (saved && budgetOk(saved.budget)) budget = Math.round(saved.budget * 100) / 100;
+  } catch (e) { /* no storage: no budget */ }
+  function saveBudget() {
+    try {
+      const saved = JSON.parse(localStorage.getItem("fc1984-knobs") || "{}");
+      localStorage.setItem("fc1984-knobs", JSON.stringify(Object.assign(saved && typeof saved === "object" ? saved : {}, { budget })));
+    } catch (e) { /* no storage: this tab only */ }
+  }
+  function budgetLevel(cost) { return !budget ? "" : cost > 2 * budget ? "over2" : cost > budget ? "over" : ""; }
+  function renderBudget() {
+    if (!state) return;
+    const cost = Number(state.totals.cost) || 0, level = budgetLevel(cost);
+    const box = $("ro-spend-box");
+    box.classList.toggle("over", level === "over");
+    box.classList.toggle("over2", level === "over2");
+    const said = !budget ? "" : level === "over2" ? `Past twice the shift budget of ${usd(budget)}`
+      : level === "over" ? `Past the shift budget of ${usd(budget)}` : `Within the shift budget of ${usd(budget)}`;
+    box.title = said;
+    const meter = $("budget-meter");
+    meter.className = `budget-meter${level ? " " + level : ""}${budget ? "" : " none"}`;
+    meter.firstChild.style.width = budget ? `${Math.min(100, cost / (2 * budget) * 100).toFixed(1)}%` : "0%";
+    meter.setAttribute("aria-valuemax", budget ? String(2 * budget) : "1");
+    meter.setAttribute("aria-valuenow", budget ? String(Math.min(cost, 2 * budget)) : "0");
+    meter.setAttribute("aria-valuetext", budget ? `${usd(cost)} of ${usd(budget)} a day` : "No budget set");
+    $("budget-v").textContent = budget ? `${usd(cost)} / ${usd(budget)}` : "no budget";
+  }
+  const budgetIn = $("budget-in");
+  const showBudget = () => { budgetIn.value = budget ? String(budget) : ""; budgetIn.removeAttribute("aria-invalid"); };
+  showBudget();
+  budgetIn.addEventListener("input", () => {
+    const v = parseBudget(budgetIn.value);
+    if (v == null) { budgetIn.setAttribute("aria-invalid", "true"); return; }  // keep the last good figure until the box is fixed
+    budgetIn.removeAttribute("aria-invalid");
+    budget = v; saveBudget(); renderBudget();
+  });
+  budgetIn.addEventListener("change", showBudget);
+  budgetIn.addEventListener("blur", showBudget);
+  budgetIn.addEventListener("keydown", e => {
+    e.stopPropagation();  // typing digits or f, s, n here is not a lane or a key on the console
+    if (e.key === "Enter" || e.key === "Escape") { e.preventDefault(); showBudget(); budgetIn.blur(); return; }
+    const step = e.key === "ArrowUp" ? 5 : e.key === "ArrowDown" ? -5 : 0;
+    if (!step) return;
+    e.preventDefault();
+    const cur = parseBudget(budgetIn.value);
+    budget = Math.max(0, Math.min(BUDGET_CAP, (cur == null ? budget : cur) + step));
+    saveBudget(); showBudget(); renderBudget();
+  });
 
   function renderSpend() {
     const hours = state.spend.hours;  // midnight to now, one column an hour
@@ -871,7 +936,7 @@
       k.setAttribute("aria-valuenow", String(Math.round(val)));
       k.setAttribute("aria-valuetext", name === "vhold" ? holdText(val) : name === "crt" ? (val ? `${Math.round(val)} of 10` : "flat") : `${Math.round(val)}`);
     });
-    try { localStorage.setItem(KNOB_KEY, JSON.stringify(knobVals)); } catch (e) { /* fine */ }
+    try { localStorage.setItem(KNOB_KEY, JSON.stringify(Object.assign({}, knobVals, { budget }))); } catch (e) { /* fine */ }
   }
   function setKnob(name, value) {
     knobVals[name] = clampKnob(name, Math.round(value));

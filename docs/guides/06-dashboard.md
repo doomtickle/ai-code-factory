@@ -574,6 +574,19 @@ command. If the files can't be read the screen says it is unavailable.
 
 - **Spend / hour:** today's cost as a bar per hour since midnight, then per
   role, with today's job count.
+- **Shift budget:** under the role bars, type the dollars per day you want to
+  stay inside (for example `50`; `$12.50` works, cents at most, up to
+  100000). The meter beside it fills against today's spend with the budget at
+  its midpoint tick, and the **Spend today** readout in the header turns amber
+  once spend is past the figure and red once it is past twice the figure
+  (exactly at the figure or at twice it doesn't tip over). Up and Down in the
+  box step by 5. Empty or `0` means no budget: nothing tints. A figure the box
+  can't read is marked and the last good one stays. It is kept in this browser
+  with the knob settings (`localStorage`), so it isn't shared between browsers
+  or machines, and a stored value that isn't a sane number is ignored. It only
+  colours the display: nothing stops, holds or cancels a job. It doesn't show
+  per-job cost: the bridge records a job's cost when the job ends, so a
+  running job has none to compare yet.
 - **Event printer:** today's broker calls (allowed, denied, staged and
   decided), the gateway's deferred writes (WRITTEN, or FAILED in red) and
   finished jobs, newest at the bottom. Denied, staged and failed calls,

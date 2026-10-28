@@ -27,7 +27,7 @@
       <div class="lamp" id="lamp-service-box" tabindex="0"><span class="led" id="lamp-service"></span><span class="silk" id="lamp-service-label">Service</span></div>
     </div>
     <div class="readouts">
-      <div class="readout"><span class="silk">Spend today</span><div class="lcd seg-box"><span class="unit">$</span><span id="ro-spend"></span></div></div>
+      <div class="readout"><span class="silk">Spend today</span><div class="lcd seg-box" id="ro-spend-box"><span class="unit">$</span><span id="ro-spend"></span></div></div>
       <div class="readout"><span class="silk">Jobs</span><div class="lcd seg-box" id="ro-jobs"></div></div>
       <div class="readout"><span class="silk">Running</span><div class="lcd seg-box" id="ro-run"></div></div>
       <div class="readout"><span class="silk">Clock</span><div class="lcd seg-box" id="ro-clock"></div></div>
@@ -90,6 +90,12 @@
         <div class="mod-h"><span class="silk" id="spend-h">Spend / hour</span><span class="right silk" id="spend-sub"></span><a class="help" href="/docs/#guide-dashboard:spend-and-the-event-printer" target="factory-docs" aria-label="Help: spend">?</a></div>
         <div class="spend-row"><div class="bargraph" id="bargraph" role="img" aria-label="Spend per hour today"></div></div>
         <div class="roles" id="roles"></div>
+        <div class="budget" id="budget">
+          <label class="silk" for="budget-in">Shift budget $/day</label>
+          <input class="budget-in" id="budget-in" type="text" inputmode="decimal" maxlength="9" autocomplete="off" spellcheck="false" placeholder="none" title="Dollars per day; 0 or empty for no budget. Display only: nothing stops a job.">
+          <div class="budget-meter" id="budget-meter" role="meter" aria-label="Today's spend against the shift budget" aria-valuemin="0" aria-valuemax="1" aria-valuenow="0" aria-valuetext="No budget set"><i class="fill"></i><i class="tick"></i></div>
+          <span class="budget-v" id="budget-v">no budget</span>
+        </div>
       </section>
 
       <section class="plate mod printer" aria-labelledby="print-h">
