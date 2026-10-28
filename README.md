@@ -309,6 +309,14 @@ factory update
 - `enabled-roles` names the optional roles (today: the researcher) to switch on
   on this machine, one per line (Roles, "Optional roles"). It only turns a role
   on or off; it can't grant tools. Applied on `factory start`. No rebuild.
+- `dashboard.toml` sets how `factory dashboard` looks: the nameplate and floor
+  plate (`plant`), the three shift names (`shifts`), the CRT knob's and the
+  SOUND key's starting values (`crt`, `sound`) and a colour per role
+  (`[roles.colors]`, `designer = "#d08cff"`). The dashboard reads it once when it
+  starts, so restart it to see a change. It is display only and strict: an
+  unknown key or a bad value makes it ignore the whole file, show the defaults
+  and say why in its log and on SETUP. It needs no rebuild and grants nothing
+  (Use the dashboard, "Your own look").
 - `plugins/<module>/` holds broker plugins (Python packages that add tools to
   the gateway; see the broker's `docs/plugin-tools.md`). `factory update`
   copies the folder into the broker image and the broker sandbox imports each

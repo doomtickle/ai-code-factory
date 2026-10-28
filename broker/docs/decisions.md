@@ -4,6 +4,30 @@ Dated entries, for the user to review. Newest first.
 
 ## 2026-10-28
 
+- **`dashboard.toml` is read once, strictly, and a bad file means the defaults, not a stopped dashboard.**
+  doomtickle/passdesk-ops#196. `scripts/dashboard_config.py` reads `FACTORY_CONFIG/dashboard.toml`
+  (the dashboard's `--config`) at start and serves the result as `look` in `/api/state`; there is no
+  new endpoint and no reload. Unknown keys and tables, repeated keys, bad values, a symlink or
+  non-regular file, a file over 16 KiB and non-UTF-8 text each refuse the whole file (the first
+  error only, with the file, line and key), rather than half-apply it: a typo in `crt` should not
+  quietly leave `[roles.colors]` in force. The refusal is logged to stderr and shown on SETUP, and
+  the page gets the defaults. Strings reuse `factory/policy.py`'s string reader (now the public
+  `toml_string`) instead of a second TOML parser, so there is no `tomllib` (3.9 on the host); values
+  are one line each, `shifts` included, which keeps the reader small. Demo mode takes the defaults.
+- **The page re-checks `look` and sets colours only with `style.setProperty`.** `look.js` validates
+  every field again (a colour is `#rrggbb`, a role name the role-name pattern, strings capped printable
+  ASCII), so a tampered state can't put anything but a validated colour into a style. No class name,
+  attribute or HTML comes from the file, and the CSP still has no inline style. The role-colour keys
+  may name any role, built-in ones included: the colour is display only, and refusing `developer` would
+  be an arbitrary rule. A role without a colour keeps its fixed hue or the hashed one from #162.
+- **`crt` and `sound` are defaults, not settings.** The browser's own choice wins. To make that
+  true for the CRT knob, the knobs' `localStorage` entry now stores only the knobs the user has turned
+  (it used to write all four on the first change), so a stored `crt` always means "my choice" and the
+  file's level shows until then. The knob's reset goes to the file's level. `sound = true` acts once,
+  from the first state, and only when `fc1984-sound` is absent.
+- **`plant` feeds both the header nameplate and the floor's plate**, as one key, as the issue's
+  comment says. The 24-character cap is what both fit (checked in the browser test).
+
 - **The dashboard's OUTBOX asks git two fixed questions and never gives git a name.**
   doomtickle/passdesk-ops#189. The module (`scripts/dashboard_outbox.py`) lists the refs the
   bridge imported with one `for-each-ref --format=%(objectname) %(refname)` over the

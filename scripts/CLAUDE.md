@@ -178,6 +178,18 @@ a dollars-a-day figure typed on the spend module and kept in this browser (`loca
 validated as a finite number from 0 to 100000, otherwise ignored; 0 or empty is no budget) that tints the header's spend readout
 (a class from a fixed pair, amber past the figure, red past twice it) and fills a meter. It sends nothing and stops nothing.
 
+DASHBOARD LOOK (doomtickle/passdesk-ops#196, `scripts/dashboard_config.py`, `dashboard-ui/look.js`) is
+`FACTORY_CONFIG/dashboard.toml` (the dashboard's `--config`): a nameplate and floor plate, three shift names, the CRT
+and sound defaults and a colour per role. It is read once at start and served as `look` in `/api/state`; it adds no
+endpoint, runs nothing and reads nothing else. The reader is strict (an unknown key or table, a repeated key, a bad
+value, a symlink or non-regular file, a file over 16 KiB or non-UTF-8 text refuses the whole file, opened `O_NOFOLLOW`
+and non-blocking, read capped) and reuses `factory/policy.py`'s string reader; a refusal logs to stderr, shows the
+defaults and appears on SETUP (`config.look`), and never stops the dashboard. Demo mode reads no real config. `look.js`
+checks every field again in the browser; a colour reaches the page only as a validated `#rrggbb` through
+`style.setProperty` (the CSP has no inline style and keeps none), strings only through `textContent`, and nothing from
+the file becomes a class name, attribute or HTML. `crt` and `sound` only start the knob and the key until the
+browser has a choice of its own.
+
 LANE LABELS (doomtickle/passdesk-ops#194, `scripts/dashboard_labels.py`, `dashboard-ui/lanelabel.js`) put a developer's
 branch and the lane a reviewer is checking on the lane modules and chips, as the floor already did: `branch`, `desk` and
 `reviews` in each lane of `/api/state`, derived by one module from the task text and the job's `⎇ branch` log lines. They

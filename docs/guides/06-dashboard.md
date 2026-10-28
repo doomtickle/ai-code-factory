@@ -358,7 +358,7 @@ document.addEventListener("factory-floor:confiscated", e => {
 
 ### Sound
 
-Off by default. The **SOUND** key next to FLOOR in the Lanes header (or `s`)
+Off by default (`sound = true` in [your `dashboard.toml`](#your-own-look-dashboardtoml) starts it on for a browser that has made no choice). The **SOUND** key next to FLOOR in the Lanes header (or `s`)
 turns on a short cue for each floor event, so you can hear the factory from
 another window:
 
@@ -538,6 +538,39 @@ terminal.
 Stands in for: `factory doctor`, `factory restart`, `factory update` and
 `factory update --plan`.
 
+### Your own look: dashboard.toml
+
+`dashboard.toml` in your config folder (`~/.config/ai-code-factory/`; `factory
+config init` writes a commented example) sets how the page looks. The
+dashboard reads it once when it starts, so restart `factory dashboard` to see a
+change. Every key is optional:
+
+```toml
+plant = "LOIS WORKS"                    # the header's nameplate and the floor's plate, up to 24 characters
+shifts = ["day", "swing", "night"]      # the floor's three shift names, up to 16 characters each
+crt = 3                                 # the CRT knob's starting level, 0 to 10
+sound = false                           # whether the SOUND key starts on
+[roles.colors]
+designer = "#d08cff"                    # a role's colour on the floor, its lane module and the spend rows
+```
+
+- `crt` and `sound` are only the starting values. Once you turn the knob or press
+  SOUND, this browser remembers your choice and the file no longer changes it
+  (the knob's reset goes to the file's level).
+- A role without a colour keeps its own: a built-in role its fixed one, any
+  other role a colour chosen from its name. Role names are the usual
+  lowercase letters, digits and dashes.
+- The nameplate, the floor plate and the shift names are plain text, one line
+  of printable ASCII, in `"double"` or `'single'` quotes without escapes. A
+  colour must be `#rrggbb`. Values are one per line, the `shifts` list too.
+- Nothing in it is run, and it cannot touch the broker, a role or a permission.
+- It is strict. An unknown key or table, a bad colour, a number out of range,
+  a key set twice, a file over 16 KiB, a symlink or text that is not UTF-8
+  makes the dashboard ignore the whole file, show the defaults, print a
+  warning naming the file, line and key, and show the same reason on the
+  SETUP screen. The dashboard still starts. With no file you get the defaults.
+  `--demo` never reads your file.
+
 ### Setup: the configuration in force
 
 The **SETUP** key opens a read-only screen of the configuration the factory
@@ -564,6 +597,8 @@ while open.
   and for each running role its instructions plus the notes against the
   20,000-character limit. A role over it is flagged: the dispatch
   bridge refuses that role's tasks.
+- **Dashboard look.** Whether `dashboard.toml` was read at start-up, or the
+  reason it was ignored. It does not show the values; the page itself does.
 
 Each line ends with the command that applies a change to it, **START** or
 **UPDATE**, as in the table in [Make it yours](04-customize.md#which-command-applies-a-change).
@@ -665,7 +700,7 @@ Demo mode is display only. It never reads your real state folder: it copies
 the fixture into a fresh temporary folder and deletes it when you press
 Ctrl-C. Terminal 0 is off, APPROVE, DECLINE, RESTART, UPDATE and DIAG answer
 that nothing here acts, INSPECT shows the fixture's patch, and SETUP shows
-the fixture's configuration (`scripts/dashboard-demo/setup/`), not yours. The same
+the fixture's configuration (`scripts/dashboard-demo/setup/`), not yours. It also ignores your `dashboard.toml` and shows the defaults. The same
 token, cookie and content rules apply as for a real run. `--demo` can't be
 combined with `--coordinator`, `--state`, `--project` or `--factory`;
 `--no-open` and `--port N` work as usual.
