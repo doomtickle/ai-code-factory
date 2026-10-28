@@ -164,6 +164,12 @@ title, the favicon (drawn on a canvas, so the main page's CSP has `img-src 'self
 or a `Notification`; agent-written text never does. Notification permission is asked only from the NOTIFY
 key's click, never on load.
 
+LANE LABELS (doomtickle/passdesk-ops#194, `scripts/dashboard_labels.py`, `dashboard-ui/lanelabel.js`) put a developer's
+branch and the lane a reviewer is checking on the lane modules and chips, as the floor already did: `branch`, `desk` and
+`reviews` in each lane of `/api/state`, derived by one module from the task text and the job's `⎇ branch` log lines. They
+add no endpoint, run no git, and are drawn with `textContent`; `lanelabel.js` is a plain served file in the allowlist,
+loaded before `app.js` and `floor.js` (no inline script).
+
 Anything new that lets a page act must meet the same bar: one fixed argv with no
 shell, a key in a request header (not just the cookie) on a POST or WebSocket with its
 `Origin` checked, kept out of reach of the page that shows agent-written content, and a

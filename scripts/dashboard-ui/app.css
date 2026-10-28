@@ -257,6 +257,7 @@ a.ob-pr { text-decoration: underline; }
 .chip:hover { filter: brightness(1.12); }
 .chip .keycap { min-width: 18px; height: 17px; font-size: .68rem; }
 .chip-name { font-family: var(--f-crt); font-size: 1.12rem; line-height: 1; color: var(--silk); white-space: nowrap; }
+.chip-branch { min-width: 0; max-width: 24ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--f-crt); font-size: 1rem; line-height: 1; color: var(--silk-dim); opacity: .8; }
 .chip-since { font-family: var(--f-silk); font-weight: 600; font-size: .66rem; letter-spacing: .1em; text-transform: uppercase; color: var(--silk-dim); white-space: nowrap; }
 .chip.entering { animation: chip-on .45s cubic-bezier(.2, .7, .2, 1) both; }
 .chip.entering.late { animation-delay: .3s; }
@@ -288,6 +289,13 @@ a.ob-pr { text-decoration: underline; }
 /* Model, cost and context ride in the title row, so the LCD gets the height */
 .lane { container-type: inline-size; }
 .lane-top .lane-name { flex: none; max-width: 55%; }
+/* Branch (pink, as the transcript's branch lines) or "▸ DEV 2": the lane a reviewer is checking */
+.lane-ref { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--f-crt); font-size: 1.05rem; line-height: 1; color: var(--t-branch); }
+.lane-ref.rev { font-family: var(--f-silk); font-weight: 700; letter-spacing: .1em; font-size: .72rem; color: var(--silk); }
+.lane-ref[hidden], .chip-branch[hidden] { display: none; }
+.lane-top { flex-wrap: wrap; row-gap: 3px; }
+/* A narrow module gives the branch its own line under the header rather than cutting its topic off */
+@container (max-width: 560px) { .lane-ref { order: 10; flex: 1 0 100%; } }
 /* Values only (tooltips name them); as a lane narrows, context then cost drop out so the name never truncates first */
 .lane-stats { display: flex; align-items: center; justify-content: flex-end; gap: 12px; margin-left: auto; flex: 1 1 0; min-width: 0; overflow: hidden; }
 .stat { display: flex; align-items: baseline; gap: 4px; white-space: nowrap; }

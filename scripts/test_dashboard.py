@@ -144,6 +144,24 @@ class SnapshotTests(unittest.TestCase):
         for lane in d.Dashboard(empty, self.fx.roles, "proj").snapshot()["lanes"]:
             self.assertEqual((lane["desk"], lane["reviews"]), ("", ""))  # no job, no placard
 
+    def test_branch_field(self):
+        log = self.fx.state / "dispatch" / "logs" / "developer.log"
+        t = hms(self.fx.now - 30)
+        def branch():
+            return next(x for x in self.board.snapshot(self.fx.now)["lanes"] if x["name"] == "developer")["branch"]
+        lanes = {lane["name"]: lane for lane in self.board.snapshot(self.fx.now)["lanes"]}
+        self.assertEqual((lanes["developer"]["branch"], lanes["reviewer"]["branch"]), ("factory/x", ""))  # the task names it; reviewers get "reviews"
+        write_lane(self.fx.state / "dispatch" / "logs", "developer", "20261019-000001-aaaaaa", self.fx.now,
+                   f"{t}  ⎇ branch factory-developer/factory/from-log at 1a2b3c4\n")
+        self.assertEqual(branch(), "factory/from-log")  # no branch in the task: the log's
+        with open(log, "a") as f:  # a later job starts clean: only its own branch counts
+            f.write(f"{t}  ▶ job 20261019-000010-dddddd from the Coordinator\n{t}     > push factory/from-task\n")
+        self.assertEqual(branch(), "factory/from-task")
+        with open(log, "a") as f:
+            f.write(f"{t}  ■ job 20261019-000010-dddddd done after 20s\n")
+        lane = next(x for x in self.board.snapshot(self.fx.now + 3600)["lanes"] if x["name"] == "developer")
+        self.assertEqual((lane["state"], lane["desk"], lane["branch"]), ("idle", "", "factory/from-task"))
+
     def test_reviewer_reads_the_whole_task(self):
         logs = self.fx.state / "dispatch" / "logs"
         t = hms(self.fx.now - 30)
@@ -206,59 +224,6 @@ class SnapshotTests(unittest.TestCase):
         snap = board.snapshot()
         self.assertEqual([lane["state"] for lane in snap["lanes"]], ["idle", "idle"])
         self.assertEqual((snap["events"], snap["gate"], snap["totals"]["jobs"]), ([], [], 0))
-
-
-class DeskLabelTests(unittest.TestCase):
-    def test_branch_topic_wins(self):
-        for text, want in (
-            ("Repo: ai-code-factory. Branch from main; commit to `factory/desk-placards`.", "desk placards"),
-            ("Review factory-developer-lane2/factory/rate_limit.v2 now", "rate limit v2"),
-            ("push factory/a-very-long-branch-name-indeed", "a very long branch name indeed"),
-            ("Fix x, then factory/first and factory/second", "first"),
-            ("Put the bundle in .factory/outgoing/ then push factory/fix-x", "fix x"),
-            ("See https://example.com/o/factory/pull/1 and push factory/fix-x", "fix x"),
-            ("Edit a/factory/b then factory-developer/factory/fix-y", "fix y"),
-            ("Review origin/factory/fix-x", "fix x"),
-            ("Diff main...factory/fix-x", "fix x"),
-            ("git diff origin/main...factory-developer/factory/fix-y", "fix y"),
-        ):
-            self.assertEqual(d.desk_label(text), want)
-
-    def test_branch_pattern_ignores_lookalikes(self):
-        self.assertEqual(d.desk_label("Edit ai-code-factory/scripts today"), "Edit ai-code-factory/scripts today")
-        self.assertEqual(d.desk_label("use factory/<topic> branches"), "use factory/ topic branches")  # a placeholder is no branch
-
-    def test_fallback_first_words(self):
-        for text, want in (
-            ("Reject empty names in greet(), test it, and push", "Reject empty names in greet(), test it,"),
-            ("Repo: passdesk-ops. Fix the **dashboard** crash", "Fix the dashboard crash"),
-            ("Task: Fix the login crash", "Fix the login crash"),
-            ("goal:make tests pass", "make tests pass"),
-            ("Repo: ai-code-factory.git Fix x", "Fix x"), ("Repository: a.b. Do it", "Do it"),
-            ("Repo: x;Fix y", "Fix y"), ("Project: demo; Tidy up", "Tidy up"),
-            ("\n\n  Tidy the `docs`  \nsecond line", "Tidy the docs"),
-            ("Supercalifragilisticexpialidocious", "Supercalifragilisticexpialidocious"),
-            ("Pneumonoultramicroscopicsilicovolcanoconiosis-dust", "Pneumonoultramicroscopicsilicovolcanoco…"),
-            ("Tidy the packaging metadata, changelog and release notes", "Tidy the packaging metadata, changelog"),
-            ("", ""), ("   \n ", ""), ("Repo: x.", ""),
-        ):
-            self.assertEqual(d.desk_label(text), want)
-
-    def test_one_clean_line(self):
-        label = d.desk_label("\x1b[31m\u202eevil\x00 <b>thing</b>\ttab")
-        self.assertTrue(label.isprintable() and len(label) <= d.DESK_MAX, repr(label))
-        self.assertNotRegex(label, r"[<>\u202e]")
-        self.assertLessEqual(len(d.desk_label("word " * 50)), d.DESK_MAX)
-        self.assertEqual(d.desk_label(None), "")
-
-    def test_reviewed_lane(self):
-        for text, want in (
-            ("Review factory-developer/factory/x", "developer"),
-            ("Review factory-developer-lane3/factory/x and factory-developer/factory/y", "developer-lane3"),
-            ("Review factory/x", ""), ("factory-reviewer/factory/x", ""),
-            ("factory-developer-lane/factory/x", ""), ("xfactory-developer/factory/x", ""), ("", ""),
-        ):
-            self.assertEqual(d.reviewed_lane(text), want, text)
 
 
 def write_lane(logs: Path, name: str, job_id: str, now: float, extra: str = "") -> None:
@@ -1375,7 +1340,7 @@ class PageTests(unittest.TestCase):
         self.assertEqual(licenses, {"OFL-VT323.txt", "OFL-BarlowCondensed.txt", "OFL-DotGothic16.txt"})
 
     def test_no_html_sinks(self):
-        for name in ("app.js", "floor.js", "sound.js", "radio.js"):
+        for name in ("app.js", "floor.js", "sound.js", "radio.js", "lanelabel.js"):
             js = (UI / name).read_text()
             for sink in ("innerHTML", "outerHTML", "insertAdjacentHTML", "document.write", "eval(", "new Function"):
                 self.assertNotIn(sink, js, f"{name} uses {sink}")
@@ -1622,6 +1587,25 @@ class PageTests(unittest.TestCase):
         # The main page's key handler is untouched: the code rides on its own listener.
         app = (UI / "app.js").read_text()
         self.assertNotIn("radio", app)
+
+    def test_lane_labels_are_one_shared_script(self):
+        # #194: the "DEV 2" tag comes from one file both the floor and the modules read, loaded
+        # (as a plain file, no inline script) before them, and drawn with textContent only.
+        html = (UI / "index.html").read_text()
+        self.assertEqual(d.STATIC["/lanelabel.js"], ("lanelabel.js", "text/javascript; charset=utf-8"))
+        self.assertTrue((UI / "lanelabel.js").is_file())
+        tag = '<script src="/lanelabel.js" defer></script>'
+        self.assertEqual(html.count(tag), 1)
+        self.assertLess(html.index(tag), html.index('<script src="/app.js" defer></script>'))
+        self.assertLess(html.index(tag), html.index('<script src="/floor.js" defer></script>'))
+        floor, app = (UI / "floor.js").read_text(), (UI / "app.js").read_text()
+        self.assertNotIn("devTag", floor)
+        self.assertIn("FactoryLabels.reviewTag(", floor + app)
+        self.assertIn("reviewTag(reviews)", floor)
+        self.assertIn("FactoryLabels.reviewTag(lane.reviews)", app)
+        body = app[app.index("function laneRef"):app.index("function makeChip")]
+        for call in ("fetch(", "innerHTML"):
+            self.assertNotIn(call, body)
 
     def test_page_obeys_its_csp(self):
         html = (UI / "index.html").read_text()

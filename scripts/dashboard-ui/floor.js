@@ -368,10 +368,7 @@
 
   // Placard text. All of it is agent-written (the server only trims it), so it goes in as text.
   const CHAR_W = 1.8;   // scene units per character of the placard font
-  const devTag = name => {
-    const m = /^developer(?:-lane(\d+))?$/.exec(name);
-    return m ? `DEV ${m[1] || 1}` : clip(name.toUpperCase(), 8);
-  };
+  const { reviewTag } = window.FactoryLabels;   // lanelabel.js: the same "DEV 2" tag the lane modules wear
   // The rendered width of a text node, or an estimate while it isn't laid out (floor hidden).
   const width = (node, s) => {
     let w = 0;
@@ -412,7 +409,7 @@
     st.sig = sig;
     const maxW = 34;
     st.card.setAttribute("class", "card");   // measured on screen: a hidden card has no text length
-    const job = show(st, st.cardJob, desk, maxW, slide), tag = show(st, st.cardTag, reviews ? `▸ ${devTag(reviews)}` : "", maxW, slide);
+    const job = show(st, st.cardJob, desk, maxW, slide), tag = show(st, st.cardTag, reviewTag(reviews), maxW, slide);
     // One line sits in the middle of the glass; two share it.
     const top = Number(st.cardBg.getAttribute("y"));
     st.cardJob.setAttribute("y", tag ? top + 4.6 : top + 6.6);

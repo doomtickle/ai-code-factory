@@ -116,6 +116,7 @@ from urllib.parse import parse_qs, urlsplit
 import approvals
 import dashboard_controls as dc
 import dashboard_demo as demo
+import dashboard_labels as labels
 import dashboard_outbox as ob
 import dashboard_service as ds
 import dashboard_term as dt
@@ -131,6 +132,7 @@ STATIC = {
     "/app.css": ("app.css", "text/css; charset=utf-8"),
     "/theme.css": ("theme.css", "text/css; charset=utf-8"),
     "/app.js": ("app.js", "text/javascript; charset=utf-8"),
+    "/lanelabel.js": ("lanelabel.js", "text/javascript; charset=utf-8"),
     "/floor.css": ("floor.css", "text/css; charset=utf-8"),
     "/floor.js": ("floor.js", "text/javascript; charset=utf-8"),
     "/sound.js": ("sound.js", "text/javascript; charset=utf-8"),
@@ -176,10 +178,6 @@ SERVICE_TTL = 5    # seconds between checks of the SERVICE DUE lamp
 PACKET_MAX = 2_000_000  # bytes of a job's packet /api/lane?job= serves
 WRITES_TTL = 4     # seconds between reads of approvals/done/ for the deferred-write list
 VERDICT = re.compile(r"^- Verdict: (\S+)", re.M)
-DESK_MAX = 40      # characters of a lane's desk placard (the floor slides what the glass can't show)
-TOPIC = re.compile(r"(?:(?<=\.\.)|(?<=\borigin/)|(?<![\w./-]))(?:factory-[A-Za-z0-9-]+/)?factory/([A-Za-z0-9][A-Za-z0-9._-]*)")
-DEV_REF = re.compile(r"(?<![\w-])factory-(developer(?:-lane[0-9]+)?)/factory/")
-TASK_LABEL = re.compile(r"^(?:(?:repo|repository|project)\s*:\s*[^\s;]*[^\s.;][.;]?\s*|(?:task|goal)\s*:\s*)", re.IGNORECASE)
 
 
 # --------------------------------------------------------------------------
@@ -208,38 +206,6 @@ def num(value) -> float | None:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
     return float(value) if math.isfinite(value) else None
-
-
-def desk_label(brief: str) -> str:
-    """A few words (at most DESK_MAX characters) for what a job is about: the
-    topic of the first factory/<topic> branch the task names, else the first
-    words of its first non-empty line without a leading "Repo: x." label. One
-    clean line: only printable characters, no markup, "" when nothing is left."""
-    text = str(brief or "")
-    m = TOPIC.search(text)
-    if m:
-        words = re.sub(r"[-_.]+", " ", m.group(1)).split()
-    else:
-        first = next((ln for ln in text.splitlines() if ln.strip()), "")
-        first = "".join(ch if ch.isprintable() else " " for ch in first)
-        first = TASK_LABEL.sub("", first.strip(), count=1)
-        words = re.sub(r"[`*_#<>\[\]{}|\\]+", " ", first).split()
-    label = ""
-    for word in words:
-        word = "".join(ch for ch in word if ch.isprintable())
-        nxt = f"{label} {word}".strip()
-        if len(nxt) > DESK_MAX:
-            label = label or word[:DESK_MAX - 1] + "…"
-            break
-        label = nxt
-    return label
-
-
-def reviewed_lane(brief: str) -> str:
-    """The developer lane a task points a reviewer at: the lane in the first
-    factory-<lane>/factory/ ref (the form the bridge imports branches as), else ""."""
-    m = DEV_REF.search(str(brief or ""))
-    return m.group(1) if m else ""
 
 
 # --------------------------------------------------------------------------
@@ -418,15 +384,21 @@ class Dashboard:
                 if verdict in ("REVISE", "APPROVED"):
                     state = verdict.lower()
         model = str(rec.get("model") or (job or {}).get("model") or "")
-        brief = str((job or {}).get("brief") or (job or {}).get("task") or "") if state != "idle" else ""
+        job_brief = str((job or {}).get("brief") or (job or {}).get("task") or "")
+        brief = job_brief if state != "idle" else ""
+        # The log's branch lines for this job only (an idle lane keeps its last job's branch).
+        entries = list(lane.entries)
+        first = max((i for i, e in enumerate(entries) if e.kind == "start"), default=0)
+        branches = [e.text for e in entries[first:] if e.kind == "branch"]
         return {
             "name": lane.name, "role": lane.role, "state": state,
             "job": (job or {}).get("id"), "task": (job or {}).get("task", ""),
-            "desk": desk_label(brief), "reviews": reviewed_lane(brief) if lane.role == "reviewer" else "",
+            "desk": labels.desk_label(brief), "reviews": labels.reviewed_lane(brief) if lane.role == "reviewer" else "",
+            "branch": labels.lane_branch(job_brief, branches) if lane.role == "developer" else "",
             "model": model.replace("claude-", ""), "effort": rec.get("effort"),
             "elapsed": lane.elapsed(now), "ended": (job or {}).get("ended"),
             "cost": num(rec.get("cost_usd")), "context_tokens": num(rec.get("context_tokens")),
-            "tail": [{"ts": e.ts, "kind": e.kind, "text": e.text} for e in list(lane.entries)[-tail:]],
+            "tail": [{"ts": e.ts, "kind": e.kind, "text": e.text} for e in entries[-tail:]],
         }
 
     def snapshot(self, now: float | None = None) -> dict:

@@ -105,7 +105,8 @@ move over to make room. Ten minutes after its job ends it powers down into
 the strip below.
 
 The **strip** under the modules has a chip for every idle lane, with its
-number and when its last job ended. With nothing running, the bay shows
+number, the branch its developer last worked on (dim) and when its last job
+ended. With nothing running, the bay shows
 STANDBY above it.
 
 Each module shows:
@@ -114,6 +115,11 @@ Each module shows:
   for changes), DONE or APPROVED (green), CANCELLED, FAILED or INTERRUPTED (red: the job was cut off
   by a restart, update or disconnect; a lane only shows RUN while the dispatch
   bridge is up and the job is live);
+- on a developer's header, the `factory/<topic>` branch it is on, in pink like
+  the transcript's branch lines: the branch the task names, else the first
+  branch the bridge logged for the job. On a reviewer's, a `▸ DEV 2` tag naming
+  the developer lane it is reviewing. The factory floor's console glass shows
+  the same tag, and both read one derivation, so they can't disagree;
 - the live tail of its transcript, with tool calls, errors, branches and held
   writes in their own colours;
 - its model, cost, context size, and the time the job has run (or took).

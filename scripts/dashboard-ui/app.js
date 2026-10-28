@@ -96,22 +96,33 @@
     r.card.setAttribute("aria-label", `Open lane ${name}`);
     const top = el("div", "lane-top");
     r.led = el("span", "led"); r.tag = el("span", "state-tag"); r.key = el("span", "keycap key");
+    r.ref = el("span", "lane-ref");
     r.lcd = el("div", "lcd lcd-text"); r.lcdKey = null;
     const stats = el("div", "lane-stats");
     const stat = label => { const s = el("div", "stat"); s.title = label; const v = el("span", "val"); s.append(el("span", "silk", label), v); stats.append(s); return v; };
     r.model = stat("Model"); r.cost = stat("Cost"); r.ctx = stat("Ctx");
     r.tbox = el("div", "lcd seg-box"); r.tbox.dataset.name = name; r.segText = null;
-    top.append(r.led, el("span", "lane-name", name), r.tag, stats, r.tbox, r.key);
+    top.append(r.led, el("span", "lane-name", name), r.tag, r.ref, stats, r.tbox, r.key);
     r.card.append(top, r.lcd);
     r.card.addEventListener("click", () => openMon(name));
     return r;
   }
 
+  // A developer's branch (pink, as the transcript's branch lines) or the lane a reviewer is checking; text only.
+  function laneRef(lane) {
+    if (lane.role === "reviewer") return FactoryLabels.reviewTag(lane.reviews);
+    return typeof lane.branch === "string" ? lane.branch : "";
+  }
   function updateCard(r, lane, i) {
     setClass(r.card, `lane plate${lane.state === "idle" ? " idle" : ""}`);
     setClass(r.led, `led ${LED[lane.state] || ""}`);
     setClass(r.tag, `state-tag st-${lane.state}`);
     setText(r.tag, LABEL[lane.state] || lane.state);
+    const ref = laneRef(lane);
+    r.ref.hidden = !ref;
+    setClass(r.ref, `lane-ref${lane.role === "reviewer" ? " rev" : ""}`);
+    setText(r.ref, ref);
+    if (r.ref.title !== ref) r.ref.title = ref;
     r.key.hidden = i >= 9;
     setText(r.key, i < 9 ? i + 1 : "");
     const lcdKey = JSON.stringify([lane.state, lane.ended, lane.tail.map(entryKey)]);
@@ -135,7 +146,8 @@
     c.chip.type = "button";
     c.chip.dataset.name = name;
     c.led = el("span", "led"); c.key = el("span", "keycap key"); c.since = el("span", "chip-since");
-    c.chip.append(c.led, c.key, el("span", "chip-name", name), c.since);
+    c.branch = el("span", "chip-branch");
+    c.chip.append(c.led, c.key, el("span", "chip-name", name), c.branch, c.since);
     c.chip.addEventListener("click", () => openMon(name));
     return c;
   }
@@ -144,7 +156,11 @@
     setText(c.key, i < 9 ? i + 1 : "");
     const since = lane.ended ? `idle since ${lane.ended.slice(0, 5)}` : "no jobs yet";
     setText(c.since, since);
-    const label = `Open lane ${lane.name}, ${since}`;
+    const branch = lane.role === "developer" && typeof lane.branch === "string" ? lane.branch : "";
+    c.branch.hidden = !branch;
+    setText(c.branch, branch);
+    if (c.branch.title !== branch) c.branch.title = branch;
+    const label = `Open lane ${lane.name}${branch ? `, branch ${branch}` : ""}, ${since}`;
     if (c.chip.getAttribute("aria-label") !== label) c.chip.setAttribute("aria-label", label);
   }
   // Classes that play a CSS animation once, then come off (so it can play again).

@@ -154,6 +154,14 @@ class SnapshotTests(unittest.TestCase):
             "developer": ("greet empty name", ""), "developer-lane2": ("", ""), "developer-lane3": ("Tidy the packaging metadata, changelog", ""),
             "reviewer": ("greet empty name", "developer"), "reviewer-lane2": ("greet readme", "developer-lane2")})
 
+    def test_lane_branches(self):
+        # #194: developers carry their branch (the task's, else the log's), reviewers the lane they check.
+        lanes = {lane["name"]: lane for lane in self.snap["lanes"]}
+        self.assertEqual({n: lane["branch"] for n, lane in lanes.items()}, {
+            "developer": "factory/greet-empty-name", "developer-lane2": "factory/greet-readme", "developer-lane3": "",
+            "reviewer": "", "reviewer-lane2": ""})
+        self.assertEqual(lanes["developer-lane2"]["state"], "idle")  # a chip keeps its last branch
+
     def test_a_staged_push_a_deny_and_a_branch(self):
         card = self.snap["gate"][0]
         self.assertEqual((card["tool"], card["repo"], card["branch"], card["role"]),
