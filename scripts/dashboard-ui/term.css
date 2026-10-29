@@ -7,8 +7,10 @@
 [hidden] { display: none !important; }
 html, body { height: 100%; margin: 0; background: transparent; overflow: hidden; }
 body { color: var(--matrix); font-family: "VT323", ui-monospace, Menlo, Consolas, monospace; }
-#term { position: absolute; inset: 0; padding: 12px 8px 8px 16px; }
-#term .xterm { height: 100%; }
+/* The padding is on .xterm, not #term: FitAddon subtracts only the padding of .xterm itself,
+   so padding on #term let the grid overflow the frame (last row and column under the glass). */
+#term { position: absolute; inset: 0; }
+#term .xterm { height: 100%; padding: 12px 0 8px 12px; }
 /* VT323 ships ff/fi/fl ligatures, and the browser's ligature and kerning passes nudge
    glyphs off xterm's fixed grid (the gap after every "f"). A terminal wants neither. */
 #term .xterm, #term .xterm * { font-variant-ligatures: none !important; font-feature-settings: "liga" 0, "clig" 0, "calt" 0, "kern" 0 !important; font-kerning: none !important; }

@@ -41,8 +41,8 @@
   }
 
   // VT323's cell is about 0.4em wide: this keeps 65 or more columns on the
-  // narrow Coordinator screen and grows the type on a wide one.
-  const fontSize = () => Math.max(15, Math.min(26, Math.floor(window.innerWidth / 30)));
+  // narrow Coordinator screen and grows the type on a wide one, up to 22px.
+  const fontSize = () => Math.max(15, Math.min(22, Math.floor(window.innerWidth / 30)));
   const term = new Terminal({
     scrollback: 5000,
     fontFamily: '"VT323", ui-monospace, Menlo, Consolas, monospace',
