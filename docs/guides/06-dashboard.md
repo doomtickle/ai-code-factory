@@ -668,8 +668,10 @@ factory is bound to a project.
   plus its own notes, against the 20,000-character limit, counted as the
   dispatch bridge counts it (headings included). It turns amber from 90% and
   red over the limit, and updates as you type. **SAVE** stays dark while any
-  role the file reaches would be over, because the bridge would refuse that
-  role's tasks.
+  role the file reaches would be over the limit and higher than it is now,
+  because the bridge would refuse that role's tasks. A change that shortens a
+  role that is already over is allowed, since that is the way back under. The
+  box takes at most 20,000 characters.
 - **Saving takes two steps.** **SAVE** shows what would change: the file's
   path, the lines added and removed as a diff, and each role's new total.
   Nothing is written yet. **CONFIRM** stays dark for 2.5 seconds, so a press

@@ -102,18 +102,19 @@ def usable_project(project: str) -> bool:
         and not project.startswith(".")
 
 
-def _notes(paths, project: str, running: list) -> tuple:
-    """(the notes block, {role: characters its instructions plus the notes come to}) for the bound project."""
+def _notes(paths, project: str, running: list, chars=_read_chars) -> tuple:
+    """(the notes block, {role: characters its instructions plus the notes come to}) for the bound project.
+    chars(path) counts a file (the config write passes one that counts a proposed notes file's new text)."""
     block = {"project": clean(project), "limit": NOTES_LIMIT, "applies": "START", "files": []}
     totals: dict = {}
     if not usable_project(project):
         return block, totals
     folder = os.path.join(paths.config, "projects")
-    shared = _read_chars(os.path.join(folder, project + ".md"))
+    shared = chars(os.path.join(folder, project + ".md"))
     if shared is not None:
         block["files"].append({"name": clean(project + ".md"), "role": None, "chars": shared})
     for name in roles.list_all_roles(paths)[:MAX_ROLES]:
-        own = _read_chars(os.path.join(folder, f"{project}.{name}.md"))
+        own = chars(os.path.join(folder, f"{project}.{name}.md"))
         if own is not None:
             block["files"].append({"name": clean(f"{project}.{name}.md"), "role": clean(name, 40), "chars": own,
                                    "read": name in running})
@@ -125,7 +126,7 @@ def _notes(paths, project: str, running: list) -> tuple:
         total = base
         if shared:
             total += len(f"\n# This project ({project})\n") + shared
-        own = _read_chars(os.path.join(folder, f"{project}.{name}.md"))
+        own = chars(os.path.join(folder, f"{project}.{name}.md"))
         if own:
             total += len(f"\n# This project ({project}), for the {name}\n") + own
         totals[name] = total

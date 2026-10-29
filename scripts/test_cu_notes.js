@@ -272,6 +272,26 @@ module.exports = async function run(h) {
     assert.strictEqual($("scr-console").hidden, true, "Close closes");
   });
 
+  await test("a role already over the limit may be edited down, not up", async () => {
+    // The developer's instructions are over on their own: 21,000 + notes. The host lets a change through that does not raise it.
+    files[""] = "s".repeat(100); files.developer = "d".repeat(50);
+    const c = config();
+    c.roles[0].instructions_chars = 21000 + SHARED_HDR + 100 + DEV_HDR + 50;
+    server.config = c;
+    await advance(2500);
+    await openEditor();
+    assert.strictEqual(gauge("developer").className, "ngauge k-err", "red: it is over");
+    await type("s".repeat(60));
+    assert.strictEqual(goKey.disabled, false, "shorter: SAVE is allowed");
+    assert.ok(text().includes("developer still over 20,000, but this change does not add to it"), text());
+    await type("s".repeat(101));
+    assert.strictEqual(goKey.disabled, true, "longer: SAVE is dark");
+    assert.ok(text().includes("developer would be over 20,000 characters: cut"));
+    await type("s".repeat(60));
+    goKey.click(); await flush();
+    assert.strictEqual(countCalls("config-prepare"), 1, "the shorter text is sent");
+  });
+
   await test("no project, no editor", async () => {
     server.config = Object.assign(config(), { notes: { project: "(no project)", limit: LIMIT, files: [] } });
     await advance(2500);

@@ -38,7 +38,7 @@ rule, and its API, POST /cu/api/<name>. A POST is read only when the Host and
 Origin name this origin exactly, Sec-Fetch-Site (if sent) is same-origin, the
 dashboard cookie matches, the X-Factory-Control header holds the control
 unit's key (not the terminal's), and the body is declared JSON of at most
-MAX_BODY bytes (control_refusal); every other method, OPTIONS included, is
+MAX_BODY bytes (MAX_CONFIG_BODY for config-prepare: control_refusal); every other method, OPTIONS included, is
 refused, and no response carries CORS headers. Without --coordinator the
 origin still runs, for the control unit; /term is then a 404.
 
@@ -86,6 +86,8 @@ CU_PORT_SLOT = "__CU_MAIN_PORT__"
 CU_HEADER = "X-Factory-Control"         # the request header carrying the control unit's key
 CU_API = "/cu/api/"
 MAX_BODY = 8192                         # largest control request body accepted
+MAX_CONFIG_BODY = 128 * 1024            # ... except config-prepare's, which carries a notes file (20,000 characters, escaped)
+CONFIG_PREPARE = CU_API + "config-prepare"
 
 # The terminal origin's only files: path -> (file under UI, content type).
 STATIC = {
@@ -135,13 +137,13 @@ def cu_csp(term_port: int, main_port: int) -> str:
             "base-uri 'none'; form-action 'none'")
 
 
-def control_refusal(headers, *, hosts, origins, cookie: str, token: str, key: str) -> tuple:
+def control_refusal(headers, *, hosts, origins, cookie: str, token: str, key: str, limit: int = MAX_BODY) -> tuple:
     """(None, length) if a POST to the control unit's API may be read, else
     (status, reason). Every check is on the headers, before any of the body is
     read: Host and Origin name this origin exactly, Sec-Fetch-Site (if the
     browser sent one) is same-origin, exactly one dashboard cookie holds the
     token, the key header holds the control unit's key, and the body is
-    declared JSON of at most MAX_BODY bytes."""
+    declared JSON of at most limit bytes (MAX_BODY; MAX_CONFIG_BODY for config-prepare)."""
     if headers.get("Host", "") not in hosts:
         return 403, "wrong Host header"
     if headers.get("Origin", "") not in origins:
@@ -162,8 +164,8 @@ def control_refusal(headers, *, hosts, origins, cookie: str, token: str, key: st
     if len(lengths) != 1 or not lengths[0].strip().isdigit():
         return 400, "Content-Length required"
     length = int(lengths[0])
-    if length > MAX_BODY:
-        return 413, f"the body is over {MAX_BODY} bytes"
+    if length > limit:
+        return 413, f"the body is over {limit} bytes"
     return None, length
 
 
@@ -879,7 +881,8 @@ def make_handler(term: Term | None, token: str, cookie: str, key: str, port: int
                 self.refuse(405, "GET only")
                 return
             status, detail = control_refusal(self.headers, hosts=hosts, origins=origins, cookie=cookie,
-                                             token=token, key=cu_key)
+                                             token=token, key=cu_key,
+                                             limit=MAX_CONFIG_BODY if path == CONFIG_PREPARE else MAX_BODY)
             if status is not None:
                 # The body was never read: end the connection with the reply.
                 self.json_reply(status, {"error": detail}, close=True)

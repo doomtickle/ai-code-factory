@@ -16,7 +16,10 @@ import subprocess
 import unittest
 from pathlib import Path
 
+import dashboard_demo
+import dashboard_setup
 import dashboard_term as dt
+import test_dashboard_configwrite as cwt
 from test_dashboard_controls import UI, Env
 
 HERE = Path(__file__).resolve().parent
@@ -87,6 +90,126 @@ class CodeTests(unittest.TestCase):
         self.assertIsNone(re.search(r"https?://|url\(|@import", block))
 
 
+HAVE_NODE = shutil.which("node") is not None
+
+
+def js_totals(cases):
+    """cu-notes.js's own arithmetic (CuNotes.projected) on [base, project, tab, role, saved, new] rows."""
+    code = ('global.window = {}; require(process.argv[1]); const P = window.CuNotes.projected;'
+            ' console.log(JSON.stringify(JSON.parse(process.argv[2]).map(a => P(...a))));')
+    out = subprocess.run(["node", "-e", code, str(UI / "cu-notes.js"), json.dumps(cases)],
+                         capture_output=True, text=True, timeout=60, check=True)
+    return json.loads(out.stdout)
+
+
+@unittest.skipUnless(HAVE_NODE, "no node")
+class EndToEndTests(cwt.Base):
+    """The real control endpoints, driven over HTTP with exactly the bodies cu-notes.js sends, checking the
+    fields it parses and that its gauge arithmetic gives the totals the host reports."""
+
+    def post(self, name, body, want=200):
+        status, out, _ = self.env.post(name, body)
+        self.assertEqual(status, want, out)
+        return out
+
+    def bases(self):
+        """What the gauges start from: each running role's instructions_chars in the unit's state."""
+        cfg = self.post("state", {})["config"]
+        self.assertEqual((cfg["notes"]["project"], cfg["notes"]["limit"]), ("proj", 20000))
+        out = {}
+        for r in cfg["roles"]:
+            if r.get("instructions_chars") is not None:
+                self.assertIsInstance(r["instructions_chars"], int)
+                out[r["name"]] = r["instructions_chars"]
+        self.assertEqual(sorted(out), ["developer", "reviewer"])
+        return out
+
+    def gauge_matches(self, tab, text, saved_chars, totals, bases):
+        roles = sorted(totals)
+        rows = [[bases[r], "proj", tab, r, saved_chars, len(text)] for r in roles]   # Python len() counts code points, as cp() does
+        self.assertEqual(dict(zip(roles, js_totals(rows))), totals)
+
+    def test_the_limit_the_box_takes_is_the_limit_the_host_enforces(self):
+        self.assertEqual(int(re.search(r"const TEXT_MAX = (\d+);", JS).group(1)), dashboard_setup.NOTES_LIMIT)
+        self.assertEqual(int(re.search(r"const DEFAULT_LIMIT = (\d+);", JS).group(1)), dashboard_setup.NOTES_LIMIT)
+        self.assertIn("over 20,000", self.post("config-prepare", {"kind": "notes", "role": "", "text": "x" * 20001}, 400)["error"])
+
+    def test_read_prepare_run_with_what_the_editor_parses(self):
+        bases = self.bases()
+        read = self.post("config-read", {"kind": "notes", "role": ""})
+        self.assertEqual(read, {"text": "", "chars": 0, "exists": False})
+        text = "Run tests with `npm test`.\nCafé \U0001F600 <b>not html</b>\n"
+        out = self.post("config-prepare", {"kind": "notes", "role": "", "text": text})
+        self.assertIsInstance(out["token"], str)
+        self.assertEqual((out["expires"], out["limit"], out["applies"], out["changed"]), (120, 20000, "RESTART", True))
+        self.assertIsInstance(out["path"], str)
+        self.assertEqual(set(out["totals"]), {"developer", "reviewer"})
+        self.assertTrue(out["diff"] and all(set(d) >= {"op", "text"} and d["op"] in " +-" for d in out["diff"]))
+        self.assertIn({"op": "+", "text": "Café \U0001F600 <b>not html</b>"}, out["diff"])   # text, as sent
+        self.gauge_matches("", text, 0, out["totals"], bases)
+        self.assertEqual(self.post("config-run", {"token": out["token"]}), {"ok": True, "applies": "RESTART"})
+        # Polled state agrees with the totals prepare reported, so the editor's stand-in can be dropped.
+        self.assertEqual(self.bases(), out["totals"])
+        again = self.post("config-read", {"kind": "notes", "role": ""})
+        self.assertEqual(again, {"text": text, "chars": len(text), "exists": True})
+        # A role's own tab: only that role's total moves.
+        bases = self.bases()
+        mine = "Docs in British English."
+        out = self.post("config-prepare", {"kind": "notes", "role": "developer", "text": mine})
+        self.gauge_matches("developer", mine, 0, out["totals"], bases)
+        self.assertEqual(out["totals"]["reviewer"], bases["reviewer"])
+        self.post("config-run", {"token": out["token"]})
+        self.assertEqual(self.bases(), out["totals"])
+        # Editing the saved file: the gauge subtracts what the file held.
+        longer = mine + " Commit messages in the imperative."
+        out = self.post("config-prepare", {"kind": "notes", "role": "developer", "text": longer})
+        self.gauge_matches("developer", longer, len(mine), out["totals"], self.bases())
+
+    def test_unchanged_text_reports_no_change(self):
+        self.write(self.notes, "same\n")
+        out = self.post("config-prepare", {"kind": "notes", "role": "", "text": "same\n"})
+        self.assertIs(out["changed"], False)
+
+    def test_changed_on_disk_is_a_409_with_the_error_the_editor_matches(self):
+        out = self.post("config-prepare", {"kind": "notes", "role": "", "text": "mine\n"})
+        self.write(self.notes, "edited in a terminal\n")
+        self.assertEqual(self.post("config-run", {"token": out["token"]}, 409), {"error": "changed"})
+        self.assertEqual(self.notes.read_text(), "edited in a terminal\n")
+        self.assertIn('error === "changed"', JS)
+        # The token was spent: a second press gets the 403 the editor shows as "no longer valid".
+        self.assertIsInstance(self.post("config-run", {"token": out["token"]}, 403)["error"], str)
+
+    def test_over_the_limit_is_a_409_and_the_gauge_says_so_first(self):
+        self.write(self.root / "roles" / "reviewer" / "instructions.md", "r" * 15000)
+        bases = self.bases()
+        text = "n" * 6000
+        rows = [[bases["reviewer"], "proj", "", "reviewer", 0, len(text)]]
+        self.assertGreater(js_totals(rows)[0], 20000)   # SAVE is dark, so the editor would not have asked
+        out = self.post("config-prepare", {"kind": "notes", "role": "", "text": text}, 409)
+        self.assertIn("reviewer", out["error"])
+        self.assertFalse(self.notes.exists())
+
+    def test_the_editor_and_the_host_agree_on_editing_down(self):
+        self.write(self.root / "roles" / "reviewer" / "instructions.md", "r" * 15000)
+        self.write(self.notes, "s" * 6000)
+        bases = self.bases()
+        self.assertGreater(bases["reviewer"], 20000)
+        for n, allowed in ((5500, True), (6000, True), (6500, False)):
+            text = "s" * n
+            total = js_totals([[bases["reviewer"], "proj", "", "reviewer", 6000, n]])[0]
+            editor_allows = not (total > 20000 and total > bases["reviewer"])
+            self.assertEqual(editor_allows, allowed, n)
+            status, out, _ = self.env.post("config-prepare", {"kind": "notes", "role": "", "text": text})
+            self.assertEqual(status == 200, allowed, (n, out))
+
+    def test_demo_refuses_with_a_403_the_editor_shows_as_its_own_fixed_text(self):
+        self.assertTrue(dashboard_demo.REFUSED.startswith("demo mode"))
+        # The editor goes by the status, never by the host's wording.
+        self.assertIn("res.status === 403", JS)
+        self.assertNotIn("demo mode", JS)
+        self.assertIn('const DEMO = "DEMO · CHANGES DISABLED";', JS)
+
+
 @unittest.skipIf(shutil.which("node") is None, "no node")
 class ScriptTests(unittest.TestCase):
     def test_editor_under_node(self):
@@ -98,7 +221,8 @@ class ScriptTests(unittest.TestCase):
             "gauge math, live", "amber near the limit, red over, SAVE dark while over", "diff is drawn as text",
             "confirm stays dark for the hold, then writes once", "cancel drops the token; an old confirmation expires",
             "changed on disk: say so, offer RELOAD", "demo: a fixed refusal, nothing saved", "refusals reach the user as text",
-            "unsaved edits are asked about before they are lost", "no project, no editor"])
+            "unsaved edits are asked about before they are lost", "a role already over the limit may be edited down, not up",
+            "no project, no editor"])
 
 
 if __name__ == "__main__":

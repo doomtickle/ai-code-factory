@@ -13,7 +13,7 @@
 (() => {
   const ROLE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,39}$/;
   const DEFAULT_LIMIT = 20000;     // characters a role's instructions plus the notes may total
-  const TEXT_MAX = 40000;          // what the box takes: more than the limit, so "over" can be seen
+  const TEXT_MAX = 20000;          // the most one notes file may hold (the host refuses more)
   const BAR = 24, DIFF_MAX = 2000;
   const GAUGE = { ok: "k-ok", warn: "k-warn", over: "k-err" };
   const DIFF = { "+": ["nd nd-add", "+"], "-": ["nd nd-del", "-"], " ": ["nd nd-ctx", " "] };
@@ -82,7 +82,9 @@
       return projected(baseOf(r), project(), tab, r.name, savedChars, cp(draft));
     }
     const affected = r => tab === "" || tab === r.name;
-    const overRoles = () => gauged().filter(r => affected(r) && totalOf(r) > limit());
+    const stillOver = () => gauged().filter(r => affected(r) && totalOf(r) > limit());
+    // The host lets a change through that lowers (or keeps) a total already over the limit: it is the way back under.
+    const overRoles = () => stillOver().filter(r => totalOf(r) > baseOf(r));
     const canSave = () => phase === "edit" && dirty() && overRoles().length === 0;
 
     function paintGauge(g) {
@@ -193,6 +195,7 @@
         text = `✕ ${over.map(r => str(r.name)).join(", ")} would be over ${num(limit())} characters: cut ${num(worst)} to save`;
         cls = "k-err";
       } else if (!dirty()) { text = "  No changes yet."; cls = "k-dim"; }
+      else if (stillOver().length) { text = `  ${stillOver().map(r => str(r.name)).join(", ")} still over ${num(limit())}, but this change does not add to it: SAVE is allowed.`; cls = "k-warn"; }
       else { text = "  Unsaved changes. SAVE shows what would be written and asks you to confirm."; cls = "k-dim"; }
       refs.status.className = `nstatus ${cls}`;
       setText(refs.status, text);
