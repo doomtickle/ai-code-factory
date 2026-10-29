@@ -71,7 +71,7 @@
   // ---------- screens
   // Each screen is a node and whether it needs the frame expanded to the whole
   // window. Switching to one that does tells the main page "cu:expand", and back
-  // "cu:collapse". The setup screen shows the effective configuration read-only;
+  // "cu:collapse". The setup screen shows the effective configuration (its one write is the notes editor);
   // settings that move the security boundary (broker policy and hosts,
   // credentials) are never edited from a browser.
   const SCREENS = {
@@ -79,7 +79,7 @@
     confirm: { node: $("scr-console"), expanded: true },  // what RESTART / UPDATE would do, and CONFIRM
     log: { node: $("scr-console"), expanded: true },      // the running action's output
     inspect: { node: $("scr-inspect"), expanded: true },  // a held push's patch, and the gate's keys
-    setup: { node: $("scr-console"), expanded: true },    // the effective configuration (read-only)
+    setup: { node: $("scr-console"), expanded: true },    // the effective configuration; its one write is the notes editor
   };
   let screen = null, expanded = false;
   function go(name) {
@@ -572,7 +572,7 @@
     });
   }
 
-  // ---------- the setup screen: the effective configuration, read-only (st.config)
+  // ---------- the setup screen: the effective configuration (st.config), plus the notes editor
   // Built on the host from the factory's own parsers (dashboard_setup.py); nothing here
   // can change a setting. Every string goes in with textContent.
   const APPLIES = { START: "factory start", UPDATE: "factory update" };
