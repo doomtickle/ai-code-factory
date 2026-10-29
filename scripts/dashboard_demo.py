@@ -133,7 +133,7 @@ class DemoControls(dc.Controls):
     def api_decide(self, body: dict) -> tuple:
         raise dc.Refused(403, REFUSED)
 
-    api_prepare = api_run = api_decide
+    api_prepare = api_run = api_config_prepare = api_config_run = api_decide
 
     def argv(self, action: str) -> list:
         raise RuntimeError("demo mode runs no commands")

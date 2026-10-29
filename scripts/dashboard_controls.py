@@ -30,6 +30,14 @@ those requests reach:
   run      start the action named by a prepared token. So no single request
            ever starts a host command.
   log      the action's output, from an offset.
+  config-read, config-prepare, config-run
+           the SETUP screen's one write (dashboard_configwrite.py): a role's
+           tuning override (ROLE_OVERRIDE_KEYS only) or the bound project's
+           notes. config-read returns a notes file's text; config-prepare
+           checks the change with the factory's own validators, returns its diff and
+           a single-use token for action "config" bound to the exact new bytes and
+           the digest of the file as it is; config-run writes it, only if the file
+           still has that digest. It applies on the next RESTART.
   patch    the held push's patch, for INSPECT: read from the broker's state
            (approvals/patches/<sha256>.patch, named by the card's
            patch_sha256), checked against that digest, parsed and
@@ -71,6 +79,7 @@ import time
 from pathlib import Path
 
 import approvals
+import dashboard_configwrite as configwrite
 import dashboard_setup
 import patchview
 
@@ -181,7 +190,8 @@ class Controls:
         self.lock = threading.Lock()
         self._setup: tuple = (0.0, None)  # (when, data) of the SETUP screen's config
         self.plan_lock = threading.Lock()  # one `factory update --plan` at a time
-        self.confirm = None        # (token, action, expires) of the last prepare
+        self.write_lock = threading.Lock()  # one config write at a time
+        self.confirm = None        # (token, action, expires[, config write plan]) of the last prepare
         self.action = None         # name of the current/last action
         self.phase = "idle"        # idle, running, done, failed
         self.started = self.ended = self.exit = None
@@ -194,13 +204,17 @@ class Controls:
     def api(self, name: str, body: dict) -> tuple:
         """(status, JSON object) for POST /cu/api/<name> with body."""
         handler = {"state": self.api_state, "decide": self.api_decide, "prepare": self.api_prepare,
-                   "run": self.api_run, "log": self.api_log, "patch": self.api_patch}.get(name)
+                   "run": self.api_run, "log": self.api_log, "patch": self.api_patch,
+                   "config-read": self.api_config_read, "config-prepare": self.api_config_prepare,
+                   "config-run": self.api_config_run}.get(name)
         if handler is None:
             return 404, {"error": "no such control"}
         try:
             return handler(body)
         except Refused as e:
             return e.status, dict(e.extra, error=str(e))
+        except configwrite.WriteRefused as e:
+            return e.status, {"error": str(e)}
         except Exception as e:  # never the message: it could quote a card or a patch
             print(f"control unit: /cu/api/{name} failed: {type(e).__name__}", file=sys.stderr)
             return 500, {"error": "the control unit failed; see the dashboard's log"}
@@ -262,6 +276,64 @@ class Controls:
             cached = dashboard_setup.setup(paths, project, self.board.look_problem)
             self._setup = (now, cached)
         return cached
+
+    # --- the SETUP screen's config write (dashboard_configwrite.py)
+    def config_source(self) -> tuple:
+        """(Paths, project folder name) a config write names its target from: server-side facts only."""
+        paths, project = self.setup_source()
+        if paths is None:
+            raise Refused(409, "the dashboard has no factory configuration to edit")
+        return paths, project
+
+    def api_config_read(self, body: dict) -> tuple:
+        if body.get("kind") != "notes":
+            raise Refused(400, "kind must be notes")
+        paths, project = self.config_source()
+        return 200, configwrite.read_notes(paths, project, body.get("role", ""))
+
+    def api_config_prepare(self, body: dict) -> tuple:
+        kind = body.get("kind")
+        if kind not in ("role", "notes"):
+            raise Refused(400, "kind must be role or notes")
+        paths, project = self.config_source()
+        with self.lock:
+            if self.phase == "running":
+                raise Refused(409, f"{self.action} is still running")
+        if kind == "role":
+            plan = configwrite.prepare_role(paths, body.get("role"), body.get("set", {}), body.get("unset", []))
+        else:
+            plan = configwrite.prepare_notes(paths, project, body.get("role", ""), body.get("text"))
+        token = secrets.token_urlsafe(24)
+        with self.lock:
+            self.confirm = (token, "config", self.clock() + CONFIRM_TTL, plan)  # replaces any earlier token
+        return 200, dict(plan.view, token=token, expires=CONFIRM_TTL)
+
+    def api_config_run(self, body: dict) -> tuple:
+        given = body.get("token")
+        with self.lock:
+            held = self.confirm
+            if not isinstance(given, str) or held is None \
+                    or not hmac.compare_digest(given.encode(), held[0].encode()):
+                raise Refused(403, "no confirmation: press the key again")
+            self.confirm = None  # single use, whatever happens next
+            if held[1] != "config":
+                raise Refused(403, "that confirmation was for another action")
+            if self.clock() > held[2]:
+                raise Refused(403, "the confirmation expired: press the key again")
+            if self.phase == "running":  # a restart snapshots the config: don't write under it
+                raise Refused(409, f"{self.action} is still running")
+        plan = held[3]
+        with self.write_lock:
+            try:
+                wrote = configwrite.apply(plan)
+            except OSError:
+                raise Refused(503, "the file could not be written; try again") from None
+        if wrote:
+            self._setup = (0.0, None)  # SETUP and the SERVICE DUE lamp show the new file now
+            changed = getattr(self.board, "config_changed", None)
+            if changed is not None:
+                changed()
+        return 200, {"ok": True, "applies": plan.view["applies"]}
 
     def held_card(self, cid: str, fp: str) -> dict:
         """The pending card with exactly this id, if its fingerprint is still fp."""
