@@ -235,7 +235,9 @@ this browser. A row shows:
 - its merge state, one of:
   - **UNMERGED**: the branch has commits that are not in your checked-out
     branch yet (the host's `HEAD`). These are the ones the header counts.
-  - **MERGED**: all of the branch's commits are in your checked-out branch.
+  - **MERGED**: all of the branch's commits are in your checked-out branch,
+    or the same changes are in it under other commits (the branch was rebased
+    or pushed again under another name).
   - **GONE**: the imported branch no longer exists in your project.
   - **?**: the dashboard couldn't check (an odd branch name, or git didn't
     answer in time). It counts as unmerged until it is checked.
@@ -252,14 +254,17 @@ this browser. A row shows:
   merge request on your configured GitLab host; anything else is shown as
   plain text.
 
-MERGED and GONE rows drop off the list a day after the job ended. A squash or
-rebase merge leaves the original commits out of `HEAD`, so the branch stays
-UNMERGED until you delete it (`git branch -rd`, see [Get the
-work](02-build-a-feature.md#get-the-work)).
+MERGED and GONE rows drop off the list a day after the job ended; UNMERGED (and
+`?`) rows drop off after 7 days. A rebase merge, or a branch that landed under
+another name, shows MERGED because the dashboard compares the changes. A squash
+of several commits into one changes them, so that branch stays UNMERGED until
+the 7 days pass or you delete the stale remote-tracking ref (`git branch -r -d
+<ref>`, for example `git branch -r -d factory-developer/factory/foo`), which
+makes the row GONE (see [Get the work](02-build-a-feature.md#get-the-work)).
 
 Press a row to open that job's review packet in the lane monitor. The outbox
 only displays: it can't merge, push or open anything. It asks git for a branch
-list and a commit count at most every few seconds, so a very long list is cut
+list, a commit count and a changes check at most every few seconds, so a very long list is cut
 at 20 rows.
 
 Stands in for: `git branch -r | grep factory-` and `factory packet <job>`.
@@ -751,7 +756,8 @@ It is local: it listens only on `127.0.0.1`, refuses any request without
 this run's token, and makes no network connection of its own. Apart from
 Terminal 0 and the control unit it only reads the factory's state folder, and
 for the [outbox](#the-outbox) asks your project's git, read-only and with hooks
-off, which `factory/*` branches exist and how far ahead of `HEAD` they are.
+off, which `factory/*` branches exist, how far ahead of `HEAD` they are and
+whether their changes are already in `HEAD`.
 The control unit can write only a decision file (APPROVE, DECLINE) and its
 action logs, and run only `factory doctor`, `factory restart`, `factory
 update --yes` and `factory update --plan`, each after a confirm screen. The README's

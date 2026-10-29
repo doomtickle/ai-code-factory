@@ -17,9 +17,9 @@ factory config folder (--config) it compares them with; no command is run for it
 dashboard.toml from that folder once at start (dashboard_config.py), for the page's nameplate, shift names, defaults and role colours.
 The FIRST SHIFT banner and start-up hints (dashboard_hints.py) run only `sbx secret ls` and `sbx ls -q`,
 in a background thread every 30 s at most, each cut off after 5 s, never for a request.
-The OUTBOX module (dashboard_outbox.py) also reads dispatch/jobs.json and runs two fixed,
-read-only git forms in the host project (a for-each-ref listing of the imported refs and
-rev-list --count HEAD..<object id>; hooks and fsmonitor off, no shell), cached for a few seconds.
+The OUTBOX module (dashboard_outbox.py) also reads dispatch/jobs.json and runs three fixed,
+read-only git forms in the host project (a for-each-ref listing of the imported refs,
+rev-list --count HEAD..<object id> and cherry HEAD <object id>; hooks and fsmonitor off, no shell), cached for a few seconds.
 It reuses watch.py's transcript model and approvals.py's card reader rather
 than parsing either command's output. The main page only displays: nothing
 it can reach acts.
