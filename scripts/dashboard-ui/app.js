@@ -578,7 +578,7 @@
   // ---------- outbox: finished factory/* branches (display only; a row opens that job's packet)
   // Every string is set as text. Classes come from the fixed maps below, never from the data, and
   // the one link is the server's own validated https PR/MR URL, re-checked here before it is used.
-  const OB_STATUS = { OPEN: "", MERGED: "merged", GONE: "gone", UNCHECKED: "unchecked" };
+  const OB_STATUS = { OPEN: "unmerged", MERGED: "merged", GONE: "gone", UNCHECKED: "unchecked" };
   const OB_VERDICT = { APPROVED: "ob-approved", REVISE: "ob-revise" };
   const OB_PUSH = { PUSHED: "ob-pushed", STAGED: "ob-staged", WRITTEN: "ob-written", FAILED: "ob-failed" };
   const SAFE_URL = /^https:\/\/[A-Za-z0-9.-]+(?::[0-9]+)?\/[\x21-\x7e]*$/;
@@ -595,8 +595,7 @@
     btn.title = lane ? "Open this job's packet" : "That lane is no longer configured";
     btn.append(el("span", "ob-repo", r.repo), el("span", "ob-branch", r.branch),
       el("span", "ob-ahead", r.ahead == null ? "" : `+${r.ahead}`));
-    if (OB_STATUS[r.status]) btn.append(el("span", `ob-tag ${OB_STATUS[r.status]}`, r.status));
-    else if (r.status === "UNCHECKED") btn.append(el("span", "ob-tag unchecked", "?"));
+    if (OB_STATUS[r.status]) btn.append(el("span", `ob-tag ${OB_STATUS[r.status]}`, r.status === "OPEN" ? "UNMERGED" : r.status === "UNCHECKED" ? "?" : r.status));
     if (r.verdict) btn.append(el("span", `ob-tag ${OB_VERDICT[r.verdict] || ""}`, r.verdict + (r.stale ? " (old)" : "")));
     if (r.push) btn.append(el("span", `ob-tag ${OB_PUSH[r.push] || ""}`, r.push));
     btn.addEventListener("click", () => openMon(r.lane, r.job, obKey(r)));
@@ -625,10 +624,22 @@
       ? [...obRows].find(([, b]) => b === document.activeElement) : null;
     obRows.clear();
     const live = rows.filter(r => r.status !== "MERGED" && r.status !== "GONE").length;
-    setText($("outbox-sub"), rows.length ? `${live} waiting` : "");
+    setText($("outbox-sub"), rows.length ? `${live} unmerged` : "");
+    $("outbox-sub").classList.toggle("lit", live > 0);
     list.replaceChildren(...(rows.length ? rows.map(obRow) : [el("p", "ob-empty", "Nothing waiting. Finished branches land here.")]));
     if (back && obRows.get(back[0])) obRows.get(back[0]).focus({ preventScroll: true });
   }
+
+  // The module folds to its header bar. The choice is this browser's (localStorage, own key, a "1" or "0" only).
+  const OB_FOLD_KEY = "fc1984-outbox";
+  function setOutboxOpen(open, save) {
+    $("outbox").classList.toggle("collapsed", !open);
+    $("outbox-fold").setAttribute("aria-expanded", open ? "true" : "false");
+    $("outbox-list").hidden = !open;
+    if (save) { try { localStorage.setItem(OB_FOLD_KEY, open ? "1" : "0"); } catch (e) { /* no storage: this tab only */ } }
+  }
+  $("outbox-fold").addEventListener("click", () => setOutboxOpen($("outbox-fold").getAttribute("aria-expanded") !== "true", true));
+  try { if (localStorage.getItem(OB_FOLD_KEY) === "1") setOutboxOpen(true, false); } catch (e) { /* no storage: folded */ }
 
   // ---------- STANDBY: the shift briefing (state.briefing, dashboard_setup.briefing): the project, its notes, the
   // roles, the holds and one example work order. Host-derived facts; every string goes in with textContent.

@@ -265,7 +265,18 @@ a.tabkey { display: inline-block; text-decoration: none; }
 .ob-tag.ob-approved, .ob-tag.ob-pushed { color: var(--lcd-green); }
 .ob-tag.ob-revise, .ob-tag.ob-staged, .ob-tag.ob-written { color: var(--lcd-amber); }
 .ob-tag.ob-failed { background: var(--lcd-red); color: var(--lcd-bg); padding: 0 3px; }
+.ob-tag.unmerged { color: var(--lcd-amber); }
 .ob-tag.merged, .ob-tag.gone, .ob-tag.unchecked { opacity: .8; }
+/* The header is the fold key: a caret, then the title; folded, only this bar is left and the lanes take the room */
+.outbox.collapsed { padding-top: 6px; padding-bottom: 6px; }
+.ob-fold { all: unset; box-sizing: border-box; display: inline-flex; align-items: center; gap: 8px; padding: 2px 4px; cursor: pointer; }
+.ob-fold .silk { color: var(--silk); }
+.ob-fold:hover .silk { color: var(--silk-dim); }
+.ob-fold:focus-visible { outline: 2px solid var(--silk); outline-offset: 2px; }
+.ob-caret::before { content: "\25BC"; font-size: .7rem; color: var(--silk-dim); }
+.outbox.collapsed .ob-caret::before { content: "\25B6"; }
+#outbox-sub.lit { color: var(--led-amber); text-shadow: 0 0 6px var(--led-amber); }
+.outbox-lcd[hidden] { display: none; }
 .ob-pr { flex: none; color: var(--lcd-blue); }
 a.ob-pr { text-decoration: underline; }
 .ob-empty { margin: 0; opacity: .75; }
