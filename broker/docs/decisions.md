@@ -2,6 +2,38 @@
 
 Dated entries, for the user to review. Newest first.
 
+## 2026-10-29
+
+- **The control unit writes two kinds of host config file, from SETUP** (owner decision 29 Oct
+  2026, doomtickle/passdesk-ops#185, #186; backend `scripts/dashboard_configwrite.py`). SETUP was
+  read-only; tuning a role or writing project notes meant editing files by hand. Choices:
+  - **Only data files, one code path.** A role's tuning override `FACTORY_CONFIG/roles/<role>.conf`
+    (`ROLE_OVERRIDE_KEYS` only; never `WORKSPACE`, `TEMPLATE` or `BROKER_TOOLS`) and the bound
+    project's notes `projects/<project>.md` and `<project>.<role>.md`. Both are parsed as data or
+    appended as prompt text, never executed. Policy, credentials, kits and `enabled-roles` stay
+    hand-edited.
+  - **Targets from server facts only**: `FACTORY_CONFIG`, the dashboard's project folder name and
+    a role `list_roles` returns. Nothing below `FACTORY_CONFIG` is followed if it is a symlink; the
+    file must be a regular one; the write is a 0600 temp file in the same folder, fsynced, then
+    `os.replace`.
+  - **Validated as `factory start` validates.** The new override passes `roles.validate_role` in a
+    throwaway config folder before a token is issued; a bad existing file is refused, not
+    repaired. Comments and key order are kept. (`validate_role` does not require MODEL to be one
+    of MODELS; the bridge adds MODEL to the list itself, so neither does this.)
+  - **Notes limit, with one leniency.** At most 20,000 characters; refused if any running role's
+    instructions plus notes would pass the bridge's 20,000 (`MAX_INSTRUCTIONS_CHARS`) — unless the
+    change lowers a total already over it, since that is the way back under.
+  - **Confirm step and concurrent edits.** Prepare returns a diff and a single-use 120 s token
+    (RESTART's token slot, action `"config"`) bound to the new bytes and the SHA-256 of the file
+    as it was; run writes only if the digest still matches (else 409 `changed`).
+  - **The 128 KiB exception.** Every control request body stays capped at 8 KiB except
+    `config-prepare`, which carries a notes file (20,000 characters is up to 80 KB as UTF-8 JSON) and
+    may be up to 128 KiB, checked on `Content-Length` before the body is read.
+  - **Applies on RESTART.** The bridge reads only the snapshot `factory start` makes into
+    `FACTORY_STATE` (`role-overrides/`, `instructions/`); LANES also sets up lane sessions at
+    start. So every change reports `RESTART`, the SERVICE DUE lamp (already comparing those files
+    with the snapshot) lights at once, and nothing was made to read `FACTORY_CONFIG` live.
+
 ## 2026-10-28
 
 - **`github_update_pr`: title and body of a pull request, nothing else**

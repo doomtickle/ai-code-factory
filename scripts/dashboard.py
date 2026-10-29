@@ -359,6 +359,11 @@ class Dashboard:
             self._service = (now, cached)
         return {"due": cached["due"], "lines": list(cached["lines"])}
 
+    def config_changed(self) -> None:
+        """The control unit wrote a config file: the SERVICE DUE lamp and the briefing look again next time."""
+        self._service = (0.0, self._service[1])
+        self._briefing = (0.0, self._briefing[1])
+
     def briefing_source(self) -> tuple:
         """(factory.context.Paths, the project's folder) the shift briefing reads; paths None when there is none.
         Demo mode reads the fixture's setup/ folder and the empty repos dashboard_demo.build made there."""
