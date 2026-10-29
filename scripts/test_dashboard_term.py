@@ -791,6 +791,10 @@ class VendorTests(unittest.TestCase):
         self.assertIn('"replay"', js)               # mutes input while the replay is written
         css = (UI / "term.css").read_text()
         self.assertIn("font-variant-ligatures: none", css)  # VT323's ff/fi/fl ligatures break xterm's grid
+        # FitAddon subtracts only .xterm's own padding: padding on #term lets the grid overflow the frame
+        self.assertIsNone(re.search(r"^#term\s*\{[^}]*padding", css, re.M), "padding on #term, not .xterm")
+        self.assertRegex(css, r"#term \.xterm \{[^}]*padding:")
+        self.assertIn("Math.min(22, Math.floor(window.innerWidth / 30))", js)  # 22px cap: larger type clipped on wide screens
         for sink in ("innerHTML", "outerHTML", "insertAdjacentHTML", "document.write", "eval(", "new Function",
                      "ClipboardAddon", "WebLinksAddon", "ImageAddon", "window.open"):
             self.assertNotIn(sink, js, f"term.js uses {sink}")
