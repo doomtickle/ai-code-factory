@@ -87,7 +87,7 @@ const fetchFake = async (url, opts) => {
   const name = url.replace("/cu/api/", ""), body = JSON.parse(opts.body);
   calls.push([name, body]);
   if (name.startsWith("config-") && cfgReply) {
-    const [status, out] = cfgReply(name, body);
+    const [status, out] = await cfgReply(name, body);
     return { status, ok: status < 300, json: async () => out };
   }
   if (name === "decide" && refuse) {
@@ -479,22 +479,45 @@ const card = (over) => Object.assign({ id: "c1", tool: "git_push", role: "develo
   await advance(300);
   assert.strictEqual($("con-go").disabled, false, "armed");
   calls.length = 0;
+  // The host answers config-run only when the test lets it, and by then has written the override.
+  let release; const gate = new Promise(r => { release = r; });
+  const prepareReply = cfgReply;
+  cfgReply = async (name, body) => {
+    if (name !== "config-run") return prepareReply(name, body);
+    wrote.push([name, body]);
+    await gate;
+    const dev = config.roles[0];
+    dev.keys = dev.keys.map(k => k.key === "LANES" ? row("LANES", "5", "LOCAL", "3") : k.key === "EFFORT" ? row("EFFORT", "high", "LOCAL", "")
+      : k.key === "MAX_TURNS" ? row("MAX_TURNS", "200", "REPO") : k);
+    return [200, { ok: true, applies: "RESTART" }];
+  };
   $("con-go").click(); await flush();
   $("con-go").fire("click"); await flush();
+  // In flight: CANCEL and Esc are dead, so a write that goes through always shows its note.
+  assert.strictEqual($("con-cancel").disabled, true, "CANCEL is dark while the write is in flight");
+  $("con-cancel").fire("click"); await flush();
+  const esc = { key: "Escape", preventDefault() {} };
+  (doc.listeners.keydown || []).forEach(f => f(esc)); await flush();
+  assert.strictEqual($("con-title").textContent, "SETUP · TUNE DEVELOPER", "Esc and CANCEL did not leave the diff");
+  release(); await flush();
   assert.deepStrictEqual(wrote.slice(1), [["config-run", { token: "tok1" }]], "the token goes once");
   assert.match($("con-body").textContent, /SERVICE DUE · RESTART TO APPLY/);
-  assert.ok(calls.some(c => c[0] === "state"), "state is refreshed");
+  assert.strictEqual($("con-cancel").disabled, false, "CANCEL is back");
+  assert.ok(calls.filter(c => c[0] === "state").length >= 1, "state is refreshed");
   assert.strictEqual($("con-title").textContent, "SETUP · CONFIGURATION");
-  assert.strictEqual(turnsNow("developer").value, "80", "the drafts of the applied role are gone; the file's values show");
+  assert.strictEqual(turnsNow("developer").value, "", "the drafts are gone and the knobs show the written file: MAX_TURNS back on the repo's");
+  assert.strictEqual(byLabel("developer", "Lanes").attrs["aria-valuenow"], "5", "LANES shows the new value");
+  assert.strictEqual(byText("developer", "button", "high").className.split(" ").includes("on"), true, "EFFORT shows the new value");
+  assert.strictEqual(prepKey("developer").disabled, true, "nothing left to prepare");
   results.push("tuning confirm holds, then sends the token once");
 
   // The file changed between prepare and run: 409 changed, said plainly, nothing retried.
-  cfgReply = (name, body) => { wrote.push([name, body]); return name === "config-run" ? [409, { error: "changed" }] : [200, { token: "tok2", expires: 120, path: "p", changed: true, applies: "LIVE", diff: [{ op: "+", text: 'LANES="2"' }] }]; };
+  cfgReply = (name, body) => { wrote.push([name, body]); return name === "config-run" ? [409, { error: "changed" }] : [200, { token: "tok2", expires: 120, path: "p", changed: true, applies: "RESTART", diff: [{ op: "+", text: 'LANES="2"' }] }]; };
   wrote = [];
   byLabel("reviewer", "More lanes").click();
   prepKey("reviewer").click(); await flush();
   assert.deepStrictEqual(wrote[0][1], { kind: "role", role: "reviewer", set: { LANES: "2" }, unset: [] });
-  assert.match($("con-body").textContent, /applies: live/);
+  assert.match($("con-body").textContent, /applies: after RESTART/);
   await advance(2600);
   $("con-go").click(); await flush();
   assert.match($("con-body").textContent, /file changed on disk after it was checked, so nothing was written\. Go back and prepare again/);
@@ -505,7 +528,7 @@ const card = (over) => Object.assign({ id: "c1", tool: "git_push", role: "develo
   results.push("tuning 409 changed");
 
   // CANCEL on the diff drops the token and sends nothing.
-  cfgReply = (name, body) => { wrote.push([name, body]); return [200, { token: "tok3", expires: 120, path: "p", changed: true, applies: "LIVE", diff: [{ op: "+", text: 'LANES="2"' }] }]; };
+  cfgReply = (name, body) => { wrote.push([name, body]); return [200, { token: "tok3", expires: 120, path: "p", changed: true, applies: "RESTART", diff: [{ op: "+", text: 'LANES="2"' }] }]; };
   wrote = [];
   prepKey("reviewer").click(); await flush();
   $("con-cancel").click(); await flush();

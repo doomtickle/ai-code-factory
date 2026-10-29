@@ -144,8 +144,8 @@ open **SETUP**, turn the role's knobs and press **PREPARE** (see [Tuning a role
 from SETUP](06-dashboard.md#tuning-a-role-from-setup)). It shows the exact change
 to `roles/<role>.conf` first and writes it only when you confirm. The dashboard
 then says when it applies: **SERVICE DUE · RESTART TO APPLY** means press
-RESTART (the key checks what it would stop first), **APPLIED · LIVE** means nothing needs
-restarting. `MODELS` and every other key stay file-edits, and so does
+RESTART (the key checks what it would stop first); every change here waits for
+a restart, as the bridge reads only the copy `factory start` took. `MODELS` and every other key stay file-edits, and so does
 anything outside a role's override.
 
 Then run `factory start`, which applies overrides: the bridge reads a copy it

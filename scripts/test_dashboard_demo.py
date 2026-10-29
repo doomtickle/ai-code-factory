@@ -254,6 +254,7 @@ class RefusalTests(unittest.TestCase):
                   {"kind": "notes", "role": "", "text": "x"})
         for body in bodies:
             self.assertEqual(self.env.post("config-prepare", body), (403, {"error": demo.REFUSED}))
+            self.assertTrue(self.env.post("config-prepare", body)[1]["error"].startswith("demo mode"))  # what cu.js matches
         self.assertEqual(self.env.post("config-run", {"token": "x"}), (403, {"error": demo.REFUSED}))
         self.assertIsNone(self.env.controls.confirm)
         self.assertEqual({p: p.read_bytes() for p in config.rglob("*") if p.is_file()}, before)

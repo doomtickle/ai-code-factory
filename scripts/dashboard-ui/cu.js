@@ -143,24 +143,34 @@
     return expired(c) ? "Expired" : "";
   }
 
-  async function poll() {
-    if (polling || document.hidden) return;
+  // poll() returns the promise of the poll running now (or of the last one, if the page is hidden).
+  let pollP = null;
+  function poll() {
+    if (polling || document.hidden) return pollP;
     polling = true;
-    try {
-      const res = await api("state", {});
-      if (res.ok) {
-        st = res.data; polledAt = Date.now(); fault = null;
-      } else {
-        fault = res.status === 403
-          ? ["REFUSED", "The dashboard refused this control unit (it may have restarted). Reload the dashboard page."]
-          : ["FAULT", errText(res)];
+    pollP = (async () => {
+      try {
+        const res = await api("state", {});
+        if (res.ok) {
+          st = res.data; polledAt = Date.now(); fault = null;
+        } else {
+          fault = res.status === 403
+            ? ["REFUSED", "The dashboard refused this control unit (it may have restarted). Reload the dashboard page."]
+            : ["FAULT", errText(res)];
+        }
+      } catch (e) {
+        fault = ["NO LINK", "Lost the dashboard. Retrying…"];
+      } finally {
+        polling = false;
       }
-    } catch (e) {
-      fault = ["NO LINK", "Lost the dashboard. Retrying…"];
-    } finally {
-      polling = false;
-    }
-    renderDeck();
+      renderDeck();
+    })();
+    return pollP;
+  }
+  // A poll that began after now: one already in flight may carry the state from before a write.
+  async function pollFresh() {
+    while (polling && pollP) await pollP;
+    await poll();
   }
 
   // ---------- scroll cues: a fade and "▼ more" while a screen has more below
@@ -546,6 +556,7 @@
   }
   function keys(cancelText, goText, goOn) {
     cancelKey.textContent = cancelText;
+    cancelKey.disabled = false;
     goKey.hidden = !goText;
     if (goText) goKey.textContent = goText;
     goKey.disabled = !goOn;
@@ -1090,10 +1101,10 @@
   function showTune(role, d) {
     tune = { role, seq: ++tuneSeq, token: d.token, deadline: Date.now() + Math.max(0, Number(d.expires) || 0) * 1000,
       armAt: Date.now() + HOLD_MS, state: "ready", onGo: runTune, armTimer: 0, changed: d.changed === true };
-    const applies = d.applies === "RESTART" ? "RESTART" : d.applies === "LIVE" ? "LIVE" : "?";
+    // The bridge reads only the snapshot `factory start` takes, so the host always answers RESTART.
+    const restart = d.applies === "RESTART";
     const out = [P("banner", `Tune ${role}`), P("ind k-dim", `  writes: ${str(d.path) || "(unknown path)"}`),
-      P("ind " + (applies === "RESTART" ? "k-warn" : "k-ok"),
-        applies === "RESTART" ? "  applies: after RESTART (SERVICE DUE · RESTART TO APPLY)" : applies === "LIVE" ? "  applies: live, no restart needed" : "  applies: unknown")];
+      P("ind k-warn", restart ? "  applies: after RESTART (SERVICE DUE · RESTART TO APPLY)" : "  applies: unknown")];
     out.push(H("Change"));
     const lines = list(d.diff).filter(l => l && typeof l === "object");
     if (!d.changed || !lines.length) out.push(P("k-dim", "  Nothing would change: the file already says this."));
@@ -1160,6 +1171,7 @@
     tune.state = "starting";
     tune.token = null;  // single use, whatever the answer
     keys("Cancel", "Confirm apply", false);
+    cancelKey.disabled = true;  // in flight: a write that went through must show its note
     let res;
     try {
       res = await api("config-run", { token });
@@ -1169,8 +1181,10 @@
     }
     if (!tune || tune.seq !== seq) return;
     if (res.ok) {
-      tuneNote = res.data.applies === "RESTART" ? { text: "SERVICE DUE · RESTART TO APPLY", cls: "k-warn" }
-        : res.data.applies === "LIVE" ? { text: "APPLIED · LIVE", cls: "k-ok" } : { text: "APPLIED", cls: "k-ok" };
+      // Every change waits for a restart; an answer that doesn't say so is still shown as a write.
+      tuneNote = res.data.applies === "RESTART" ? { text: "SERVICE DUE · RESTART TO APPLY", cls: "k-warn" } : { text: "APPLIED", cls: "k-ok" };
+      await pollFresh();  // the host dropped its SETUP cache: the knobs show what was written
+      if (!tune || tune.seq !== seq) return;
       drafts.delete(role);
       rackMsg.delete(role);
       tuneStop();
@@ -1178,7 +1192,6 @@
       keys("Close", null, false);
       renderSetup(true);
       cancelKey.focus();
-      poll();
     } else if (res.status === 409 && res.data.error === "changed") {
       tuneFail("The file changed on disk after it was checked, so nothing was written. Go back and prepare again.");
     } else if (res.status === 403) {
@@ -1590,7 +1603,7 @@
     const back = lastKey && !lastKey.disabled && !lastKey.hidden ? lastKey : $("btn-approve").disabled ? $("deck-lcd") : $("btn-approve");
     back.focus();
   }
-  cancelKey.addEventListener("click", () => { if (tune) tuneCancel(); else closeConsole(); });
+  cancelKey.addEventListener("click", () => { if (!tune) closeConsole(); else if (tune.state !== "starting") tuneCancel(); });
   goKey.addEventListener("click", () => {
     if (tune) { if (tune.onGo && !goKey.disabled && Date.now() >= tune.armAt) tune.onGo(); return; }
     if (svc && svc.onGo && !goKey.disabled) svc.onGo();
@@ -1622,7 +1635,7 @@
       return;
     }
     if (screen !== "confirm" && screen !== "log" && screen !== "setup") return;
-    if (e.key === "Escape") { e.preventDefault(); if (tune) tuneCancel(); else closeConsole(); return; }
+    if (e.key === "Escape") { e.preventDefault(); if (!tune) closeConsole(); else if (tune.state !== "starting") tuneCancel(); return; }
     if (e.key !== "Tab") return;
     const items = [conBody, cancelKey, goKey].filter(n => !n.hidden && !n.disabled);
     const first = items[0], last = items[items.length - 1];

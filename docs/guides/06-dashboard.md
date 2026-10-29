@@ -683,8 +683,10 @@ When it is written, the screen says when it takes effect. **SERVICE DUE ·
 RESTART TO APPLY** means press RESTART: these keys are read at `factory start`
 (see the table in [Make it yours](04-customize.md#which-command-applies-a-change)),
 and RESTART runs `factory restart`, which cancels running jobs, so its usual
-check shows first. **APPLIED ·
-LIVE** means nothing needs restarting. In demo mode PREPARE answers
+check shows first. Every change here waits for a restart: the dispatch bridge
+reads only the copy `factory start` took, so nothing applies live. While the
+write is in flight CANCEL and Esc are dark, so the note always shows; the knobs
+then show the values just written. In demo mode PREPARE answers
 **DEMO · CHANGES DISABLED** and writes nothing. Broker policy, hosts, kits and
 credentials have no knobs here: they stay read-only.
 
@@ -797,8 +799,9 @@ Terminal 0 and the control unit it only reads the factory's state folder, and
 for the [outbox](#the-outbox) asks your project's git, read-only and with hooks
 off, which `factory/*` branches exist, how far ahead of `HEAD` they are and
 whether their changes are already in `HEAD`.
-The control unit can write only a decision file (APPROVE, DECLINE) and its
-action logs, and run only `factory doctor`, `factory restart`, `factory
+The control unit can write only a decision file (APPROVE, DECLINE), its
+action logs and, from SETUP, a role's local tuning override or the project's notes (each after a diff and a
+confirm), and run only `factory doctor`, `factory restart`, `factory
 update --yes` and `factory update --plan`, each after a confirm screen. The README's
 [Dashboard](../../README.md#dashboard) section has the details.
 
