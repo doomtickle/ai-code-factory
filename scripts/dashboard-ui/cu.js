@@ -1656,6 +1656,8 @@
       state: () => st,
       refresh: () => pollFresh(),
       more: moreCue,
+      // The editor takes the screen: a knob check still waiting for its answer is dropped (the drafts stay).
+      opened: () => { tuneStop(); tuneChecking = null; },
       head: (tag, cls, led, note) => {
         setText($("con-title"), "SETUP · NOTES");
         setClass($("con-state"), `state-tag st-${cls}`);

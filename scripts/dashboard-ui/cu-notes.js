@@ -411,6 +411,7 @@
     function enter() {
       if (on || !usable()) return;
       on = true; override = null;
+      if (d.opened) d.opened();
       load("");
     }
 

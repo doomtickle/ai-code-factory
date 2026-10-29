@@ -558,6 +558,32 @@ const card = (over) => Object.assign({ id: "c1", tool: "git_push", role: "develo
   assert.ok(walk(rack("reviewer")).some(n => n.textContent === "✕ LANES must be 1 to 8 <b>"));
   results.push("tuning demo 403 line");
   $("con-cancel").click(); await flush();
+
+  // A knob check still waiting for its answer when the notes editor opens is dropped: its diff never lands on the editor.
+  $("svc-setup").click(); await flush();
+  let answer;
+  cfgReply = (name) => new Promise(res => { answer = () => res([200, { token: "late", expires: 120, path: "p", changed: true, applies: "RESTART", diff: [{ op: "+", text: 'LANES="2"' }] }]); });
+  server.handlers["config-read"] = async () => [200, { text: "notes", chars: 5, exists: true }];
+  const editBtn = () => kids().find(n => n.tagName === "button" && n.textContent === "Edit notes");
+  const writes = () => calls.filter(c => c[0] === "config-run" || c[0] === "config-prepare").length;
+  byLabel("reviewer", "More lanes").click();
+  prepKey("reviewer").click(); await flush();
+  const before = writes();
+  editBtn().click(); await flush();
+  assert.ok(kids().some(n => n.tagName === "textarea"), "the editor is open");
+  answer(); await flush(); await advance(3000);
+  assert.ok(kids().some(n => n.tagName === "textarea"), "the late answer left the editor on the glass");
+  assert.strictEqual($("con-title").textContent, "SETUP · NOTES");
+  assert.ok(!$("con-body").textContent.includes('LANES="2"'), "no tune diff over the editor");
+  assert.strictEqual($("con-go").hidden === false && $("con-go").disabled === false, false, "no key armed for a write that was dropped");
+  assert.strictEqual(writes(), before, "nothing was sent");
+  $("con-cancel").click(); await flush();                               // the editor's Close: back to the knobs
+  assert.strictEqual($("con-title").textContent, "SETUP · CONFIGURATION");
+  assert.strictEqual(byLabel("reviewer", "Lanes").attrs["aria-valuenow"], "2", "the knob draft is kept");
+  assert.strictEqual(prepKey("reviewer").disabled, false, "and can be prepared again");
+  results.push("a pending knob check is dropped when the notes editor opens");
+  $("con-cancel").click(); await flush();
+  delete server.handlers["config-read"];
   cfgReply = null; server.config = null;
 
   // The NOTES editor, from the deck again.

@@ -1545,7 +1545,8 @@ class CuScriptTests(unittest.TestCase):
                           "service keys follow the lamp", "main page may only choose the card shown",
                           "tuning sends changed keys only", "tuning diff is text",
                           "tuning confirm holds, then sends the token once", "tuning 409 changed",
-                          "tuning cancel drops the token", "tuning demo 403 line"])
+                          "tuning cancel drops the token", "tuning demo 403 line",
+                          "a pending knob check is dropped when the notes editor opens"])
 
 
 class RealPageTests(unittest.TestCase):
