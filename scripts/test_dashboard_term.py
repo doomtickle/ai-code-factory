@@ -869,6 +869,16 @@ class Osc52Tests(unittest.TestCase):
         self.assertIsNone(self.js(f"T.osc52Text('c;' + Buffer.from('✓'.repeat({cap // 3 + 1})).toString('base64'))"))
         self.assertIsNone(self.js(f"T.osc52Text('c;' + 'A'.repeat({cap * 2}))"))
 
+    def test_oversize(self):
+        cap = self.js("T.COPY_MAX")
+        size = lambda data: self.js(f"T.osc52Oversize({data})")
+        self.assertEqual(size(f"'c;' + Buffer.from('x'.repeat({cap})).toString('base64')"), 0)  # fits
+        self.assertEqual(size(f"'c;' + Buffer.from('x'.repeat({cap + 1})).toString('base64')"), cap + 1)
+        self.assertEqual(size(f"'c;' + Buffer.from('x'.repeat({cap + 2})).toString('base64')"), cap + 2)
+        self.assertEqual(size(f"';' + 'A'.repeat({cap * 2})"), cap * 2 * 3 // 4)
+        for bad in ("'c;?'", "'c'", "null", f"'c;' + '@'.repeat({cap * 2})", f"'c;' + 'A'.repeat({cap * 2 + 1})"):
+            self.assertEqual(size(bad), 0, bad)
+
     def test_preview_and_trim(self):
         self.assertEqual(self.js("T.copyPreview('a\\nb\\tc\\u202ed\\u200b')"), "a⏎ b  c⟨U+202E⟩d⟨U+200B⟩")
         self.assertTrue(self.js("T.hasHidden('x\\u2066y')"))
@@ -885,7 +895,9 @@ class Osc52Tests(unittest.TestCase):
             return self.js(f"T.isCopyKey({json.dumps(ev)}, {json.dumps(mac)})")
         self.assertTrue(key(False, ctrlKey=True, shiftKey=True, key="C"))
         self.assertTrue(key(False, ctrlKey=True, key="Insert", code="Insert"))
-        self.assertFalse(key(False, ctrlKey=True))  # Ctrl+C is the Coordinator's
+        self.assertTrue(key(False, ctrlKey=True))  # asked only with a selection; else Ctrl+C is the Coordinator's
+        self.assertFalse(key(False, ctrlKey=True, shiftKey=True, key="Insert", code="Insert"))
+        self.assertFalse(key(True, ctrlKey=True))  # always the Coordinator's on a Mac
         self.assertFalse(key(False, metaKey=True))
         self.assertFalse(key(False, ctrlKey=True, shiftKey=True, altKey=True))
         self.assertFalse(key(False, ctrlKey=True, shiftKey=True, type="keyup"))
@@ -905,7 +917,8 @@ class TermScriptTests(unittest.TestCase):
                                   capture_output=True, text=True, timeout=60)
             self.assertEqual(proc.returncode, 0, proc.stderr)
             self.assertEqual(json.loads(proc.stdout.strip().splitlines()[-1]),
-                             ["copy only on click, newest wins", "queries and bad payloads refused", "dismiss discards",
+                             ["copy only on click, newest wins, after the hold", "queries and bad payloads refused",
+                              "too large: a note, nothing to copy", "dismiss discards",
                               "replay raises no prompt", "preview is visible text", "fallback when writeText is refused",
                               "selection copied trimmed", "copy keys"], platform)
 

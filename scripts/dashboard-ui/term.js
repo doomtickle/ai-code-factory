@@ -11,7 +11,8 @@
 // prompt with a text-only preview, and only a click on its COPY key writes the
 // text. A selection (Shift-drag, or Option-drag on a Mac, past the Coordinator's
 // mouse capture) is copied by the browser's own copy (Cmd+C, the menu) or by
-// Ctrl+Shift+C / Ctrl+Insert, with each line's trailing spaces trimmed.
+// Ctrl+C / Ctrl+Shift+C / Ctrl+Insert elsewhere, with each line's trailing
+// spaces trimmed; the selection is then cleared, so the next Ctrl+C interrupts.
 // Attaching never starts the Coordinator: this page asks for it with a
 // {"type":"power"} message, once on load (only if it is off and not open
 // elsewhere) and whenever the power key is pressed.
@@ -54,6 +55,16 @@
     if (!text || CONTROL.test(text)) return null;
     return text;
   }
+  // An OSC 52 copy osc52Text drops only for its size: the bytes its base64 would
+  // decode to (counted, not decoded), or 0 if it fits or is malformed anyway.
+  function osc52Oversize(data) {
+    if (typeof data !== "string") return 0;
+    const b64 = data.slice(data.indexOf(";") + 1);
+    if (data.indexOf(";") < 0 || b64.length % 4 === 1 || !B64.test(b64)) return 0;
+    const pad = b64.endsWith("==") ? 2 : b64.endsWith("=") ? 1 : 0;
+    const bytes = Math.floor((b64.length - pad) * 3 / 4);
+    return bytes > COPY_MAX ? bytes : 0;
+  }
   // What the prompt shows of it: hidden characters made visible, newlines as ⏎,
   // cut at PREVIEW_MAX. Drawn with textContent only.
   function copyPreview(text) {
@@ -66,16 +77,18 @@
   // A grid selection: the Coordinator pads its lines with spaces, so trim each line's end.
   const trimSelection = text => String(text).replace(/[ \u00a0]+$/gm, "");
   // The copy shortcut for a selection: Cmd+C on a Mac (also the browser's own
-  // copy), Ctrl+Shift+C or Ctrl+Insert elsewhere. Plain Ctrl+C stays the Coordinator's.
+  // copy; Ctrl+C there is always the Coordinator's), Ctrl+C, Ctrl+Shift+C or
+  // Ctrl+Insert elsewhere. Only asked while there is a selection: without one,
+  // Ctrl+C goes to the Coordinator as an interrupt.
   function isCopyKey(ev, mac) {
     if (ev.type !== "keydown" || ev.altKey) return false;
     const c = ev.code === "KeyC" || ev.key === "c" || ev.key === "C";
     if (mac) return ev.metaKey && !ev.ctrlKey && !ev.shiftKey && c;
     if (ev.metaKey || !ev.ctrlKey) return false;
-    return (ev.shiftKey && c) || (!ev.shiftKey && (ev.key === "Insert" || ev.code === "Insert"));
+    return c || (!ev.shiftKey && (ev.key === "Insert" || ev.code === "Insert"));
   }
   if (typeof module !== "undefined" && module.exports) {
-    module.exports = { osc52Text, copyPreview, hasHidden, trimSelection, isCopyKey, COPY_MAX, PREVIEW_MAX };
+    module.exports = { osc52Text, osc52Oversize, copyPreview, hasHidden, trimSelection, isCopyKey, COPY_MAX, PREVIEW_MAX };
     return;
   }
 
@@ -148,9 +161,13 @@
   // ---------- copying
   // One pending OSC 52 copy at a time: a newer one replaces it, DISMISS drops it,
   // and only a click on COPY writes it (navigator.clipboard.writeText, needing the
-  // frame's allow="clipboard-write"; else the selected-textarea fallback).
+  // frame's allow="clipboard-write"; else the selected-textarea fallback). Each new
+  // text holds COPY dark for HOLD_MS (as the control unit's keys), so a copy sent
+  // just before a click can't be the one the click writes unread.
   const mac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent || "");
-  let pending = null, copyTimer = 0;
+  const HOLD_MS = 2500;
+  let pending = null, copyTimer = 0, holdUntil = 0, holdTimer = 0;
+  const holding = () => Date.now() < holdUntil;
   function copyShow(state, text) {
     clearTimeout(copyTimer);
     const box = $("copy"), manual = $("copy-manual");
@@ -159,10 +176,16 @@
     manual.value = "";
     if (state === "none") { pending = null; box.hidden = true; return; }
     box.classList.toggle("done", state === "done");
+    box.classList.toggle("large", state === "large");
     box.classList.toggle("fail", state === "fail");
-    $("copy-go").hidden = $("copy-x").hidden = state === "done";
+    $("copy-go").hidden = state === "done" || state === "large";
+    $("copy-x").hidden = state === "done";
     if (state === "offer") {
       pending = text;
+      holdUntil = Date.now() + HOLD_MS;
+      $("copy-go").disabled = true;
+      clearTimeout(holdTimer);
+      holdTimer = setTimeout(() => { $("copy-go").disabled = holding(); }, HOLD_MS + 20);
       const n = text.length;
       $("copy-title").textContent = `COORDINATOR COPIED ${n} CHARACTER${n === 1 ? "" : "S"} · PRESS TO COPY`;
       $("copy-preview").textContent = copyPreview(text);
@@ -173,6 +196,12 @@
       $("copy-title").textContent = "COPIED TO THE CLIPBOARD";
       $("copy-note").hidden = true;
       copyTimer = setTimeout(() => copyShow("none"), 1500);
+    } else if (state === "large") {
+      // text: the bytes it would decode to. Nothing to copy, so no COPY key.
+      pending = null;
+      $("copy-preview").textContent = "";
+      $("copy-title").textContent = `COORDINATOR COPIED ABOUT ${Math.ceil(text / 1024)} KiB · TOO LARGE TO COPY (LIMIT ${COPY_MAX / 1024} KiB)`;
+      $("copy-note").hidden = true;
     }
     box.hidden = false;
   }
@@ -193,7 +222,7 @@
   }
   $("copy-go").addEventListener("click", () => {
     const text = pending;
-    if (text === null) return;
+    if (text === null || holding()) return;
     const clip = navigator.clipboard;
     if (!clip || typeof clip.writeText !== "function") { copyFallback(text); return; }
     clip.writeText(text).then(() => { copyShow("done"); term.focus(); }, () => copyFallback(text));
@@ -204,17 +233,21 @@
   term.parser.registerOscHandler(52, data => {
     if (muted) return true;
     const text = osc52Text(data);
-    if (text !== null) copyShow("offer", text);
+    if (text !== null) { copyShow("offer", text); return true; }
+    const size = osc52Oversize(data);
+    if (size) copyShow("large", size);
     return true;
   });
   // A grid selection, by any copy the user starts (keys, the browser's menu):
   // trimmed, put on the copy event's own clipboard data. Capture phase, so it runs
-  // before xterm.js's own untrimmed copy handler.
+  // before xterm.js's own untrimmed copy handler. The selection is then cleared, so
+  // the next Ctrl+C reaches the Coordinator.
   document.addEventListener("copy", ev => {
     if (!term.hasSelection() || !ev.clipboardData || !$("term").contains(ev.target)) return;
     ev.clipboardData.setData("text/plain", trimSelection(term.getSelection()));
     ev.preventDefault();
     ev.stopImmediatePropagation();
+    term.clearSelection();
   }, true);
   term.attachCustomKeyEventHandler(ev => {
     if (!term.hasSelection() || !isCopyKey(ev, mac)) return true;

@@ -46,6 +46,7 @@ body { color: var(--matrix); font-family: "VT323", ui-monospace, Menlo, Consolas
 .copy .key { font: 1.3rem/1 "VT323", ui-monospace, monospace; text-transform: uppercase; letter-spacing: .12em; cursor: pointer;
   color: #000500; background: var(--matrix); border: 0; border-radius: 3px; padding: 5px 12px 3px; box-shadow: 0 0 8px var(--matrix-glow); }
 .copy .key.dim { color: var(--matrix); background: transparent; border: 1px solid var(--matrix-dim); box-shadow: none; }
+.copy .key:disabled { opacity: .45; cursor: default; }
 .copy .key:focus-visible { outline: 2px solid var(--matrix-pale); outline-offset: 3px; }
-.copy.done .copy-preview { display: none; }
+.copy.done .copy-preview, .copy.large .copy-preview { display: none; }
 .copy.fail { border-color: #ffb000; }

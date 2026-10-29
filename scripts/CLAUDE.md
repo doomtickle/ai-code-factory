@@ -59,18 +59,23 @@ COPY (doomtickle/passdesk-ops#142, `dashboard-ui/term.js`): Terminal 0 shows age
 text, so nothing it prints reaches the clipboard by itself (a poisoned clipboard may be pasted
 into a host shell). No xterm.js clipboard addon is loaded; term.js's own OSC 52 handler is the
 only one, and it is write-only: a query (`?`) or an empty payload is refused and never answered,
-the selection target is ignored, the payload is at most 64 KiB of strict base64 and strict UTF-8,
+the selection target is ignored, the payload is at most 64 KiB of strict base64 and strict UTF-8
+(a well-formed one over that, sized from its base64 length and never decoded, only shows
+"COORDINATOR COPIED ABOUT N KiB · TOO LARGE TO COPY (LIMIT 64 KiB)" with DISMISS and no COPY key),
 and one carrying a C0 or C1 control (other than tab and newline; CR is made a newline) is dropped,
 as is any OSC 52 parsed during the muted replay. A valid one only raises a prompt in the terminal
 frame ("COORDINATOR COPIED N CHARACTERS · PRESS TO COPY") with a preview drawn by `textContent`
 (cut at 240 characters, invisible and bidi characters shown as `⟨U+XXXX⟩` and flagged); a newer
 copy replaces the pending one, DISMISS or a new session drops it, and only a click on its COPY key
-writes it (`navigator.clipboard.writeText`, else `execCommand("copy")` from a selected textarea,
-else that textarea left selected for the user's own copy). A grid selection is copied only by a
-copy the user starts (the browser's copy event, Cmd+C on a Mac, Ctrl+Shift+C or Ctrl+Insert
-elsewhere, only while there is a selection; Ctrl+C stays the Coordinator's), each line's trailing
-spaces trimmed. The page never reads the clipboard. The terminal iframe alone carries
-`allow="clipboard-write"` (never `clipboard-read`); the control unit's frame gets no `allow`.
+writes it. Each new text disables COPY and sets a `holdUntil` 2.5 s on (the control unit's
+`HOLD_MS`), and a click during the hold does nothing, so a copy swapped in just before a click
+is never the one written unread. The click writes it (`navigator.clipboard.writeText`, else
+`execCommand("copy")` from a selected textarea, else that textarea left selected for the user's own copy). A grid selection is copied only by a
+copy the user starts (the browser's copy event, Cmd+C on a Mac, Ctrl+C, Ctrl+Shift+C or
+Ctrl+Insert elsewhere, only while there is a selection), each line's trailing spaces trimmed, and
+the selection is then cleared, so the next Ctrl+C is the Coordinator's interrupt; with no
+selection, and always on a Mac, Ctrl+C goes to the PTY. The page never reads the clipboard. The
+terminal iframe alone carries `allow="clipboard-write"` (never `clipboard-read`); the control unit's frame gets no `allow`.
 
 Every other control lives in the control unit (`scripts/dashboard_controls.py`, served
 by `dashboard_term.py` on that same second origin, which runs whenever the dashboard

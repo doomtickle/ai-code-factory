@@ -81,16 +81,21 @@ starts nothing; only POWER ON does.
   shows the start of the text. Press **COPY** to put it on your clipboard, or
   **DISMISS**. This copies the exact text, without the screen's line breaks or
   padding, so prefer it for commands. Nothing reaches your clipboard until you
-  press COPY, because the text comes from an agent; check the preview first. A
+  press COPY, because the text comes from an agent; check the preview first.
+  COPY stays dark for 2.5 seconds after the text appears or changes, so a
+  newer copy can't slip in just before your click. A
   newer copy replaces the one waiting, and "⚠ CONTAINS HIDDEN CHARACTERS" means
   the preview shows invisible or right-to-left characters as `⟨U+XXXX⟩`. If
   the browser blocks the copy, the prompt selects the text in a box and asks
-  you to press Ctrl+C (⌘C on a Mac).
+  you to press Ctrl+C (⌘C on a Mac). A copy over 64 KiB can't be taken: the
+  strip says "COORDINATOR COPIED ABOUT N KiB · TOO LARGE TO COPY (LIMIT 64 KiB)",
+  with DISMISS only.
 - **Select it on the screen.** The Coordinator takes the mouse, so a plain
   drag selects nothing. Hold **Shift** while you drag on Windows (WSL) and
-  Linux, or **Option** on a Mac. Then copy with **Ctrl+Shift+C** or
-  **Ctrl+Insert** (plain Ctrl+C goes to the Coordinator as an interrupt), or
-  **⌘C** on a Mac, or the browser's Copy menu. Trailing spaces are trimmed
+  Linux, or **Option** on a Mac. Then copy with **Ctrl+C**, **Ctrl+Shift+C** or
+  **Ctrl+Insert**, or **⌘C** on a Mac, or the browser's Copy menu. Copying
+  clears the selection, so the next Ctrl+C goes to the Coordinator as an
+  interrupt, as Ctrl+C always does with nothing selected (and on a Mac). Trailing spaces are trimmed
   from each line, but what you get is what the screen shows: a long command
   the Coordinator wrapped comes out as several lines with their indentation,
   and anything cut off at the edge is missing. Use the COPY prompt for those.
