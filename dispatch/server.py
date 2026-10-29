@@ -1865,7 +1865,7 @@ def may_block(msg: dict) -> bool:
 
 
 def sse_event(obj: dict) -> bytes:
-    return b"event: message\ndata: " + json.dumps(obj, ensure_ascii=False).encode() + b"\n\n"
+    return b"event: message\ndata: " + json.dumps(obj).encode() + b"\n\n"
 
 
 class Handler(BaseHTTPRequestHandler):

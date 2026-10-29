@@ -1065,6 +1065,15 @@ class StreamTests(Base):
         self.assertEqual(events[-1][1]["id"], 1)
         self.assertIn("result", events[-1][1])
 
+    def test_lone_surrogate_in_the_token_still_gets_the_final_message(self):
+        self.finish_after(0.4)
+        _, resp = self.call(meta={"progressToken": "\ud800"})
+        _, events = self.events(resp.read())
+        self.assertEqual(events[-1][0], "message")
+        self.assertEqual(events[-1][1]["id"], 1)
+        self.assertIn("result", events[-1][1])
+        self.assertTrue(all(e["params"]["progressToken"] == "\ud800" for _, e in events[:-1]))
+
     def test_delegate_with_a_wait_streams_too(self):
         tool = mock.Mock(return_value="Started job x")
         with mock.patch.dict(d.TOOLS, {"delegate": (tool, *d.TOOLS["delegate"][1:])}):
