@@ -1815,6 +1815,18 @@ class PageTests(unittest.TestCase):
         self.assertIn("if (running && (was.state !== \"running\" || was.task !== task)) unpark(lane.name);", flow)
         self.assertIn("if (crates >= MAX_CRATES) return false;", js)
 
+    def test_floor_fills_the_row_on_big_screens_only(self):
+        # The panel's width follows the bay's shape. Up to floor.css's 1280px breakpoint the aspect
+        # stays capped at 2.2 (small and medium screens unchanged); above it the cap is 4, so a wide
+        # bay gets a wider scene instead of side margins (letterboxing).
+        js = (UI / "floor.js").read_text()
+        css = (UI / "floor.css").read_text()
+        self.assertIn("MAX_ASPECT = 2.2, MAX_ASPECT_WIDE = 4", js)
+        self.assertIn('const bigScreen = matchMedia("(min-width: 1281px)");', js)
+        self.assertIn("Math.min(aspect, bigScreen.matches ? MAX_ASPECT_WIDE : MAX_ASPECT)", js)
+        self.assertIn("@media (max-width: 1280px)", css)
+        self.assertNotIn("style=", js.replace("style.setProperty", ""))
+
     def test_floor_events_are_display_only_hooks(self):
         # Floor events (doomtickle/passdesk-ops#162): three CustomEvents on document for
         # a future sound layer or shift ticket. Fired from play(), not from the animation,

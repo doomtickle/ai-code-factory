@@ -48,11 +48,12 @@
   if (!host || !key || !bay) return;
   const STORE = "fc1984-floor";
   const motionOff = matchMedia("(prefers-reduced-motion: reduce)");
+  const bigScreen = matchMedia("(min-width: 1281px)");   // above floor.css's 1280px breakpoint: the floor gets the row's whole width
 
   // Scene geometry, in SVG units (one unit is one "pixel" of the art). The panel is H
   // tall and as wide as the bay's shape asks (never under MIN_W, never too narrow for its
   // stations); the extra width spreads the stations along the track.
-  const H = 228, MIN_W = 320, MIN_CELL = 50, MAX_CELL = 80, MAX_ASPECT = 2.2;   // a station's cell: at least MIN_CELL wide, never wider than MAX_CELL
+  const H = 228, MIN_W = 320, MIN_CELL = 50, MAX_CELL = 80, MAX_ASPECT = 2.2, MAX_ASPECT_WIDE = 4;   // a station's cell: at least MIN_CELL wide, never wider than MAX_CELL
   const GLASS_X = 13, GLASS_Y = 33, GLASS_B = 190;         // the tube's glass: GLASS_X..W - GLASS_X, GLASS_Y..GLASS_B
   const DEV_H = 52, REV_H = 41, OTHER_W = 50;             // station cell heights above and below the track; other roles' cell width
   const RAD = 24, HALF = 4.5;                             // the track's corner radius and half width
@@ -105,7 +106,7 @@
     const right = no ? 8 + no * OTHER_W + 10 : 40;                     // from the track's right side to the panel's edge
     const devSpan = LX + RAD, revSpan = QUEUE_X + MAX_PARKED * 9 + 6;   // where each row's stations may start
     const need = Math.max(devSpan + nd * MIN_CELL, revSpan + nr * MIN_CELL, LX + 2 * RAD + 60) + RAD + right;
-    const w = Math.max(MIN_W, need, Math.round(H * Math.min(aspect, MAX_ASPECT) / 8) * 8);
+    const w = Math.max(MIN_W, need, Math.round(H * Math.min(aspect, bigScreen.matches ? MAX_ASPECT_WIDE : MAX_ASPECT) / 8) * 8);
     return { nd, nr, no, w, right, devSpan, revSpan };
   }
 
