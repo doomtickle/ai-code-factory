@@ -1539,7 +1539,10 @@ class CuScriptTests(unittest.TestCase):
                           "viewer asks with the count", "viewer: fp change cancels",
                           "decided card shows its state, keys dark", "expired card shows EXPIRED, keys dark",
                           "refusals shown as text", "decline without a reason says so", "agent strings stay text",
-                          "service keys follow the lamp", "main page may only choose the card shown"])
+                          "service keys follow the lamp", "main page may only choose the card shown",
+                          "tuning sends changed keys only", "tuning diff is text",
+                          "tuning confirm holds, then sends the token once", "tuning 409 changed",
+                          "tuning cancel drops the token", "tuning demo 403 line"])
 
 
 class RealPageTests(unittest.TestCase):

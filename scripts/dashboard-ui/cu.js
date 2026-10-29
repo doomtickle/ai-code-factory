@@ -15,6 +15,10 @@
 // the broker's state, checks it against the card's digest, parses and sanitises
 // it, so this page only draws lines with textContent; nothing from the patch
 // goes into an attribute, a URL, a class name or a title.
+// SETUP also tunes a role (#185): knobs for LANES, MODEL, EFFORT and the MAX_ limits write the
+// local override file, in the same two steps (/cu/api/config-prepare shows the diff, only CONFIRM
+// sends the token to /cu/api/config-run, dark for HOLD_MS). Only those named keys; everything
+// else on SETUP stays read-only.
 // Starting a restart, an update or a diag takes two presses: the key asks the server
 // what would happen (/cu/api/prepare, which runs nothing but `factory update
 // --plan`), and only CONFIRM on that screen sends the single-use token back.
@@ -358,6 +362,7 @@
     box.title = !c ? "No write held" : s == null ? "Expiry unknown" : s <= 0 ? "Expired" : `Expires in ${mmss(s)}`;
     updateKeys();
     if (screen === "confirm") tickConfirm();
+    if (screen === "setup") tuneTick();
   }
 
   function step(d) {
@@ -592,7 +597,8 @@
     const tags = [r.on ? "on" : "off", r.optional ? "optional" : null, r.override ? "local override" : null].filter(Boolean).join(" · ");
     out.push(H(str(r.name), tags));
     if (!r.on) out.push(P("k-dim", "  Switched off in enabled-roles: no sandbox, so none of this is applied."));
-    for (const k of list(r.keys).filter(x => x && typeof x === "object")) {
+    out.push(tuneRack(r));
+    for (const k of list(r.keys).filter(x => x && typeof x === "object" && !TUNE_KEYS.includes(x.key))) {
       const local = k.source === "LOCAL";
       const tail = [span(local ? "k-warn" : "k-dim", `  ${SOURCES[k.source] || "?"}`)];
       if (local && str(k.repo) !== str(k.value)) tail.push(span("k-dim", ` (repo: ${str(k.repo) || "empty"})`));
@@ -615,7 +621,8 @@
   function setupBlocks() {
     const cfg = c();
     if (!cfg) return [P("k-dim", "No configuration to show: this dashboard was started without the factory's config folder.")];
-    const out = [P("k-dim", "Read-only. REPO is the committed roles/<name>/role.conf, LOCAL a value your override in the config folder puts on top of it, FIXED a value no override can change. → START is factory start, → UPDATE is factory update.")];
+    const out = [P("k-dim", "REPO is the committed roles/<name>/role.conf, LOCAL a value your override in the config folder puts on top of it, FIXED a value no override can change. Each role's knobs write that override (PREPARE shows the change first); everything else is read-only. → START is factory start, → UPDATE is factory update.")];
+    if (tuneNote) out.unshift(P(`banner ${tuneNote.cls}`, tuneNote.text));
     for (const r of list(cfg.roles).filter(x => x && typeof x === "object")) out.push(...roleBlock(r));
 
     const en = cfg.enabled || {};
@@ -656,14 +663,380 @@
     return out;
   }
 
-  function renderSetup() {
+  function renderSetup(force) {
+    if (tune) return;  // the diff is on the glass
     const k = JSON.stringify(st ? st.config : null);
-    if (k === setupKey) return;
+    if (!force && (k === setupKey || tuneFocus)) return;
     setupKey = k;
+    tuneFocus = false;
     const keep = conBody.scrollTop;
     conBody.replaceChildren(P("banner", "Setup · effective configuration"), ...setupBlocks());
     conBody.scrollTop = keep;
     moreCue();
+  }
+
+  // ---------- SETUP tuning (#185): knobs for a role's local override
+  // Only these six keys can be turned; the host re-checks every value and writes the override
+  // file itself. Two steps, as RESTART: config-prepare returns the diff and a token, and only
+  // CONFIRM (dark for HOLD_MS, so a diff that just arrived is never confirmed unread) sends the
+  // token to config-run. The diff, the path and every error are drawn with textContent.
+  const TUNE_KEYS = ["LANES", "MODEL", "EFFORT", "MAX_SESSION_TOKENS", "MAX_TURNS", "MAX_JOB_SECONDS"];
+  const TUNE_LABELS = { LANES: "Lanes", MODEL: "Model", EFFORT: "Effort", MAX_SESSION_TOKENS: "Session tokens", MAX_TURNS: "Turns", MAX_JOB_SECONDS: "Job seconds" };
+  const TUNE_NUMBERS = ["MAX_SESSION_TOKENS", "MAX_TURNS", "MAX_JOB_SECONDS"];
+  const TUNE_HINTS = { MAX_SESSION_TOKENS: "0 = no cap", MAX_TURNS: "0 = no cap", MAX_JOB_SECONDS: "0 = no limit" };
+  const EFFORTS = ["low", "medium", "high", "xhigh"];
+  const DEMO_LINE = "DEMO · CHANGES DISABLED";
+  const diffCls = op => (op === "+" ? "k-ok" : op === "-" ? "k-err" : "k-dim");
+  const diffOp = op => (op === "+" || op === "-" ? op : " ");
+  const DIFF_CAP = 400;
+  // A draft is undefined (untouched), null (unset: the repo's value applies) or a string to set.
+  const drafts = new Map();   // role -> Map(key -> draft)
+  const rackMsg = new Map();  // role -> {text, cls}: the last word on that role's rack
+  let tune = null, tuneNote = null, tuneSeq = 0, tuneFocus = false, tuneChecking = null;
+
+  const draftOf = (role, key) => (drafts.has(role) ? drafts.get(role).get(key) : undefined);
+  const keyRow = (r, key) => list(r.keys).find(k => k && typeof k === "object" && k.key === key) || {};
+  const repoVal = row => str(row.source === "LOCAL" ? row.repo : row.value);
+  // What a knob shows: {set, v}. Untouched follows the file; null follows the repo.
+  function shownOf(r, key) {
+    const row = keyRow(r, key), d = draftOf(str(r.name), key);
+    if (typeof d === "string") return { set: true, v: d };
+    if (d === undefined && row.source === "LOCAL") return { set: true, v: str(row.value) };
+    return { set: false, v: repoVal(row) };
+  }
+  const problemOf = (key, d) => (TUNE_NUMBERS.includes(key) && typeof d === "string" && !/^[0-9]{1,9}$/.test(d) ? "digits only, at most 9" : "");
+  // What a draft would do to the file: null (nothing), {set: v} or {unset: true}.
+  function changeOf(r, key) {
+    const row = keyRow(r, key), d = draftOf(str(r.name), key);
+    if (d === undefined || problemOf(key, d)) return null;
+    if (d === null) return row.source === "LOCAL" ? { unset: true } : null;
+    return d === str(row.value) ? null : { set: d };
+  }
+  function changesOf(r) {
+    const set = {}, unset = [];
+    for (const key of TUNE_KEYS) {
+      const ch = changeOf(r, key);
+      if (ch && ch.unset) unset.push(key);
+      else if (ch) set[key] = ch.set;
+    }
+    return { set, unset };
+  }
+  const problemsOf = r => TUNE_KEYS.filter(key => problemOf(key, draftOf(str(r.name), key)));
+
+  function tuneRack(r) {
+    const name = str(r.name);
+    const box = el("div", "rack");
+    box.setAttribute("role", "group");
+    box.setAttribute("aria-label", `Tuning ${name}`);
+    const updates = [];
+    const redraw = () => updates.forEach(f => f());
+    const setDraft = (key, v) => {
+      if (!drafts.has(name)) drafts.set(name, new Map());
+      drafts.get(name).set(key, v);
+      rackMsg.delete(name);
+      redraw();
+    };
+    const focusFlag = n => {
+      n.addEventListener("focus", () => { tuneFocus = true; });
+      n.addEventListener("blur", () => { tuneFocus = false; });
+    };
+    const reset = key => {
+      const b = el("button", "nubkey rst", "↺");
+      b.type = "button";
+      b.setAttribute("aria-label", `${TUNE_LABELS[key]}: back to the repo default`);
+      b.title = "Back to the repo default";
+      b.addEventListener("click", () => setDraft(key, null));
+      focusFlag(b);
+      updates.push(() => { b.hidden = !shownOf(r, key).set; });
+      return b;
+    };
+    const line = (key, control) => {
+      const state = span("tstate", "");
+      const lab = el("span", "silk tlabel", TUNE_LABELS[key]);
+      const p = el("div", "trow");
+      p.append(lab, control, state, reset(key));
+      updates.push(() => {
+        const row = keyRow(r, key), ch = changeOf(r, key), bad = problemOf(key, draftOf(name, key));
+        setClass(p, `trow${ch ? " dirty" : ""}${bad ? " bad" : ""}`);
+        if (bad) { setClass(state, "tstate k-err"); setText(state, bad); return; }
+        if (ch) {
+          setClass(state, "tstate k-warn");
+          setText(state, ch.unset ? `→ UNSET · repo: ${repoVal(row) || "empty"}` : `→ SET ${ch.set}`);
+          return;
+        }
+        const local = row.source === "LOCAL";
+        setClass(state, `tstate ${local ? "k-warn" : "k-dim"}`);
+        setText(state, `${SOURCES[row.source] || "?"}${local && str(row.repo) !== str(row.value) ? ` · repo: ${str(row.repo) || "empty"}` : ""}`);
+      });
+      return p;
+    };
+
+    // LANES: a dial with eight detents, a digit and a pair of nudge keys.
+    const lanesNow = () => {
+      const n = parseInt(shownOf(r, "LANES").v, 10);
+      return Math.min(8, Math.max(1, Number.isFinite(n) ? n : 1));
+    };
+    const turn = d => setDraft("LANES", String(Math.min(8, Math.max(1, lanesNow() + d))));
+    const dial = el("div", "dial");
+    dial.tabIndex = 0;
+    dial.setAttribute("role", "slider");
+    dial.setAttribute("aria-label", "Lanes");
+    dial.setAttribute("aria-valuemin", "1");
+    dial.setAttribute("aria-valuemax", "8");
+    dial.append(el("i"));
+    dial.addEventListener("click", () => setDraft("LANES", String(lanesNow() % 8 + 1)));
+    dial.addEventListener("keydown", e => {
+      const d = { ArrowRight: 1, ArrowUp: 1, ArrowLeft: -1, ArrowDown: -1 }[e.key];
+      if (d) { e.preventDefault(); turn(d); }
+      else if (e.key === "Home") { e.preventDefault(); setDraft("LANES", "1"); }
+      else if (e.key === "End") { e.preventDefault(); setDraft("LANES", "8"); }
+    });
+    focusFlag(dial);
+    const nub = (txt, label, d) => {
+      const b = el("button", "nubkey", txt);
+      b.type = "button";
+      b.setAttribute("aria-label", label);
+      b.addEventListener("click", () => turn(d));
+      focusFlag(b);
+      return b;
+    };
+    const digit = el("span", "lcd tdigit", "");
+    const ticks = el("span", "ticks");
+    const tickNodes = [1, 2, 3, 4, 5, 6, 7, 8].map(n => el("span", "tick", n));
+    ticks.append(...tickNodes);
+    updates.push(() => {
+      const n = lanesNow(), sh = shownOf(r, "LANES");
+      setClass(dial, `dial d${n}${sh.set ? "" : " dim"}`);
+      dial.setAttribute("aria-valuenow", String(n));
+      dial.setAttribute("aria-valuetext", `${n} lane${n > 1 ? "s" : ""}${sh.set ? "" : ", the repo default"}`);
+      setText(digit, n);
+      setClass(digit, `lcd tdigit${sh.set ? "" : " dim"}`);
+      tickNodes.forEach((t, i) => setClass(t, `tick${i + 1 === n ? " on" : ""}`));
+    });
+    const lanesCtl = el("span", "tctl");
+    lanesCtl.append(nub("◀", "Fewer lanes", -1), dial, nub("▶", "More lanes", 1), digit, ticks);
+
+    // MODEL: a selector over the role's MODELS (plus whatever is set now).
+    const modelRow = keyRow(r, "MODEL"), modelsRow = keyRow(r, "MODELS");
+    const models = [];
+    for (const m of [...str(modelsRow.value).split(/[\s,]+/), str(modelRow.value), repoVal(modelRow)]) if (m && !models.includes(m)) models.push(m);
+    const select = el("select", "tape");
+    select.setAttribute("aria-label", "Model");
+    const opt = (v, t) => { const o = el("option", null, t); o.value = v; return o; };
+    select.append(opt("", `Role default${repoVal(modelRow) ? ` (${repoVal(modelRow)})` : ""}`), ...models.map(m => opt(m, m)));
+    select.addEventListener("change", () => setDraft("MODEL", select.value === "" ? null : select.value));
+    focusFlag(select);
+    updates.push(() => { const sh = shownOf(r, "MODEL"); select.value = sh.set ? sh.v : ""; });
+
+    // EFFORT: a detent switch, "role default" being unset.
+    const effort = el("span", "seg-row");
+    effort.setAttribute("role", "radiogroup");
+    effort.setAttribute("aria-label", "Effort");
+    const segs = [[null, "Role default"], ...EFFORTS.map(e => [e, e])].map(([v, t]) => {
+      const b = el("button", "seg", t);
+      b.type = "button";
+      b.setAttribute("role", "radio");
+      b.addEventListener("click", () => setDraft("EFFORT", v));
+      focusFlag(b);
+      return [v, b];
+    });
+    effort.append(...segs.map(x => x[1]));
+    updates.push(() => {
+      const sh = shownOf(r, "EFFORT");
+      for (const [v, b] of segs) {
+        const on = v === null ? !sh.set || sh.v === "" : sh.set && sh.v === v;
+        setClass(b, `seg${on ? " on" : ""}`);
+        b.setAttribute("aria-checked", on ? "true" : "false");
+      }
+    });
+
+    box.append(line("LANES", lanesCtl), line("MODEL", select), line("EFFORT", effort));
+    for (const key of TUNE_NUMBERS) {
+      const inp = el("input", "tape num");
+      inp.type = "text";
+      inp.maxLength = 9;
+      inp.autocomplete = "off";
+      inp.spellcheck = false;
+      inp.setAttribute("inputmode", "numeric");
+      inp.setAttribute("aria-label", TUNE_LABELS[key]);
+      const onType = () => { const v = inp.value.trim(); setDraft(key, v === "" ? null : v); };
+      inp.addEventListener("input", onType);
+      inp.addEventListener("change", onType);
+      focusFlag(inp);
+      updates.push(() => {
+        const sh = shownOf(r, key), row = keyRow(r, key);
+        inp.placeholder = `${repoVal(row) ? `repo: ${repoVal(row)}` : "repo default"} · ${TUNE_HINTS[key]}`;
+        if (document.activeElement !== inp) inp.value = sh.set ? sh.v : "";
+      });
+      box.append(line(key, inp));
+    }
+
+    const msg = span("tmsg", "");
+    const prep = el("button", "svckey prepkey");
+    prep.type = "button";
+    const lamp = el("span", "led");
+    prep.append(lamp, "Prepare");
+    focusFlag(prep);
+    prep.addEventListener("click", () => tunePrepare(r, redraw));
+    const foot = el("div", "trow tfoot");
+    foot.append(msg, prep);
+    updates.push(() => {
+      const ch = changesOf(r), n = Object.keys(ch.set).length + ch.unset.length, bad = problemsOf(r).length > 0;
+      const m = rackMsg.get(name);
+      const ready = n > 0 && !bad && !fault && !tuneChecking;
+      prep.disabled = !ready;
+      prep.title = bad ? "Fix the marked value first" : n ? "" : "Nothing has changed";
+      setClass(lamp, `led${ready ? " a" : ""}${tuneChecking === name ? " blink" : ""}`);
+      setClass(msg, `tmsg ${m ? m.cls : "k-dim"}`);
+      setText(msg, m ? m.text : tuneChecking === name ? "▶ Checking what would change…" : n ? `${n} change${n > 1 ? "s" : ""} ready to prepare` : "No changes");
+    });
+    box.append(foot);
+    redraw();
+    return box;
+  }
+
+  async function tunePrepare(r, redraw) {
+    const name = str(r.name);
+    if (tuneChecking || tune) return;
+    const { set, unset } = changesOf(r);
+    if (!Object.keys(set).length && !unset.length) return;
+    const seq = ++tuneSeq;
+    tuneChecking = name;
+    tuneNote = null;
+    rackMsg.delete(name);
+    redraw();
+    let res;
+    try {
+      res = await api("config-prepare", { kind: "role", role: name, set, unset });
+    } catch (e) {
+      res = null;
+    }
+    if (seq !== tuneSeq) return;
+    tuneChecking = null;
+    if (res && res.ok && typeof res.data.token === "string" && res.data.token) { showTune(name, res.data); return; }
+    const demo = res && res.status === 403 && /^demo mode/i.test(str(res.data.error));
+    rackMsg.set(name, { cls: demo ? "k-warn" : "k-err", text: demo ? DEMO_LINE : res ? `✕ ${errText(res)}` : "✕ Lost the dashboard: nothing was checked or written." });
+    redraw();
+  }
+
+  function tuneHead(tag, tagCls, led, note) {
+    setText($("con-title"), `SETUP · TUNE ${str(tune.role).toUpperCase()}`);
+    const t = $("con-state");
+    setClass(t, `state-tag st-${tagCls}`);
+    setText(t, tag);
+    setClass($("con-led"), `led ${led}`);
+    setText($("con-note"), note || "");
+  }
+
+  function showTune(role, d) {
+    tune = { role, seq: ++tuneSeq, token: d.token, deadline: Date.now() + Math.max(0, Number(d.expires) || 0) * 1000,
+      armAt: Date.now() + HOLD_MS, state: "ready", onGo: runTune, armTimer: 0, changed: d.changed === true };
+    const applies = d.applies === "RESTART" ? "RESTART" : d.applies === "LIVE" ? "LIVE" : "?";
+    const out = [P("banner", `Tune ${role}`), P("ind k-dim", `  writes: ${str(d.path) || "(unknown path)"}`),
+      P("ind " + (applies === "RESTART" ? "k-warn" : "k-ok"),
+        applies === "RESTART" ? "  applies: after RESTART (SERVICE DUE · RESTART TO APPLY)" : applies === "LIVE" ? "  applies: live, no restart needed" : "  applies: unknown")];
+    out.push(H("Change"));
+    const lines = list(d.diff).filter(l => l && typeof l === "object");
+    if (!d.changed || !lines.length) out.push(P("k-dim", "  Nothing would change: the file already says this."));
+    for (const l of lines.slice(0, DIFF_CAP)) out.push(P(`diff ${diffCls(l.op)}`, `${diffOp(l.op)} ${str(l.text)}`));
+    if (lines.length > DIFF_CAP) out.push(P("k-dim", `  … ${lines.length - DIFF_CAP} more lines`));
+    out.push(el("div", "gap"), P("k-dim", `Nothing has been written yet. CONFIRM writes it; CANCEL or Esc backs out.${tune.changed ? " CONFIRM lights in a moment." : ""}`));
+    conBody.replaceChildren(...out);
+    conBody.scrollTop = 0;
+    moreCue();
+    tuneHead("Confirm", "confirm", "a blink");
+    keys("Cancel", "Confirm apply", false);
+    tune.armTimer = setTimeout(armTune, HOLD_MS + 20);
+    tuneTick();
+    cancelKey.focus();
+  }
+
+  function armTune() {
+    if (tune && tune.state === "ready" && tune.changed && Date.now() >= tune.armAt) goKey.disabled = false;
+  }
+
+  function tuneTick() {
+    if (!tune || tune.state !== "ready") return;
+    const left = Math.max(0, Math.ceil((tune.deadline - Date.now()) / 1000));
+    if (left > 0) { tuneHead("Confirm", "confirm", "a blink", `Confirm within ${mmss(left)}`); return; }
+    tune.state = "expired";
+    tune.token = null;
+    tuneHead("Expired", "expired", "r", "The confirmation expired. Cancel and prepare again.");
+    keys("Cancel", "Expired · start over", false);
+  }
+
+  function tuneStop() {
+    if (tune) clearTimeout(tune.armTimer);
+    tune = null;
+    tuneSeq++;
+  }
+  function tuneReset() {
+    tuneStop();
+    tuneChecking = null; tuneFocus = false; tuneNote = null;
+    drafts.clear(); rackMsg.clear();
+  }
+
+  // Back to the knobs with the drafts kept.
+  function tuneCancel() {
+    if (!tune) return;
+    tuneStop();
+    setupHead();
+    keys("Close", null, false);
+    renderSetup(true);
+    cancelKey.focus();
+  }
+
+  function tuneFail(text) {
+    tune.state = "refused";
+    tune.token = null;
+    tuneHead("Refused", "refused", "r");
+    conBody.replaceChildren(P("banner", "Not written"), P("k-err", `✕ ${text}`), P("k-dim", "Cancel to go back to the knobs; your changes are kept."));
+    keys("Back", null, false);
+    cancelKey.focus();
+  }
+
+  async function runTune() {
+    if (!tune || tune.state !== "ready" || !tune.token) return;
+    const { role, token, seq } = tune;
+    tune.state = "starting";
+    tune.token = null;  // single use, whatever the answer
+    keys("Cancel", "Confirm apply", false);
+    let res;
+    try {
+      res = await api("config-run", { token });
+    } catch (e) {
+      if (tune && tune.seq === seq) tuneFail("Lost the dashboard before it answered. The file may or may not have changed: go back and prepare again to see.");
+      return;
+    }
+    if (!tune || tune.seq !== seq) return;
+    if (res.ok) {
+      tuneNote = res.data.applies === "RESTART" ? { text: "SERVICE DUE · RESTART TO APPLY", cls: "k-warn" }
+        : res.data.applies === "LIVE" ? { text: "APPLIED · LIVE", cls: "k-ok" } : { text: "APPLIED", cls: "k-ok" };
+      drafts.delete(role);
+      rackMsg.delete(role);
+      tuneStop();
+      setupHead();
+      keys("Close", null, false);
+      renderSetup(true);
+      cancelKey.focus();
+      poll();
+    } else if (res.status === 409 && res.data.error === "changed") {
+      tuneFail("The file changed on disk after it was checked, so nothing was written. Go back and prepare again.");
+    } else if (res.status === 403) {
+      tuneFail("The confirmation is no longer valid (expired, already used, or replaced by a newer check). Go back and prepare again.");
+    } else {
+      tuneFail(errText(res));
+    }
+  }
+
+  function setupHead() {
+    setText($("con-title"), "SETUP · CONFIGURATION");
+    const t = $("con-state");
+    setClass(t, "state-tag st-check");
+    setText(t, "Tuning");
+    setClass($("con-led"), "led g");
+    setText($("con-project"), st ? str(st.project) : "");
+    setText($("con-note"), "Turn a knob, then PREPARE: nothing is written until you confirm.");
   }
 
   function openSetup() {
@@ -672,16 +1045,11 @@
     svcSeq++;
     svc = null;
     go("setup");
-    setText($("con-title"), "SETUP · CONFIGURATION");
-    const t = $("con-state");
-    setClass(t, "state-tag st-check");
-    setText(t, "Read-only");
-    setClass($("con-led"), "led g");
-    setText($("con-project"), str(st.project));
-    setText($("con-note"), "Edit the files, then run the command shown.");
+    tuneReset();
+    setupHead();
     keys("Close", null, false);
     setupKey = null;
-    renderSetup();
+    renderSetup(true);
     conBody.scrollTop = 0;
     cancelKey.focus();
   }
@@ -1218,11 +1586,15 @@
     go("deck");
     renderDeck();
     setupKey = null;
+    tuneReset();
     const back = lastKey && !lastKey.disabled && !lastKey.hidden ? lastKey : $("btn-approve").disabled ? $("deck-lcd") : $("btn-approve");
     back.focus();
   }
-  cancelKey.addEventListener("click", closeConsole);
-  goKey.addEventListener("click", () => { if (svc && svc.onGo && !goKey.disabled) svc.onGo(); });
+  cancelKey.addEventListener("click", () => { if (tune) tuneCancel(); else closeConsole(); });
+  goKey.addEventListener("click", () => {
+    if (tune) { if (tune.onGo && !goKey.disabled && Date.now() >= tune.armAt) tune.onGo(); return; }
+    if (svc && svc.onGo && !goKey.disabled) svc.onGo();
+  });
   $("svc-restart").addEventListener("click", () => openService("restart"));
   $("svc-update").addEventListener("click", () => openService("update"));
   $("svc-doctor").addEventListener("click", () => openService("doctor"));
@@ -1250,7 +1622,7 @@
       return;
     }
     if (screen !== "confirm" && screen !== "log" && screen !== "setup") return;
-    if (e.key === "Escape") { e.preventDefault(); closeConsole(); return; }
+    if (e.key === "Escape") { e.preventDefault(); if (tune) tuneCancel(); else closeConsole(); return; }
     if (e.key !== "Tab") return;
     const items = [conBody, cancelKey, goKey].filter(n => !n.hidden && !n.disabled);
     const first = items[0], last = items[items.length - 1];
