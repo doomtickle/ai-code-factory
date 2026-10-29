@@ -11,6 +11,7 @@ the body caps, the header checks on the new routes, and the SERVICE DUE lamp aft
 import hashlib
 import json
 import os
+import re
 import stat
 import unittest
 from pathlib import Path
@@ -18,6 +19,7 @@ from pathlib import Path
 import dashboard_configwrite as cw
 import dashboard_setup
 import dashboard_term as dt
+from factory import roles
 from dashboard_service import Paths
 from test_dashboard_controls import Env
 
@@ -430,6 +432,75 @@ class HttpTests(Base):
                                        ensure_ascii=False).encode()), dt.MAX_CONFIG_BODY)
         ok = b"{" + b" " * (dt.MAX_CONFIG_BODY - 2) + b"}"
         self.assertEqual(e.post("config-prepare", raw=ok)[0], 400)  # read, then refused for its content
+
+
+class CuPageContractTests(Base):
+    """The requests scripts/dashboard-ui/cu.js sends for a tuning change, byte for byte, through the
+    real front door, and the answers it parses: token, expires, path, changed, applies, diff ops, the
+    exact 409 "changed", and the knobs' values in the next state poll."""
+
+    def keys(self, role="developer"):
+        r = next(r for r in self.api("state", {})["config"]["roles"] if r["name"] == role)
+        return {k["key"]: k for k in r["keys"]}
+
+    def post(self, name, body):
+        status, out, _ = self.env.post(name, body)
+        return status, out
+
+    def test_cu_js_names_the_keys_and_the_demo_line_the_host_uses(self):
+        js = (Path(__file__).resolve().parent / "dashboard-ui" / "cu.js").read_text()
+        tune = re.search(r"const TUNE_KEYS = \[([^\]]*)\]", js).group(1)
+        self.assertEqual(sorted(re.findall(r'"([A-Z_]+)"', tune)), sorted(k for k in roles.ROLE_OVERRIDE_KEYS if k != "MODELS"))
+        self.assertIn("/^demo mode/i", js)
+
+    def test_prepare_run_and_the_knobs_afterwards(self):
+        self.write(self.override, 'MAX_TURNS="80"\nMODEL="opus"\n')
+        before = self.keys()
+        self.assertEqual((before["MAX_TURNS"]["value"], before["MAX_TURNS"]["source"]), ("80", "LOCAL"))
+        self.assertEqual(before["MAX_TURNS"]["repo"], "200")
+        # What cu.js sends: LANES up, EFFORT set, the LOCAL MAX_TURNS unset; numbers are strings.
+        status, out = self.post("config-prepare", {"kind": "role", "role": "developer",
+                                                   "set": {"LANES": "5", "EFFORT": "high"}, "unset": ["MAX_TURNS"]})
+        self.assertEqual(status, 200, out)
+        self.assertIsInstance(out["token"], str)
+        self.assertTrue(out["token"])
+        self.assertIsInstance(out["expires"], int)
+        self.assertGreater(out["expires"], 0)
+        self.assertTrue(out["path"].endswith("roles/developer.conf"))
+        self.assertIs(out["changed"], True)
+        self.assertEqual(out["applies"], "RESTART")  # every change waits for a restart: never "LIVE"
+        self.assertTrue(all(set(d) >= {"op", "text"} and d["op"] in " +-" and isinstance(d["text"], str)
+                            for d in out["diff"]))
+        ops = [(d["op"], d["text"]) for d in out["diff"]]
+        self.assertIn(("-", 'MAX_TURNS="80"'), ops)
+        self.assertIn(("+", 'LANES="5"'), ops)
+        self.assertIn(("+", 'EFFORT="high"'), ops)
+        self.assertEqual(self.override.read_text(), 'MAX_TURNS="80"\nMODEL="opus"\n')  # prepare writes nothing
+        # The knobs still show the old values until CONFIRM.
+        self.assertEqual(self.keys()["LANES"]["source"], "REPO")
+        self.assertEqual(self.post("config-run", {"token": out["token"]}), (200, {"ok": True, "applies": "RESTART"}))
+        after = self.keys()  # the next poll: the write dropped the SETUP cache
+        self.assertEqual((after["LANES"]["value"], after["LANES"]["source"], after["LANES"]["repo"]), ("5", "LOCAL", "3"))
+        self.assertEqual((after["EFFORT"]["value"], after["EFFORT"]["source"]), ("high", "LOCAL"))
+        self.assertEqual((after["MAX_TURNS"]["value"], after["MAX_TURNS"]["source"]), ("200", "REPO"))
+        self.assertEqual((after["MODEL"]["value"], after["MODEL"]["source"]), ("opus", "LOCAL"))  # untouched
+        # The token was single use: a second CONFIRM is the 403 cu.js words as "no longer valid".
+        status, out2 = self.post("config-run", {"token": out["token"]})
+        self.assertEqual(status, 403, out2)
+
+    def test_a_changed_file_is_the_exact_409_cu_js_matches(self):
+        self.write(self.override, 'LANES="2"\n')
+        status, out = self.post("config-prepare", {"kind": "role", "role": "developer", "set": {"LANES": "4"}, "unset": []})
+        self.assertEqual(status, 200, out)
+        self.write(self.override, 'LANES="7"\n')  # edited by hand after the diff was shown
+        self.assertEqual(self.post("config-run", {"token": out["token"]}), (409, {"error": "changed"}))
+        self.assertEqual(self.override.read_text(), 'LANES="7"\n')
+
+    def test_a_bad_value_is_a_400_with_text_cu_js_shows(self):
+        status, out = self.post("config-prepare", {"kind": "role", "role": "developer", "set": {"LANES": "9"}, "unset": []})
+        self.assertEqual(status, 400, out)
+        self.assertIsInstance(out["error"], str)
+        self.assertTrue(out["error"])
 
 
 if __name__ == "__main__":

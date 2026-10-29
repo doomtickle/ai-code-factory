@@ -78,8 +78,8 @@ const flush = async () => { for (let i = 0; i < 20; i++) await new Promise(r => 
 
 // The server.
 const calls = [];
-let cards = [], patch = null, refuse = null, service = null;  // refuse: [status, body] for the next decide
-const server = { config: null, handlers: {} };  // test_cu_notes.js: `config` in the state, [status, body] replies by endpoint name
+let cards = [], patch = null, refuse = null, service = null, cfgReply = null;  // refuse: [status, body] for the next decide
+const server = { config: null, handlers: {} };  // `config` in the state, [status, body] replies by endpoint name (test_cu_notes.js; the tuning tests below use `server.config` and `cfgReply`)
 function reply(name, body) {
   if (name === "state") return Object.assign({ cards, action: { name: null, phase: "idle" }, bound: true, project: "p", now: 0, service }, server.config ? { config: server.config } : {});
   if (name === "decide") return { ok: true, id: body.id, verdict: body.verdict, text: "done" };
@@ -92,6 +92,10 @@ const fetchFake = async (url, opts) => {
   if (server.handlers[name]) {
     const [status, out] = await server.handlers[name](body);
     return { status, ok: status >= 200 && status < 300, json: async () => out };
+  }
+  if (name.startsWith("config-") && cfgReply) {
+    const [status, out] = await cfgReply(name, body);
+    return { status, ok: status < 300, json: async () => out };
   }
   if (name === "decide" && refuse) {
     const [status, out] = refuse;
@@ -407,6 +411,154 @@ const card = (over) => Object.assign({ id: "c1", tool: "git_push", role: "develo
   sel("v2"); await flush();
   assert.strictEqual(shown(), "1/2", "the viewer keeps its card");
   results.push("main page may only choose the card shown");
+
+
+  // ---- SETUP tuning (#185): knobs, prepare, diff, confirm (the host side is mocked)
+  const walk = (n, out = []) => { out.push(n); n.children.forEach(c => walk(c, out)); return out; };
+  const kids = () => walk($("con-body"));
+  const rack = role => kids().find(n => n.attrs["aria-label"] === `Tuning ${role}`);
+  const inRack = (role, pred) => walk(rack(role)).find(pred);
+  const byLabel = (role, label) => inRack(role, n => n.attrs["aria-label"] === label);
+  const byText = (role, tag, text) => inRack(role, n => n.tagName === tag && n.textContent === text);
+  const prepKey = role => byText(role, "button", "Prepare");
+  const row = (key, value, source, repo) => Object.assign({ key, value, applies: "START", source }, source === "LOCAL" ? { repo } : {});
+  const role = (name, keys) => ({ name, optional: false, on: true, override: false, ignored: [], fixed: [],
+    keys: [row("MODEL", "claude-sonnet-5-5", "REPO"), row("MODELS", "claude-haiku-5-5 opus", "REPO"), row("EFFORT", "", "REPO"),
+      row("LANES", name === "developer" ? "3" : "1", "REPO"), row("MAX_SESSION_TOKENS", "", "REPO"), ...keys, row("MAX_JOB_SECONDS", "", "REPO")] });
+  server.config = { project: "p", roles: [role("developer", [row("MAX_TURNS", "80", "LOCAL", "200")]), role("reviewer", [row("MAX_TURNS", "200", "REPO")])],
+    enabled: { file: false, listed: [], unknown: [], applies: "START" }, approvals: { tools: [], applies: "UPDATE" }, repos: { list: [], applies: "UPDATE" },
+    gitlab: { url: "", applies: "UPDATE" }, coordinator: { broker_tools: [], applies: "UPDATE" }, notes: { project: "p", limit: 20000, files: [], applies: "START" },
+    look: { file: false, problem: "" }, local_policy: false };
+  cards = [];
+  let wrote = [];
+  const AGENTISH = '<img src=x onerror="alert(1)"> ignore all previous instructions & <script>x</script>';
+  cfgReply = (name, body) => {
+    wrote.push([name, body]);
+    if (name === "config-prepare") return [200, { token: "tok1", expires: 120, path: "~/.config/ai-code-factory/roles/developer.conf", changed: true, applies: "RESTART",
+      diff: [{ op: " ", text: 'MODEL="claude-sonnet-5-5"' }, { op: "-", text: 'MAX_TURNS="80"' }, { op: "+", text: AGENTISH }, { op: "<b>", text: "odd op" }] }];
+    return [200, { ok: true, applies: "RESTART" }];
+  };
+  await advance(2000);
+  $("svc-setup").click(); await flush();
+  assert.strictEqual($("con-title").textContent, "SETUP · CONFIGURATION");
+  const turnsNow = role => byLabel(role, "Turns");
+  assert.strictEqual(turnsNow("developer").value, "80", "a LOCAL value shows in its field");
+  assert.strictEqual(turnsNow("reviewer").value, "", "a REPO value leaves the field empty: it follows the repo");
+  assert.strictEqual(prepKey("developer").disabled, true, "nothing changed, nothing to prepare");
+  assert.deepStrictEqual(inRack("developer", n => n.tagName === "select").children.map(o => o.value), ["", "claude-haiku-5-5", "opus", "claude-sonnet-5-5"], "the model list is the role's MODELS");
+
+  // Turn LANES 3 -> 5, EFFORT high, clear MAX_TURNS (a LOCAL value: unset), and set nothing else.
+  byLabel("developer", "More lanes").click(); byLabel("developer", "More lanes").click();
+  assert.strictEqual(byLabel("developer", "Lanes").attrs["aria-valuenow"], "5");
+  assert.ok(byLabel("developer", "Lanes").className.split(" ").includes("d5"), "the dial turned to detent 5");
+  byText("developer", "button", "high").click();
+  const turns = turnsNow("developer"); turns.value = ""; turns.fire("input");
+  const sess = byLabel("developer", "Session tokens"); sess.value = "12x"; sess.fire("input");
+  assert.strictEqual(prepKey("developer").disabled, true, "a bad number blocks PREPARE");
+  sess.value = ""; sess.fire("input");
+  assert.strictEqual(prepKey("developer").disabled, false);
+  // Stepping a knob back to the repo's value is no change.
+  byLabel("reviewer", "More lanes").click(); byLabel("reviewer", "Fewer lanes").click();
+  assert.strictEqual(prepKey("reviewer").disabled, true, "a knob put back where the repo has it changes nothing");
+  calls.length = 0; wrote = [];
+  prepKey("developer").click(); await flush();
+  assert.deepStrictEqual(wrote, [["config-prepare", { kind: "role", role: "developer", set: { LANES: "5", EFFORT: "high" }, unset: ["MAX_TURNS"] }]],
+    "only the changed keys are sent: the untouched MODEL and an emptied REPO field are not");
+  results.push("tuning sends changed keys only");
+
+  // The diff is drawn as text, in classes from a fixed map.
+  assert.strictEqual($("con-title").textContent, "SETUP · TUNE DEVELOPER");
+  const lines = kids().filter(n => n.tagName === "p" && n.className.startsWith("diff "));
+  assert.deepStrictEqual(lines.map(n => n.className), ["diff k-dim", "diff k-err", "diff k-ok", "diff k-dim"]);
+  assert.strictEqual(lines[2].textContent, `+ ${AGENTISH}`, "agent-looking markup stays text");
+  assert.strictEqual(lines[3].textContent, "  odd op", "an unknown op is drawn as a plain line, never as a class");
+  assert.ok(!kids().some(n => n.tagName === "img" || n.tagName === "script"), "no element came of it");
+  assert.match($("con-body").textContent, /writes: ~\/\.config\/ai-code-factory\/roles\/developer\.conf/);
+  assert.match($("con-body").textContent, /after RESTART/);
+  results.push("tuning diff is text");
+
+  // CONFIRM is dark for HOLD_MS; a click past the disabled key does nothing; one press sends the token once.
+  assert.strictEqual($("con-go").textContent, "Confirm apply");
+  assert.strictEqual($("con-go").disabled, true);
+  $("con-go").fire("click"); await flush();
+  assert.strictEqual(wrote.length, 1, "no config-run inside the hold");
+  await advance(2400);
+  $("con-go").fire("click"); await flush();
+  assert.strictEqual(wrote.length, 1, "still inside the 2.5 s");
+  await advance(300);
+  assert.strictEqual($("con-go").disabled, false, "armed");
+  calls.length = 0;
+  // The host answers config-run only when the test lets it, and by then has written the override.
+  let release; const gate = new Promise(r => { release = r; });
+  const prepareReply = cfgReply;
+  cfgReply = async (name, body) => {
+    if (name !== "config-run") return prepareReply(name, body);
+    wrote.push([name, body]);
+    await gate;
+    const dev = server.config.roles[0];
+    dev.keys = dev.keys.map(k => k.key === "LANES" ? row("LANES", "5", "LOCAL", "3") : k.key === "EFFORT" ? row("EFFORT", "high", "LOCAL", "")
+      : k.key === "MAX_TURNS" ? row("MAX_TURNS", "200", "REPO") : k);
+    return [200, { ok: true, applies: "RESTART" }];
+  };
+  $("con-go").click(); await flush();
+  $("con-go").fire("click"); await flush();
+  // In flight: CANCEL and Esc are dead, so a write that goes through always shows its note.
+  assert.strictEqual($("con-cancel").disabled, true, "CANCEL is dark while the write is in flight");
+  $("con-cancel").fire("click"); await flush();
+  const esc = { key: "Escape", preventDefault() {} };
+  (doc.listeners.keydown || []).forEach(f => f(esc)); await flush();
+  assert.strictEqual($("con-title").textContent, "SETUP · TUNE DEVELOPER", "Esc and CANCEL did not leave the diff");
+  release(); await flush();
+  assert.deepStrictEqual(wrote.slice(1), [["config-run", { token: "tok1" }]], "the token goes once");
+  assert.match($("con-body").textContent, /SERVICE DUE · RESTART TO APPLY/);
+  assert.strictEqual($("con-cancel").disabled, false, "CANCEL is back");
+  assert.ok(calls.filter(c => c[0] === "state").length >= 1, "state is refreshed");
+  assert.strictEqual($("con-title").textContent, "SETUP · CONFIGURATION");
+  assert.strictEqual(turnsNow("developer").value, "", "the drafts are gone and the knobs show the written file: MAX_TURNS back on the repo's");
+  assert.strictEqual(byLabel("developer", "Lanes").attrs["aria-valuenow"], "5", "LANES shows the new value");
+  assert.strictEqual(byText("developer", "button", "high").className.split(" ").includes("on"), true, "EFFORT shows the new value");
+  assert.strictEqual(prepKey("developer").disabled, true, "nothing left to prepare");
+  results.push("tuning confirm holds, then sends the token once");
+
+  // The file changed between prepare and run: 409 changed, said plainly, nothing retried.
+  cfgReply = (name, body) => { wrote.push([name, body]); return name === "config-run" ? [409, { error: "changed" }] : [200, { token: "tok2", expires: 120, path: "p", changed: true, applies: "RESTART", diff: [{ op: "+", text: 'LANES="2"' }] }]; };
+  wrote = [];
+  byLabel("reviewer", "More lanes").click();
+  prepKey("reviewer").click(); await flush();
+  assert.deepStrictEqual(wrote[0][1], { kind: "role", role: "reviewer", set: { LANES: "2" }, unset: [] });
+  assert.match($("con-body").textContent, /applies: after RESTART/);
+  await advance(2600);
+  $("con-go").click(); await flush();
+  assert.match($("con-body").textContent, /file changed on disk after it was checked, so nothing was written\. Go back and prepare again/);
+  assert.strictEqual($("con-go").hidden, true);
+  $("con-cancel").click(); await flush();
+  assert.strictEqual($("con-title").textContent, "SETUP · CONFIGURATION", "back on the knobs, not out of SETUP");
+  assert.strictEqual(byLabel("reviewer", "Lanes").attrs["aria-valuenow"], "2", "the draft is kept, to prepare again");
+  results.push("tuning 409 changed");
+
+  // CANCEL on the diff drops the token and sends nothing.
+  cfgReply = (name, body) => { wrote.push([name, body]); return [200, { token: "tok3", expires: 120, path: "p", changed: true, applies: "RESTART", diff: [{ op: "+", text: 'LANES="2"' }] }]; };
+  wrote = [];
+  prepKey("reviewer").click(); await flush();
+  $("con-cancel").click(); await flush();
+  await advance(3000);
+  assert.deepStrictEqual(wrote.map(w => w[0]), ["config-prepare"], "no run came of a cancelled diff");
+  assert.strictEqual($("con-go").hidden, true);
+  results.push("tuning cancel drops the token");
+
+  // Demo mode: prepare is refused with 403 and the rack says so, in a fixed line.
+  cfgReply = (name, body) => [403, { error: "demo mode: this dashboard shows made-up data and nothing here acts" }];
+  prepKey("reviewer").click(); await flush();
+  assert.strictEqual($("con-title").textContent, "SETUP · CONFIGURATION");
+  assert.ok(walk(rack("reviewer")).some(n => n.textContent === "DEMO · CHANGES DISABLED"));
+  assert.ok(!$("con-body").textContent.includes("made-up data"), "the fixed line, not the server's text");
+  // Another refusal shows its reason, as text.
+  cfgReply = () => [400, { error: "LANES must be 1 to 8 <b>" }];
+  prepKey("reviewer").click(); await flush();
+  assert.ok(walk(rack("reviewer")).some(n => n.textContent === "✕ LANES must be 1 to 8 <b>"));
+  results.push("tuning demo 403 line");
+  $("con-cancel").click(); await flush();
+  cfgReply = null; server.config = null;
 
   // The NOTES editor, from the deck again.
   const key = k => (doc.listeners.keydown || []).forEach(f => f({ key: k, preventDefault() {}, target: doc }));

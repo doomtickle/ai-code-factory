@@ -1433,6 +1433,9 @@ class SetupTests(unittest.TestCase):
         self.assertNotRegex(block, r"\.(href|src|style|dataset|innerHTML)\b")
         self.assertNotIn("setAttribute", block)
         self.assertNotIn("api(", block)  # it reads the polled state and makes no request
+        tune = js[js.index("// ---------- SETUP tuning"):js.index("// ---------- the log screen")]
+        self.assertNotRegex(tune, r"\.(href|src|style|dataset|innerHTML|outerHTML)\b|insertAdjacentHTML|\beval\b")
+        self.assertEqual(sorted(set(re.findall(r'api\("([^"]+)"', tune))), ["config-prepare", "config-run"])  # the only requests
         html = (UI / "cu.html").read_text()
         self.assertEqual(re.findall(r'<button class="blank" type="button" id="(svc-setup)"', html), ["svc-setup"])
         self.assertIn('$("svc-setup").addEventListener("click", openSetup);', js)
@@ -1539,7 +1542,10 @@ class CuScriptTests(unittest.TestCase):
                           "viewer asks with the count", "viewer: fp change cancels",
                           "decided card shows its state, keys dark", "expired card shows EXPIRED, keys dark",
                           "refusals shown as text", "decline without a reason says so", "agent strings stay text",
-                          "service keys follow the lamp", "main page may only choose the card shown"])
+                          "service keys follow the lamp", "main page may only choose the card shown",
+                          "tuning sends changed keys only", "tuning diff is text",
+                          "tuning confirm holds, then sends the token once", "tuning 409 changed",
+                          "tuning cancel drops the token", "tuning demo 403 line"])
 
 
 class RealPageTests(unittest.TestCase):

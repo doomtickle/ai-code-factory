@@ -310,6 +310,26 @@ module.exports = async function run(h) {
     assert.ok(!/[\ud800-\udbff](?![\udc00-\udfff])/.test(area().value), "no split surrogate pair");
   });
 
+  await test("the editor and the tuning rack share SETUP without fighting", async () => {
+    const rack = () => find(n => (n.attrs || {})["aria-label"] === "Tuning developer");
+    $("svc-setup").click(); await flush();
+    assert.ok(rack(), "SETUP shows the knobs");
+    button("Edit notes").click(); await flush();
+    assert.ok(area() && !rack(), "the editor owns the screen");
+    await type("typed, not saved");
+    await advance(2500);
+    assert.strictEqual(area().value, "typed, not saved", "a poll leaves the box alone");
+    key("Escape"); await flush();                         // unsaved: asks first, stays on the editor
+    assert.ok(area() && !rack());
+    button("Discard").click(); await flush();
+    assert.ok(!area() && rack(), "back on the knobs");
+    assert.strictEqual($("scr-console").hidden, false, "Esc left the editor, not SETUP");
+    assert.strictEqual(cancelKey.textContent, "Close");
+    assert.strictEqual(cancelKey.disabled, false);
+    key("Escape"); await flush();
+    assert.strictEqual($("scr-console").hidden, true, "a second Esc closes SETUP");
+  });
+
   await test("no project, no editor", async () => {
     server.config = Object.assign(config(), { notes: { project: "(no project)", limit: LIMIT, files: [] } });
     await advance(2500);

@@ -618,12 +618,12 @@ designer = "#d08cff"                    # a role's colour on the floor, its lane
 
 ### Setup: the configuration in force
 
-The **SETUP** key opens a screen of the configuration the factory will use,
-read on this machine with the same code `factory start` uses. It shows
-everything read-only, and the one thing it lets you change is the
-[project notes](#the-notes-editor); edit every other file as
-[Make it yours](04-customize.md) describes. It refreshes every few seconds
-while open.
+The **SETUP** key opens the configuration the factory will use, read on this
+machine with the same code `factory start` uses. Most of it is read-only: edit
+the files as [Make it yours](04-customize.md) describes. Two things can be
+changed here: a role's tuning ([below](#tuning-a-role-from-setup)) and the
+[project notes](#the-notes-editor). It refreshes every few seconds while open,
+except while you are in the middle of turning a knob or editing the notes.
 
 - **Roles.** One block per role: whether it is on (an optional role is on only
   if it is listed in `enabled-roles`), and `MODEL`, `MODELS`, `EFFORT`,
@@ -652,12 +652,52 @@ Each line ends with the command that applies a change to it, **START** or
 Tokens, passwords and other credentials are never shown, and it never runs a
 command. If the files can't be read the screen says it is unavailable.
 
+#### Tuning a role from SETUP
+
+Each role block has a small rack of controls for the keys people change most.
+They write the role's local override (`roles/<role>.conf` in the config
+folder), never the repo's `role.conf`:
+
+- **Lanes**: a dial with eight detents (1 to 8). Click it to turn it on, or use
+  the arrow keys on it, or the ◀ ▶ keys beside it.
+- **Model**: a selector over the role's `MODELS` list (plus the model set now).
+- **Effort**: a switch for `low`, `medium`, `high` or `xhigh`.
+- **Session tokens**, **Turns**, **Job seconds**: numbers (digits only; `0` is
+  no cap or no limit, as in [Tune a role](04-customize.md#tune-a-role)).
+
+A control that has a **LOCAL** value starts there; one that follows the repo
+shows the repo's value (a number field is empty, with the repo's value as its
+hint). Choosing **Role default**, or emptying a number field, or pressing **↺**
+removes your override for that key, so the repo's value applies again. A row you
+changed is marked `→ SET x` or `→ UNSET`.
+
+Nothing is written when you turn a knob. **PREPARE** (one per role, lit when
+something changed) sends only the changed keys and shows the result on the
+amber tube: the override file's path, and the file's change as `+` and `-`
+lines, as the host computed it. **CONFIRM APPLY** stays dark for 2.5 seconds
+after the diff appears, so a diff is never confirmed unread, and the check
+expires after two minutes. **CANCEL** (or Esc) goes back to the knobs with your
+changes kept; nothing was written. If the file changed on disk after the
+check, the host refuses to write over it: the screen says so, and you prepare
+again.
+
+When it is written, the screen says when it takes effect. **SERVICE DUE ·
+RESTART TO APPLY** means press RESTART: these keys are read at `factory start`
+(see the table in [Make it yours](04-customize.md#which-command-applies-a-change)),
+and RESTART runs `factory restart`, which cancels running jobs, so its usual
+check shows first. Every change here waits for a restart: the dispatch bridge
+reads only the copy `factory start` took, so nothing applies live. While the
+write is in flight CANCEL and Esc are dark, so the note always shows; the knobs
+then show the values just written. In demo mode PREPARE answers
+**DEMO · CHANGES DISABLED** and writes nothing. Broker policy, hosts, kits and
+credentials have no knobs here: they stay read-only.
+
 ### The notes editor
 
 **Edit notes** (under Project notes on SETUP) opens an editor for the project's
 notes files, the ones [Make it yours](04-customize.md#per-project-notes)
-describes. It is the only thing on SETUP that writes. It appears once the
-factory is bound to a project.
+describes. Like the tuning knobs, it is a write from SETUP, after a diff and a confirm.
+It appears once the factory is bound to a project.
 
 - **Tabs.** **SHARED** is `projects/<folder>.md`, which every role gets; each
   other tab is one role's own file, `projects/<folder>.<role>.md`. Opening a
@@ -671,12 +711,14 @@ factory is bound to a project.
   role the file reaches would be over the limit and higher than it is now,
   because the bridge would refuse that role's tasks. A change that shortens a
   role that is already over is allowed, since that is the way back under. The
-  box takes at most 20,000 characters.
+  box takes at most 20,000 characters, counted as the host counts them (an
+  emoji is one character).
 - **Saving takes two steps.** **SAVE** shows what would change: the file's
   path, the lines added and removed as a diff, and each role's new total.
   Nothing is written yet. **CONFIRM** stays dark for 2.5 seconds, so a press
   can't land on a screen you haven't read, and then writes the file.
-  **CANCEL** drops the pending save. A confirmation not used within two
+  **CANCEL** drops the pending save (while the write itself is in flight CANCEL
+  and Esc are dark). A confirmation not used within two
   minutes expires.
 - **After a save** the editor says "SAVED · SERVICE DUE · RESTART TO APPLY":
   the new notes reach the roles when the factory next starts, so the SERVICE
@@ -788,7 +830,8 @@ Demo mode is display only. It never reads your real state folder: it copies
 the fixture into a fresh temporary folder and deletes it when you press
 Ctrl-C. Terminal 0 is off, APPROVE, DECLINE, RESTART, UPDATE, DIAG and the notes editor's SAVE answer
 that nothing here acts, INSPECT shows the fixture's patch, and SETUP shows
-the fixture's configuration (`scripts/dashboard-demo/setup/`), not yours. It also ignores your `dashboard.toml` and shows the defaults. The same
+the fixture's configuration (`scripts/dashboard-demo/setup/`), not yours, and its
+PREPARE says DEMO · CHANGES DISABLED. It also ignores your `dashboard.toml` and shows the defaults. The same
 token, cookie and content rules apply as for a real run. `--demo` can't be
 combined with `--coordinator`, `--state`, `--project` or `--factory`;
 `--no-open` and `--port N` work as usual.
@@ -801,8 +844,9 @@ Terminal 0 and the control unit it only reads the factory's state folder, and
 for the [outbox](#the-outbox) asks your project's git, read-only and with hooks
 off, which `factory/*` branches exist, how far ahead of `HEAD` they are and
 whether their changes are already in `HEAD`.
-The control unit can write only a decision file (APPROVE, DECLINE), a project notes file (the SETUP notes editor, after a confirm) and its
-action logs, and run only `factory doctor`, `factory restart`, `factory
+The control unit can write only a decision file (APPROVE, DECLINE), its
+action logs and, from SETUP, a role's local tuning override or the project's notes (each after a diff and a
+confirm), and run only `factory doctor`, `factory restart`, `factory
 update --yes` and `factory update --plan`, each after a confirm screen. The README's
 [Dashboard](../../README.md#dashboard) section has the details.
 

@@ -28,7 +28,9 @@ affected, after listing what each one loses and asking you.
 
 The dashboard's **SETUP** key shows the effective value of each line above and
 which of the two commands applies it: see
-[Setup](06-dashboard.md#setup-the-configuration-in-force).
+[Setup](06-dashboard.md#setup-the-configuration-in-force). For a role's
+`MODEL`, `EFFORT`, `LANES`, `MAX_SESSION_TOKENS`, `MAX_TURNS` and
+`MAX_JOB_SECONDS` it also has knobs (see [Tune a role](#tune-a-role)).
 
 > **Tip:** Not sure? `factory start` warns when a sandbox is out of date:
 > `out of date (made from an older image or kit): factory-broker; run 'factory update' to recreate them`.
@@ -143,6 +145,15 @@ Or, to give the developer a different set of models to pick from per task
 # ~/.config/ai-code-factory/roles/developer.conf
 MODELS="claude-haiku-5-5 opus claude-fable-5-1"
 ```
+
+You can also set these six from the dashboard instead of editing the file:
+open **SETUP**, turn the role's knobs and press **PREPARE** (see [Tuning a role
+from SETUP](06-dashboard.md#tuning-a-role-from-setup)). It shows the exact change
+to `roles/<role>.conf` first and writes it only when you confirm. The dashboard
+then says when it applies: **SERVICE DUE · RESTART TO APPLY** means press
+RESTART (the key checks what it would stop first); every change here waits for
+a restart, as the bridge reads only the copy `factory start` took. `MODELS` and every other key stay file-edits, and so does
+anything outside a role's override.
 
 Then run `factory start`, which applies overrides: the bridge reads a copy it
 takes then, so editing the file mid-session changes nothing until the next

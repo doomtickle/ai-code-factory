@@ -373,6 +373,7 @@
       stopTimers();
       head("Saving", "running", "g blink", "");
       setKeys("Cancel", "Confirm save", false);
+      cancelKey.disabled = true;   // in flight: a write that went through must show its result
       conBody.append(P("cursor", "▶ Writing…"));
       let res;
       try {
