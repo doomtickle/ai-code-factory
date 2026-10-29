@@ -165,6 +165,21 @@ class EndToEndTests(cwt.Base):
         out = self.post("config-prepare", {"kind": "notes", "role": "developer", "text": longer})
         self.gauge_matches("developer", longer, len(mine), out["totals"], self.bases())
 
+    def test_astral_characters_count_once_on_both_sides(self):
+        bases = self.bases()
+        text = "\U0001F600" * 30 + "e\u0301" + "\U0001F468\u200d\U0001F469\n"
+        self.assertGreater(len(text.encode("utf-16-le")) // 2, len(text))   # JS .length would count more
+        out = self.post("config-prepare", {"kind": "notes", "role": "", "text": text})
+        self.gauge_matches("", text, 0, out["totals"], bases)
+        self.post("config-run", {"token": out["token"]})
+        self.assertEqual(self.post("config-read", {"kind": "notes", "role": ""})["chars"], len(text))
+        self.assertEqual(self.bases(), out["totals"])
+        # 20,000 characters (25,000 UTF-16 units) pass the file limit, so the refusal is a role's total (409); one more is the file limit (400).
+        full = "\U0001F600" * 5000 + "x" * 15000
+        self.assertEqual(len(full), 20000)
+        self.assertIn("over 20,000", self.post("config-prepare", {"kind": "notes", "role": "", "text": full + "x"}, 400)["error"])
+        self.assertNotIn("the file", self.post("config-prepare", {"kind": "notes", "role": "", "text": full}, 409)["error"])
+
     def test_unchanged_text_reports_no_change(self):
         self.write(self.notes, "same\n")
         out = self.post("config-prepare", {"kind": "notes", "role": "", "text": "same\n"})
@@ -222,7 +237,7 @@ class ScriptTests(unittest.TestCase):
             "confirm stays dark for the hold, then writes once", "cancel drops the token; an old confirmation expires",
             "changed on disk: say so, offer RELOAD", "demo: a fixed refusal, nothing saved", "refusals reach the user as text",
             "unsaved edits are asked about before they are lost", "a role already over the limit may be edited down, not up",
-            "no project, no editor"])
+            "astral characters count once, as the host counts them", "no project, no editor"])
 
 
 if __name__ == "__main__":

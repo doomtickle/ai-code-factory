@@ -292,6 +292,24 @@ module.exports = async function run(h) {
     assert.strictEqual(countCalls("config-prepare"), 1, "the shorter text is sent");
   });
 
+  await test("astral characters count once, as the host counts them", async () => {
+    server.config = config();
+    await advance(2500);
+    await openEditor();
+    const emoji = "\u{1F600}";
+    assert.strictEqual(emoji.length, 2, "two UTF-16 units");
+    await type(emoji.repeat(10));
+    assert.ok(text().includes("10 characters in this file"), text());
+    assert.ok(gauge("developer").textContent.includes(`${(5000 + SHARED_HDR + 100 + DEV_HDR + 50 - 100 + 10).toLocaleString("en-US")} / 20,000`), gauge("developer").textContent);
+    assert.strictEqual(area().maxLength === undefined || area().maxLength === 0 || area().maxLength === -1, true, "no UTF-16 maxLength on the box");
+    await type(emoji.repeat(LIMIT));
+    assert.strictEqual(Array.from(area().value).length, LIMIT, "20,000 emoji (40,000 units) are kept whole");
+    assert.ok(text().includes("20,000 characters in this file"), text());
+    await type(emoji.repeat(LIMIT + 5));
+    assert.strictEqual(Array.from(area().value).length, LIMIT, "cut at 20,000 characters");
+    assert.ok(!/[\ud800-\udbff](?![\udc00-\udfff])/.test(area().value), "no split surrogate pair");
+  });
+
   await test("no project, no editor", async () => {
     server.config = Object.assign(config(), { notes: { project: "(no project)", limit: LIMIT, files: [] } });
     await advance(2500);

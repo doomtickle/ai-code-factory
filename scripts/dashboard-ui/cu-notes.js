@@ -85,7 +85,7 @@
     const stillOver = () => gauged().filter(r => affected(r) && totalOf(r) > limit());
     // The host lets a change through that lowers (or keeps) a total already over the limit: it is the way back under.
     const overRoles = () => stillOver().filter(r => totalOf(r) > baseOf(r));
-    const canSave = () => phase === "edit" && dirty() && overRoles().length === 0;
+    const canSave = () => phase === "edit" && dirty() && cp(draft) <= TEXT_MAX && overRoles().length === 0;
 
     function paintGauge(g) {
       const total = totalOf(g.role), lim = limit(), lv = level(total, lim);
@@ -160,9 +160,16 @@
       const ta = el("textarea", "nedit");
       ta.value = draft;
       ta.spellcheck = false;
-      ta.maxLength = TEXT_MAX;
       ta.setAttribute("aria-label", `Notes: ${fileName(tab)}`);
-      ta.addEventListener("input", () => { draft = ta.value; status = null; live(); });
+      ta.addEventListener("input", () => {
+        // maxLength counts UTF-16 units; the host counts characters, so the cap is enforced here.
+        if (cp(ta.value) > TEXT_MAX) {
+          const at = ta.selectionStart;
+          ta.value = Array.from(ta.value).slice(0, TEXT_MAX).join("");
+          if (typeof at === "number" && ta.setSelectionRange) ta.setSelectionRange(Math.min(at, ta.value.length), Math.min(at, ta.value.length));
+        }
+        draft = ta.value; status = null; live();
+      });
       const g = gauged().map(gaugeRow);
       refs = { ta, tabs: {}, gauges: g, count: P("k-dim", ""), status: P("nstatus", ""), ask: el("div", "nask"), hint: null };
       refs.ask.setAttribute("role", "alert");
