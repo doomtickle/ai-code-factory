@@ -982,6 +982,10 @@ The same managed settings also set `CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT` to
 legitimately block up to the dispatch bridge's 600 s maximum wait
 (`MAX_WAIT_SECONDS` in `dispatch/server.py`) and Claude Code's default idle
 abort is shorter than that; changing it needs the same `factory update`.
+The bridge also answers such a blocking call as a `text/event-stream` with a keepalive every
+15 s when the client's `Accept` allows it, so a proxy's idle timeout doesn't drop it
+([Troubleshooting](docs/guides/05-troubleshooting.md)); a dropped wait is safe to retry
+(`wait_for_job` on the same id).
 The managed settings of the Coordinator and of every role also set
 `disableClaudeAiConnectors`, so connectors from your claude.ai account never
 load in a factory sandbox; sandboxes created before that change keep loading

@@ -92,6 +92,10 @@ MAX_WAIT_SECONDS = 600
 # and the audit log showed it picking 90-240 s waits and polling jobs several
 # times. 0 is still "the status right now, without waiting".
 MIN_WAIT_SECONDS = 300
+# While a blocking tools/call runs, a client that accepts text/event-stream gets a
+# keepalive this often, so an idle timeout between it and the bridge doesn't drop
+# the connection (the job keeps running either way).
+KEEPALIVE_SECONDS = 15
 # A role's saved session over this many context tokens is not resumed: the next
 # task starts fresh (role.conf MAX_SESSION_TOKENS overrides it; "0" = no cap).
 # Every turn of a resumed session re-reads its whole history, so a large one
@@ -1844,6 +1848,26 @@ def handle_rpc(msg: dict) -> dict | None:
     return {"jsonrpc": "2.0", "id": mid, "result": result}
 
 
+def may_block(msg: dict) -> bool:
+    """True for a tools/call that can wait minutes: delegate or wait_for_job with a
+    positive wait (their defaults wait)."""
+    params = msg.get("params")
+    if msg.get("method") != "tools/call" or not isinstance(params, dict):
+        return False
+    args = params.get("arguments") or {}
+    if not isinstance(args, dict):
+        return False
+    key = {"delegate": "wait_seconds", "wait_for_job": "timeout_seconds"}.get(params.get("name"))
+    if key is None:
+        return False
+    wait = args.get(key, MAX_WAIT_SECONDS)
+    return isinstance(wait, int) and not isinstance(wait, bool) and wait > 0
+
+
+def sse_event(obj: dict) -> bytes:
+    return b"event: message\ndata: " + json.dumps(obj, ensure_ascii=False).encode() + b"\n\n"
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = f"{SERVER_NAME}/{SERVER_VERSION}"
 
@@ -1874,10 +1898,60 @@ class Handler(BaseHTTPRequestHandler):
         except json.JSONDecodeError:
             return self._send(400, {"jsonrpc": "2.0", "id": None,
                                     "error": {"code": -32700, "message": "parse error"}})
+        if (isinstance(msg, dict) and msg.get("id") is not None and may_block(msg)
+                and "text/event-stream" in (self.headers.get("Accept") or "").lower()):
+            return self._stream_rpc(msg)
         resp = handle_rpc(msg) if isinstance(msg, dict) else None
         if resp is None:
             return self._send(202)
         self._send(200, resp)
+
+    def _stream_rpc(self, msg: dict) -> None:
+        """Answer a blocking tools/call as an SSE stream (MCP Streamable HTTP): the call
+        runs in a worker while keepalives (and progress notifications, if the client
+        sent a progressToken) go out every KEEPALIVE_SECONDS, then the response ends the
+        stream. If the client goes away the job is untouched; the worker finishes alone."""
+        meta = (msg.get("params") or {}).get("_meta")
+        token = meta.get("progressToken") if isinstance(meta, dict) else None
+        if isinstance(token, bool) or not isinstance(token, (str, int)):
+            token = None
+        box: list = []
+
+        def work() -> None:
+            try:
+                box.append(handle_rpc(msg))
+            except Exception as e:  # noqa: BLE001
+                box.append({"jsonrpc": "2.0", "id": msg.get("id"),
+                            "error": {"code": -32603, "message": sanitize(f"internal error: {e}", 500)}})
+
+        worker = threading.Thread(target=work, daemon=True)
+        worker.start()
+        self.close_connection = True
+        try:
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Cache-Control", "no-cache")
+            self.send_header("Connection", "close")
+            self.end_headers()
+            self.wfile.flush()
+            beats = 0
+            while True:
+                worker.join(KEEPALIVE_SECONDS)
+                if not worker.is_alive():
+                    break
+                beats += 1
+                self.wfile.write(b": keepalive\n\n")
+                if token is not None:
+                    self.wfile.write(sse_event({"jsonrpc": "2.0", "method": "notifications/progress",
+                                                "params": {"progressToken": token, "progress": beats,
+                                                           "message": "still waiting"}}))
+                self.wfile.flush()
+            self.wfile.write(sse_event(box[0]))
+            self.wfile.flush()
+        except (OSError, ValueError) as e:
+            tool = (msg.get("params") or {}).get("name")
+            log_line(f"client closed the {tool} stream early ({type(e).__name__}); "
+                     "any job keeps running, wait_for_job returns its result")
 
     def do_GET(self):
         self._send(405)

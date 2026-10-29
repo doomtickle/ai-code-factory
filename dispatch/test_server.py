@@ -975,6 +975,156 @@ class ProtocolTests(Base):
         self.assertIn("- designer (project read-only): Designs things", res["result"]["instructions"])
 
 
+class StreamTests(Base):
+    """POST /mcp over a real socket: a blocking call streams keepalives as SSE."""
+    BOTH = "application/json, text/event-stream"
+
+    def setUp(self):
+        super().setUp()
+        import hashlib
+        import http.server
+        (d.STATE / "token.sha256").write_text(hashlib.sha256(b"tok").hexdigest())
+        for name, val in (("KEEPALIVE_SECONDS", 0.1), ("MIN_WAIT_SECONDS", 1), ("MAX_WAIT_SECONDS", 5)):
+            p = mock.patch.object(d, name, val)
+            p.start()
+            self.addCleanup(p.stop)
+        self.httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), d.Handler)
+        threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
+        self.addCleanup(self.httpd.server_close)
+        self.addCleanup(self.httpd.shutdown)
+        self.job = d.Job("developer", "t", None)
+        d._jobs[self.job.id] = self.job
+
+    def tearDown(self):
+        self.finish()  # the fake job has no process: Base.tearDown would wait 30 s to cancel it
+        super().tearDown()
+
+    def finish(self):
+        self.job.status = "done"
+        self.job.done.set()
+
+    def finish_after(self, seconds):
+        t = threading.Timer(seconds, self.finish)
+        t.start()
+        self.addCleanup(t.cancel)
+
+    def call(self, name="wait_for_job", args=None, accept=BOTH, meta=None, id=1):
+        import http.client
+        params = {"name": name, "arguments": {"job_id": self.job.id} if args is None else args}
+        if meta:
+            params["_meta"] = meta
+        headers = {"Content-Type": "application/json", "Authorization": "Bearer tok"}
+        if accept:
+            headers["Accept"] = accept
+        conn = http.client.HTTPConnection("127.0.0.1", self.httpd.server_port, timeout=15)
+        self.addCleanup(conn.close)
+        conn.request("POST", "/mcp", json.dumps({"jsonrpc": "2.0", "id": id, "method": "tools/call",
+                                                 "params": params}), headers)
+        return conn, conn.getresponse()
+
+    @staticmethod
+    def events(raw):
+        """(comments, [(event name, parsed data)]) of an SSE body."""
+        comments, events = [], []
+        for block in raw.decode().split("\n\n"):
+            if block.startswith(":"):
+                comments.append(block)
+            elif block.strip():
+                fields = dict(line.split(": ", 1) for line in block.splitlines())
+                events.append((fields["event"], json.loads(fields["data"])))
+        return comments, events
+
+    def test_blocking_wait_streams_keepalives_then_the_result(self):
+        self.finish_after(0.6)
+        _, resp = self.call()
+        self.assertEqual(resp.status, 200)
+        self.assertEqual(resp.getheader("Content-Type"), "text/event-stream")
+        self.assertEqual(resp.getheader("Cache-Control"), "no-cache")
+        self.assertIsNone(resp.getheader("Content-Length"))
+        comments, events = self.events(resp.read())
+        self.assertGreaterEqual(len(comments), 3)
+        self.assertEqual(set(comments), {": keepalive"})
+        self.assertEqual(len(events), 1)  # no progress without a progressToken
+        name, final = events[0]
+        self.assertEqual(name, "message")
+        self.assertEqual(final, d.handle_rpc({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                                              "params": {"name": "wait_for_job",
+                                                         "arguments": {"job_id": self.job.id}}}))
+        self.assertEqual(json.loads(final["result"]["content"][0]["text"])["status"], "done")
+
+    def test_progress_notifications_when_the_client_sends_a_token(self):
+        self.finish_after(0.6)
+        _, resp = self.call(meta={"progressToken": "tok-1"})
+        comments, events = self.events(resp.read())
+        progress = [e for _, e in events if e.get("method") == "notifications/progress"]
+        self.assertGreaterEqual(len(progress), 3)
+        self.assertEqual([p["params"]["progressToken"] for p in progress], ["tok-1"] * len(progress))
+        values = [p["params"]["progress"] for p in progress]
+        self.assertEqual(values, sorted(set(values)))  # strictly increasing
+        self.assertEqual(len(comments), len(progress))
+        self.assertEqual(events[-1][1]["id"], 1)
+        self.assertIn("result", events[-1][1])
+
+    def test_delegate_with_a_wait_streams_too(self):
+        tool = mock.Mock(return_value="Started job x")
+        with mock.patch.dict(d.TOOLS, {"delegate": (tool, *d.TOOLS["delegate"][1:])}):
+            _, resp = self.call("delegate", {"role": "developer", "task": "t"})
+            self.assertEqual(resp.getheader("Content-Type"), "text/event-stream")
+            _, events = self.events(resp.read())
+        tool.assert_called_once()
+        self.assertEqual(events[0][1]["result"]["content"][0]["text"], "Started job x")
+
+    def test_plain_json_without_event_stream_in_accept(self):
+        self.finish_after(0.3)
+        for accept in (None, "application/json"):
+            _, resp = self.call(accept=accept)
+            self.assertEqual(resp.status, 200)
+            self.assertEqual(resp.getheader("Content-Type"), "application/json")
+            body = resp.read()
+            self.assertEqual(int(resp.getheader("Content-Length")), len(body))
+            self.assertEqual(json.loads(body)["id"], 1)
+            self.assertEqual(json.loads(json.loads(body)["result"]["content"][0]["text"])["status"], "done")
+
+    def test_non_blocking_calls_stay_plain_json(self):
+        cases = [("wait_for_job", {"job_id": self.job.id, "timeout_seconds": 0}),
+                 ("delegate", {"role": "developer", "task": "t", "wait_seconds": 0}),
+                 ("job_status", {}), ("list_roles", {})]
+        for name, args in cases:
+            with self.subTest(name=name):
+                _, resp = self.call(name, args)
+                self.assertEqual(resp.getheader("Content-Type"), "application/json")
+                self.assertIsNotNone(resp.getheader("Content-Length"))
+                json.loads(resp.read())
+        _, resp = self.call("wait_for_job", {"job_id": self.job.id, "timeout_seconds": True})
+        self.assertEqual(resp.getheader("Content-Type"), "application/json")  # denied at once
+
+    def test_a_request_without_an_id_is_not_streamed(self):
+        import http.client
+        conn = http.client.HTTPConnection("127.0.0.1", self.httpd.server_port, timeout=5)
+        self.addCleanup(conn.close)
+        conn.request("POST", "/mcp", json.dumps({"jsonrpc": "2.0", "method": "notifications/initialized"}),
+                     {"Authorization": "Bearer tok", "Accept": self.BOTH})
+        self.assertEqual(conn.getresponse().status, 202)
+
+    def test_client_disconnect_leaves_the_job_and_the_server_alone(self):
+        with mock.patch.object(d, "log_line") as log:
+            conn, resp = self.call()
+            self.assertEqual(resp.status, 200)  # the stream is open; now hang up
+            resp.close()
+            conn.close()
+            deadline = time.time() + 5
+            while not log.called and time.time() < deadline:
+                time.sleep(0.05)
+        log.assert_called_once()
+        self.assertIn("closed the wait_for_job stream early", log.call_args[0][0])
+        self.assertEqual(self.job.status, "running")
+        self.assertFalse(self.job.done.is_set())
+        self.finish()
+        _, resp = self.call(accept=None, args={"job_id": self.job.id, "timeout_seconds": 0})
+        self.assertEqual(resp.status, 200)
+        self.assertEqual(json.loads(json.loads(resp.read())["result"]["content"][0]["text"])["status"], "done")
+
+
 def git(*args, cwd=None):
     """Test-side git, isolated from the user's global and system git config."""
     import subprocess
