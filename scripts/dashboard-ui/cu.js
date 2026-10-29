@@ -675,6 +675,165 @@
     moreCue();
   }
 
+  function setupHead() {
+    setText($("con-title"), "SETUP · CONFIGURATION");
+    const t = $("con-state");
+    setClass(t, "state-tag st-check");
+    setText(t, "Tuning");
+    setClass($("con-led"), "led g");
+    setText($("con-project"), st ? str(st.project) : "");
+    setText($("con-note"), "Turn a knob, then PREPARE: nothing is written until you confirm.");
+  }
+
+  function openSetup() {
+    if (fault || !st) return;
+    lastKey = $("svc-setup");
+    svcSeq++;
+    svc = null;
+    go("setup");
+    tuneReset();
+    setupHead();
+    keys("Close", null, false);
+    setupKey = null;
+    renderSetup(true);
+    conBody.scrollTop = 0;
+    cancelKey.focus();
+  }
+
+  function renderConfirm(d) {
+    const action = svc.action;
+    svc.token = d.confirm;
+    svc.deadline = Date.now() + Math.max(0, Number(d.expires_in) || 0) * 1000;
+    svc.state = "ready";
+    svc.onGo = runAction;
+    const out = [P("banner", TITLES[action])];
+    if (action === "doctor") {
+      out.push(P(null, "▶ Diag runs the factory's doctor: it checks this machine, its tools, Docker, the sandboxes and the gateway, and prints the fix for each problem. It changes nothing."));
+      if (d.project) out.push(P("ind k-dim", `  project: ${str(d.project)}`));
+      out.push(P("ind k-cmd", `  runs exactly: ${RUNS[action]}`));
+      out.push(P("ind k-dim", "  Terminal 0 stays attached. Running jobs and held writes carry on."));
+      out.push(el("div", "gap"), P("k-dim", "Nothing has run yet. CONFIRM DIAG starts it; CANCEL or Esc backs out."));
+      conBody.replaceChildren(...out);
+      conBody.scrollTop = 0;
+      moreCue();
+      keys("Cancel", "Confirm diag", true);
+      tickConfirm();
+      return;
+    }
+    if (action === "update") {
+      out.push(P(null, "▶ Update pulls the factory's code, rebuilds what changed, recreates the sandboxes listed below, then starts the factory again."));
+    } else {
+      out.push(P(null, "▶ Restart stops the agents, the broker and the dispatch bridge, then starts them again."));
+    }
+    if (d.project) out.push(P("ind k-dim", `  project: ${str(d.project)}`));
+    out.push(P("ind k-cmd", `  runs exactly: ${RUNS[action]}`));
+    out.push(P("ind k-dim", "  Terminal 0 hangs up while it runs."));
+
+    const jobs = list(d.jobs);
+    out.push(H("Running jobs"));
+    if (jobs.length) {
+      out.push(P("k-err", `✕ ${jobs.length} running job${jobs.length > 1 ? "s" : ""} will be cancelled:`));
+      for (const j of jobs) out.push(P("ind k-err", `  ${str(j && j.lane)} · ${str(j && j.task) || "(no task text)"}`));
+    } else {
+      out.push(P("k-ok", "✓ No jobs are running."));
+    }
+    const held = list(d.held);
+    out.push(H("Write gate"));
+    if (held.length) {
+      out.push(P("k-err", `✕ ${held.length} held write${held.length > 1 ? "s are" : " is"} dropped; the agent can try again afterwards:`));
+      for (const h of held) out.push(P("ind k-err", `  ${str(h && h.text) || str(h && h.id)}`));
+    } else {
+      out.push(P("k-ok", "✓ No writes are held."));
+    }
+    const queued = list(d.queued);
+    if (queued.length) {
+      out.push(P("k-ok", `✓ ${queued.length} staged write${queued.length > 1 ? "s are" : " is"} kept; the gateway makes ${queued.length > 1 ? "each" : "it"} once approved:`));
+      for (const h of queued) out.push(P("ind k-dim", `  ${str(h && h.text) || str(h && h.id)}`));
+    }
+
+    if (action === "update") {
+      if (d.plan_error) out.push(H("Update check"), P("k-err", `✕ ${str(d.plan_error)}`));
+      const commits = list(d.commits);
+      out.push(H("Incoming commits"));
+      if (commits.length) for (const c of commits) out.push(P("ind k-cmd", `  ${str(c && c.sha).slice(0, 9)} ${str(c && c.subject)}`));
+      else out.push(P("k-dim", "  No new commits upstream."));
+      const rec = list(d.recreate);
+      out.push(H("Sandboxes recreated"));
+      if (rec.length) for (const r of rec) out.push(P("ind k-warn", `✕ ${str(r && r.sandbox)}: loses ${str(r && r.loses)}`));
+      else out.push(P("k-ok", "✓ No sandbox is out of date."));
+      const maybe = list(d.maybe);
+      if (maybe.length) {
+        out.push(H("Maybe recreated", "heuristic"));
+        out.push(P("k-dim", "  A guess from the files the incoming commits touch; the update decides for real."));
+        for (const m of maybe) out.push(P("ind k-warn", `? ${str(m && m.sandbox)}: ${str(m && m.why)}`));
+      }
+      const notes = list(d.notes);
+      if (notes.length) {
+        out.push(H("Notes"));
+        for (const n of notes) out.push(P("ind k-warn", `• ${str(n)}`));
+      }
+    }
+    out.push(el("div", "gap"), P("k-dim", `Nothing has run yet. CONFIRM ${action.toUpperCase()} starts it; CANCEL or Esc backs out.`));
+    conBody.replaceChildren(...out);
+    conBody.scrollTop = 0;
+    moreCue();
+    keys("Cancel", `Confirm ${action}`, true);
+    tickConfirm();
+  }
+
+  function tickConfirm() {
+    if (!svc || svc.state !== "ready") return;
+    const left = Math.max(0, Math.ceil((svc.deadline - Date.now()) / 1000));
+    if (left > 0) {
+      head(svc.action, "Confirm", "confirm", "a blink", `Confirm within ${mmss(left)}`);
+      return;
+    }
+    svc.state = "expired";
+    svc.token = null;
+    head(svc.action, "Expired", "expired", "r", "The confirmation expired. Cancel and press the key again to start over.");
+    keys("Cancel", "Expired · start over", false);
+  }
+
+  function refused(text, conflict) {
+    svc.state = "refused";
+    svc.token = null;
+    head(svc.action, "Refused", "refused", "r");
+    conBody.replaceChildren(P("banner", "Not started"), P("k-err", `✕ ${text}`));
+    if (conflict && running()) {
+      conBody.append(P("k-dim", "Another action is running: open its log to watch it."));
+      svc.onGo = () => openLog(false);
+      keys("Close", "Open log", true);
+    } else {
+      keys("Close", null, false);
+    }
+    cancelKey.focus();
+  }
+
+  async function runAction() {
+    if (!svc || svc.state !== "ready" || !svc.token) return;
+    const { action, token, seq } = svc;
+    svc.state = "starting";
+    svc.token = null;  // single use, whatever the answer
+    keys("Cancel", `Confirm ${keyName(action)}`, false);
+    let res;
+    try {
+      res = await api("run", { action, confirm: token });
+    } catch (e) {
+      if (svc && svc.seq === seq) refused("Lost the dashboard before it answered. Check the log key on the control unit before trying again.", false);
+      return;
+    }
+    if (!svc || svc.seq !== seq) return;
+    if (res.ok) {
+      offeredLog = true;
+      openLog(true, action);
+      poll();
+    } else if (res.status === 403) {
+      refused("The confirmation is no longer valid (expired, already used, or replaced by a newer check). Cancel and start over.", false);
+    } else {
+      refused(errText(res), res.status === 409);
+    }
+  }
+
   // ---------- SETUP tuning (#185): knobs for a role's local override
   // Only these six keys can be turned; the host re-checks every value and writes the override
   // file itself. Two steps, as RESTART: config-prepare returns the diff and a token, and only
@@ -1026,165 +1185,6 @@
       tuneFail("The confirmation is no longer valid (expired, already used, or replaced by a newer check). Go back and prepare again.");
     } else {
       tuneFail(errText(res));
-    }
-  }
-
-  function setupHead() {
-    setText($("con-title"), "SETUP · CONFIGURATION");
-    const t = $("con-state");
-    setClass(t, "state-tag st-check");
-    setText(t, "Tuning");
-    setClass($("con-led"), "led g");
-    setText($("con-project"), st ? str(st.project) : "");
-    setText($("con-note"), "Turn a knob, then PREPARE: nothing is written until you confirm.");
-  }
-
-  function openSetup() {
-    if (fault || !st) return;
-    lastKey = $("svc-setup");
-    svcSeq++;
-    svc = null;
-    go("setup");
-    tuneReset();
-    setupHead();
-    keys("Close", null, false);
-    setupKey = null;
-    renderSetup(true);
-    conBody.scrollTop = 0;
-    cancelKey.focus();
-  }
-
-  function renderConfirm(d) {
-    const action = svc.action;
-    svc.token = d.confirm;
-    svc.deadline = Date.now() + Math.max(0, Number(d.expires_in) || 0) * 1000;
-    svc.state = "ready";
-    svc.onGo = runAction;
-    const out = [P("banner", TITLES[action])];
-    if (action === "doctor") {
-      out.push(P(null, "▶ Diag runs the factory's doctor: it checks this machine, its tools, Docker, the sandboxes and the gateway, and prints the fix for each problem. It changes nothing."));
-      if (d.project) out.push(P("ind k-dim", `  project: ${str(d.project)}`));
-      out.push(P("ind k-cmd", `  runs exactly: ${RUNS[action]}`));
-      out.push(P("ind k-dim", "  Terminal 0 stays attached. Running jobs and held writes carry on."));
-      out.push(el("div", "gap"), P("k-dim", "Nothing has run yet. CONFIRM DIAG starts it; CANCEL or Esc backs out."));
-      conBody.replaceChildren(...out);
-      conBody.scrollTop = 0;
-      moreCue();
-      keys("Cancel", "Confirm diag", true);
-      tickConfirm();
-      return;
-    }
-    if (action === "update") {
-      out.push(P(null, "▶ Update pulls the factory's code, rebuilds what changed, recreates the sandboxes listed below, then starts the factory again."));
-    } else {
-      out.push(P(null, "▶ Restart stops the agents, the broker and the dispatch bridge, then starts them again."));
-    }
-    if (d.project) out.push(P("ind k-dim", `  project: ${str(d.project)}`));
-    out.push(P("ind k-cmd", `  runs exactly: ${RUNS[action]}`));
-    out.push(P("ind k-dim", "  Terminal 0 hangs up while it runs."));
-
-    const jobs = list(d.jobs);
-    out.push(H("Running jobs"));
-    if (jobs.length) {
-      out.push(P("k-err", `✕ ${jobs.length} running job${jobs.length > 1 ? "s" : ""} will be cancelled:`));
-      for (const j of jobs) out.push(P("ind k-err", `  ${str(j && j.lane)} · ${str(j && j.task) || "(no task text)"}`));
-    } else {
-      out.push(P("k-ok", "✓ No jobs are running."));
-    }
-    const held = list(d.held);
-    out.push(H("Write gate"));
-    if (held.length) {
-      out.push(P("k-err", `✕ ${held.length} held write${held.length > 1 ? "s are" : " is"} dropped; the agent can try again afterwards:`));
-      for (const h of held) out.push(P("ind k-err", `  ${str(h && h.text) || str(h && h.id)}`));
-    } else {
-      out.push(P("k-ok", "✓ No writes are held."));
-    }
-    const queued = list(d.queued);
-    if (queued.length) {
-      out.push(P("k-ok", `✓ ${queued.length} staged write${queued.length > 1 ? "s are" : " is"} kept; the gateway makes ${queued.length > 1 ? "each" : "it"} once approved:`));
-      for (const h of queued) out.push(P("ind k-dim", `  ${str(h && h.text) || str(h && h.id)}`));
-    }
-
-    if (action === "update") {
-      if (d.plan_error) out.push(H("Update check"), P("k-err", `✕ ${str(d.plan_error)}`));
-      const commits = list(d.commits);
-      out.push(H("Incoming commits"));
-      if (commits.length) for (const c of commits) out.push(P("ind k-cmd", `  ${str(c && c.sha).slice(0, 9)} ${str(c && c.subject)}`));
-      else out.push(P("k-dim", "  No new commits upstream."));
-      const rec = list(d.recreate);
-      out.push(H("Sandboxes recreated"));
-      if (rec.length) for (const r of rec) out.push(P("ind k-warn", `✕ ${str(r && r.sandbox)}: loses ${str(r && r.loses)}`));
-      else out.push(P("k-ok", "✓ No sandbox is out of date."));
-      const maybe = list(d.maybe);
-      if (maybe.length) {
-        out.push(H("Maybe recreated", "heuristic"));
-        out.push(P("k-dim", "  A guess from the files the incoming commits touch; the update decides for real."));
-        for (const m of maybe) out.push(P("ind k-warn", `? ${str(m && m.sandbox)}: ${str(m && m.why)}`));
-      }
-      const notes = list(d.notes);
-      if (notes.length) {
-        out.push(H("Notes"));
-        for (const n of notes) out.push(P("ind k-warn", `• ${str(n)}`));
-      }
-    }
-    out.push(el("div", "gap"), P("k-dim", `Nothing has run yet. CONFIRM ${action.toUpperCase()} starts it; CANCEL or Esc backs out.`));
-    conBody.replaceChildren(...out);
-    conBody.scrollTop = 0;
-    moreCue();
-    keys("Cancel", `Confirm ${action}`, true);
-    tickConfirm();
-  }
-
-  function tickConfirm() {
-    if (!svc || svc.state !== "ready") return;
-    const left = Math.max(0, Math.ceil((svc.deadline - Date.now()) / 1000));
-    if (left > 0) {
-      head(svc.action, "Confirm", "confirm", "a blink", `Confirm within ${mmss(left)}`);
-      return;
-    }
-    svc.state = "expired";
-    svc.token = null;
-    head(svc.action, "Expired", "expired", "r", "The confirmation expired. Cancel and press the key again to start over.");
-    keys("Cancel", "Expired · start over", false);
-  }
-
-  function refused(text, conflict) {
-    svc.state = "refused";
-    svc.token = null;
-    head(svc.action, "Refused", "refused", "r");
-    conBody.replaceChildren(P("banner", "Not started"), P("k-err", `✕ ${text}`));
-    if (conflict && running()) {
-      conBody.append(P("k-dim", "Another action is running: open its log to watch it."));
-      svc.onGo = () => openLog(false);
-      keys("Close", "Open log", true);
-    } else {
-      keys("Close", null, false);
-    }
-    cancelKey.focus();
-  }
-
-  async function runAction() {
-    if (!svc || svc.state !== "ready" || !svc.token) return;
-    const { action, token, seq } = svc;
-    svc.state = "starting";
-    svc.token = null;  // single use, whatever the answer
-    keys("Cancel", `Confirm ${keyName(action)}`, false);
-    let res;
-    try {
-      res = await api("run", { action, confirm: token });
-    } catch (e) {
-      if (svc && svc.seq === seq) refused("Lost the dashboard before it answered. Check the log key on the control unit before trying again.", false);
-      return;
-    }
-    if (!svc || svc.seq !== seq) return;
-    if (res.ok) {
-      offeredLog = true;
-      openLog(true, action);
-      poll();
-    } else if (res.status === 403) {
-      refused("The confirmation is no longer valid (expired, already used, or replaced by a newer check). Cancel and start over.", false);
-    } else {
-      refused(errText(res), res.status === 409);
     }
   }
 

@@ -1433,6 +1433,9 @@ class SetupTests(unittest.TestCase):
         self.assertNotRegex(block, r"\.(href|src|style|dataset|innerHTML)\b")
         self.assertNotIn("setAttribute", block)
         self.assertNotIn("api(", block)  # it reads the polled state and makes no request
+        tune = js[js.index("// ---------- SETUP tuning"):js.index("// ---------- the log screen")]
+        self.assertNotRegex(tune, r"\.(href|src|style|dataset|innerHTML|outerHTML)\b|insertAdjacentHTML|\beval\b")
+        self.assertEqual(sorted(set(re.findall(r'api\("([^"]+)"', tune))), ["config-prepare", "config-run"])  # the only requests
         html = (UI / "cu.html").read_text()
         self.assertEqual(re.findall(r'<button class="blank" type="button" id="(svc-setup)"', html), ["svc-setup"])
         self.assertIn('$("svc-setup").addEventListener("click", openSetup);', js)
