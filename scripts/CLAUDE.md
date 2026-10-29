@@ -46,7 +46,7 @@ terminal query replies in old output aren't sent to the Coordinator again.
 
 It is served from a second 127.0.0.1 port, its own origin, which the main page frames
 (main CSP adds only `frame-src` for that port; the iframe is
-`sandbox="allow-scripts allow-same-origin"`); the terminal page's CSP allows framing
+`sandbox="allow-scripts allow-same-origin"` with `allow="clipboard-write"`, below); the terminal page's CSP allows framing
 only by the main port, and that page (the one carrying the key) is served only with
 `Sec-Fetch-Dest: iframe` and `Sec-Fetch-Site` `same-site` or `same-origin`, never to a
 top-level navigation. Its WebSocket is accepted only with that port's `Host`, an
@@ -54,6 +54,23 @@ top-level navigation. Its WebSocket is accepted only with that port's `Host`, an
 main cookie, and a per-run terminal key in `Sec-WebSocket-Protocol`
 (`factory-term.<key>`), which the server writes only into the terminal page it serves,
 so the main page (which shows agent text) never has it.
+
+COPY (doomtickle/passdesk-ops#142, `dashboard-ui/term.js`): Terminal 0 shows agent-written
+text, so nothing it prints reaches the clipboard by itself (a poisoned clipboard may be pasted
+into a host shell). No xterm.js clipboard addon is loaded; term.js's own OSC 52 handler is the
+only one, and it is write-only: a query (`?`) or an empty payload is refused and never answered,
+the selection target is ignored, the payload is at most 64 KiB of strict base64 and strict UTF-8,
+and one carrying a C0 or C1 control (other than tab and newline; CR is made a newline) is dropped,
+as is any OSC 52 parsed during the muted replay. A valid one only raises a prompt in the terminal
+frame ("COORDINATOR COPIED N CHARACTERS · PRESS TO COPY") with a preview drawn by `textContent`
+(cut at 240 characters, invisible and bidi characters shown as `⟨U+XXXX⟩` and flagged); a newer
+copy replaces the pending one, DISMISS or a new session drops it, and only a click on its COPY key
+writes it (`navigator.clipboard.writeText`, else `execCommand("copy")` from a selected textarea,
+else that textarea left selected for the user's own copy). A grid selection is copied only by a
+copy the user starts (the browser's copy event, Cmd+C on a Mac, Ctrl+Shift+C or Ctrl+Insert
+elsewhere, only while there is a selection; Ctrl+C stays the Coordinator's), each line's trailing
+spaces trimmed. The page never reads the clipboard. The terminal iframe alone carries
+`allow="clipboard-write"` (never `clipboard-read`); the control unit's frame gets no `allow`.
 
 Every other control lives in the control unit (`scripts/dashboard_controls.py`, served
 by `dashboard_term.py` on that same second origin, which runs whenever the dashboard

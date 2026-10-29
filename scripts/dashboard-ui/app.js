@@ -1033,6 +1033,9 @@
     // Same host as this page (the cookie is per host), the terminal's port.
     termFrame.src = `http://${location.hostname}:${Number(t.port)}/term`;
     termFrame.setAttribute("sandbox", "allow-scripts allow-same-origin");
+    // Its COPY key (an OSC 52 copy, only on a click) writes the clipboard. Write
+    // only (no read permission), and this frame only: never the control unit.
+    termFrame.setAttribute("allow", "clipboard-write");
     termFrame.setAttribute("referrerpolicy", "no-referrer");
     crtBody.hidden = true;
     roll.classList.add("live");

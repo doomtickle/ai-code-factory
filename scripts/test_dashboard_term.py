@@ -1,7 +1,8 @@
 """Tests for scripts/dashboard_term.py (Terminal 0, the dashboard's Coordinator
 terminal): the WebSocket handshake's accept/refuse matrix, frame encoding and
 decoding, the PTY bridge (with a fake command standing in for `sbx run`), the
-"open elsewhere" check, both pages' CSPs, and the vendored xterm.js.
+"open elsewhere" check, both pages' CSPs, the vendored xterm.js, and term.js's
+OSC 52 copy prompt (under node, with scripts/test_term_page.js).
 
 No sbx runs here: every Term gets a small Python program as its command.
 
@@ -15,8 +16,10 @@ import io
 import json
 import os
 import re
+import shutil
 import socket
 import struct
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -796,9 +799,15 @@ class VendorTests(unittest.TestCase):
         self.assertRegex(css, r"#term \.xterm \{[^}]*padding:")
         self.assertIn("Math.min(22, Math.floor(window.innerWidth / 30))", js)  # 22px cap: larger type clipped on wide screens
         for sink in ("innerHTML", "outerHTML", "insertAdjacentHTML", "document.write", "eval(", "new Function",
-                     "ClipboardAddon", "WebLinksAddon", "ImageAddon", "window.open"):
+                     "ClipboardAddon", "WebLinksAddon", "ImageAddon", "window.open",
+                     "readText", "clipboard.read", "clipboard-read"):
             self.assertNotIn(sink, js, f"term.js uses {sink}")
         self.assertIn("allowProposedApi: false", js)
+        # One OSC 52 handler, ours; the only clipboard write is the COPY key's (TermScriptTests).
+        self.assertEqual(js.count("registerOscHandler("), 1)
+        self.assertIn("registerOscHandler(52,", js)
+        self.assertEqual(js.count(".writeText("), 2)  # the COPY key and the copy-key fallback
+        self.assertIn("macOptionClickForcesSelection: true", js)
         html = (UI / "term.html").read_text()
         self.assertIsNone(re.search(r"<script(?![^>]*\bsrc=)", html), "inline script")
         self.assertIsNone(re.search(r"\son[a-z]+=", html), "inline event handler")
@@ -809,6 +818,96 @@ class VendorTests(unittest.TestCase):
         js = (UI / "app.js").read_text()
         self.assertIn('setAttribute("sandbox", "allow-scripts allow-same-origin")', js)
         self.assertNotIn("term-key", js)
+        # Clipboard write for Terminal 0's frame only (its COPY key); never read, never the control unit.
+        self.assertEqual(js.count('setAttribute("allow", '), 1)
+        self.assertIn('termFrame.setAttribute("allow", "clipboard-write");', js)
+        self.assertNotIn("clipboard-read", js)
+        cu = js[js.index("function renderCu()"):]
+        cu = cu[:cu.index("\n  }\n")]
+        self.assertNotIn("allow\"", cu)
+
+
+@unittest.skipUnless(shutil.which("node"), "needs node")
+class Osc52Tests(unittest.TestCase):
+    """term.js's pure copy helpers, loaded under node (they return before touching the DOM)."""
+
+    def js(self, expr):
+        code = f"const T = require({str(UI / 'term.js')!r}); process.stdout.write(JSON.stringify({expr}));"
+        return json.loads(subprocess.run(["node", "-e", code], capture_output=True, text=True, check=True, timeout=30).stdout)
+
+    def parse(self, data):
+        return self.js(f"T.osc52Text({json.dumps(data)})")
+
+    @staticmethod
+    def b64(text):
+        return base64.b64encode(text.encode()).decode()
+
+    def test_writes(self):
+        for target in ("c", "p", "s", "0", "", "cpq7", "anything"):  # the target is ignored
+            self.assertEqual(self.parse(f"{target};{self.b64('git status')}"), "git status")
+        self.assertEqual(self.parse("c;" + self.b64("naïve ✓ 日本 🙂")), "naïve ✓ 日本 🙂")
+        self.assertEqual(self.parse("c;" + self.b64("a\r\nb\rc\td")), "a\nb\nc\td")
+        self.assertEqual(self.parse("c;" + self.b64("ab").rstrip("=")), "ab")  # unpadded
+        self.assertEqual(self.parse("c;a;b".replace("a;b", self.b64("x;y"))), "x;y")
+
+    def test_refused(self):
+        for data in ("c;?", "?", ";?", "c;", "c", "", "c;" + self.b64("x") + "?", "c;@@@@", "c;YQ=x", "c;Y",
+                     "c; " + self.b64("x"), "c;" + self.b64("x") + "\n",
+                     "c;" + base64.b64encode(b"\xff\xfe").decode(),         # not UTF-8
+                     "c;" + base64.b64encode(b"\xed\xa0\x80").decode(),     # a lone surrogate
+                     "c;" + self.b64("echo \x1b[31m"), "c;" + self.b64("a\x00b"), "c;" + self.b64("a\x85b"),
+                     "c;" + self.b64("a\x7f")):
+            self.assertIsNone(self.parse(data), repr(data))
+        self.assertIsNone(self.js("T.osc52Text(null)"))
+
+    def test_cap(self):
+        cap = self.js("T.COPY_MAX")
+        self.assertEqual(cap, 64 * 1024)
+        self.assertEqual(self.js(f"T.osc52Text('c;' + Buffer.from('x'.repeat({cap})).toString('base64')).length"), cap)
+        self.assertIsNone(self.js(f"T.osc52Text('c;' + Buffer.from('x'.repeat({cap + 1})).toString('base64'))"))
+        # The cap is bytes: 3-byte characters fit a third as many.
+        self.assertIsNone(self.js(f"T.osc52Text('c;' + Buffer.from('✓'.repeat({cap // 3 + 1})).toString('base64'))"))
+        self.assertIsNone(self.js(f"T.osc52Text('c;' + 'A'.repeat({cap * 2}))"))
+
+    def test_preview_and_trim(self):
+        self.assertEqual(self.js("T.copyPreview('a\\nb\\tc\\u202ed\\u200b')"), "a⏎ b  c⟨U+202E⟩d⟨U+200B⟩")
+        self.assertTrue(self.js("T.hasHidden('x\\u2066y')"))
+        self.assertFalse(self.js("T.hasHidden('plain text')"))
+        cut = self.js("T.copyPreview('z'.repeat(1000))")
+        self.assertEqual(len(cut), self.js("T.PREVIEW_MAX"))
+        self.assertTrue(cut.endswith("…"))
+        self.assertEqual(self.js("T.trimSelection('  a b   \\nc\\u00a0 \\n\\n d')"), "  a b\nc\n\n d")
+
+    def test_copy_keys(self):
+        def key(mac, **ev):
+            ev = {"type": "keydown", "key": "c", "code": "KeyC", "ctrlKey": False, "shiftKey": False,
+                  "altKey": False, "metaKey": False, **ev}
+            return self.js(f"T.isCopyKey({json.dumps(ev)}, {json.dumps(mac)})")
+        self.assertTrue(key(False, ctrlKey=True, shiftKey=True, key="C"))
+        self.assertTrue(key(False, ctrlKey=True, key="Insert", code="Insert"))
+        self.assertFalse(key(False, ctrlKey=True))  # Ctrl+C is the Coordinator's
+        self.assertFalse(key(False, metaKey=True))
+        self.assertFalse(key(False, ctrlKey=True, shiftKey=True, altKey=True))
+        self.assertFalse(key(False, ctrlKey=True, shiftKey=True, type="keyup"))
+        self.assertTrue(key(True, metaKey=True))
+        self.assertFalse(key(True, ctrlKey=True, shiftKey=True))
+        self.assertFalse(key(True, metaKey=True, shiftKey=True))
+
+
+@unittest.skipUnless(shutil.which("node"), "needs node")
+class TermScriptTests(unittest.TestCase):
+    """term.js itself, under node with a fake DOM and Terminal (scripts/test_term_page.js)."""
+
+    def test_page_script(self):
+        here = Path(__file__).resolve().parent
+        for platform in ("other", "mac"):
+            proc = subprocess.run(["node", str(here / "test_term_page.js"), str(UI / "term.js"), platform],
+                                  capture_output=True, text=True, timeout=60)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertEqual(json.loads(proc.stdout.strip().splitlines()[-1]),
+                             ["copy only on click, newest wins", "queries and bad payloads refused", "dismiss discards",
+                              "replay raises no prompt", "preview is visible text", "fallback when writeText is refused",
+                              "selection copied trimmed", "copy keys"], platform)
 
 
 if __name__ == "__main__":

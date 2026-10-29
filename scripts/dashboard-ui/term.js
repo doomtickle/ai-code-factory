@@ -4,12 +4,81 @@
 // The terminal key arrives in a <meta> only this origin can read, goes out as
 // the WebSocket subprotocol, and the <meta> is removed. No clipboard, link or
 // image addons; OSC 8 links do nothing.
+// Copying (doomtickle/passdesk-ops#142): an OSC 52 copy from the Coordinator
+// never reaches the clipboard by itself, since this screen shows agent-written
+// text. Our own OSC 52 handler is write-only (a query is refused and nothing
+// here ever reads the clipboard), size-capped and decoded strictly; it raises a
+// prompt with a text-only preview, and only a click on its COPY key writes the
+// text. A selection (Shift-drag, or Option-drag on a Mac, past the Coordinator's
+// mouse capture) is copied by the browser's own copy (Cmd+C, the menu) or by
+// Ctrl+Shift+C / Ctrl+Insert, with each line's trailing spaces trimmed.
 // Attaching never starts the Coordinator: this page asks for it with a
 // {"type":"power"} message, once on load (only if it is off and not open
 // elsewhere) and whenever the power key is pressed.
 "use strict";
 
 (() => {
+  // ---------- copying: pure helpers (also loaded under node by test_dashboard_term.py)
+  const COPY_MAX = 64 * 1024;                     // bytes of UTF-8 an OSC 52 copy may carry
+  const B64_MAX = Math.ceil(COPY_MAX / 3) * 4;    // the same, as base64
+  const PREVIEW_MAX = 240;                            // characters the prompt shows
+  const B64 = /^[A-Za-z0-9+/]*={0,2}$/;
+  // C0 and C1 controls other than tab and newline: a copy carrying one is dropped.
+  // eslint-disable-next-line no-control-regex
+  const CONTROL = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/;
+  // Invisible and bidi characters: kept, but shown in the preview as ⟨U+XXXX⟩.
+  const HIDDEN_CHARS = "\u00ad\u061c\u180e\u200b-\u200f\u2028-\u202e\u2060-\u2064\u2066-\u206f\ufeff\ufff9-\ufffb";
+  const HIDDEN = new RegExp(`[${HIDDEN_CHARS}]`, "g"), HIDDEN_ONE = new RegExp(`[${HIDDEN_CHARS}]`);
+
+  // The text an OSC 52 sequence asks to copy, or null to drop it. data is what
+  // follows "52;": a selection target (ignored), ";", then base64 or "?". A query
+  // ("?"), an empty payload (clear), invalid base64, invalid UTF-8, a control
+  // character or more than COPY_MAX bytes gives null.
+  function osc52Text(data) {
+    if (typeof data !== "string") return null;
+    const semi = data.indexOf(";");
+    if (semi < 0) return null;
+    let b64 = data.slice(semi + 1);
+    if (!b64 || b64 === "?" || b64.length > B64_MAX || !B64.test(b64)) return null;
+    if (b64.length % 4 === 1) return null;
+    while (b64.length % 4) b64 += "=";
+    let text;
+    try {
+      const bin = atob(b64);
+      if (bin.length > COPY_MAX) return null;
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
+    } catch (e) { return null; }
+    text = text.replace(/\r\n?/g, "\n");
+    if (!text || CONTROL.test(text)) return null;
+    return text;
+  }
+  // What the prompt shows of it: hidden characters made visible, newlines as ⏎,
+  // cut at PREVIEW_MAX. Drawn with textContent only.
+  function copyPreview(text) {
+    const s = String(text).replace(HIDDEN, c => `⟨U+${c.charCodeAt(0).toString(16).toUpperCase().padStart(4, "0")}⟩`)
+      .replace(/\n/g, "⏎ ").replace(/\t/g, "  ");
+    const chars = Array.from(s);
+    return chars.length > PREVIEW_MAX ? chars.slice(0, PREVIEW_MAX - 1).join("") + "…" : s;
+  }
+  const hasHidden = text => HIDDEN_ONE.test(String(text));
+  // A grid selection: the Coordinator pads its lines with spaces, so trim each line's end.
+  const trimSelection = text => String(text).replace(/[ \u00a0]+$/gm, "");
+  // The copy shortcut for a selection: Cmd+C on a Mac (also the browser's own
+  // copy), Ctrl+Shift+C or Ctrl+Insert elsewhere. Plain Ctrl+C stays the Coordinator's.
+  function isCopyKey(ev, mac) {
+    if (ev.type !== "keydown" || ev.altKey) return false;
+    const c = ev.code === "KeyC" || ev.key === "c" || ev.key === "C";
+    if (mac) return ev.metaKey && !ev.ctrlKey && !ev.shiftKey && c;
+    if (ev.metaKey || !ev.ctrlKey) return false;
+    return (ev.shiftKey && c) || (!ev.shiftKey && (ev.key === "Insert" || ev.code === "Insert"));
+  }
+  if (typeof module !== "undefined" && module.exports) {
+    module.exports = { osc52Text, copyPreview, hasHidden, trimSelection, isCopyKey, COPY_MAX, PREVIEW_MAX };
+    return;
+  }
+
   const $ = id => document.getElementById(id);
   const meta = document.querySelector('meta[name="term-key"]');
   const key = meta ? meta.getAttribute("content") : "";
@@ -54,6 +123,10 @@
     allowProposedApi: false,
     allowTransparency: true,
     macOptionIsMeta: true,
+    // The Coordinator captures the mouse, so a plain drag selects nothing. Shift-drag
+    // forces a selection on Windows and Linux; on a Mac it takes Option-drag and this.
+    // (It only changes mouse handling: Option still types as Meta.)
+    macOptionClickForcesSelection: true,
     linkHandler: { activate() {}, allowNonHttpProtocols: false },
     theme: {
       background: "rgba(0, 0, 0, 0)", foreground: "#00ff41", cursor: "#b8ffca", cursorAccent: "#000500",
@@ -71,6 +144,89 @@
   // typed into the Coordinator.
   let autoTried = false, replayNext = false, muted = false;
   const enc = new TextEncoder();
+
+  // ---------- copying
+  // One pending OSC 52 copy at a time: a newer one replaces it, DISMISS drops it,
+  // and only a click on COPY writes it (navigator.clipboard.writeText, needing the
+  // frame's allow="clipboard-write"; else the selected-textarea fallback).
+  const mac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent || "");
+  let pending = null, copyTimer = 0;
+  function copyShow(state, text) {
+    clearTimeout(copyTimer);
+    const box = $("copy"), manual = $("copy-manual");
+    if (!manual.hidden && document.activeElement === manual) term.focus();
+    manual.hidden = true;
+    manual.value = "";
+    if (state === "none") { pending = null; box.hidden = true; return; }
+    box.classList.toggle("done", state === "done");
+    box.classList.toggle("fail", state === "fail");
+    $("copy-go").hidden = $("copy-x").hidden = state === "done";
+    if (state === "offer") {
+      pending = text;
+      const n = text.length;
+      $("copy-title").textContent = `COORDINATOR COPIED ${n} CHARACTER${n === 1 ? "" : "S"} · PRESS TO COPY`;
+      $("copy-preview").textContent = copyPreview(text);
+      $("copy-note").textContent = hasHidden(text) ? "⚠ CONTAINS HIDDEN CHARACTERS (SHOWN AS ⟨U+…⟩)" : "";
+      $("copy-note").hidden = !hasHidden(text);
+    } else if (state === "done") {
+      pending = null;
+      $("copy-title").textContent = "COPIED TO THE CLIPBOARD";
+      $("copy-note").hidden = true;
+      copyTimer = setTimeout(() => copyShow("none"), 1500);
+    }
+    box.hidden = false;
+  }
+  // The browser refused writeText: copy from a selected textarea in this click,
+  // and if even that fails leave it selected for the user's own Ctrl+C / Cmd+C.
+  function copyFallback(text) {
+    const area = $("copy-manual");
+    area.value = text;
+    area.hidden = false;
+    area.focus();
+    area.select();
+    let ok = false;
+    try { ok = document.execCommand("copy"); } catch (e) { ok = false; }
+    if (ok) { copyShow("done"); term.focus(); return; }
+    $("copy-title").textContent = `THE BROWSER BLOCKED THE COPY · PRESS ${mac ? "⌘C" : "CTRL+C"} NOW`;
+    $("copy-note").hidden = true;
+    $("copy").classList.add("fail");
+  }
+  $("copy-go").addEventListener("click", () => {
+    const text = pending;
+    if (text === null) return;
+    const clip = navigator.clipboard;
+    if (!clip || typeof clip.writeText !== "function") { copyFallback(text); return; }
+    clip.writeText(text).then(() => { copyShow("done"); term.focus(); }, () => copyFallback(text));
+  });
+  $("copy-x").addEventListener("click", () => { copyShow("none"); term.focus(); });
+  // Write-only, never during the muted replay (old output raises no prompt), and
+  // always "handled" so no other handler sees it.
+  term.parser.registerOscHandler(52, data => {
+    if (muted) return true;
+    const text = osc52Text(data);
+    if (text !== null) copyShow("offer", text);
+    return true;
+  });
+  // A grid selection, by any copy the user starts (keys, the browser's menu):
+  // trimmed, put on the copy event's own clipboard data. Capture phase, so it runs
+  // before xterm.js's own untrimmed copy handler.
+  document.addEventListener("copy", ev => {
+    if (!term.hasSelection() || !ev.clipboardData || !$("term").contains(ev.target)) return;
+    ev.clipboardData.setData("text/plain", trimSelection(term.getSelection()));
+    ev.preventDefault();
+    ev.stopImmediatePropagation();
+  }, true);
+  term.attachCustomKeyEventHandler(ev => {
+    if (!term.hasSelection() || !isCopyKey(ev, mac)) return true;
+    if (mac) return false;  // Cmd+C: xterm.js stays out; the browser's copy event runs the handler above
+    ev.preventDefault();
+    const text = trimSelection(term.getSelection());
+    let ok = false;
+    try { ok = document.execCommand("copy"); } catch (e) { ok = false; }
+    if (!ok && navigator.clipboard && typeof navigator.clipboard.writeText === "function") navigator.clipboard.writeText(text).catch(() => {});
+    term.clearSelection();
+    return false;
+  });
 
   function show(reason) {
     const off = $("off");
@@ -128,7 +284,7 @@
       if (!msg) return;
       if (msg.type === "replay") { replayNext = true; return; }
       if (msg.type !== "state") return;
-      if (msg.running && !running) { term.reset(); sendSize(); }
+      if (msg.running && !running) { term.reset(); sendSize(); copyShow("none"); }
       running = !!msg.running;
       const elsewhere = msg.reason === "elsewhere" || msg.elsewhere === true;
       // During a restart or update the server decides whether the Coordinator

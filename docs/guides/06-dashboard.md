@@ -73,6 +73,31 @@ starts nothing; only POWER ON does.
   muted until the replay is done.
 - When the session ends, the screen powers off. POWER ON starts it again.
 
+**Copying out of Terminal 0.** There are two ways:
+
+- **The COPY prompt.** When the Coordinator copies something to your
+  clipboard (Claude Code sends its copies through the terminal), a strip at the bottom
+  of the screen says "COORDINATOR COPIED N CHARACTERS · PRESS TO COPY" and
+  shows the start of the text. Press **COPY** to put it on your clipboard, or
+  **DISMISS**. This copies the exact text, without the screen's line breaks or
+  padding, so prefer it for commands. Nothing reaches your clipboard until you
+  press COPY, because the text comes from an agent; check the preview first. A
+  newer copy replaces the one waiting, and "⚠ CONTAINS HIDDEN CHARACTERS" means
+  the preview shows invisible or right-to-left characters as `⟨U+XXXX⟩`. If
+  the browser blocks the copy, the prompt selects the text in a box and asks
+  you to press Ctrl+C (⌘C on a Mac).
+- **Select it on the screen.** The Coordinator takes the mouse, so a plain
+  drag selects nothing. Hold **Shift** while you drag on Windows (WSL) and
+  Linux, or **Option** on a Mac. Then copy with **Ctrl+Shift+C** or
+  **Ctrl+Insert** (plain Ctrl+C goes to the Coordinator as an interrupt), or
+  **⌘C** on a Mac, or the browser's Copy menu. Trailing spaces are trimmed
+  from each line, but what you get is what the screen shows: a long command
+  the Coordinator wrapped comes out as several lines with their indentation,
+  and anything cut off at the edge is missing. Use the COPY prompt for those.
+
+The dashboard never reads your clipboard. Pasting into Terminal 0 works as in
+any terminal.
+
 **FIRST SHIFT.** A line above the screen tells you what `factory start` would
 print in the terminal you started it from, since you're looking at the browser:
 
