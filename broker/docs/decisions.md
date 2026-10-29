@@ -74,6 +74,18 @@ Dated entries, for the user to review. Newest first.
 - **`plant` feeds both the header nameplate and the floor's plate**, as one key, as the issue's
   comment says. The 24-character cap is what both fit (checked in the browser test).
 
+- **OUTBOX also asks `git cherry`, and retires abandoned rows after a week (2026-10-29).** A branch
+  re-pushed under another name (`-v2`) or rebased landed as different commits, so `rev-list` showed
+  it UNMERGED forever; and OPEN rows never retired. When `rev-list` says ahead, the module runs
+  `cherry HEAD <object id>` (the same pinned flags, the same listed id): all `- ` lines (and at least
+  one) is MERGED, any `+`, an error or a timeout stays OPEN. A squash of several commits is still not
+  detected (the patch differs). Caching: HEAD's id would need `rev-parse`, a fourth form, so the answer
+  is keyed by (repo, object id), valid 60 s (`CHERRY_TTL`) and dropped when the ahead count differs.
+  The ahead count alone can't be the key: a squash or rebase landing moves `HEAD` and leaves it
+  unchanged, which is exactly the case this exists for. Failures are cached the same way so a
+  long-diverged branch costs one 5 s run a minute, not one per poll. Cherry runs only for rows that
+  will be shown (newest first, stop at 20, nothing past 7 days). OPEN and UNCHECKED rows retire
+  7 days after the job ended (`RETIRE_OPEN_SECONDS`); MERGED and GONE keep 24 h.
 - **The dashboard's OUTBOX asks git two fixed questions and never gives git a name.**
   doomtickle/passdesk-ops#189. The module (`scripts/dashboard_outbox.py`) lists the refs the
   bridge imported with one `for-each-ref --format=%(objectname) %(refname)` over the

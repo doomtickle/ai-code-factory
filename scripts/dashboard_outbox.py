@@ -8,6 +8,7 @@ host project's git. The git it runs is fixed, argv-only and read-only, with hook
 off and none of the dashboard's GIT_* environment, and never takes a branch name:
   git for-each-ref --format=%(objectname) %(refname) refs/remotes/factory-<lane>/factory/ ...
   git rev-list --count HEAD..<object id from the line above>
+  git cherry HEAD <the same object id>   (only for a branch that is ahead: are its patches already in HEAD?)
 The result is cached for a few seconds, rows are capped and a deadline bounds the git time, so a
 page polling every two seconds never queues git runs.
 
@@ -45,6 +46,8 @@ MAX_ROWS = 20              # rows in the module
 MAX_CANDIDATES = 40        # newest branches looked at
 MAX_REVIEWS = 200          # newest reviewer jobs whose packets are read
 RETIRE_SECONDS = 24 * 3600  # a MERGED or GONE row stays this long after its job ended
+RETIRE_OPEN_SECONDS = 7 * 24 * 3600  # an OPEN or UNCHECKED row (abandoned work) stays this long
+CHERRY_TTL = 60            # seconds a cherry answer is reused (HEAD moves without the branch changing)
 INDEX_MAX = 5_000_000      # bytes read of jobs.json (the bridge writes at most this)
 PACKET_MAX = 200_000       # bytes read of one reviewer packet
 GIT_TIMEOUT = 5            # seconds for one git run
@@ -135,6 +138,13 @@ def gitlab_host(paths) -> str:
         return ""
 
 
+def patch_equivalent(out: str) -> bool:
+    """True if `git cherry` printed at least one line and every line is a "- " one (the commit has a
+    patch-equivalent in HEAD). Any "+" line, or anything else, is False."""
+    lines = out.splitlines()
+    return bool(lines) and all(line.startswith("- ") for line in lines)
+
+
 class HostGit:
     """The host project's git, read-only. Every run is a fixed argv with no shell."""
 
@@ -188,10 +198,22 @@ class HostGit:
         out = self._run(rel, "rev-list", "--count", f"HEAD..{oid}")
         return int(out) if out is not None and out.strip().isdigit() else None
 
+    def has_budget(self) -> bool:
+        return self._project is not None and self._deadline - time.monotonic() > 0
+
+    def cherry(self, rel: str, oid: str) -> bool | None:
+        """True if every commit of the object past HEAD has a patch-equivalent in HEAD (rebased or
+        re-pushed under another name), False if one has not, None if git failed."""
+        if not OID.fullmatch(oid):
+            return None
+        out = self._run(rel, "cherry", "HEAD", oid)
+        return None if out is None else patch_equivalent(out)
+
 
 class FixtureGit:
     """Demo mode: git answers from dispatch/demo-refs.json in the throwaway folder, and nothing runs.
-    {"<repo>": {"<full ref>": {"oid": "<hex>", "ahead": N}}}"""
+    {"<repo>": {"<full ref>": {"oid": "<hex>", "ahead": N, "cherry": ["-", "+", ...]}}}
+    "cherry" is optional: one "-" (patch-equivalent in HEAD) or "+" per commit, as `git cherry` marks them."""
 
     def __init__(self, state: Path):
         self.state = state
@@ -219,6 +241,17 @@ class FixtureGit:
                 return v["ahead"]
         return None
 
+    def has_budget(self) -> bool:
+        return True
+
+    def cherry(self, rel: str, oid: str) -> bool | None:
+        for v in (self.data.get(rel) or {}).values():
+            if isinstance(v, dict) and v.get("oid") == oid:
+                marks = v.get("cherry")
+                if isinstance(marks, list) and all(m in ("-", "+") for m in marks):
+                    return patch_equivalent("".join(f"{m} {'0' * 40}\n" for m in marks))
+        return None
+
 
 def _utc(ts) -> float | None:
     try:
@@ -241,6 +274,7 @@ class Outbox:
         self._lock = threading.Lock()
         self._cached: tuple = (0.0, [])
         self._packets: dict = {}  # reviewer job id -> (verdict, refs its task names)
+        self._cherry: dict = {}   # (repo, branch oid) -> (ahead when asked, answer, monotonic time asked)
 
     # ----- the job index and the reviewer packets
 
@@ -403,16 +437,44 @@ class Outbox:
         verdicts = self._verdicts(jobs)
         events = self._events(calls, writes)
         host = gitlab_host(self.paths)
-        rows = []
+        rows: list = []
+        used: set = set()
+        # Newest job first (seen is in that order), so the cherry runs go only to rows that can be shown.
         for (rel, ref), (job, commit) in seen.items():
-            row = self._row(rel, ref, commit, job, listing, verdicts, events, pending, host)
-            if row["status"] in ("MERGED", "GONE") and now - job["ended"] > RETIRE_SECONDS:
+            if len(rows) >= MAX_ROWS:
+                break
+            age = now - job["ended"]
+            if age > RETIRE_OPEN_SECONDS:  # retired whatever its state
+                continue
+            row = self._row(rel, ref, commit, job, listing, verdicts, events, pending, host, used)
+            if row["status"] in ("MERGED", "GONE") and age > RETIRE_SECONDS:
                 continue
             rows.append(row)
+        self._cherry = {k: v for k, v in self._cherry.items() if k in used}
         rows.sort(key=lambda r: r["at"], reverse=True)
-        return rows[:MAX_ROWS]
+        return rows
 
-    def _row(self, rel, ref, commit, job, listing, verdicts, events, pending, host) -> dict:
+    def _patch_equivalent(self, rel: str, oid: str, ahead: int, used: set) -> bool:
+        """Whether git cherry finds every commit of the branch already in HEAD. HEAD is not known
+        here without another git form, and it can move (the owner pulls the squashed or rebased
+        copy) with the branch and its ahead count unchanged, so an answer is reused for CHERRY_TTL
+        seconds, and not at all once the ahead count differs. A failed or timed-out run is cached
+        the same way (a long-diverged branch must not cost 5 s on every poll) and reads as not
+        merged. With the recomputation's git time spent, the last answer for the same ahead count
+        stands."""
+        key = (rel, oid)
+        used.add(key)
+        hit = self._cherry.get(key)
+        same = hit is not None and hit[0] == ahead
+        if same and time.monotonic() - hit[2] < CHERRY_TTL:
+            return hit[1] is True
+        if not self.git.has_budget():
+            return same and hit[1] is True
+        result = self.git.cherry(rel, oid)
+        self._cherry[key] = (ahead, result, time.monotonic())
+        return result is True
+
+    def _row(self, rel, ref, commit, job, listing, verdicts, events, pending, host, used) -> dict:
         status, ahead, oid = "UNCHECKED", None, None
         refs = listing.get(rel)
         if valid_ref(ref) and refs is not None:
@@ -422,6 +484,8 @@ class Outbox:
             else:
                 ahead = self.git.ahead(rel, oid)
                 status = "UNCHECKED" if ahead is None else ("MERGED" if ahead == 0 else "OPEN")
+                if status == "OPEN" and self._patch_equivalent(rel, oid, ahead, used):
+                    status = "MERGED"
         verdict, stale = "", False
         if ref in verdicts:
             verdict, reviewed = verdicts[ref]

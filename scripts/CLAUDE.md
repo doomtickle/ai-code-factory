@@ -171,14 +171,21 @@ branches the bridge imported, newest first, as `outbox` in the main page's state
 the branch, the commits ahead of host `HEAD`, the latest reviewer verdict, the push state and
 the PR or MR. It reads `dispatch/jobs.json` and `dispatch/packets/` (regular files only, opened
 `O_NOFOLLOW`, size-capped) and the audit and deferred writes the dashboard already holds, and runs
-only two git forms, both read-only, hooks and fsmonitor off (`-c core.hooksPath=/dev/null -c
+only three git forms, all read-only, hooks and fsmonitor off (`-c core.hooksPath=/dev/null -c
 core.fsmonitor=false`), argv list, no shell, `GIT_*` stripped, `GIT_OPTIONAL_LOCKS=0`:
-`for-each-ref --format=%(objectname) %(refname) refs/remotes/factory-<lane>/factory/` and
-`rev-list --count HEAD..<object id>`. A branch name is only compared with what `for-each-ref`
+`for-each-ref --format=%(objectname) %(refname) refs/remotes/factory-<lane>/factory/`,
+`rev-list --count HEAD..<object id>` and, only for a branch that is ahead (count above 0),
+`cherry HEAD <object id>`. A branch is MERGED when the count is 0, or when `cherry` succeeds and
+prints at least one line, every one starting `- ` (each commit has a patch-equivalent in `HEAD`:
+rebased, or re-pushed under another name); any `+` line, an error or a timeout leaves it OPEN
+(never UNCHECKED, the count worked). Since `HEAD` isn't known without a fourth form, an answer is
+cached per (repo, object id) for 60 s and dropped when the ahead count differs; a failure is cached
+likewise, and `cherry` runs only for rows that will be shown. A branch name is only compared with what `for-each-ref`
 printed and never reaches git, and the only thing passed on is a full object id the listing gave
 (`[0-9a-f]{40,64}`, so it can't be an option). A name that isn't a plain ref gives an UNCHECKED
 row and no git run. The result is cached 8 s, there are at most 20 rows and 40 branches looked
-at, one run is cut at 5 s and a recomputation at 12 s. A link is built only from the gateway's own
+at, one run is cut at 5 s and a recomputation at 12 s. A MERGED or GONE row retires 24 h after its
+job ended, an OPEN or UNCHECKED one (abandoned work) after 7 days, and a row past 7 days costs no git run. A link is built only from the gateway's own
 `Opened PR #N: <url>` result and only when it is `https://github.com/<owner>/<repo>/pull/N` or
 `https://<the policy's GitLab host>/<project>/-/merge_requests/N` with the same number (no
 userinfo, query or fragment); anything else is shown as text, and the page re-checks that it is
