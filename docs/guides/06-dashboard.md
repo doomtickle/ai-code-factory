@@ -224,10 +224,21 @@ Stands in for: `factory watch`, `factory logs <role>` and `factory packet
 
 The **outbox** sits under the lanes. It has one row for every `factory/*` branch
 the dispatch bridge has imported into your project, newest first, so you can
-see at a glance what is finished and what still needs you. A row shows:
+see at a glance what is finished and what still needs you. It starts folded to
+its header bar, which shows how many branches are unmerged (the count lights up
+amber when it isn't zero); press the **Outbox** title (or Tab to it and press
+Enter or Space) to unfold or fold it. The dashboard remembers your choice in
+this browser. A row shows:
 
 - the repository, the branch and how many commits it is ahead of your current
   `HEAD` (`+3`);
+- its merge state, one of:
+  - **UNMERGED**: the branch has commits that are not in your checked-out
+    branch yet (the host's `HEAD`). These are the ones the header counts.
+  - **MERGED**: all of the branch's commits are in your checked-out branch.
+  - **GONE**: the imported branch no longer exists in your project.
+  - **?**: the dashboard couldn't check (an odd branch name, or git didn't
+    answer in time). It counts as unmerged until it is checked.
 - the reviewer's latest verdict, APPROVED or REVISE, from the reviewer packets
   that name the branch (none if no review mentions it; `(old)` means that review
   started before the developer's last job on the branch ended, so it may not
@@ -241,10 +252,9 @@ see at a glance what is finished and what still needs you. A row shows:
   merge request on your configured GitLab host; anything else is shown as
   plain text.
 
-When the branch is contained in your `HEAD` the row says **MERGED**, and when the
-import is gone it says **GONE**. Either one drops off the list a day after the
-job ended. A squash or rebase merge leaves the original commits out of `HEAD`, so
-the branch stays OPEN until you delete it (`git branch -rd`, see [Get the
+MERGED and GONE rows drop off the list a day after the job ended. A squash or
+rebase merge leaves the original commits out of `HEAD`, so the branch stays
+UNMERGED until you delete it (`git branch -rd`, see [Get the
 work](02-build-a-feature.md#get-the-work)).
 
 Press a row to open that job's review packet in the lane monitor. The outbox

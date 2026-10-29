@@ -1704,6 +1704,9 @@ class PageTests(unittest.TestCase):
         html = (UI / "index.html").read_text()
         self.assertIn('href="/docs/#guide-dashboard:the-outbox"', html)
         self.assertIn('id="outbox-list"', html)
+        self.assertIn('OPEN: "unmerged"', js)
+        self.assertIn("unmerged`", js)
+        self.assertNotIn("waiting`", js)
         body = js[js.index("function obRow"):js.index("function renderOutbox")]
         # The only href is set from the server's URL after an https-only check; classes come from fixed maps.
         self.assertEqual(body.count(".href ="), 1)
@@ -1717,6 +1720,22 @@ class PageTests(unittest.TestCase):
         # A row opens that job's packet, and the monitor fetches it by the job id the server validates.
         self.assertIn("openMon(r.lane, r.job, obKey(r))", body)
         self.assertIn("&job=${encodeURIComponent(monJob)}", js)
+
+    def test_outbox_folds_from_a_real_button(self):
+        js = (UI / "app.js").read_text()
+        html = (UI / "index.html").read_text()
+        # The title is a button wired to the list; folded by default, the help link stays a separate link.
+        self.assertRegex(html, r'<button class="ob-fold" type="button" id="outbox-fold" aria-expanded="false" aria-controls="outbox-list">')
+        self.assertRegex(html, r'id="outbox-list"[^>]* hidden>')
+        self.assertIn('class="plate mod outbox collapsed"', html)
+        self.assertNotIn("<a", html[html.index('id="outbox-fold"'):html.index("</button>", html.index('id="outbox-fold"'))])
+        # The choice is a "1" or "0" in its own key, read and written inside try/catch, and nothing else is trusted.
+        body = js[js.index("const OB_FOLD_KEY"):js.index("// ---------- STANDBY")]
+        self.assertIn('"fc1984-outbox"', body)
+        self.assertIn('getItem(OB_FOLD_KEY) === "1"', body)
+        self.assertEqual(body.count("try {"), body.count("catch (e)"))
+        self.assertEqual(body.count("try {"), 2)
+        self.assertNotIn("innerHTML", body)
 
     def test_floor_only_displays(self):
         # The factory floor draws from the state app.js hands it: it makes no request
