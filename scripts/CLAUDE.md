@@ -196,6 +196,18 @@ folder (`O_CREAT|O_EXCL|O_NOFOLLOW`, by its fd), fsynced and `os.replace`d. The 
 write drops the SERVICE DUE and SETUP caches so the lamp lights at once. Nothing reads
 `FACTORY_CONFIG` live because of this, and nothing else in the config folder is written.
 
+The notes editor on SETUP (`dashboard-ui/cu-notes.js`, a plain served file in `STATIC`, loaded before `cu.js`,
+no inline script) is the page's side of the notes kind. It makes no request of its own and never sees the key:
+`cu.js` hands it its private `api` function (which adds `X-Factory-Control`) and the console nodes, and the editor
+calls only `config-read`, `config-prepare` and `config-run {"token"}`. The text and every server string (the diff
+lines, the path, errors) are drawn with `textContent`, a diff line's class comes from a fixed `+`/`-`/space map and
+a gauge's from a fixed ok/warn/over map, and its few attributes are fixed. SAVE is a prepare, CONFIRM (dark for the
+2.5 s `HOLD_MS`) is the run, CANCEL drops the token; a 409 `changed` offers RELOAD; a 403 on prepare in demo mode
+shows a fixed "DEMO · CHANGES DISABLED". The box takes at most the host's 20,000 characters, and its per-role
+gauge mirrors `dashboard_setup._notes` (SAVE is dark when a role would be over and higher than now, as the host
+refuses it); the host decides regardless. `test_cu_notes.py` drives the real endpoints with the bodies the editor
+sends.
+
 OUTBOX (doomtickle/passdesk-ops#189, `scripts/dashboard_outbox.py`) lists the `factory/*`
 branches the bridge imported, newest first, as `outbox` in the main page's state: the repo,
 the branch, the commits ahead of host `HEAD`, the latest reviewer verdict, the push state and

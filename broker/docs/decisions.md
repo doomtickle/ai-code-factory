@@ -33,6 +33,20 @@ Dated entries, for the user to review. Newest first.
     `FACTORY_STATE` (`role-overrides/`, `instructions/`); LANES also sets up lane sessions at
     start. So every change reports `RESTART`, the SERVICE DUE lamp (already comparing those files
     with the snapshot) lights at once, and nothing was made to read `FACTORY_CONFIG` live.
+  - **The editor is its own served file** (UI half, `dashboard-ui/cu-notes.js`, in `STATIC`, loaded
+    before `cu.js`). `cu.js` lends it only its `api` function and the console nodes, so the per-run
+    key never leaves `cu.js`; the editor makes no request of its own and sends only
+    `config-read`, `config-prepare` and `config-run`.
+  - **SAVE is dark while any role the file reaches would be over 20,000**, not only the role on the
+    open tab: saving a shared file that pushes another role over would make the bridge refuse that
+    role's tasks. The gauge copies the bridge's arithmetic (headings included, code points); after
+    a save the prepare reply's `totals` stand in until the polled state catches up. A change that
+    lowers a total already over the limit is allowed by the backend, so the editor lets SAVE
+    through when no total it would raise is over.
+  - **A refusal of prepare in demo mode** is drawn as the fixed text "DEMO · CHANGES DISABLED",
+    never the server's wording.
+  - **"Edit notes" sits in the SETUP body**, not on the shared GO key, so the tuning knobs can
+    use that key without a clash.
 
 ## 2026-10-28
 

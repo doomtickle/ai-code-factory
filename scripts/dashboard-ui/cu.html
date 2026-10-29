@@ -7,6 +7,7 @@
 <meta name="cu-main-port" content="__CU_MAIN_PORT__">
 <title>Control unit</title>
 <link rel="stylesheet" href="/cu.css">
+<script src="/cu-notes.js" defer></script>
 <script src="/cu.js" defer></script>
 </head>
 <body>
@@ -56,8 +57,8 @@
       <button class="svckey warnkey" type="button" id="svc-update"><span class="led" id="led-update"></span>Update</button>
       <button class="svckey logkey" type="button" id="svc-log" hidden><span class="led" id="led-log"></span>Log</button>
     </div>
-    <!-- SETUP: the effective configuration, read-only. A blanking plate that is a key. -->
-    <button class="blank" type="button" id="svc-setup" aria-label="Setup: the effective configuration, and the tuning knobs for each role"><span class="silk">Setup</span></button>
+    <!-- SETUP: the effective configuration, the tuning knobs and the project notes editor. A blanking plate that is a key. -->
+    <button class="blank" type="button" id="svc-setup" aria-label="Setup: the effective configuration, the tuning knobs for each role, and the project notes"><span class="silk">Setup</span></button>
   </div>
 </section>
 

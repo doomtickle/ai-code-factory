@@ -16,7 +16,7 @@ affected, after listing what each one loses and asking you.
 
 | You changed | Run |
 |---|---|
-| Per-project notes (`projects/<folder>.md`, `projects/<folder>.<role>.md`) | `factory start` |
+| Per-project notes (`projects/<folder>.md`, `projects/<folder>.<role>.md`), by hand or in the dashboard's SETUP notes editor | `factory start` |
 | A role's instructions, `MODEL`, `MODELS`, `EFFORT`, `LANES`, `MAX_SESSION_TOKENS`, `MAX_TURNS`, `MAX_JOB_SECONDS` | `factory start` |
 | A role's `BROKER_TOOLS` (it already had some) | `factory start` |
 | A new role, or a removed one | `factory start` |
@@ -90,6 +90,13 @@ shared file: `my-api.developer.md` for the docs style and commit conventions,
 start` appends each one after the shared notes, to that role alone, under a
 `# This project (my-api), for the developer` heading, so the other roles don't
 carry it in every prompt.
+
+You can also edit these files from the dashboard: **SETUP**, then **Edit notes**
+has a tab for the shared file and one per role, a gauge of each role's
+characters against the limit below, and a two-step save that shows the diff
+first. The change applies on restart, like an edit in a terminal: press
+**RESTART** (the SERVICE lamp shows "RESTART due") or run `factory start`. See
+[The notes editor](06-dashboard.md#the-notes-editor).
 
 > **Note:** A role's instructions plus your notes must stay under 20,000
 > characters, or the dispatch bridge refuses its tasks with

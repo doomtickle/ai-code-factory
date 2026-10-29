@@ -457,3 +457,31 @@ button.blank:disabled { cursor: not-allowed; filter: brightness(.75); }
   .mon-actions .bigkey { min-width: 0; flex: 1; }
   .mon-actions { width: 100%; }
 }
+
+/* ---------- NOTES editor on SETUP (cu-notes.js): tabs, a phosphor edit box, per-role gauges, the diff */
+.crt-body .nopen { margin: 8px 0 2px; }
+.crt-body .ntabs { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 10px; }
+.crt-body .ntab { cursor: pointer; font: inherit; font-size: .8em; letter-spacing: .1em; text-transform: uppercase; color: var(--c); background: transparent;
+  border: 1px solid var(--dim); border-radius: 2px; padding: 1px 9px; text-shadow: inherit; }
+.crt-body .ntab:hover { border-color: var(--c); }
+.crt-body .ntab.on { background: var(--c); color: var(--crt-bg); text-shadow: none; border-color: var(--c); box-shadow: 0 0 8px var(--glow); }
+.crt-body .ntab:focus-visible { outline: 2px solid var(--stripe-2); outline-offset: 2px; }
+.crt-body .nedit { display: block; width: 100%; height: clamp(11em, 34vh, 24em); margin: 4px 0 6px; padding: 8px 10px; resize: vertical; border: 1px solid var(--dim); border-radius: 2px;
+  background: rgba(0,0,0,.4); color: var(--amber-pale); caret-color: var(--c); font: inherit; line-height: 1.2; text-shadow: 0 0 4px var(--glow);
+  box-shadow: inset 0 0 18px rgba(0,0,0,.75); scrollbar-width: thin; scrollbar-color: var(--dim) transparent; }
+.crt-body .nedit:focus-visible { outline: 1px dashed var(--c); outline-offset: 2px; }
+.crt-body .nedit:disabled { opacity: .55; }
+.crt-body .nedit::selection { background: var(--c); color: var(--crt-bg); text-shadow: none; }
+.crt-body .ngauge { margin-bottom: 2px; }
+.crt-body .nbar { letter-spacing: 0; }
+.crt-body .nstatus { margin-top: 8px; }
+.crt-body .nask { margin: 6px 0 8px; padding: 6px 10px; border-radius: 3px; color: #fff3e6; text-shadow: none; box-shadow: 0 0 0 1px #000, 0 2px 6px rgba(0,0,0,.6);
+  background: repeating-linear-gradient(-45deg, #8f1d10 0 12px, #a3261a 12px 24px); }
+.crt-body .nask .svckey { font-size: .7rem; padding: 3px 8px 2px; }
+.crt-body .nd { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; padding-left: 1ch; text-indent: -1ch; }
+.crt-body .nd-add { color: var(--t-ok); background: rgba(140, 255, 143, .07); }
+.crt-body .nd-del { color: var(--t-err); background: rgba(255, 110, 90, .08); }
+.crt-body .nd-ctx { color: var(--dim); text-shadow: none; }
+@media (max-width: 640px) {
+  .crt-body .nedit { height: clamp(9em, 30vh, 18em); }
+}

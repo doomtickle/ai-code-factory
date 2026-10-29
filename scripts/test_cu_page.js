@@ -4,10 +4,12 @@
 // fingerprint or the card going cancels it, and the viewer counts the files
 // it doesn't show. A decided or expired card shows its state with both keys
 // dark, and every refusal (each 409 reason, a 400) reaches the user as text.
-// Run by test_dashboard_controls.py (CuScriptTests):
+// The NOTES editor (cu-notes.js, loaded before cu.js as the page does) is driven by
+// test_cu_notes.js on this same harness; its names print on a "NOTES [...]" line, run by
+// test_cu_notes.py. Run by test_dashboard_controls.py (CuScriptTests):
 //   node scripts/test_cu_page.js scripts/dashboard-ui/cu.js
 "use strict";
-const fs = require("fs"), vm = require("vm"), assert = require("assert");
+const fs = require("fs"), vm = require("vm"), assert = require("assert"), path = require("path");
 const CU = process.argv[2];
 
 class El {
@@ -76,9 +78,10 @@ const flush = async () => { for (let i = 0; i < 20; i++) await new Promise(r => 
 
 // The server.
 const calls = [];
-let cards = [], patch = null, refuse = null, service = null, config = null, cfgReply = null;  // refuse: [status, body] for the next decide
+let cards = [], patch = null, refuse = null, service = null, cfgReply = null;  // refuse: [status, body] for the next decide
+const server = { config: null, handlers: {} };  // `config` in the state, [status, body] replies by endpoint name (test_cu_notes.js; the tuning tests below use `server.config` and `cfgReply`)
 function reply(name, body) {
-  if (name === "state") return { cards, action: { name: null, phase: "idle" }, bound: true, project: "p", now: 0, service, config };
+  if (name === "state") return Object.assign({ cards, action: { name: null, phase: "idle" }, bound: true, project: "p", now: 0, service }, server.config ? { config: server.config } : {});
   if (name === "decide") return { ok: true, id: body.id, verdict: body.verdict, text: "done" };
   if (name === "patch") return patch;
   return {};
@@ -86,6 +89,10 @@ function reply(name, body) {
 const fetchFake = async (url, opts) => {
   const name = url.replace("/cu/api/", ""), body = JSON.parse(opts.body);
   calls.push([name, body]);
+  if (server.handlers[name]) {
+    const [status, out] = await server.handlers[name](body);
+    return { status, ok: status >= 200 && status < 300, json: async () => out };
+  }
   if (name.startsWith("config-") && cfgReply) {
     const [status, out] = await cfgReply(name, body);
     return { status, ok: status < 300, json: async () => out };
@@ -114,6 +121,8 @@ const card = (over) => Object.assign({ id: "c1", tool: "git_push", role: "develo
   commits: 1, file_count: 3, files: ["a.py"], seconds_left: 600, fp: "fp1", patch: true, patch_truncated: false }, over);
 
 (async () => {
+  const NOTES = path.join(path.dirname(CU), "cu-notes.js");   // the page loads it first
+  vm.runInThisContext(fs.readFileSync(NOTES, "utf8"), { filename: NOTES });
   vm.runInThisContext(fs.readFileSync(CU, "utf8"), { filename: CU });
   const results = [];
   const test = async (name, fn) => { await fn(); results.push(name); };
@@ -416,7 +425,7 @@ const card = (over) => Object.assign({ id: "c1", tool: "git_push", role: "develo
   const role = (name, keys) => ({ name, optional: false, on: true, override: false, ignored: [], fixed: [],
     keys: [row("MODEL", "claude-sonnet-5-5", "REPO"), row("MODELS", "claude-haiku-5-5 opus", "REPO"), row("EFFORT", "", "REPO"),
       row("LANES", name === "developer" ? "3" : "1", "REPO"), row("MAX_SESSION_TOKENS", "", "REPO"), ...keys, row("MAX_JOB_SECONDS", "", "REPO")] });
-  config = { project: "p", roles: [role("developer", [row("MAX_TURNS", "80", "LOCAL", "200")]), role("reviewer", [row("MAX_TURNS", "200", "REPO")])],
+  server.config = { project: "p", roles: [role("developer", [row("MAX_TURNS", "80", "LOCAL", "200")]), role("reviewer", [row("MAX_TURNS", "200", "REPO")])],
     enabled: { file: false, listed: [], unknown: [], applies: "START" }, approvals: { tools: [], applies: "UPDATE" }, repos: { list: [], applies: "UPDATE" },
     gitlab: { url: "", applies: "UPDATE" }, coordinator: { broker_tools: [], applies: "UPDATE" }, notes: { project: "p", limit: 20000, files: [], applies: "START" },
     look: { file: false, problem: "" }, local_policy: false };
@@ -486,7 +495,7 @@ const card = (over) => Object.assign({ id: "c1", tool: "git_push", role: "develo
     if (name !== "config-run") return prepareReply(name, body);
     wrote.push([name, body]);
     await gate;
-    const dev = config.roles[0];
+    const dev = server.config.roles[0];
     dev.keys = dev.keys.map(k => k.key === "LANES" ? row("LANES", "5", "LOCAL", "3") : k.key === "EFFORT" ? row("EFFORT", "high", "LOCAL", "")
       : k.key === "MAX_TURNS" ? row("MAX_TURNS", "200", "REPO") : k);
     return [200, { ok: true, applies: "RESTART" }];
@@ -549,7 +558,41 @@ const card = (over) => Object.assign({ id: "c1", tool: "git_push", role: "develo
   assert.ok(walk(rack("reviewer")).some(n => n.textContent === "✕ LANES must be 1 to 8 <b>"));
   results.push("tuning demo 403 line");
   $("con-cancel").click(); await flush();
-  cfgReply = null; config = null;
+
+  // A knob check still waiting for its answer when the notes editor opens is dropped: its diff never lands on the editor.
+  $("svc-setup").click(); await flush();
+  let answer;
+  cfgReply = (name) => new Promise(res => { answer = () => res([200, { token: "late", expires: 120, path: "p", changed: true, applies: "RESTART", diff: [{ op: "+", text: 'LANES="2"' }] }]); });
+  server.handlers["config-read"] = async () => [200, { text: "notes", chars: 5, exists: true }];
+  const editBtn = () => kids().find(n => n.tagName === "button" && n.textContent === "Edit notes");
+  const writes = () => calls.filter(c => c[0] === "config-run" || c[0] === "config-prepare").length;
+  byLabel("reviewer", "More lanes").click();
+  prepKey("reviewer").click(); await flush();
+  const before = writes();
+  editBtn().click(); await flush();
+  assert.ok(kids().some(n => n.tagName === "textarea"), "the editor is open");
+  answer(); await flush(); await advance(3000);
+  assert.ok(kids().some(n => n.tagName === "textarea"), "the late answer left the editor on the glass");
+  assert.strictEqual($("con-title").textContent, "SETUP · NOTES");
+  assert.ok(!$("con-body").textContent.includes('LANES="2"'), "no tune diff over the editor");
+  assert.strictEqual($("con-go").hidden === false && $("con-go").disabled === false, false, "no key armed for a write that was dropped");
+  assert.strictEqual(writes(), before, "nothing was sent");
+  $("con-cancel").click(); await flush();                               // the editor's Close: back to the knobs
+  assert.strictEqual($("con-title").textContent, "SETUP · CONFIGURATION");
+  assert.strictEqual(byLabel("reviewer", "Lanes").attrs["aria-valuenow"], "2", "the knob draft is kept");
+  assert.strictEqual(prepKey("reviewer").disabled, false, "and can be prepared again");
+  results.push("a pending knob check is dropped when the notes editor opens");
+  $("con-cancel").click(); await flush();
+  delete server.handlers["config-read"];
+  cfgReply = null; server.config = null;
+
+  // The NOTES editor, from the deck again.
+  const key = k => (doc.listeners.keydown || []).forEach(f => f({ key: k, preventDefault() {}, target: doc }));
+  key("Escape");
+  cards = [];
+  await advance(2000);
+  const notesResults = await require("./test_cu_notes.js")({ assert, doc, $, calls, server, advance, flush, key, now: () => now });
+  console.log("NOTES " + JSON.stringify(notesResults));
 
   Date.now = realNow;
   console.log(JSON.stringify(results));

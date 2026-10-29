@@ -18,7 +18,8 @@
 // SETUP also tunes a role (#185): knobs for LANES, MODEL, EFFORT and the MAX_ limits write the
 // local override file, in the same two steps (/cu/api/config-prepare shows the diff, only CONFIRM
 // sends the token to /cu/api/config-run, dark for HOLD_MS). Only those named keys; everything
-// else on SETUP stays read-only.
+// else on SETUP stays read-only, except the project notes editor (cu-notes.js, #186), which
+// writes through the same two endpoints; the editor owns the screen while it is open.
 // Starting a restart, an update or a diag takes two presses: the key asks the server
 // what would happen (/cu/api/prepare, which runs nothing but `factory update
 // --plan`), and only CONFIRM on that screen sends the single-use token back.
@@ -75,7 +76,7 @@
   // ---------- screens
   // Each screen is a node and whether it needs the frame expanded to the whole
   // window. Switching to one that does tells the main page "cu:expand", and back
-  // "cu:collapse". The setup screen shows the effective configuration read-only;
+  // "cu:collapse". The setup screen shows the effective configuration and writes only the tuning knobs and the project notes;
   // settings that move the security boundary (broker policy and hosts,
   // credentials) are never edited from a browser.
   const SCREENS = {
@@ -83,7 +84,7 @@
     confirm: { node: $("scr-console"), expanded: true },  // what RESTART / UPDATE would do, and CONFIRM
     log: { node: $("scr-console"), expanded: true },      // the running action's output
     inspect: { node: $("scr-inspect"), expanded: true },  // a held push's patch, and the gate's keys
-    setup: { node: $("scr-console"), expanded: true },    // the effective configuration (read-only)
+    setup: { node: $("scr-console"), expanded: true },    // the effective configuration, its tuning knobs and the notes editor
   };
   let screen = null, expanded = false;
   function go(name) {
@@ -102,6 +103,7 @@
   let st = null, polledAt = 0, polling = false, fault = null;
   let selId = null, selFp = null, expectGone = null, busy = false;
   let shownKey = null, flashTimer = 0, offeredLog = false;
+  let notes = null;   // the NOTES editor (cu-notes.js), made at start-up
   // holdUntil: the decide keys stay dark until then after the card on the glass
   // changed under the user (a poll replaced it, or it left and the next one moved
   // in), so a click aimed at the old card can't land on one never seen.
@@ -587,7 +589,7 @@
     });
   }
 
-  // ---------- the setup screen: the effective configuration, read-only (st.config)
+  // ---------- the setup screen: the effective configuration (st.config), plus the notes editor
   // Built on the host from the factory's own parsers (dashboard_setup.py); nothing here
   // can change a setting. Every string goes in with textContent.
   const APPLIES = { START: "factory start", UPDATE: "factory update" };
@@ -666,6 +668,7 @@
       tail.push(applyTag(nt.applies));
       out.push(row(f.name, "", ...tail));
     }
+    if (notes) out.push(notes.openKey());
 
     const lk = cfg.look && typeof cfg.look === "object" ? cfg.look : {};
     out.push(H("Dashboard look", "dashboard.toml"));
@@ -675,6 +678,7 @@
   }
 
   function renderSetup(force) {
+    if (notes && notes.active()) { notes.onState(); return; }   // the editor owns the screen
     if (tune) return;  // the diff is on the glass
     const k = JSON.stringify(st ? st.config : null);
     if (!force && (k === setupKey || tuneFocus)) return;
@@ -693,7 +697,7 @@
     setText(t, "Tuning");
     setClass($("con-led"), "led g");
     setText($("con-project"), st ? str(st.project) : "");
-    setText($("con-note"), "Turn a knob, then PREPARE: nothing is written until you confirm.");
+    setText($("con-note"), "Turn a knob, then PREPARE, or edit the project notes: nothing is written until you confirm.");
   }
 
   function openSetup() {
@@ -1593,6 +1597,7 @@
   // ---------- leaving the monitor
   function closeConsole() {
     if (screen !== "confirm" && screen !== "log" && screen !== "setup") return;
+    if (screen === "setup" && notes && notes.close()) return;   // the editor's own Back / Cancel
     svcSeq++;           // a pending prepare or run answer is dropped
     svc = null;
     clearTimeout(logTimer); logTimer = 0;
@@ -1643,6 +1648,27 @@
     if (e.shiftKey && (document.activeElement === first || !inside)) { e.preventDefault(); last.focus(); }
     else if (!e.shiftKey && (document.activeElement === last || !inside)) { e.preventDefault(); first.focus(); }
   });
+
+  // ---------- the NOTES editor (cu-notes.js): lent this page's request function, never its key
+  if (window.CuNotes) {
+    notes = window.CuNotes.create({
+      api, el, str, list, num, conBody, cancelKey, goKey, keys, errText, holdMs: HOLD_MS,
+      state: () => st,
+      refresh: () => pollFresh(),
+      more: moreCue,
+      // The editor takes the screen: a knob check still waiting for its answer is dropped (the drafts stay).
+      opened: () => { tuneStop(); tuneChecking = null; },
+      head: (tag, cls, led, note) => {
+        setText($("con-title"), "SETUP · NOTES");
+        setClass($("con-state"), `state-tag st-${cls}`);
+        setText($("con-state"), tag);
+        setClass($("con-led"), `led ${led}`);
+        setText($("con-project"), st ? str(st.project) : "");
+        setText($("con-note"), note || "");
+      },
+      back: () => { setupHead(); keys("Close", null, false); setupKey = null; renderSetup(true); conBody.scrollTop = 0; cancelKey.focus(); },
+    });
+  }
 
   // ---------- start
   go("deck");

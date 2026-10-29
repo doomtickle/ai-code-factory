@@ -620,9 +620,10 @@ designer = "#d08cff"                    # a role's colour on the floor, its lane
 
 The **SETUP** key opens the configuration the factory will use, read on this
 machine with the same code `factory start` uses. Most of it is read-only: edit
-the files as [Make it yours](04-customize.md) describes. The one thing you can
-change here is a role's tuning (below). It refreshes every few seconds while
-open, except while you are in the middle of turning a knob.
+the files as [Make it yours](04-customize.md) describes. Two things can be
+changed here: a role's tuning ([below](#tuning-a-role-from-setup)) and the
+[project notes](#the-notes-editor). It refreshes every few seconds while open,
+except while you are in the middle of turning a knob or editing the notes.
 
 - **Roles.** One block per role: whether it is on (an optional role is on only
   if it is listed in `enabled-roles`), and `MODEL`, `MODELS`, `EFFORT`,
@@ -641,7 +642,8 @@ open, except while you are in the middle of turning a knob.
 - **Project notes.** The notes files for the project the dashboard is bound to,
   and for each running role its instructions plus the notes against the
   20,000-character limit. A role over it is flagged: the dispatch
-  bridge refuses that role's tasks.
+  bridge refuses that role's tasks. **Edit notes** opens the
+  [notes editor](#the-notes-editor).
 - **Dashboard look.** Whether `dashboard.toml` was read at start-up, or the
   reason it was ignored. It does not show the values; the page itself does.
 
@@ -689,6 +691,49 @@ write is in flight CANCEL and Esc are dark, so the note always shows; the knobs
 then show the values just written. In demo mode PREPARE answers
 **DEMO · CHANGES DISABLED** and writes nothing. Broker policy, hosts, kits and
 credentials have no knobs here: they stay read-only.
+
+### The notes editor
+
+**Edit notes** (under Project notes on SETUP) opens an editor for the project's
+notes files, the ones [Make it yours](04-customize.md#per-project-notes)
+describes. Like the tuning knobs, it is a write from SETUP, after a diff and a confirm.
+It appears once the factory is bound to a project.
+
+- **Tabs.** **SHARED** is `projects/<folder>.md`, which every role gets; each
+  other tab is one role's own file, `projects/<folder>.<role>.md`. Opening a
+  tab reads the file as it is on disk (a file that doesn't exist yet is an
+  empty box, and saving creates it). Switching tabs with unsaved changes asks
+  first: keep editing, or discard.
+- **Gauges.** One line per role: that role's instructions plus the shared notes
+  plus its own notes, against the 20,000-character limit, counted as the
+  dispatch bridge counts it (headings included). It turns amber from 90% and
+  red over the limit, and updates as you type. **SAVE** stays dark while any
+  role the file reaches would be over the limit and higher than it is now,
+  because the bridge would refuse that role's tasks. A change that shortens a
+  role that is already over is allowed, since that is the way back under. The
+  box takes at most 20,000 characters, counted as the host counts them (an
+  emoji is one character).
+- **Saving takes two steps.** **SAVE** shows what would change: the file's
+  path, the lines added and removed as a diff, and each role's new total.
+  Nothing is written yet. **CONFIRM** stays dark for 2.5 seconds, so a press
+  can't land on a screen you haven't read, and then writes the file.
+  **CANCEL** drops the pending save (while the write itself is in flight CANCEL
+  and Esc are dark). A confirmation not used within two
+  minutes expires.
+- **After a save** the editor says "SAVED · SERVICE DUE · RESTART TO APPLY":
+  the new notes reach the roles when the factory next starts, so the SERVICE
+  lamp shows RESTART due. Press **RESTART** (or run `factory start`).
+- **A file that changed meanwhile.** If the file changed on disk between SAVE
+  and CONFIRM (you edited it in a terminal, say), nothing is written and the
+  editor says so. **RELOAD** reads the file again; **KEEP MY TEXT** goes back
+  to your edit.
+- **Demo mode** shows the editor but writes nothing: SAVE answers
+  "DEMO · CHANGES DISABLED".
+
+The text is drawn with `textContent` and the diff's lines get their colour from
+a fixed list, so nothing in a notes file can act on the page. The page holds no
+key of its own: the control unit sends every request, and the file is written
+by the host only after the token SAVE returned.
 
 ## Spend and the event printer
 
@@ -783,7 +828,7 @@ you can see a held crate waiting at the gate and a denied one landing in the der
 
 Demo mode is display only. It never reads your real state folder: it copies
 the fixture into a fresh temporary folder and deletes it when you press
-Ctrl-C. Terminal 0 is off, APPROVE, DECLINE, RESTART, UPDATE and DIAG answer
+Ctrl-C. Terminal 0 is off, APPROVE, DECLINE, RESTART, UPDATE, DIAG and the notes editor's SAVE answer
 that nothing here acts, INSPECT shows the fixture's patch, and SETUP shows
 the fixture's configuration (`scripts/dashboard-demo/setup/`), not yours, and its
 PREPARE says DEMO · CHANGES DISABLED. It also ignores your `dashboard.toml` and shows the defaults. The same
