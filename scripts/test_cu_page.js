@@ -4,10 +4,12 @@
 // fingerprint or the card going cancels it, and the viewer counts the files
 // it doesn't show. A decided or expired card shows its state with both keys
 // dark, and every refusal (each 409 reason, a 400) reaches the user as text.
-// Run by test_dashboard_controls.py (CuScriptTests):
+// The NOTES editor (cu-notes.js, loaded before cu.js as the page does) is driven by
+// test_cu_notes.js on this same harness; its names print on a "NOTES [...]" line, run by
+// test_cu_notes.py. Run by test_dashboard_controls.py (CuScriptTests):
 //   node scripts/test_cu_page.js scripts/dashboard-ui/cu.js
 "use strict";
-const fs = require("fs"), vm = require("vm"), assert = require("assert");
+const fs = require("fs"), vm = require("vm"), assert = require("assert"), path = require("path");
 const CU = process.argv[2];
 
 class El {
@@ -77,8 +79,9 @@ const flush = async () => { for (let i = 0; i < 20; i++) await new Promise(r => 
 // The server.
 const calls = [];
 let cards = [], patch = null, refuse = null, service = null;  // refuse: [status, body] for the next decide
+const server = { config: null, handlers: {} };  // test_cu_notes.js: `config` in the state, [status, body] replies by endpoint name
 function reply(name, body) {
-  if (name === "state") return { cards, action: { name: null, phase: "idle" }, bound: true, project: "p", now: 0, service };
+  if (name === "state") return Object.assign({ cards, action: { name: null, phase: "idle" }, bound: true, project: "p", now: 0, service }, server.config ? { config: server.config } : {});
   if (name === "decide") return { ok: true, id: body.id, verdict: body.verdict, text: "done" };
   if (name === "patch") return patch;
   return {};
@@ -86,6 +89,10 @@ function reply(name, body) {
 const fetchFake = async (url, opts) => {
   const name = url.replace("/cu/api/", ""), body = JSON.parse(opts.body);
   calls.push([name, body]);
+  if (server.handlers[name]) {
+    const [status, out] = await server.handlers[name](body);
+    return { status, ok: status >= 200 && status < 300, json: async () => out };
+  }
   if (name === "decide" && refuse) {
     const [status, out] = refuse;
     refuse = null;
@@ -110,6 +117,8 @@ const card = (over) => Object.assign({ id: "c1", tool: "git_push", role: "develo
   commits: 1, file_count: 3, files: ["a.py"], seconds_left: 600, fp: "fp1", patch: true, patch_truncated: false }, over);
 
 (async () => {
+  const NOTES = path.join(path.dirname(CU), "cu-notes.js");   // the page loads it first
+  vm.runInThisContext(fs.readFileSync(NOTES, "utf8"), { filename: NOTES });
   vm.runInThisContext(fs.readFileSync(CU, "utf8"), { filename: CU });
   const results = [];
   const test = async (name, fn) => { await fn(); results.push(name); };
@@ -398,6 +407,14 @@ const card = (over) => Object.assign({ id: "c1", tool: "git_push", role: "develo
   sel("v2"); await flush();
   assert.strictEqual(shown(), "1/2", "the viewer keeps its card");
   results.push("main page may only choose the card shown");
+
+  // The NOTES editor, from the deck again.
+  const key = k => (doc.listeners.keydown || []).forEach(f => f({ key: k, preventDefault() {}, target: doc }));
+  key("Escape");
+  cards = [];
+  await advance(2000);
+  const notesResults = await require("./test_cu_notes.js")({ assert, doc, $, calls, server, advance, flush, key, now: () => now });
+  console.log("NOTES " + JSON.stringify(notesResults));
 
   Date.now = realNow;
   console.log(JSON.stringify(results));

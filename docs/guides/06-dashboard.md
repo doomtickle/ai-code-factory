@@ -618,9 +618,10 @@ designer = "#d08cff"                    # a role's colour on the floor, its lane
 
 ### Setup: the configuration in force
 
-The **SETUP** key opens a read-only screen of the configuration the factory
-will use, read on this machine with the same code `factory start` uses. It
-changes nothing and has no keys but **CLOSE**; edit the files as
+The **SETUP** key opens a screen of the configuration the factory will use,
+read on this machine with the same code `factory start` uses. It shows
+everything read-only, and the one thing it lets you change is the
+[project notes](#the-notes-editor); edit every other file as
 [Make it yours](04-customize.md) describes. It refreshes every few seconds
 while open.
 
@@ -641,7 +642,8 @@ while open.
 - **Project notes.** The notes files for the project the dashboard is bound to,
   and for each running role its instructions plus the notes against the
   20,000-character limit. A role over it is flagged: the dispatch
-  bridge refuses that role's tasks.
+  bridge refuses that role's tasks. **Edit notes** opens the
+  [notes editor](#the-notes-editor).
 - **Dashboard look.** Whether `dashboard.toml` was read at start-up, or the
   reason it was ignored. It does not show the values; the page itself does.
 
@@ -649,6 +651,45 @@ Each line ends with the command that applies a change to it, **START** or
 **UPDATE**, as in the table in [Make it yours](04-customize.md#which-command-applies-a-change).
 Tokens, passwords and other credentials are never shown, and it never runs a
 command. If the files can't be read the screen says it is unavailable.
+
+### The notes editor
+
+**Edit notes** (under Project notes on SETUP) opens an editor for the project's
+notes files, the ones [Make it yours](04-customize.md#per-project-notes)
+describes. It is the only thing on SETUP that writes. It appears once the
+factory is bound to a project.
+
+- **Tabs.** **SHARED** is `projects/<folder>.md`, which every role gets; each
+  other tab is one role's own file, `projects/<folder>.<role>.md`. Opening a
+  tab reads the file as it is on disk (a file that doesn't exist yet is an
+  empty box, and saving creates it). Switching tabs with unsaved changes asks
+  first: keep editing, or discard.
+- **Gauges.** One line per role: that role's instructions plus the shared notes
+  plus its own notes, against the 20,000-character limit, counted as the
+  dispatch bridge counts it (headings included). It turns amber from 90% and
+  red over the limit, and updates as you type. **SAVE** stays dark while any
+  role the file reaches would be over, because the bridge would refuse that
+  role's tasks.
+- **Saving takes two steps.** **SAVE** shows what would change: the file's
+  path, the lines added and removed as a diff, and each role's new total.
+  Nothing is written yet. **CONFIRM** stays dark for 2.5 seconds, so a press
+  can't land on a screen you haven't read, and then writes the file.
+  **CANCEL** drops the pending save. A confirmation not used within two
+  minutes expires.
+- **After a save** the editor says "SAVED · SERVICE DUE · RESTART TO APPLY":
+  the new notes reach the roles when the factory next starts, so the SERVICE
+  lamp shows RESTART due. Press **RESTART** (or run `factory start`).
+- **A file that changed meanwhile.** If the file changed on disk between SAVE
+  and CONFIRM (you edited it in a terminal, say), nothing is written and the
+  editor says so. **RELOAD** reads the file again; **KEEP MY TEXT** goes back
+  to your edit.
+- **Demo mode** shows the editor but writes nothing: SAVE answers
+  "DEMO · CHANGES DISABLED".
+
+The text is drawn with `textContent` and the diff's lines get their colour from
+a fixed list, so nothing in a notes file can act on the page. The page holds no
+key of its own: the control unit sends every request, and the file is written
+by the host only after the token SAVE returned.
 
 ## Spend and the event printer
 
@@ -743,7 +784,7 @@ you can see a held crate waiting at the gate and a denied one landing in the der
 
 Demo mode is display only. It never reads your real state folder: it copies
 the fixture into a fresh temporary folder and deletes it when you press
-Ctrl-C. Terminal 0 is off, APPROVE, DECLINE, RESTART, UPDATE and DIAG answer
+Ctrl-C. Terminal 0 is off, APPROVE, DECLINE, RESTART, UPDATE, DIAG and the notes editor's SAVE answer
 that nothing here acts, INSPECT shows the fixture's patch, and SETUP shows
 the fixture's configuration (`scripts/dashboard-demo/setup/`), not yours. It also ignores your `dashboard.toml` and shows the defaults. The same
 token, cookie and content rules apply as for a real run. `--demo` can't be
@@ -758,7 +799,7 @@ Terminal 0 and the control unit it only reads the factory's state folder, and
 for the [outbox](#the-outbox) asks your project's git, read-only and with hooks
 off, which `factory/*` branches exist, how far ahead of `HEAD` they are and
 whether their changes are already in `HEAD`.
-The control unit can write only a decision file (APPROVE, DECLINE) and its
+The control unit can write only a decision file (APPROVE, DECLINE), a project notes file (the SETUP notes editor, after a confirm) and its
 action logs, and run only `factory doctor`, `factory restart`, `factory
 update --yes` and `factory update --plan`, each after a confirm screen. The README's
 [Dashboard](../../README.md#dashboard) section has the details.

@@ -2,6 +2,23 @@
 
 Dated entries, for the user to review. Newest first.
 
+## 2026-10-29
+
+- **Control unit NOTES editor, UI half** (doomtickle/passdesk-ops#186; the owner approved on
+  29 Oct that the unit may write per-project notes). Choices:
+  - **Its own served file.** The editor is `dashboard-ui/cu-notes.js`, in `STATIC`, loaded
+    before `cu.js`. `cu.js` lends it only its `api` function and the console nodes, so the
+    per-run key never leaves `cu.js`; the editor makes no request of its own.
+  - **SAVE is dark while any role the file reaches would be over 20,000**, not only the role
+    on the open tab: saving a shared file that pushes another role over would make the bridge
+    refuse that role's tasks. The gauge copies the bridge's arithmetic (headings included,
+    code points); after a save the prepare reply's `totals` stand in until the polled state
+    catches up.
+  - **A 403 on prepare is shown as "DEMO · CHANGES DISABLED"**, a fixed text. The unit's other
+    403 sources are refused before prepare is reached.
+  - **"Edit notes" sits in the SETUP body**, not on the shared GO key, so the #185 tuning knobs
+    can use that key without a clash.
+
 ## 2026-10-28
 
 - **`github_update_pr`: title and body of a pull request, nothing else**

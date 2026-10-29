@@ -98,6 +98,7 @@
   let st = null, polledAt = 0, polling = false, fault = null;
   let selId = null, selFp = null, expectGone = null, busy = false;
   let shownKey = null, flashTimer = 0, offeredLog = false;
+  let notes = null;   // the NOTES editor (cu-notes.js), made at start-up
   // holdUntil: the decide keys stay dark until then after the card on the glass
   // changed under the user (a poll replaced it, or it left and the next one moved
   // in), so a click aimed at the old card can't land on one never seen.
@@ -648,6 +649,7 @@
       tail.push(applyTag(nt.applies));
       out.push(row(f.name, "", ...tail));
     }
+    if (notes) out.push(notes.openKey());
 
     const lk = cfg.look && typeof cfg.look === "object" ? cfg.look : {};
     out.push(H("Dashboard look", "dashboard.toml"));
@@ -657,6 +659,7 @@
   }
 
   function renderSetup() {
+    if (notes && notes.active()) { notes.onState(); return; }   // the editor owns the screen
     const k = JSON.stringify(st ? st.config : null);
     if (k === setupKey) return;
     setupKey = k;
@@ -666,12 +669,7 @@
     moreCue();
   }
 
-  function openSetup() {
-    if (fault || !st) return;
-    lastKey = $("svc-setup");
-    svcSeq++;
-    svc = null;
-    go("setup");
+  function setupHead() {
     setText($("con-title"), "SETUP · CONFIGURATION");
     const t = $("con-state");
     setClass(t, "state-tag st-check");
@@ -680,6 +678,15 @@
     setText($("con-project"), str(st.project));
     setText($("con-note"), "Edit the files, then run the command shown.");
     keys("Close", null, false);
+  }
+
+  function openSetup() {
+    if (fault || !st) return;
+    lastKey = $("svc-setup");
+    svcSeq++;
+    svc = null;
+    go("setup");
+    setupHead();
     setupKey = null;
     renderSetup();
     conBody.scrollTop = 0;
@@ -1212,6 +1219,7 @@
   // ---------- leaving the monitor
   function closeConsole() {
     if (screen !== "confirm" && screen !== "log" && screen !== "setup") return;
+    if (screen === "setup" && notes && notes.close()) return;   // the editor's own Back / Cancel
     svcSeq++;           // a pending prepare or run answer is dropped
     svc = null;
     clearTimeout(logTimer); logTimer = 0;
@@ -1258,6 +1266,25 @@
     if (e.shiftKey && (document.activeElement === first || !inside)) { e.preventDefault(); last.focus(); }
     else if (!e.shiftKey && (document.activeElement === last || !inside)) { e.preventDefault(); first.focus(); }
   });
+
+  // ---------- the NOTES editor (cu-notes.js): lent this page's request function, never its key
+  if (window.CuNotes) {
+    notes = window.CuNotes.create({
+      api, el, str, list, num, conBody, cancelKey, goKey, keys, errText, holdMs: HOLD_MS,
+      state: () => st,
+      refresh: () => poll(),
+      more: moreCue,
+      head: (tag, cls, led, note) => {
+        setText($("con-title"), "SETUP · NOTES");
+        setClass($("con-state"), `state-tag st-${cls}`);
+        setText($("con-state"), tag);
+        setClass($("con-led"), `led ${led}`);
+        setText($("con-project"), st ? str(st.project) : "");
+        setText($("con-note"), note || "");
+      },
+      back: () => { setupHead(); setupKey = null; renderSetup(); conBody.scrollTop = 0; cancelKey.focus(); },
+    });
+  }
 
   // ---------- start
   go("deck");
