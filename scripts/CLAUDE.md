@@ -88,7 +88,8 @@ reads its key from the page and removes it from the DOM. Every action is a POST 
 `/cu/api/<name>` with a JSON body, read only when `Host` and `Origin` name the second
 origin exactly, `Sec-Fetch-Site` (if sent) is `same-origin`, exactly one dashboard
 cookie matches, the key is in the `X-Factory-Control` header (compared in constant
-time), the `Content-Type` is JSON and the body is at most 8 KiB; every other method
+time), the `Content-Type` is JSON and the body is at most 8 KiB (128 KiB for `config-prepare` alone,
+which carries a notes file: CONFIG WRITE below), checked on `Content-Length` before any of it is read; every other method
 (`OPTIONS` included) is refused, and no response carries CORS headers. The main page
 can't script the frame (another origin); the frame may tell it
 exactly three strings by `postMessage` (`cu:expand`, `cu:collapse`, `cu:reload`),
@@ -160,11 +161,40 @@ changing or going cancels the question.
 An unexpected exception in any control is a 500 with a fixed message, and only its
 type is logged. SETUP (doomtickle/passdesk-ops#183) shows the effective configuration read-only: `config`
 in the unit's state, built by `scripts/dashboard_setup.py` from the factory's parsers, cached
-a few seconds and read outside the board's lock. It adds no endpoint and runs nothing; it takes
+a few seconds and read outside the board's lock. Its read-only view adds no endpoint and runs nothing
+(its one write is CONFIG WRITE below); it takes
 only named policy keys (never a credential, and a URL's user, password, query and fragment are
 cut), and every string is cleaned to one printable line and drawn as text. Anything that moves
 the security boundary (broker policy and hosts, credentials, kits) is shown there read-only,
 never edited.
+
+CONFIG WRITE (doomtickle/passdesk-ops#185, #186, owner decision 29 Oct 2026,
+`scripts/dashboard_configwrite.py`) is SETUP's one write, and the only file the control unit
+writes besides a decision and an action's log: a role's tuning override `FACTORY_CONFIG/roles/<role>.conf` and the bound
+project's notes `FACTORY_CONFIG/projects/<project>.md` and `<project>.<role>.md`, data the factory
+parses or appends to a prompt, never runs. One code path for both, three endpoints behind the same
+checks as every other: `config-read {"kind":"notes","role"}` (a notes file's text, read capped at
+`NOTES_READ_MAX`), `config-prepare` (the change, checked; returns the diff, the display path,
+`changed`, `applies` and a single-use 120 s token for action `"config"`, in RESTART's one token
+slot, bound to the exact new bytes and the SHA-256 of the file's current bytes or `absent`) and
+`config-run {"token"}` (under a lock, re-reads the file and writes only if its digest is unchanged,
+else a 409 `changed`). The target is named only from server-side facts (`FACTORY_CONFIG`, the
+dashboard's project folder name if `usable_project`, a role `list_roles` returns), never a path
+from the request. A role override takes only `ROLE_OVERRIDE_KEYS` (never `WORKSPACE`, `TEMPLATE`,
+`BROKER_TOOLS` or any other key), each value one line of at most 200 characters with no quote,
+backslash or control character; the existing file is updated in place (comments and order kept,
+new keys appended, unset keys removed) and the result passes `roles.validate_role` (what
+`factory start` runs) in a throwaway config folder before the token is issued, so a bad value or a
+bad existing file is refused and the file left as it is. Notes are at most 20,000 characters of
+strict UTF-8 with no NUL, and are refused (409, naming the role) if they would take any running
+role's instructions plus notes (counted by `dashboard_setup._notes`, as the bridge counts them)
+past `NOTES_LIMIT` and higher than it is now. Below `FACTORY_CONFIG` nothing is followed:
+`roles/` and `projects/` are opened `O_NOFOLLOW|O_DIRECTORY` (made 0700 if missing), the file
+`O_NOFOLLOW|O_NONBLOCK` and fstat'ed as a regular file, and the write is a 0600 temp file in that
+folder (`O_CREAT|O_EXCL|O_NOFOLLOW`, by its fd), fsynced and `os.replace`d. The bridge reads only
+`factory start`'s snapshot in `FACTORY_STATE`, so every change says `applies: "RESTART"`, and a
+write drops the SERVICE DUE and SETUP caches so the lamp lights at once. Nothing reads
+`FACTORY_CONFIG` live because of this, and nothing else in the config folder is written.
 
 OUTBOX (doomtickle/passdesk-ops#189, `scripts/dashboard_outbox.py`) lists the `factory/*`
 branches the bridge imported, newest first, as `outbox` in the main page's state: the repo,
@@ -275,8 +305,8 @@ rule above. It reads no `FACTORY_STATE` or broker state and refuses `--state`,
 `exec`s Python so a signal reaches it). The copy is a fresh 0700 `mkdtemp` folder, never
 inside the checkout, removed when the dashboard exits; the ticker appends audit records
 only there. There is no Terminal 0. Its control unit is `DemoControls`: `decide`,
-`prepare` and `run` raise `Refused(403)` before any decision file, token or host command,
-and `argv()` raises. `state`, `log` and `patch` are inherited unchanged (SETUP reads the
+`prepare`, `run`, `config-prepare` and `config-run` raise `Refused(403)` before any decision file, token, config write or host command,
+and `argv()` raises. `state`, `log`, `patch` and `config-read` are inherited unchanged (SETUP and `config-read` read the
 fixture's `setup/` folder through `setup_source()`), so INSPECT reads
 the fixture's patch through the same `read_patch` path (digest-named, `O_NOFOLLOW`,
 SHA-256 checked) inside the temp folder. Keep it that way: demo code must never add a

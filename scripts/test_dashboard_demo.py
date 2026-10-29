@@ -247,6 +247,21 @@ class RefusalTests(unittest.TestCase):
         self.assertFalse((self.env.state / "dashboard").exists())  # no action log folder either
         self.assertEqual(self.env.post("state")[1]["action"]["phase"], "idle")
 
+    def test_config_writes_are_refused_and_reads_come_from_the_fixture(self):
+        config = self.env.state / demo.SETUP / "config"
+        before = {p: p.read_bytes() for p in config.rglob("*") if p.is_file()}
+        bodies = ({"kind": "role", "role": "developer", "set": {"LANES": "2"}, "unset": []},
+                  {"kind": "notes", "role": "", "text": "x"})
+        for body in bodies:
+            self.assertEqual(self.env.post("config-prepare", body), (403, {"error": demo.REFUSED}))
+        self.assertEqual(self.env.post("config-run", {"token": "x"}), (403, {"error": demo.REFUSED}))
+        self.assertIsNone(self.env.controls.confirm)
+        self.assertEqual({p: p.read_bytes() for p in config.rglob("*") if p.is_file()}, before)
+        status, out = self.env.post("config-read", {"kind": "notes", "role": ""})
+        self.assertEqual(status, 200, out)
+        self.assertEqual(out["text"], (config / "projects" / f"{demo.PROJECT}.md").read_text(encoding="utf-8"))
+        self.assertTrue(out["exists"])
+
     def test_the_card_stays_staged_and_undecided(self):
         card = self.env.card()
         self.env.post("decide", {"id": card["id"], "fp": card["fp"], "verdict": "approve"})
