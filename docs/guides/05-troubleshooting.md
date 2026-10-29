@@ -364,6 +364,27 @@ in its conversation is lost when it is recreated. To keep a plan, ask for it to
 be committed through a developer job (a `factory/*` branch, a doc or an issue
 in the repo) before you update.
 
+### "transport dropped mid-call; response for tool ... was lost"
+
+```text
+MCP server "mcp-gateway" transport dropped mid-call; response for tool "wait_for_job" was lost
+```
+
+**Cause:** a `delegate` or `wait_for_job` call that blocks for minutes sat on a
+silent HTTP connection between the Coordinator and the dispatch bridge, and
+something on the way (the sbx MCP gateway proxy, most likely) dropped it after
+a few minutes idle. The job is not affected.
+**Fix:** none needed to keep the work: the job keeps running, and calling
+`wait_for_job` again with the same job id (a long wait is safe to retry; use
+`timeout_seconds: 0` for the status right now) returns its result. The bridge
+now keeps such a call alive: when the client accepts `text/event-stream` (Claude
+Code's HTTP MCP client does) it answers a blocking call as an event stream and
+sends a keepalive every 15 s (`KEEPALIVE_SECONDS` in `dispatch/server.py`), plus
+a progress notification when the client sent a progress token, then the result.
+It takes effect after `factory restart` on the host. If the message still
+appears, check `dispatch.log` for `client closed the ... stream early`, which
+means the client or a proxy hung up anyway.
+
 ### "sent no response or progress for ...s; aborting"
 
 ```text
