@@ -17,6 +17,8 @@ vendored, and `scripts/test_dashboard_term.py` checks them against it.
 Source: `https://registry.npmjs.org/@xterm/xterm/-/xterm-5.5.0.tgz` and
 `https://registry.npmjs.org/@xterm/addon-fit/-/addon-fit-0.10.0.tgz`, fetched
 19 Oct 2026. No other addons are used: no clipboard (OSC 52), links or images.
+OSC 52 copies are handled by `term.js` itself, behind a click-to-copy prompt
+(doomtickle/passdesk-ops#142), never by the clipboard addon.
 To update, replace the files from the new tarballs, delete the
 `//# sourceMappingURL=` line at the end of each `.js` file, then
 `sha256sum xterm.js xterm.css addon-fit.js > SHA256SUMS` and update this table.

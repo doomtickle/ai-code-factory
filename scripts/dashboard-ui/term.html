@@ -13,6 +13,16 @@
 </head>
 <body>
 <div id="term" aria-label="Coordinator terminal"></div>
+<div class="copy" id="copy" role="region" aria-label="Copy from the Coordinator" aria-live="polite" hidden>
+  <p class="copy-title" id="copy-title"></p>
+  <p class="copy-preview" id="copy-preview"></p>
+  <p class="copy-note" id="copy-note" hidden></p>
+  <textarea class="copy-manual" id="copy-manual" readonly hidden aria-label="Text to copy"></textarea>
+  <div class="copy-keys">
+    <button type="button" class="key" id="copy-go">Copy</button>
+    <button type="button" class="key dim" id="copy-x">Dismiss</button>
+  </div>
+</div>
 <div class="off" id="off" hidden>
   <p class="banner" id="off-title">TERMINAL 0 · POWERED OFF</p>
   <p class="note" id="off-text"></p>

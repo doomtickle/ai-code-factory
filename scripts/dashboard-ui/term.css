@@ -31,3 +31,22 @@ body { color: var(--matrix); font-family: "VT323", ui-monospace, Menlo, Consolas
 .off.service .banner { animation: svc-pulse 1.6s ease-in-out infinite; }
 @keyframes svc-pulse { 50% { opacity: .45; box-shadow: none; } }
 @media (prefers-reduced-motion: reduce) { .off.service .banner { animation: none; } }
+/* An OSC 52 copy from the Coordinator waits here for a click (term.js): a strip along
+   the bottom, so the screen above stays readable. The preview is text only. */
+.copy { position: absolute; left: 12px; right: 12px; bottom: 10px; z-index: 5; padding: 8px 12px 10px; display: flex; flex-direction: column; gap: 6px;
+  font-size: 1.35rem; line-height: 1.1; background: rgba(0, 8, 2, .94); border: 1px solid var(--matrix);
+  box-shadow: 0 0 10px var(--matrix-glow), inset 0 0 6px rgba(0, 255, 65, .25); text-shadow: 0 0 3px var(--matrix-glow); }
+.copy p { margin: 0; }
+.copy-title { letter-spacing: .06em; }
+.copy-preview { color: var(--matrix-pale); white-space: pre-wrap; overflow-wrap: anywhere; max-height: 4.6em; overflow: hidden;
+  border-left: 2px solid var(--matrix-dim); padding-left: 8px; }
+.copy-note { color: #ffb000; }
+.copy-manual { width: 100%; height: 4.6em; resize: none; font: inherit; font-size: 1.1rem; color: var(--matrix-pale); background: #000500; border: 1px solid var(--matrix-dim); }
+.copy-keys { display: flex; gap: 10px; }
+.copy .key { font: 1.3rem/1 "VT323", ui-monospace, monospace; text-transform: uppercase; letter-spacing: .12em; cursor: pointer;
+  color: #000500; background: var(--matrix); border: 0; border-radius: 3px; padding: 5px 12px 3px; box-shadow: 0 0 8px var(--matrix-glow); }
+.copy .key.dim { color: var(--matrix); background: transparent; border: 1px solid var(--matrix-dim); box-shadow: none; }
+.copy .key:disabled { opacity: .45; cursor: default; }
+.copy .key:focus-visible { outline: 2px solid var(--matrix-pale); outline-offset: 3px; }
+.copy.done .copy-preview, .copy.large .copy-preview { display: none; }
+.copy.fail { border-color: #ffb000; }
