@@ -14,9 +14,10 @@
 // Ctrl+C / Ctrl+Shift+C / Ctrl+Insert elsewhere, with each line's trailing
 // spaces trimmed; the selection is then cleared, so the next Ctrl+C interrupts.
 // Attaching never starts the Coordinator: this page asks for it with a
-// {"type":"power"} message, once on load (only if it is off and not open
-// elsewhere) and whenever the power key is pressed. The RESUME key sends the
-// same with "resume": true (the last session continued); nothing else does.
+// {"type":"power","on":true} message. Once per page load (only if it is off and
+// not open elsewhere) it asks with "resume": true, the last session continued,
+// and so does the RESUME key. Only the POWER ON key asks without it, for a
+// fresh session; nothing else sends either.
 "use strict";
 
 (() => {
@@ -328,11 +329,12 @@
       // automatic power-on from this page then, or after.
       if (msg.reason === "service") autoTried = true;
       if (!autoTried) {
-        // Opening the dashboard brings the Coordinator up, once per page load,
-        // and only if it is off and not open in `factory chat`.
+        // Opening the dashboard brings the Coordinator up (the last session
+        // continued), once per page load, and only if it is off and not open
+        // in `factory chat`. Only the POWER ON key starts a fresh session.
         autoTried = true;
         if (!running && !elsewhere) {
-          send(JSON.stringify({ type: "power", on: true }));
+          send(powerMsg(true));
           return;  // the server answers with the new state
         }
       }

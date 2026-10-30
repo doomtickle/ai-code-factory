@@ -36,7 +36,7 @@ Terminal 0 is the Coordinator's terminal (`scripts/dashboard_term.py`, enabled b
 RESUME, doomtickle/passdesk-ops#193), NAME matching `[a-z0-9][a-z0-9-]*`, in a PTY, no shell and
 never a shell fallback, only when a page explicitly asks (`{"type":"power","on":true}`, or the same with `"resume":true`;
 `resume` is read only as the JSON `true` or `false`, any other value drops the message, and no page text ever reaches the
-argv, which `coordinator_argv(name, resume)` builds; attaching a page starts nothing). After a RESTART or UPDATE that
+argv, which `coordinator_argv(name, resume)` builds; attaching a WebSocket starts nothing: the start always comes from an explicit page message through these checks. The page sends the resume form once per load automatically, if the Coordinator is off and not open elsewhere, and on the RESUME key; only the POWER ON key sends the fresh form). After a RESTART or UPDATE that
 succeeded with Terminal 0 attached, the control unit re-attaches with the resume form (`Term.power_on(resume=True)`). Both
 forms go through the same checks, only after `sbx ls -q` lists the sandbox and
 `ps -axo pid=,ppid=,args=` shows no other `sbx run` naming it (`--name NAME`,

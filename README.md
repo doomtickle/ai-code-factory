@@ -1112,10 +1112,10 @@ your browser. It shows:
 
 - **Terminal 0:** the Coordinator itself, live, on the left-hand screen. Type
   to it as you would in any terminal; every tab you open shows the same session (the
-  last tab you resize or focus sets its size). Opening the page starts
-  nothing: press POWER ON to attach (a fresh session; RESUME next to it
-  continues the last one, and a RESTART or UPDATE from the control unit
-  re-attaches that way). If the Coordinator is already open in
+  last tab you resize or focus sets its size). Opening the page
+  resumes the Coordinator once per load (the last session continued); after
+  that, RESUME resumes and POWER ON starts a fresh session. A RESTART or UPDATE
+  from the control unit re-attaches with a resume too. If the Coordinator is already open in
   `factory chat`, the screen says so instead: close it there, then
   press POWER ON again. A tab opened later replays the recent output, with
   its keyboard muted while it does, so the terminal's answers to old

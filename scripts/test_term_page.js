@@ -8,7 +8,9 @@
 // writeText falls back to a selected textarea; the page never reads the
 // clipboard; a selection is copied trimmed (then cleared) by the copy event and
 // the copy keys, plain Ctrl+C among them off a Mac, and Ctrl+C with no
-// selection (or any Ctrl+C on a Mac) still goes to the Coordinator.
+// selection (or any Ctrl+C on a Mac) still goes to the Coordinator. The
+// page's power-on messages: the once-per-load automatic one resumes, POWER ON
+// is fresh, RESUME resumes.
 // Run by test_dashboard_term.py (TermScriptTests):
 //   node scripts/test_term_page.js scripts/dashboard-ui/term.js [mac]
 "use strict";
@@ -114,6 +116,18 @@ const done = [];
   assert.strictEqual(T.opts.macOptionClickForcesSelection, true);
   assert.strictEqual(T.opts.macOptionIsMeta, true);
   assert(T.osc[52], "OSC 52 handler registered");
+  // Opening the page powers the Coordinator on once, as a resume; only the POWER ON key is fresh.
+  const powers = () => sock.sent.filter(m => typeof m === "string" && JSON.parse(m).type === "power").map(m => JSON.parse(m));
+  sock.onmessage({ data: JSON.stringify({ type: "state", running: false, reason: "exited" }) });
+  assert.deepStrictEqual(powers(), [{ type: "power", on: true, resume: true }], "auto power-on resumes");
+  sock.onmessage({ data: JSON.stringify({ type: "state", running: false, reason: "exited" }) });
+  assert.strictEqual(powers().length, 1, "only once per page load");
+  click("power");
+  assert.deepStrictEqual(powers().pop(), { type: "power", on: true }, "POWER ON is fresh");
+  click("resume");
+  assert.deepStrictEqual(powers().pop(), { type: "power", on: true, resume: true }, "RESUME resumes");
+  assert.strictEqual(powers().length, 3);
+  done.push("auto power-on resumes, POWER ON is fresh");
   sock.onmessage({ data: JSON.stringify({ type: "state", running: true }) });
   const box = $("copy");
   // The copy element starts hidden in term.html; the fake starts visible, so hide it.

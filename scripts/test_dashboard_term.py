@@ -220,8 +220,8 @@ class ResumeTests(unittest.TestCase):
             self.assertFalse(self.started(json.dumps(msg).encode()).running(), msg)
 
     def test_resume_makes_the_same_checks_as_power_on(self):
-        for kw, reason in ((dict(exists=lambda: False), "no-sandbox"), (dict(exists=lambda: None), "no-sbx"),
-                           (dict(elsewhere=lambda own: [999]), "elsewhere")):
+        for kw, reason in (({"exists": lambda: False}, "no-sandbox"), ({"exists": lambda: None}, "no-sbx"),
+                           ({"elsewhere": lambda own: [999]}, "elsewhere")):
             t = fake_term(**kw)
             self.addCleanup(t.shutdown)
             page = Collector()
@@ -989,7 +989,8 @@ class TermScriptTests(unittest.TestCase):
                                   capture_output=True, text=True, timeout=60)
             self.assertEqual(proc.returncode, 0, proc.stderr)
             self.assertEqual(json.loads(proc.stdout.strip().splitlines()[-1]),
-                             ["copy only on click, newest wins, after the hold", "queries and bad payloads refused",
+                             ["auto power-on resumes, POWER ON is fresh",
+                              "copy only on click, newest wins, after the hold", "queries and bad payloads refused",
                               "too large: a note, nothing to copy", "dismiss discards",
                               "replay raises no prompt", "preview is visible text", "fallback when writeText is refused",
                               "selection copied trimmed", "copy keys"], platform)

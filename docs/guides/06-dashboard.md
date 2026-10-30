@@ -63,9 +63,11 @@ underneath them.
 
 ## Terminal 0: the Coordinator
 
-The big screen on the left is the Coordinator itself, live. Press **POWER ON**
-to attach, then type to it as you would in any terminal. Opening the page
-starts nothing; only POWER ON does.
+The big screen on the left is the Coordinator itself, live. Opening the page
+brings the Coordinator up once per load, continuing its last session (if it is
+off and not open in `factory chat`); then type to it as you would in any
+terminal. Later, when the screen is off, **RESUME** continues the last session
+and **POWER ON** starts a fresh one.
 
 - Every tab you open shows the same session. The last tab you resize or click
   into sets its size.
@@ -73,13 +75,15 @@ starts nothing; only POWER ON does.
   muted until the replay is done.
 - When the session ends, the screen powers off. POWER ON starts a new session.
   **RESUME**, next to it, continues the last one instead (it runs Claude Code's
-  `--continue`), so what you told the Coordinator earlier is still in its
-  context. Both keys check the same things: the Coordinator's sandbox exists
-  and nothing else has it open.
-- **POWER ON always starts a fresh session.** Checked on 30 October 2026: the
+  `--continue`), so what you told the Coordinator earlier should still be in
+  its context. The automatic start on page load is a RESUME. All three check
+  the same things: the Coordinator's sandbox exists and nothing else has it
+  open.
+- **POWER ON starts a fresh session.** Checked on 30 October 2026: the
   Coordinator was told a word to remember, the dashboard was closed, POWER ON
-  was pressed again, and the new session had no memory of it. Use RESUME when
-  you want yesterday's conversation back.
+  was pressed again, and the new session had no memory of it. That is the only
+  thing that check covered. RESUME's `sbx run --name <name> -- --continue` has
+  not been tried on a live host yet, so it is untested there.
 - A **RESTART** or **UPDATE** from the control unit hangs up Terminal 0 and,
   when it finishes successfully, attaches again with RESUME, not POWER ON, so
   the day's context survives. If the Coordinator wasn't attached when you
