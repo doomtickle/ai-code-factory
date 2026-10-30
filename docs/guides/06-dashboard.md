@@ -839,6 +839,11 @@ moment you start it, and adds a broker call 8 seconds after the start and then
 every 20 seconds, so the factory floor has crates to move. Open the link it prints, press the floor key and
 you can see a held crate waiting at the gate and a denied one landing in the derez field.
 
+Roles that need a picture of the dashboard (a developer or reviewer checking a
+change to it) use `factory-demo start`, `factory-shot "$(factory-demo url)" out.png`
+and `factory-demo stop` inside their sandbox, which run this same demo on loopback
+and stop only the process they started.
+
 Demo mode is display only. It never reads your real state folder: it copies
 the fixture into a fresh temporary folder and deletes it when you press
 Ctrl-C. Terminal 0 is off, APPROVE, DECLINE, RESTART, UPDATE, DIAG and the notes editor's SAVE answer

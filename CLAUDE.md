@@ -70,7 +70,11 @@ socket, or host credentials. Full picture: README.md.
   via `templates/agent/factory-shot`/DevTools) for rendering and screenshotting work —
   not a network capability: kits unchanged, the browser reaches only `file://` and
   loopback, `factory-shot` refuses other URLs. Screenshots go to `FACTORY_SCRATCH`,
-  never the project or a branch.
+  never the project or a branch. To
+  screenshot the dashboard, roles run `templates/agent/factory-demo` (`start|url|stop`: the
+  demo on loopback, its PID recorded under `FACTORY_SCRATCH`, `stop` signals only that PID
+  after checking its start time and argv); roles never kill by name or pattern, since their
+  own Claude command line holds the task text.
 - Roles never install dependencies into the project folder (shared with host, whose
   `node_modules` holds host-native binaries). Tests run via `factory-test`
   (`templates/agent/factory-test`) in a sandbox-local copy of the project/lane/review

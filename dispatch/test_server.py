@@ -623,6 +623,55 @@ class DelegateTests(Base):
             d.claude_argv = orig
         self.assertEqual(job.result, "ok")
 
+    def run_failing_claude(self, script: str) -> "d.Job":
+        job = d.Job("developer", "x", None)
+        log = d.Transcript("developer")
+        with mock.patch.object(d, "claude_argv", lambda *a: [sys.executable, "-c", textwrap.dedent(script)]):
+            d.run_claude(job, log, str(d.PROJECT), None)
+        return job
+
+    TAG_LINE = ('[claude-code:unrecognized_model] {"model":"claude-sonnet-5-5","query_source":"sdk"}')
+
+    def test_a_signal_exit_is_reported_as_a_signal_not_as_a_stderr_tag(self):
+        for script, status in (
+            # exit 143 is how `sbx exec` reports the sandbox process's death by SIGTERM
+            (f"import sys; sys.stderr.write({self.TAG_LINE!r} + '\\n'); sys.exit(143)", 143),
+            # a child killed by the signal itself (negative returncode)
+            (f"import os, signal, sys; sys.stderr.write({self.TAG_LINE!r} + '\\n'); sys.stderr.flush(); "
+             "os.kill(os.getpid(), signal.SIGTERM)", -15),
+        ):
+            with self.subTest(status=status):
+                job = self.run_failing_claude(script)
+                self.assertEqual(job.status, "failed")
+                self.assertIn("killed by signal 15 (SIGTERM)", job.result)
+                self.assertIn("the role may have stopped its own process", job.result)
+                self.assertIn("factory logs developer", job.result)
+                self.assertNotIn("unrecognized_model", job.result)
+
+    def test_a_sigkill_exit_names_sigkill(self):
+        job = self.run_failing_claude("import sys; sys.exit(137)")
+        self.assertIn("killed by signal 9 (SIGKILL)", job.result)
+
+    def test_a_signal_exit_keeps_other_stderr_lines_but_not_tag_lines(self):
+        job = self.run_failing_claude(
+            f"import sys; sys.stderr.write({self.TAG_LINE!r} + '\\nTerminated\\n'); sys.exit(143)")
+        self.assertIn("last stderr: Terminated", job.result)
+        self.assertNotIn("unrecognized_model", job.result)
+
+    def test_an_ordinary_failure_still_shows_its_own_stderr_and_tag(self):
+        job = self.run_failing_claude(f"import sys; sys.stderr.write({self.TAG_LINE!r} + '\\n'); sys.exit(1)")
+        self.assertEqual(job.status, "failed")
+        self.assertTrue(job.result.startswith("claude exited with status 1: "), job.result)
+        self.assertIn("unrecognized_model", job.result)
+        self.assertNotIn("signal", job.result)
+
+    def test_exit_codes_that_are_not_signals(self):
+        for code in (1, 2, 127, 128, 160, 255):
+            self.assertIsNone(d.exit_signal(code), code)
+        self.assertEqual(d.exit_signal(143), 15)
+        self.assertEqual(d.exit_signal(137), 9)
+        self.assertEqual(d.exit_signal(-2), 2)
+
     def test_a_failure_after_claude_keeps_the_report_and_still_imports(self):
         with mock.patch.object(d, "save_session", side_effect=OSError("disk full")):
             report = json.loads(d.tool_wait_for_job({"job_id": self.delegate("developer", "x"),

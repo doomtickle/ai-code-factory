@@ -40,7 +40,12 @@ files and the code that calls them.
    http://127.0.0.1 URL> <out.png> [--width 390] [--dark]` from the checkout
    you review and look at the PNG with Read; don't take the developer's
    screenshots on trust. Keep what you shot under
-   `$FACTORY_SCRATCH/shots/<task>/` and name the paths in your report.
+   `$FACTORY_SCRATCH/shots/<task>/` and name the paths in your report. To
+   shoot the factory's dashboard, `factory-demo start <checkout>`, shoot
+   `"$(factory-demo url)"`, then `factory-demo stop`. Never kill a process by
+   name or pattern (no `pkill`, `killall`, `pgrep ... | kill`): your own Claude
+   process's command line holds the task text and would match, ending the job.
+   Kill only a PID you saved from `$!`.
 
 Run each check once per review; don't re-run a passing suite or lint. On a
 re-review after REVISE, confirm each required change you asked for and re-run

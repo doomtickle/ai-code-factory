@@ -71,6 +71,8 @@ jobs:
         run: bash scripts/test_sbx_reference.sh
       - name: factory-shot argument handling
         run: bash scripts/test_factory_shot.sh
+      - name: factory-demo (PID-tracked demo dashboard)
+        run: bash scripts/test_factory_demo.sh
       - name: factory state (token minting, update's failed rm)
         run: bash scripts/test_factory_state.sh
       - name: fresh-clone and setup helper checks
