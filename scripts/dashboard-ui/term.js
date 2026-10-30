@@ -15,7 +15,8 @@
 // spaces trimmed; the selection is then cleared, so the next Ctrl+C interrupts.
 // Attaching never starts the Coordinator: this page asks for it with a
 // {"type":"power"} message, once on load (only if it is off and not open
-// elsewhere) and whenever the power key is pressed.
+// elsewhere) and whenever the power key is pressed. The RESUME key sends the
+// same with "resume": true (the last session continued); nothing else does.
 "use strict";
 
 (() => {
@@ -104,7 +105,7 @@
     "no-sandbox": ["TERMINAL 0 · NO COORDINATOR", "The Coordinator sandbox doesn't exist yet: run `factory start` first, then power on."],
     "no-sbx": ["TERMINAL 0 · NO SBX", "`sbx` could not run on this machine. Run `factory doctor`, then power on."],
     error: ["TERMINAL 0 · FAULT", "The Coordinator could not be started. Power on to try again."],
-    exited: ["TERMINAL 0 · POWERED OFF", "The Coordinator session ended. Power on to start it again."],
+    exited: ["TERMINAL 0 · POWERED OFF", "The Coordinator session ended. Power on starts a fresh session; Resume continues the last one."],
     lost: ["TERMINAL 0 · NO SIGNAL", "Lost the dashboard. Reconnecting…"],
     framed: ["TERMINAL 0 · NOT IN THE DASHBOARD", "Open the LOIS dashboard; this page only works inside it."],
     service: ["TERMINAL 0 · SERVICE", "The factory is restarting or updating. The Coordinator comes back when it's done."],
@@ -116,6 +117,7 @@
       $("off-title").textContent = REASONS.framed[0];
       $("off-text").textContent = REASONS.framed[1];
       $("power").hidden = true;
+      $("resume").hidden = true;
       $("off").hidden = false;
     };
     if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", show); else show();
@@ -149,7 +151,7 @@
   const fit = new FitAddon.FitAddon();
   term.loadAddon(fit);
 
-  let ws = null, running = false, wanted = false, retry = 0, opened = false;
+  let ws = null, running = false, wanted = null, retry = 0, opened = false;
   // autoTried: the one automatic power-on per page load has been decided.
   // replayNext: the next binary frame is the server's replay of past output.
   // muted: that replay is being parsed. xterm.js answers the old terminal
@@ -269,11 +271,12 @@
     $("off-text").textContent = text;
     // Lost: it reconnects by itself. Service: the server holds power-on until the
     // restart or update ends, and brings the Coordinator back itself.
-    $("power").hidden = reason === "lost" || reason === "service";
-    $("power").disabled = false;
+    const noKeys = reason === "lost" || reason === "service";
+    for (const id of ["power", "resume"]) { $(id).hidden = noKeys; $(id).disabled = false; }
     off.classList.toggle("service", reason === "service");
     off.hidden = false;
   }
+  const powerMsg = resume => JSON.stringify(resume ? { type: "power", on: true, resume: true } : { type: "power", on: true });
   function send(data) {
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
     if (typeof data === "string") { ws.send(data); return; }
@@ -298,7 +301,7 @@
     sock.onopen = () => {
       retry = 0;
       sendSize();
-      if (wanted) { wanted = false; send(JSON.stringify({ type: "power", on: true })); }
+      if (wanted) { send(powerMsg(wanted === "resume")); wanted = null; }
     };
     sock.onmessage = ev => {
       if (typeof ev.data !== "string") {
@@ -352,13 +355,18 @@
   term.onBinary(d => { if (quiet()) return; const b = new Uint8Array(d.length); for (let i = 0; i < d.length; i++) b[i] = d.charCodeAt(i) & 0xff; send(b); });
   term.onResize(() => sendSize());
 
-  $("power").addEventListener("click", () => {
-    $("power").disabled = true;
-    if (ws && ws.readyState === WebSocket.OPEN) send(JSON.stringify({ type: "power", on: true }));
-    else wanted = true;
-  });
+  function powerKey(id, resume) {
+    $(id).addEventListener("click", () => {
+      $("power").disabled = true;
+      $("resume").disabled = true;
+      if (ws && ws.readyState === WebSocket.OPEN) send(powerMsg(resume));
+      else wanted = resume ? "resume" : "fresh";
+    });
+  }
+  powerKey("power", false);
+  powerKey("resume", true);
   // The dashboard focuses this frame when its screen is clicked: hand focus to the terminal.
-  window.addEventListener("focus", () => { sendSize(); if ($("off").hidden) term.focus(); else $("power").focus(); });
+  window.addEventListener("focus", () => { sendSize(); if ($("off").hidden) term.focus(); else if (!$("power").hidden) $("power").focus(); });
   document.addEventListener("visibilitychange", sendSize);
 
   function start() {

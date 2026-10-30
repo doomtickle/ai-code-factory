@@ -20,7 +20,15 @@ def _stop_script(ctx):
 
 def chat(ctx, args):
     """Open the Coordinator sandbox in this terminal: what `sbx run --name factory-coordinator`
-    does, which `factory start` creates. Extra arguments go to sbx run."""
+    does, which `factory start` creates. `--resume` continues the last session
+    (`sbx run --name factory-coordinator -- --continue`, the dashboard's RESUME key); other extra
+    arguments go to sbx run."""
+    args = list(args)
+    resume = "--resume" in args
+    if resume:
+        args = [a for a in args if a != "--resume"]
+        if "--" in args:
+            raise FactoryError("usage: factory chat [--resume] (--resume can't be combined with '--')")
     sbx.require_sbx(ctx)
     if not sbx.sandbox_exists(ctx, COORDINATOR_SANDBOX):
         raise FactoryError("the coordinator sandbox doesn't exist yet; run 'factory start' first")
@@ -28,7 +36,7 @@ def chat(ctx, args):
     if sbx.coordinator_attached(ctx, COORDINATOR_SANDBOX):
         raise FactoryError("the Coordinator is already open elsewhere (the dashboard or another 'factory chat'); "
                            "close it there first")
-    return ctx.exec(["sbx", "run", "--name", COORDINATOR_SANDBOX] + list(args))
+    return ctx.exec(["sbx", "run", "--name", COORDINATOR_SANDBOX] + args + (["--", "--continue"] if resume else []))
 
 
 def stop(ctx, args):

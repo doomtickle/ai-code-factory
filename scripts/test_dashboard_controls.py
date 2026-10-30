@@ -1175,6 +1175,7 @@ class TermAroundActionTests(unittest.TestCase):
         self.assertTrue(self.c.wait())
         self.assertIsNone(t.held)
         self.assertTrue(dt.wait_for(t.running))  # attached before, and it succeeded: attached again
+        self.assertEqual(t.proc.args, t.resume_argv)  # ... resuming the session, not a fresh one
 
     def test_no_repower_after_a_failure_or_when_not_attached(self):
         t = self.term
@@ -1187,6 +1188,7 @@ class TermAroundActionTests(unittest.TestCase):
         self.assertIsNone(t.reason)  # released: plain powered off, POWER ON works again
         t.power_on()
         self.assertTrue(t.running())
+        self.assertEqual(t.proc.args, t.argv)  # a page's POWER ON stays a fresh session
         t.hang_up("service")
         (self.env.dir / "exit").write_text("0")
         self.start(block=False)  # not attached when it started

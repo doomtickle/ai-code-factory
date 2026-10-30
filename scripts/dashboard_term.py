@@ -4,10 +4,12 @@ The dashboard owns the only attachment to the Coordinator sandbox and fans it
 out to every browser tab. A second `sbx run --name factory-coordinator` while
 one is attached would start a second Claude process in the same VM, so:
 
-- The server runs one fixed argv, `sbx run --name <coordinator>`, in a
-  pseudo-terminal (no shell; the name is checked against NAME), only when a
-  page asks for it ({"type": "power", "on": true}, the POWER ON button):
-  attaching a page starts nothing. It never falls back to a shell: when the
+- The server runs one of exactly two fixed argv in a pseudo-terminal (no
+  shell; the name is checked against NAME): `sbx run --name <coordinator>`
+  (a fresh session) or `sbx run --name <coordinator> -- --continue` (the
+  RESUME key: Claude Code's own continue of the last session), only when a
+  page asks for it ({"type": "power", "on": true}, the POWER ON button, or
+  the same with "resume": true): attaching a page starts nothing. It never falls back to a shell: when the
   child exits, the pages show the set powered off.
 - Before starting it, it refuses if another process on this machine is
   already running `sbx run --name <coordinator>` (`factory chat`), and if `sbx ls -q` doesn't list the sandbox.
@@ -112,11 +114,12 @@ STATIC = {
 CONT, TEXT, BINARY, CLOSE, PING, PONG = 0x0, 0x1, 0x2, 0x8, 0x9, 0xA
 
 
-def coordinator_argv(name: str) -> list:
-    """The one command the terminal runs. Never a shell."""
+def coordinator_argv(name: str, resume: bool = False) -> list:
+    """The command the terminal runs: this, or with resume the same plus `-- --continue`. Never a shell."""
     if not NAME.fullmatch(name or ""):
         raise ValueError(f"not a sandbox name: {name!r}")
-    return ["sbx", "run", "--name", name]
+    argv = ["sbx", "run", "--name", name]
+    return argv + ["--", "--continue"] if resume else argv
 
 
 def term_csp(term_port: int, main_port: int) -> str:
@@ -458,15 +461,18 @@ class Client:
 class Term:
     """The Coordinator's PTY and the pages attached to it.
 
-    argv is the fixed command (coordinator_argv). name is the sandbox; exists
+    argv is the fixed command (coordinator_argv) and resume_argv its resuming
+    form (coordinator_argv with resume; argv plus `-- --continue` if not
+    given): power_on starts exactly one of the two. name is the sandbox; exists
     and elsewhere are the pre-start checks, and clock, ping_interval and
     ping_timeout the heartbeat's (all injectable for tests)."""
 
-    def __init__(self, argv: list, name: str, exists=None, elsewhere=None,
+    def __init__(self, argv: list, name: str, exists=None, elsewhere=None, resume_argv: list | None = None,
                  ring: int = RING, max_clients: int = MAX_CLIENTS, env: dict | None = None,
                  clock=time.monotonic, ping_interval: float = PING_INTERVAL,
                  ping_timeout: float = PING_TIMEOUT):
         self.argv, self.name = list(argv), name
+        self.resume_argv = list(resume_argv) if resume_argv is not None else self.argv + ["--", "--continue"]
         self.exists = exists or (lambda: sandbox_listed(name))
         self.elsewhere = elsewhere or (lambda own: attached_pids(ps_listing(), name, own))
         self.ring, self.max_clients = ring, max_clients
@@ -544,7 +550,8 @@ class Term:
         client.close()
 
     # --- the child
-    def power_on(self) -> None:
+    def power_on(self, resume: bool = False) -> None:
+        """Start the Coordinator: a fresh session, or with resume=True the last one continued."""
         with self.start_lock:
             if self.closing or self.running():
                 return
@@ -563,7 +570,7 @@ class Term:
             try:
                 self._winsize(slave)
                 proc = subprocess.Popen(
-                    self.argv, stdin=slave, stdout=slave, stderr=slave, env=self.env,
+                    self.resume_argv if resume else self.argv, stdin=slave, stdout=slave, stderr=slave, env=self.env,
                     start_new_session=True, close_fds=True, preexec_fn=_take_tty)
             except (OSError, subprocess.SubprocessError):
                 os.close(master)
@@ -652,7 +659,8 @@ class Term:
             pass
 
     def control(self, payload: bytes) -> None:
-        """A page's JSON control message: resize or power."""
+        """A page's JSON control message: resize or power (a fresh session, or "resume": true to
+        continue the last one; any other "resume" value is ignored)."""
         try:
             msg = json.loads(payload.decode("utf-8"))
         except ValueError:
@@ -664,7 +672,9 @@ class Term:
             if all(isinstance(v, int) and not isinstance(v, bool) and 2 <= v <= 500 for v in (cols, rows)):
                 self.resize(cols, rows)
         elif msg.get("type") == "power" and msg.get("on") is True:
-            self.power_on()
+            resume = msg.get("resume", False)
+            if resume is True or resume is False:
+                self.power_on(resume)
 
     def hold(self, reason: str) -> None:
         """Refuse power-on (the pages show reason) until release(): the control

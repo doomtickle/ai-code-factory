@@ -80,10 +80,39 @@ class ChatTest(RunStateTest):
         self.sandboxes("factory-broker", COORDINATOR_SANDBOX)
         for command in ("chat", "coordinator"):
             self.execs.clear()
-            rc, out, err = self.run_command(command, "--resume", "-x")
+            rc, out, err = self.run_command(command, "--debug", "-x")
             self.assertEqual((rc, out, err), (0, "", ""), command)
             self.assertEqual([argv for argv, _ in self.execs],
-                             [["sbx", "run", "--name", "factory-coordinator", "--resume", "-x"]], command)
+                             [["sbx", "run", "--name", "factory-coordinator", "--debug", "-x"]], command)
+
+    def test_resume_continues_the_last_session(self):
+        self.sandboxes("factory-broker", COORDINATOR_SANDBOX)
+        for command in ("chat", "coordinator"):
+            self.execs.clear()
+            rc, out, err = self.run_command(command, "--resume")
+            self.assertEqual((rc, out, err), (0, "", ""), command)
+            self.assertEqual([argv for argv, _ in self.execs],
+                             [["sbx", "run", "--name", "factory-coordinator", "--", "--continue"]], command)
+        self.execs.clear()
+        self.run_command("chat", "-x", "--resume")  # other arguments stay before the separator
+        self.assertEqual([argv for argv, _ in self.execs],
+                         [["sbx", "run", "--name", "factory-coordinator", "-x", "--", "--continue"]])
+
+    def test_resume_with_a_separator_of_its_own_is_refused(self):
+        self.sandboxes(COORDINATOR_SANDBOX)
+        self.ctx()
+        rc = main(["chat", "--resume", "--", "-p"], root=self.root, environ=self.environ, stdout=self.out,
+                  stderr=self.err, execer=self.execer)
+        self.assertEqual((rc, self.execs), (1, []))
+        self.assertIn("usage: factory chat [--resume]", self.err.getvalue())
+
+    def test_resume_still_refuses_when_the_coordinator_is_open_elsewhere(self):
+        self.sandboxes(COORDINATOR_SANDBOX)
+        self.write("ps-out", "sbx run --name factory-coordinator -- --continue\n")
+        self.ctx()
+        rc = main(["chat", "--resume"], root=self.root, environ=self.environ, stdout=self.out, stderr=self.err,
+                  execer=self.execer)
+        self.assertEqual((rc, self.execs), (1, []))
 
     def test_it_refuses_when_the_coordinator_is_open_elsewhere(self):
         self.sandboxes(COORDINATOR_SANDBOX)
@@ -116,7 +145,7 @@ class ChatTest(RunStateTest):
         cp = subprocess.run([sys.executable, os.path.join(REPO, "factory"), "chat", "--resume"], env=env,
                             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=self.tmp)
         self.assertEqual((cp.returncode, cp.stderr), (0, b""))
-        self.assertIn("sbx run --name factory-coordinator --resume", self.logged())
+        self.assertIn("sbx run --name factory-coordinator -- --continue", self.logged())
 
 
 class StopTest(RunStateTest):

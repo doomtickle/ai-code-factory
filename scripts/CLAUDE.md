@@ -31,13 +31,17 @@ authorize an action. The main page only displays: it reaches no endpoint that ac
 holds no key. Its actions are Terminal 0 and the control unit.
 
 Terminal 0 is the Coordinator's terminal (`scripts/dashboard_term.py`, enabled by
-`--coordinator NAME`, which `factory dashboard` passes: `factory/commands/wrappers.py`): it runs exactly the fixed argv
-`sbx run --name <NAME>` (NAME matches `[a-z0-9][a-z0-9-]*`) in a PTY, no shell and
-never a shell fallback, only when a page explicitly asks (`{"type":"power","on":true}`;
-attaching a page starts nothing), only after `sbx ls -q` lists the sandbox and
+`--coordinator NAME`, which `factory dashboard` passes: `factory/commands/wrappers.py`): it runs exactly one of two fixed argv,
+`sbx run --name <NAME>` (a fresh session; POWER ON) or `sbx run --name <NAME> -- --continue` (the last session continued;
+RESUME, doomtickle/passdesk-ops#193), NAME matching `[a-z0-9][a-z0-9-]*`, in a PTY, no shell and
+never a shell fallback, only when a page explicitly asks (`{"type":"power","on":true}`, or the same with `"resume":true`;
+`resume` is read only as the JSON `true` or `false`, any other value drops the message, and no page text ever reaches the
+argv, which `coordinator_argv(name, resume)` builds; attaching a page starts nothing). After a RESTART or UPDATE that
+succeeded with Terminal 0 attached, the control unit re-attaches with the resume form (`Term.power_on(resume=True)`). Both
+forms go through the same checks, only after `sbx ls -q` lists the sandbox and
 `ps -axo pid=,ppid=,args=` shows no other `sbx run` naming it (`--name NAME`,
-`--name=NAME` or positional; one attachment: a second would start a second Coordinator
-in the same VM; `factory chat` refuses
+`--name=NAME` or positional, with or without a trailing `-- --continue`; one attachment: a second would start a second Coordinator
+in the same VM; `factory chat` (and `factory chat --resume`, the same `--continue` argv) refuses
 likewise via `coordinator_attached` (`factory/sbx.py`), whose `runs_sandbox` must match the same forms as
 the dashboard's, `factory/test_sbx.py` runs both on the same fixtures), and never once shutdown has begun. It fans that one PTY out to every
 tab; a tab that attaches late gets the ring buffer as a `{"type":"replay"}` text frame

@@ -184,12 +184,72 @@ PS = """\
   401   400 sbx run --name factory-coordinator
   500     1 grep sbx run --name factory-coordinator
   600     1 sbx exec factory-coordinator true
+  207   150 sbx run --name factory-coordinator -- --continue
+  208   150 sbx run --name factory-coordinator-old -- --continue
 """
+
+
+RESUME_ON = json.dumps({"type": "power", "on": True, "resume": True}).encode()
+
+
+class ResumeTests(unittest.TestCase):
+    """POWER ON starts the fixed fresh argv, RESUME the fixed `--continue` one; nothing else starts anything."""
+
+    def started(self, payload):
+        t = fake_term()
+        self.addCleanup(t.shutdown)
+        t.attach(Collector())
+        t.control(payload)
+        return t
+
+    def test_power_on_is_fresh_and_resume_continues(self):
+        for payload, want in ((POWER_ON, "argv"), (RESUME_ON, "resume_argv"),
+                              (json.dumps({"type": "power", "on": True, "resume": False}).encode(), "argv")):
+            t = self.started(payload)
+            self.assertTrue(t.running(), payload)
+            self.assertEqual(t.proc.args, getattr(t, want), payload)
+
+    def test_a_resume_that_is_not_a_json_boolean_starts_nothing(self):
+        for resume in ("yes", "true", 1, 0, None, [], {}, ["--continue"]):
+            t = self.started(json.dumps({"type": "power", "on": True, "resume": resume}).encode())
+            self.assertFalse(t.running(), resume)
+
+    def test_resume_without_on_starts_nothing(self):
+        for msg in ({"type": "power", "resume": True}, {"type": "power", "on": False, "resume": True},
+                    {"type": "resume", "on": True}, {"type": "power", "on": "true", "resume": True}):
+            self.assertFalse(self.started(json.dumps(msg).encode()).running(), msg)
+
+    def test_resume_makes_the_same_checks_as_power_on(self):
+        for kw, reason in ((dict(exists=lambda: False), "no-sandbox"), (dict(exists=lambda: None), "no-sbx"),
+                           (dict(elsewhere=lambda own: [999]), "elsewhere")):
+            t = fake_term(**kw)
+            self.addCleanup(t.shutdown)
+            page = Collector()
+            t.attach(page)
+            t.control(RESUME_ON)
+            self.assertFalse(t.running(), reason)
+            self.assertEqual(page.states()[-1]["reason"], reason)
+        t = fake_term()
+        self.addCleanup(t.shutdown)
+        t.hold("service")
+        t.control(RESUME_ON)
+        self.assertFalse(t.running())
+        self.assertEqual(t.state()["reason"], "service")
+        t = fake_term()
+        t.shutdown()
+        t.control(RESUME_ON)
+        self.assertFalse(t.running())
+
+    def test_a_running_session_is_not_replaced_by_a_resume(self):
+        t = self.started(POWER_ON)
+        proc = t.proc
+        t.control(RESUME_ON)
+        self.assertIs(t.proc, proc)
 
 
 class ElsewhereTests(unittest.TestCase):
     def test_finds_other_attachments(self):
-        self.assertEqual(dt.attached_pids(PS, "factory-coordinator", [300]), [200, 202, 203, 204])
+        self.assertEqual(dt.attached_pids(PS, "factory-coordinator", [300]), [200, 202, 203, 204, 207])
 
     def test_forms(self):
         name = "factory-coordinator"
@@ -199,6 +259,9 @@ class ElsewhereTests(unittest.TestCase):
                            ("sbx run claude --name factory-coordinator", True),
                            ("sbx --debug run --name factory-coordinator", True),  # global flag first
                            ("/opt/bin/sbx run -e X=1 factory-coordinator", True),
+                           ("sbx run --name factory-coordinator -- --continue", True),  # the RESUME form
+                           ("sbx run factory-coordinator -- --continue", True),
+                           ("sbx run -- --continue", False),
                            ("sbx run claude -- factory-coordinator", False),  # an agent argument
                            ("sbx run factory-coordinator-old", False),
                            ("sbx exec factory-coordinator true", False),
@@ -231,9 +294,18 @@ class ElsewhereTests(unittest.TestCase):
 
     def test_argv_is_fixed(self):
         self.assertEqual(dt.coordinator_argv("factory-coordinator"), ["sbx", "run", "--name", "factory-coordinator"])
+        self.assertEqual(dt.coordinator_argv("factory-coordinator", resume=True),
+                         ["sbx", "run", "--name", "factory-coordinator", "--", "--continue"])
         for bad in ("", "-x", "a b", "a;b", "A", "../x", "x\n"):
-            with self.assertRaises(ValueError):
-                dt.coordinator_argv(bad)
+            for resume in (False, True):
+                with self.assertRaises(ValueError):
+                    dt.coordinator_argv(bad, resume)
+
+    def test_resume_argv_defaults_to_continue_on_the_fixed_argv(self):
+        t = fake_term()
+        self.assertEqual(t.resume_argv, t.argv + ["--", "--continue"])
+        u = dt.Term(dt.coordinator_argv("x"), "x", resume_argv=dt.coordinator_argv("x", resume=True))
+        self.assertEqual((u.argv, u.resume_argv), (["sbx", "run", "--name", "x"], ["sbx", "run", "--name", "x", "--", "--continue"]))
 
 
 # --------------------------------------------------------------------------

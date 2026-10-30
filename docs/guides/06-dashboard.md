@@ -71,7 +71,23 @@ starts nothing; only POWER ON does.
   into sets its size.
 - A tab you open later replays the recent output first, with its keyboard
   muted until the replay is done.
-- When the session ends, the screen powers off. POWER ON starts it again.
+- When the session ends, the screen powers off. POWER ON starts a new session.
+  **RESUME**, next to it, continues the last one instead (it runs Claude Code's
+  `--continue`), so what you told the Coordinator earlier is still in its
+  context. Both keys check the same things: the Coordinator's sandbox exists
+  and nothing else has it open.
+- **POWER ON always starts a fresh session.** Checked on 30 October 2026: the
+  Coordinator was told a word to remember, the dashboard was closed, POWER ON
+  was pressed again, and the new session had no memory of it. Use RESUME when
+  you want yesterday's conversation back.
+- A **RESTART** or **UPDATE** from the control unit hangs up Terminal 0 and,
+  when it finishes successfully, attaches again with RESUME, not POWER ON, so
+  the day's context survives. If the Coordinator wasn't attached when you
+  pressed it, nothing is attached afterwards.
+- In a plain terminal, `factory chat` is a fresh session and `factory chat
+  --resume` is RESUME (`sbx run --name factory-coordinator -- --continue`).
+  If RESUME ever shows a fresh session (nothing to continue), type `/resume`
+  inside the session to pick an earlier one from Claude Code's own list.
 
 **Copying out of Terminal 0.** There are two ways:
 
@@ -127,7 +143,7 @@ The screen tells you when it can't attach:
 
 | The screen says | What to do |
 |---|---|
-| OPEN ELSEWHERE | The Coordinator is open in `factory chat`. Close it there, then POWER ON. |
+| OPEN ELSEWHERE | The Coordinator is open in `factory chat`. Close it there, then POWER ON or RESUME. |
 | NO COORDINATOR | Its sandbox doesn't exist yet: run `factory start`. |
 | NO SBX | `sbx` couldn't run: run `factory doctor`. |
 | SERVICE | A RESTART or UPDATE is running. The Coordinator comes back when it's done. |

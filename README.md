@@ -226,7 +226,7 @@ another.
 | `factory update --plan` | What `factory update` would do, changing nothing but a (hook-free) `git fetch`: the incoming commits, the sandboxes it would recreate and what each loses, the ones the incoming changes may make out of date (a guess from the changed files), and notes: what every update drops and keeps (running jobs, held writes, the job list), and anything such as uncommitted changes that would skip the pull. Tab-separated lines (`commit`, `recreate`, `maybe`, `note`), for the dashboard |
 | `factory start [dir] [--no-ui]` | Start the factory for a project (default: current folder) and open the dashboard. `--no-ui` (or `FACTORY_NO_UI=1`) opens no dashboard: talk to the Coordinator with `factory chat` in any terminal and follow roles with `factory watch` or `factory logs <role>`. The old `--layout` flag is accepted only as `web` (see "Layouts") |
 | `factory restart` | Stop the factory and start it again for the project it is bound to, (it doesn't open a second dashboard; one already open keeps running). The dashboard's RESTART key runs it |
-| `factory chat` | Talk to the Coordinator in this terminal (wraps `sbx run --name factory-coordinator`); `factory start` creates the sandbox first. Refuses while the Coordinator is open elsewhere (the dashboard) |
+| `factory chat [--resume]` | Talk to the Coordinator in this terminal (wraps `sbx run --name factory-coordinator`); `factory start` creates the sandbox first. `--resume` continues the last session instead of starting a fresh one (`sbx run --name factory-coordinator -- --continue`). Refuses while the Coordinator is open elsewhere (the dashboard) |
 | `factory status` | Project, broker, dispatch bridge, login, roles (with their lanes), sandbox status, and pending approvals and the oldest one's age |
 | `factory logs <role>` | Follow a role's transcripts, all its lanes (`factory logs developer-lane2` for one lane); `factory logs broker` / `dispatch` for audit logs |
 | `factory watch` | Live terminal view of the lanes: one pane per active lane (a job running, or finished in the last ten minutes) with the job's status, elapsed time, model and cost in its title and the transcript rendered for reading (tool calls condensed, results dimmed, text wrapped); idle lanes take one status line each. A digit focuses one lane, `a` shows every lane, `p` shows a lane's latest review packet, `q` quits. `--once` prints one plain-text frame |
@@ -1113,7 +1113,9 @@ your browser. It shows:
 - **Terminal 0:** the Coordinator itself, live, on the left-hand screen. Type
   to it as you would in any terminal; every tab you open shows the same session (the
   last tab you resize or focus sets its size). Opening the page starts
-  nothing: press POWER ON to attach. If the Coordinator is already open in
+  nothing: press POWER ON to attach (a fresh session; RESUME next to it
+  continues the last one, and a RESTART or UPDATE from the control unit
+  re-attaches that way). If the Coordinator is already open in
   `factory chat`, the screen says so instead: close it there, then
   press POWER ON again. A tab opened later replays the recent output, with
   its keyboard muted while it does, so the terminal's answers to old
