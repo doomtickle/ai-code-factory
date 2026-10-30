@@ -1625,6 +1625,29 @@ class ImportTests(Base):
         self.assertTrue(a["truncated"])
         self.assertEqual(a["patch"].count("\n"), 12)
 
+    def test_a_cut_inside_the_first_line_keeps_the_headers_and_its_start(self):
+        self.make_host(d.PROJECT)
+        self.make_lane(d.PROJECT, "developer", ".", ["a"])
+        clone = self.lanes / "developer"
+        git("checkout", "-q", "factory/a", cwd=clone)
+        (clone / "min.js").write_text("var x=" + "é" * 5000 + ";\n")
+        git("add", ".", cwd=clone)
+        git("commit", "-q", "-m", "minified", cwd=clone)
+        with mock.patch.object(d, "MAX_DIFF_BYTES", 600):
+            report = self.wait(self.delegate("developer", "build"))
+        a = {b["ref"].rsplit("/", 1)[1]: b for b in self.diff_file(report)["branches"]}["a"]
+        self.assertTrue(a["truncated"])
+        self.assertLessEqual(len(a["patch"].encode()), 600)
+        self.assertIn("diff --git a/min.js b/min.js", a["patch"])
+        self.assertIn("\n+var x=é", a["patch"])
+        self.assertNotIn("\ufffd", a["patch"])
+        self.assertTrue(a["patch"].endswith(d.LINE_CUT.decode() + "\n"))
+        # No newline at all in the first cap's worth, and a cap too small for a marker.
+        self.assertEqual(d.cut_at_line_end(b"+" + b"x" * 99, 100), b"+" + b"x" * (100 - len(d.LINE_CUT) - 1 - 1) + d.LINE_CUT + b"\n")
+        self.assertEqual(d.cut_at_line_end(b"x" * 10, 10), b"")
+        # Cut after ordinary hunk lines: back to the last line end, no marker.
+        self.assertEqual(d.cut_at_line_end(b"@@ -1 +1 @@\n+a\n+bbbb", 20), b"@@ -1 +1 @@\n+a\n")
+
     def test_a_diff_within_the_caps_is_not_marked_truncated(self):
         self.make_host(d.PROJECT)
         self.make_lane(d.PROJECT, "developer", ".", ["a"])
@@ -1661,6 +1684,32 @@ class ImportTests(Base):
         self.assertEqual((out, cut), (b"", False))
         self.assertNotEqual(code, 0)
         self.assertTrue(err)
+
+    def test_both_git_paths_strip_git_env_and_turn_hooks_and_fsmonitor_off(self):
+        self.make_host(d.PROJECT)
+        with mock.patch.dict(os.environ, {"GIT_DIR": "/nonexistent", "GIT_CONFIG_COUNT": "1", "GIT_SSH_COMMAND": "x"}):
+            env = d._git_env()
+            self.assertEqual([k for k in env if k.startswith("GIT_")], ["GIT_TERMINAL_PROMPT"])
+            self.assertEqual(env["GIT_TERMINAL_PROMPT"], "0")
+            argv = d._git_argv(d.PROJECT, ("status",))
+            self.assertEqual(argv[:1] + argv[-3:-1], ["git", "-C", str(d.PROJECT)])
+            self.assertEqual(argv[1:1 + len(d.GIT_SAFE)], list(d.GIT_SAFE))
+            self.assertIn("core.hooksPath=/dev/null", argv)
+            self.assertIn("core.fsmonitor=false", argv)
+            # Both entry points run through the helpers; GIT_DIR would break git if it leaked.
+            self.assertEqual(d.host_git(d.PROJECT, "rev-parse", "--is-inside-work-tree").stdout.strip(), b"true")
+            out, _, code, _ = d.host_git_capped(d.PROJECT, 1000, "rev-parse", "--is-inside-work-tree")
+            self.assertEqual((out.strip(), code), (b"true", 0))
+            seen = []
+            real_run, real_popen = d.subprocess.run, d.subprocess.Popen
+            with mock.patch.object(d.subprocess, "run", lambda *a, **k: seen.append((a[0], k["env"])) or real_run(*a, **k)), \
+                    mock.patch.object(d.subprocess, "Popen", lambda *a, **k: seen.append((a[0], k["env"])) or real_popen(*a, **k)):
+                d.host_git(d.PROJECT, "status")
+                d.host_git_capped(d.PROJECT, 1000, "status")
+            self.assertGreaterEqual(len(seen), 2)  # run() also goes through Popen
+            for cmd, env in seen:
+                self.assertEqual(cmd[1:1 + len(d.GIT_SAFE)], list(d.GIT_SAFE))
+                self.assertEqual([k for k in env if k.startswith("GIT_")], ["GIT_TERMINAL_PROMPT"])
 
     def test_no_diff_file_when_no_branch_came_back_or_the_role_is_read_only(self):
         self.make_host(d.PROJECT)

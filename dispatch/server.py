@@ -949,13 +949,23 @@ def export_bundle(job: Job, rel: str, dest: Path, full: bool = False) -> bool:
     return True
 
 
+def _git_env() -> dict:
+    """The environment every host git runs in: none of the bridge's own GIT_* variables, no prompts."""
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    return env
+
+
+def _git_argv(repo: Path, args: tuple) -> list:
+    """The fixed argv every host git runs with: no hooks, no fsmonitor (GIT_SAFE), the repo by -C."""
+    return ["git", *GIT_SAFE, "-C", str(repo), *args]
+
+
 def host_git(repo: Path, *args: str) -> subprocess.CompletedProcess:
     """git in a host repo with a fixed argv: no shell, no hooks, no fsmonitor, no
     prompts, and none of the bridge's own GIT_* environment."""
-    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
-    env["GIT_TERMINAL_PROMPT"] = "0"
-    return subprocess.run(["git", *GIT_SAFE, "-C", str(repo), *args], stdin=subprocess.DEVNULL,
-                          capture_output=True, env=env, timeout=GIT_TIMEOUT_SECONDS)
+    return subprocess.run(_git_argv(repo, args), stdin=subprocess.DEVNULL,
+                          capture_output=True, env=_git_env(), timeout=GIT_TIMEOUT_SECONDS)
 
 
 _import_lock = threading.Lock()  # one git fetch into the host project at a time
@@ -1098,11 +1108,9 @@ def host_git_capped(repo: Path, cap: int, *args: str) -> tuple:
     """host_git's invocation, but the output is read only up to cap bytes and git is stopped
     there (a branch can hold a diff of any size). (output, cut, returncode, stderr); cut says
     git had more than cap bytes to give."""
-    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
-    env["GIT_TERMINAL_PROMPT"] = "0"
     with tempfile.TemporaryFile() as err:
-        proc = subprocess.Popen(["git", *GIT_SAFE, "-C", str(repo), *args], stdin=subprocess.DEVNULL,
-                                stdout=subprocess.PIPE, stderr=err, env=env)
+        proc = subprocess.Popen(_git_argv(repo, args), stdin=subprocess.DEVNULL,
+                                stdout=subprocess.PIPE, stderr=err, env=_git_env())
         watchdog = threading.Timer(GIT_TIMEOUT_SECONDS, proc.kill)
         watchdog.start()
         try:
@@ -1121,13 +1129,32 @@ def host_git_capped(repo: Path, cap: int, *args: str) -> tuple:
         return data[:cap], cut, proc.returncode, err.read(2000)
 
 
+LINE_CUT = " … [line cut at the cap]".encode("utf-8")
+
+
+def cut_at_line_end(data: bytes, cap: int) -> bytes:
+    """data (at most cap bytes of a larger patch) cut back to its last line end. If that leaves
+    only file headers (or nothing), because the first hunk line is longer than the cap (one huge
+    minified line), the headers stay and so does the start of that line, ended with LINE_CUT, so
+    the reader sees which file it is and how it begins. Never longer than cap."""
+    kept = data[:data.rfind(b"\n") + 1]
+    last = kept[kept[:-1].rfind(b"\n") + 1:]
+    if kept and not last.startswith(b"@@"):
+        return kept
+    room = cap - len(kept) - len(LINE_CUT) - 1
+    if room <= 0:
+        return kept
+    tail = data[len(kept):][:room].decode("utf-8", "ignore").encode("utf-8")
+    return kept + tail + LINE_CUT + b"\n" if tail else kept
+
+
 def branch_patch(repo: Path, ref: str, commit: str, max_bytes: int, max_lines: int) -> dict:
     """The full patch of an imported branch against the host repo's HEAD (the range the packet's
     diffstat covers), pinned to the commits that are there right now: HEAD and the branch tip are
     resolved once and the diff runs between those two ids, so the file never changes with a ref
     that moves later. Same hardening as branch_detail (fixed argv, hooks and fsmonitor off, no
-    external diff or textconv), and cut at max_bytes / max_lines (at a line end), with
-    "truncated" set. A branch that no longer points at the job's commit gets an "error"."""
+    external diff or textconv), and cut at max_bytes / max_lines (at a line end, see
+    cut_at_line_end), with "truncated" set. A branch that no longer points at the job's commit gets an "error"."""
     full = ref if ref.startswith("refs/") else f"refs/remotes/{ref}"
     out = {"ref": one_line(ref, 200), "commit": one_line(commit, 40), "base": "", "tip": "", "patch": "",
            "truncated": False, "error": ""}
@@ -1153,7 +1180,7 @@ def branch_patch(repo: Path, ref: str, commit: str, max_bytes: int, max_lines: i
         out["error"] = f"git diff failed: {excerpt(stderr, 300)}"
         return out
     if cut:
-        data = data[:data.rfind(b"\n") + 1]
+        data = cut_at_line_end(data, max_bytes)
     lines = data.split(b"\n")
     if lines and lines[-1] == b"":
         lines.pop()
