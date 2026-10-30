@@ -184,13 +184,14 @@ def is_section(line: str) -> bool:
     return line.startswith(("diff --git ", "diff --cc ", "diff --combined ")) or COMMIT.fullmatch(line) is not None
 
 
-def parse(text: str) -> dict:
+def parse(text: str, truncated: bool = False) -> dict:
     """{"truncated", "commits": [...]} for a patch as described above (the
-    response's other fields are added by view())."""
+    response's other fields are added by view()). truncated says the text was
+    cut by whoever stored it without a trailer line (the dispatch bridge's
+    job diffs keep that in their JSON), so a hunk the text ends in is cut short."""
     lines = text.split("\n")
     if lines and lines[-1] == "":
         lines.pop()
-    truncated = False
     # The trailer counts only as the very last line: anywhere else, a line
     # like it is content (indented in a message, prefixed in a hunk).
     if lines and TRAILER.fullmatch(lines[-1]):

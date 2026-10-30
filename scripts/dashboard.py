@@ -583,6 +583,10 @@ class Dashboard:
             return f"(no packet for job {job} yet: it is written when the job ends)"
         return raw.decode("utf-8", "replace")
 
+    def job_diff(self, job: str) -> dict:
+        """What a finished job changed, from the sidecar the bridge wrote next to its packet. No git here."""
+        return jobs_mod.job_diff(self.state / "dispatch" / "packets", job)
+
 
 # --------------------------------------------------------------------------
 # HTTP
@@ -674,6 +678,12 @@ def make_handler(board: Dashboard, token: str, port: int, term: dt.Term | None =
                     self.refuse(404, "no such lane")
                 else:
                     self.json(detail)
+            elif url.path == "/api/diff":
+                job = parse_qs(url.query).get("job", [""])[0]
+                if not jobs_mod.JOB_ID.fullmatch(job):
+                    self.refuse(400, "bad job id")
+                    return
+                self.json(board.job_diff(job))
             elif url.path == "/favicon.ico":
                 self.send(204, b"", "text/plain")  # no icon; don't fill the console with 404s
             elif url.path == "/docs":

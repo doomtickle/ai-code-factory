@@ -218,9 +218,10 @@ Each module shows:
 
 A lane keeps its number as a module and as a chip. Press it (1 to 9), or
 click the module or chip, to open the **lane monitor**: the
-full transcript (**T**) and a job's review packet (**P**), which has
+full transcript (**T**), a job's review packet (**P**), which has
 the task, each branch's commits and diffstat, the tests it ran, the broker
-calls it made, its cost and the role's report. **Esc** closes it.
+calls it made, its cost and the role's report, and its **diff** (**D**).
+**Esc** closes it.
 
 The packet tab opens on the lane's newest job and steps back through the
 lane's past ones: **◀** (or **[**) goes to the next older job, **▶** (or **]**)
@@ -236,6 +237,31 @@ keeps, never the full text), model, time run so far and cost so far (shown as
 Stepping in the packet tab never changes the transcript, which keeps updating
 live. A job's packet opens only for the lane the job ran on; pressing a JOB
 line on the event printer opens its job's packet the same way.
+
+The **DIFF** tab shows what a finished job changed, for the same job the
+packet tab is on (so ◀ ▶ and `[` `]` step through it too). Each branch the
+job brought back gets a header with its name, the commit it was imported at
+and the files, lines added and lines removed; under it every file is a plate
+with a status chip (ADD, DEL, MOD, REN, or BIN for a binary file), its path
+(a rename shows the old one struck through), `+n −n` and a bar of five blocks
+for the split between the two. Click a plate (or press Enter on it) to fold
+it; EXPAND ALL and COLLAPSE ALL do the whole job, and a big diff opens with
+only its first files unfolded. Added lines are green, removed lines red, with
+the old and new line numbers in the margin; a long line wraps rather than
+scrolling sideways, so the tab reads the same on a phone.
+
+The patch is the one the dispatch bridge made when it imported the branch,
+from the commit it imported: it is pinned to that job, so it doesn't change
+if the branch later moves or is deleted. A patch bigger than about 1 MB or
+20,000 lines is cut, and the tab says where (`✂ CUT HERE`). Anything the bridge
+could not diff says why instead, and a job that brought back no branch (a
+review, a failed job) or ran before this existed shows `NO DIFF FOR THIS JOB`;
+the tab asks again every few seconds, so a job that has only just finished
+fills in. The dashboard runs no git for this: it reads a file, like the
+packet. Control, direction-changing and invisible characters in a patch are
+shown as `⟨U+XXXX⟩` and the file flagged, so a file can't hide what it says.
+Only the diff of a finished job is shown here; for a job still running, read
+the transcript.
 
 Stands in for: `factory watch`, `factory logs <role>` and `factory packet
 <lane>`.
@@ -772,7 +798,7 @@ Stands in for: part of `factory analytics` and of `factory logs broker` /
 | Anywhere, control unit's deck | `,` | Open Settings (not while typing in a box) |
 | Settings | Esc | Back to the deck (from a diff, back to the knobs) |
 | Settings tabs | ← → | Previous / next tab |
-| Lane monitor | `t` / `p` | Transcript / review packet |
+| Lane monitor | `t` / `p` / `d` | Transcript / review packet / diff |
 | Lane monitor, patch viewer | Esc | Close |
 | Event printer line | Enter / Esc | Act on the line / shut an opened line |
 | Patch viewer | `j` `k` ↓ ↑ | Next / previous file |
