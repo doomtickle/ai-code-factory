@@ -52,7 +52,7 @@ and its own session, so it survives the dashboard exiting. One at a time.
 RESTART and UPDATE stop the Coordinator's sandbox, so before starting, the
 Coordinator's terminal hangs up (Term.hang_up) and refuses POWER ON until
 the action ends; if it was attached and the action succeeded, it attaches
-again. DIAG (`factory doctor`) changes nothing and leaves the terminal alone;
+again, resuming the session (`--continue`). DIAG (`factory doctor`) changes nothing and leaves the terminal alone;
 it exits 1 when it finds problems.
 
 After an update that succeeded, the dashboard's own files are compared with
@@ -608,7 +608,7 @@ class Controls:
             if term is not None:
                 term.release()
                 if attached and code == 0:
-                    term.power_on()
+                    term.power_on(resume=True)  # the day's context survives a restart
 
     def wait(self, timeout: float = 30.0) -> bool:
         """Wait for the current action to end (tests)."""

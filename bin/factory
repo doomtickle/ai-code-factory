@@ -85,7 +85,8 @@ ${B}Usage${N}
                              and prints how to reach the Coordinator and follow
                              the roles. (--layout web is accepted and ignored;
                              the old "watch" and "tabs" layouts fall back to it.)
-  factory chat               Talk to the Coordinator in this terminal
+  factory chat [--resume]    Talk to the Coordinator in this terminal
+                             (--resume continues its last session)
   factory status             What is running, and for which project
   factory stop               Stop the agents, broker and dispatch bridge
   factory restart            Stop, then start the factory again for its project

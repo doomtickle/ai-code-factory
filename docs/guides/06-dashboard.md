@@ -63,15 +63,35 @@ underneath them.
 
 ## Terminal 0: the Coordinator
 
-The big screen on the left is the Coordinator itself, live. Press **POWER ON**
-to attach, then type to it as you would in any terminal. Opening the page
-starts nothing; only POWER ON does.
+The big screen on the left is the Coordinator itself, live. Opening the page
+brings the Coordinator up once per load, continuing its last session (if it is
+off and not open in `factory chat`); then type to it as you would in any
+terminal. Later, when the screen is off, **RESUME** continues the last session
+and **POWER ON** starts a fresh one.
 
 - Every tab you open shows the same session. The last tab you resize or click
   into sets its size.
 - A tab you open later replays the recent output first, with its keyboard
   muted until the replay is done.
-- When the session ends, the screen powers off. POWER ON starts it again.
+- When the session ends, the screen powers off. POWER ON starts a new session.
+  **RESUME**, next to it, continues the last one instead (it runs Claude Code's
+  `--continue`), so what you told the Coordinator earlier should still be in
+  its context. The automatic start on page load is a RESUME. All three check
+  the same things: the Coordinator's sandbox exists and nothing else has it
+  open.
+- **POWER ON starts a fresh session.** Checked on 30 October 2026: the
+  Coordinator was told a word to remember, the dashboard was closed, POWER ON
+  was pressed again, and the new session had no memory of it. That is the only
+  thing that check covered. RESUME's `sbx run --name <name> -- --continue` has
+  not been tried on a live host yet, so it is untested there.
+- A **RESTART** or **UPDATE** from the control unit hangs up Terminal 0 and,
+  when it finishes successfully, attaches again with RESUME, not POWER ON, so
+  the day's context survives. If the Coordinator wasn't attached when you
+  pressed it, nothing is attached afterwards.
+- In a plain terminal, `factory chat` is a fresh session and `factory chat
+  --resume` is RESUME (`sbx run --name factory-coordinator -- --continue`).
+  If RESUME ever shows a fresh session (nothing to continue), type `/resume`
+  inside the session to pick an earlier one from Claude Code's own list.
 
 **Copying out of Terminal 0.** There are two ways:
 
@@ -127,7 +147,7 @@ The screen tells you when it can't attach:
 
 | The screen says | What to do |
 |---|---|
-| OPEN ELSEWHERE | The Coordinator is open in `factory chat`. Close it there, then POWER ON. |
+| OPEN ELSEWHERE | The Coordinator is open in `factory chat`. Close it there, then POWER ON or RESUME. |
 | NO COORDINATOR | Its sandbox doesn't exist yet: run `factory start`. |
 | NO SBX | `sbx` couldn't run: run `factory doctor`. |
 | SERVICE | A RESTART or UPDATE is running. The Coordinator comes back when it's done. |

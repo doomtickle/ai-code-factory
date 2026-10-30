@@ -23,6 +23,7 @@ body { color: var(--matrix); font-family: "VT323", ui-monospace, Menlo, Consolas
 .off p { margin: 0; white-space: pre-wrap; max-width: 46em; }
 .off .banner { border: 1px solid var(--matrix); padding: 6px 10px; box-shadow: 0 0 8px var(--matrix-glow), inset 0 0 8px var(--matrix-glow); }
 .off .note { color: var(--matrix-pale); }
+.powers { display: flex; flex-wrap: wrap; gap: 12px; }
 .power { font: 700 1rem/1 "VT323", ui-monospace, monospace; font-size: 1.5rem; text-transform: uppercase; letter-spacing: .12em; cursor: pointer;
   color: #000500; background: var(--matrix); border: 0; border-radius: 3px; padding: 6px 14px 4px; box-shadow: 0 0 10px var(--matrix-glow); }
 .power:focus-visible { outline: 2px solid var(--matrix-pale); outline-offset: 3px; }

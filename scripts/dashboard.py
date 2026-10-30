@@ -45,8 +45,9 @@ runs, and nothing else:
     (read-only), its output logged the same way. Terminal 0 stays attached.
 
 With --coordinator NAME it also serves Terminal 0, the Coordinator's live
-terminal (dashboard_term.py): one fixed argv, `sbx run --name NAME`, in a PTY
-(no shell), started only when a page asks (POWER ON), refused while the
+terminal (dashboard_term.py): one of two fixed argv, `sbx run --name NAME` or
+that with `-- --continue` (RESUME), in a PTY
+(no shell), started only when a page asks (POWER ON or RESUME), refused while the
 Coordinator is attached anywhere else, and shared by every open tab. It lives
 on a second port (its own origin) the main page frames; the terminal page is
 served only to a same-site iframe load (Sec-Fetch-Dest/Sec-Fetch-Site), and a
@@ -818,7 +819,8 @@ def main(argv=None) -> int:
     term = None
     if args.coordinator:
         try:
-            term = dt.Term(dt.coordinator_argv(args.coordinator), args.coordinator)
+            term = dt.Term(dt.coordinator_argv(args.coordinator), args.coordinator,
+                           resume_argv=dt.coordinator_argv(args.coordinator, resume=True))
         except ValueError as e:
             print(str(e), file=sys.stderr)
             return 2
@@ -904,7 +906,7 @@ def _run(args, server, url: str, term) -> int:
         print("DEMO MODE: made-up data from scripts/dashboard-demo/, no factory needed. The keys that act are "
               "switched off and there is no Coordinator terminal.")
     if term is not None:
-        print(f"Terminal 0 attaches to {args.coordinator} when you press POWER ON on the page "
+        print(f"Terminal 0 attaches to {args.coordinator} when you press POWER ON (a fresh session) or RESUME on the page "
               "(unless it is open elsewhere).")
     if args.demo:
         print("Ctrl-C stops the dashboard and deletes the demo data.", flush=True)
