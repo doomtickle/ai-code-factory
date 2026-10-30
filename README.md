@@ -114,7 +114,7 @@ dashboard in your browser.
 - A Docker account (for `sbx login`)
 - A Claude Pro or Max subscription
 - Optional: a GitHub fine-grained token, only if agents should push or open PRs
-- Optional: a GitLab project access token, only if agents should push to or open merge requests on GitLab
+- Optional: a GitLab project or group access token, only if agents should push to or open merge requests on GitLab
 - Optional: a Gemini API key, only if the (optional, off by default) researcher is enabled and should use `gemini_flash_query`
 - Optional: a scoped Atlassian API token, only if the Coordinator should use
   `jira_my_issues` / `jira_get_issue`
@@ -377,12 +377,26 @@ GitHub and opens merge requests with `gitlab_create_mr`.
    [git]
    repos = ["my-org/my-project", "gitlab.acme.net/platform/api", "gitlab.acme.net/platform/tools/cli"]
    ```
+   To allow every project in one GitLab group (subgroups included) without
+   listing each, end the group with `/*`:
+   ```toml
+   [gitlab]
+   url = "https://gitlab.acme.net/"   # the trailing "/" is required
+
+   [git]
+   repos = ["gitlab.acme.net/platform/*"]
+   ```
+   The entry's host must be the one in `[gitlab].url`. It matches whole path
+   components (`platform/*` does not cover `platform-evil/x`), is for GitLab
+   only (GitHub repos are listed one by one), and is baked into the broker
+   image like the rest of the list: edit it, then `factory update`.
    The URL must be https and end in `/` (`https://acme.net/gitlab/` for an
    instance under a path works too).
 2. Add the host to your local broker kit, `broker-kit/spec.yaml`, under
    `permissions.network.allow` (`- gitlab.acme.net`).
 3. In GitLab, create a **project access token** (project, Settings, Access
-   tokens; a group access token covers several projects) with the
+   tokens) for exact project entries, or a **group access token** (group,
+   Settings, Access tokens) for a `/*` group entry or several projects, with the
    **Developer** role, the **api** and **write_repository** scopes, and an
    expiry date. Don't use a personal access token: `api` on it reaches
    everything you can. Save it once:
@@ -394,8 +408,10 @@ GitHub and opens merge requests with `gitlab_create_mr`.
    (`factory-gitlab`) into a file in the broker sandbox only, and the broker
    sends it to that GitLab URL and nowhere else.
 4. Run `factory update`, then `factory doctor`: it checks the URL, the
-   projects, the kit host and the token, and that the token can push each
-   project.
+   projects and groups, the kit host and the token, and that the token can
+   push each project (or has the Developer role on each group). A group entry
+   whose token only reaches one project, as a project access token does, is
+   flagged.
 
 The same rules hold as on GitHub: only `factory/*` branches, never a
 protected one, no force-push, every commit secret-scanned, and with

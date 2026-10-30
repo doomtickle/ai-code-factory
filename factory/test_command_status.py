@@ -157,6 +157,24 @@ class OutputTest(StatusTest):
         self.assertEqual((rc, self.out.getvalue(), self.err.getvalue()), (1, "", "error: 'sbx' not found in PATH (see README.md)\n"))
 
 
+class GitReposTest(StatusTest):
+    def test_a_group_entry_is_shown_as_a_group(self):
+        self.policy('[gitlab]\nurl = "https://gitlab.example.com/"\n'
+                    '[git]\nrepos = ["acme/app", "gitlab.example.com/my-group/*", "gitlab.example.com/g/p"]\n')
+        out = "\n".join(self.lines())
+        self.assertIn("Git repos acme/app, gitlab.example.com/my-group/* (any project in the group), "
+                      "gitlab.example.com/g/p", out)
+        self.assertNotIn("[git].repos entry", out)
+
+    def test_a_bad_entry_is_a_warning(self):
+        self.policy('[gitlab]\nurl = "https://gitlab.example.com/"\n[git]\nrepos = ["gitlab.example.com/*"]\n')
+        self.assertIn('[git].repos entry "gitlab.example.com/*": name a group, not the whole instance',
+                      "\n".join(self.lines()))
+
+    def test_no_repos_no_line(self):
+        self.assertNotIn("Git repos", "\n".join(self.lines()))
+
+
 class LocalSettingsTest(StatusTest):
     def local(self):
         return [l for l in self.lines() if l.startswith("Local settings")][0]

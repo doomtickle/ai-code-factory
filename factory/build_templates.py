@@ -19,7 +19,7 @@ import shutil
 import subprocess
 import tempfile
 
-from factory import pins, preflight, sbx
+from factory import pins, policy as factory_policy, preflight, sbx
 from factory.context import FactoryError
 from factory.programs import KEEP, run_tool, to_stderr
 
@@ -121,6 +121,10 @@ def _build(ctx, tmp, build_only, image, dockerfile, context, build_args=()):
 
 def _build_all(ctx, tmp, build_only):
     root, config = ctx.paths.root, ctx.paths.config
+    # A [git].repos group entry the broker would refuse fails here, not silently in the image.
+    problems = factory_policy.git_repos_problems(ctx.paths)
+    if problems:
+        raise FactoryError("policy.toml: " + "; ".join(problems))
     broker = os.path.join(tmp, "broker")
     os.mkdir(broker)
     prepare_broker_context(ctx, root, broker)

@@ -612,6 +612,30 @@ class GitlabTest(DoctorTest):
         self.assertNotIn("GitLab", self.run_doctor()[1])
 
 
+class GitReposTest(DoctorTest):
+    GL = 'url = "https://gitlab.example.com/"\n'
+
+    def run_with(self, policy_text):
+        self.write("config/ai-code-factory/policy.toml", policy_text)
+        self.docker()
+        return self.run_doctor()
+
+    def test_a_group_entry_is_shown_as_a_group(self):
+        rc, out, _ = self.run_with('[gitlab]\n%s[git]\nrepos = ["gitlab.example.com/my-group/*"]\n' % self.GL)
+        self.assertIn("[git].repos covers gitlab.example.com/my-group/* (any project in the group)", out)
+        self.assertNotIn("[git].repos entry", out)
+
+    def test_a_bad_group_entry_is_a_problem_with_its_fix(self):
+        rc, out, _ = self.run_with('[gitlab]\n%s[git]\nrepos = ["gitlab.example.com/*", "acme/*"]\n' % self.GL)
+        self.assertIn('[git].repos entry "gitlab.example.com/*": name a group, not the whole instance', out)
+        self.assertIn('[git].repos entry "acme/*": group entries are for GitLab only', out)
+        self.assertIn("fix [git].repos in %s" % os.path.join(self.config, "policy.toml"), out)
+        self.assertEqual(rc, 1)
+
+    def test_nothing_is_said_without_repos(self):
+        self.assertNotIn("[git].repos", self.run_with("")[1])
+
+
 class ReferenceTest(DoctorTest):
     def test_a_stale_reference_is_a_warning(self):
         self.write("repo/docs/reference/sbx-cli.md", "<!-- sbx-reference: version=0.1.0 generated=x -->\n")

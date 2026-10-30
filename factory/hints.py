@@ -85,6 +85,8 @@ def collect(ctx, stale=None, keychain_checks=True, roles=False):
         out.append((KEYCHAIN, missing_message(
             ctx, "factory-gitlab", "[gitlab].url is set but no GitLab token is stored: run 'factory secret save gitlab' "
                                    "(see README: Enabling GitLab)")))
+    for problem in policy.git_repos_problems(paths):
+        out.append((CONFIG, "%s (see README: Enabling GitLab)" % problem))
     why = policy.gitlab_mr_unheld(paths)
     if why:
         out.append((CONFIG, "GitLab merge requests open without approval: %s (see README: Enabling approvals)" % why))

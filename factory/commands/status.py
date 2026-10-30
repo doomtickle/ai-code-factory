@@ -124,6 +124,11 @@ def run(ctx, args):
         warn_missing(ctx, "factory-npm-registry", 'private npm registry keychain entry ("factory-npm-registry") not found')
     if policy.gitlab_needs_token(paths):
         warn_missing(ctx, "factory-gitlab", 'GitLab keychain entry ("factory-gitlab") not found')
+    repos = policy.git_repos(paths)
+    if repos:
+        ctx.say("%sGit repos%s %s" % (st.B, st.N, ", ".join(policy.describe_repo_entry(r) for r in repos)))
+    for problem in policy.git_repos_problems(paths):
+        ctx.warn(problem)
     why = policy.gitlab_mr_unheld(paths)
     if why:
         ctx.warn("GitLab merge requests open without approval: " + why)
