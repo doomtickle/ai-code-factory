@@ -259,6 +259,19 @@ class MainTest(BuildTest):
         contexts = [argv[i + 1] for i, w in enumerate(argv) if w == "--build-context"]
         self.assertEqual([c.split("=")[0] for c in contexts], ["factory-config", "plugins"])
 
+    def test_a_bad_group_entry_stops_the_build_before_anything_is_built(self):
+        self.write("config/ai-code-factory/policy.toml",
+                   '[gitlab]\nurl = "https://gitlab.example.com/"\n[git]\nrepos = ["gitlab.example.com/g/*", "gitlab.example.com/*"]\n')
+        status, out, err = self.build("--build-only")
+        self.assertEqual(status, 1)
+        self.assertIn('error: policy.toml: [git].repos entry "gitlab.example.com/*": name a group', err)
+        self.assertEqual([c for c in self.calls() if c[1] == "build"], [])
+
+    def test_a_good_group_entry_builds(self):
+        self.write("config/ai-code-factory/policy.toml",
+                   '[gitlab]\nurl = "https://gitlab.example.com/"\n[git]\nrepos = ["gitlab.example.com/g/*"]\n')
+        self.assertEqual(self.build("--build-only")[0], 0)
+
     def test_a_local_policy_and_plugins_are_included_and_named(self):
         self.write("config/ai-code-factory/policy.toml", "[web]\n", 0o600)
         self.write("config/ai-code-factory/plugins/zeta/plugin.py", "x = 1\n")

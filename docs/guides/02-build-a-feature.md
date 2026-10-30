@@ -221,8 +221,10 @@ factory secret save github
 
 On GitLab, follow [Enabling GitLab](../../README.md#enabling-gitlab)
 instead: name the instance in `[gitlab].url`, list projects host first
-(`gitlab.acme.net/platform/api`), and save a project access token with
-`factory secret save gitlab`. The developer then opens merge requests.
+(`gitlab.acme.net/platform/api`), and save a project or group access token
+with `factory secret save gitlab` (a group token plus
+`gitlab.acme.net/platform/*` covers every project in the group). The
+developer then opens merge requests.
 
 Then ask:
 

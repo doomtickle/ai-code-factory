@@ -255,12 +255,20 @@ def _check_policy_shape(report: Report, pol: dict) -> None:
     git = pol.get("git") if isinstance(pol.get("git"), dict) else {}
     repos = git.get("repos", [])
     if not _is_str_list(repos):
-        report.fail("[git].repos must be a list of \"owner/name\" (or \"<gitlab host>/<group>/<project>\") strings")
+        report.fail("[git].repos must be a list of \"owner/name\", \"<gitlab host>/<group>/<project>\" or "
+                    "\"<gitlab host>/<group>/*\" strings")
     else:
         for r in repos:
+            if "*" in r:
+                try:
+                    git_tool.check_repos_entry(r)
+                except Denied as e:
+                    report.fail(str(e), 'a GitLab group is "<host of [gitlab].url>/<group>/*"; '
+                                        "GitHub repos are listed one by one as owner/name")
+                continue
             if git_tool.is_gitlab_name(r):
                 continue  # a GitLab project: check_policy checks it against [gitlab].url
-            if not _REPO_RE.match(r) or ".." in r:
+            if not _REPO_RE.fullmatch(r) or ".." in r:
                 report.fail(f"[git].repos: {r!r} is not owner/name",
                             'e.g. "acme/widgets"; no URL, no .git suffix')
     prot = git.get("protected_branches", [])
@@ -376,17 +384,33 @@ def check_policy(report: Report, path: Path | None = None) -> dict | None:
     if gitlab_ok and _is_str_list(git.get("repos", [])):
         on_gitlab = 0
         for repo in git["repos"]:
+            if "*" in repo:
+                try:
+                    git_tool.check_repos_entry(repo)
+                except Denied:
+                    continue  # malformed: _check_policy_shape already failed it
+                try:
+                    git_tool.group_remote(repo, pol)
+                except Denied as e:
+                    report.fail(f"[git].repos entry {repo!r}: {e}",
+                                "a GitLab group is <host of [gitlab].url>/<group>/*")
+                    continue
+                on_gitlab += 1
+                report.ok(f"[git].repos covers {git_tool.describe_repos_entry(repo)}")
+                continue
             try:
                 git_tool.check_repo(repo, {**pol, "git": {**git, "repos": [repo]}})
             except Denied as e:
                 report.fail(f"[git].repos entry {repo!r}: {e}",
-                            "GitHub repos are owner/name; GitLab projects are <host of [gitlab].url>/<group>/<project>")
+                            "GitHub repos are owner/name; GitLab projects are <host of [gitlab].url>/<group>/<project>"
+                            " and a GitLab group is <host of [gitlab].url>/<group>/*")
                 continue
             on_gitlab += git_tool.is_gitlab_name(repo)
         if gitlab and not on_gitlab:
             report.info(f"[gitlab].url is set ({gitlab}) but no [git].repos entry is on it: "
                         "gitlab_create_mr returns DENIED",
-                        f"add projects as \"{git_tool.gitlab_host(pol)}/<group>/<project>\"")
+                        f"add projects as \"{git_tool.gitlab_host(pol)}/<group>/<project>\", or a whole group as "
+                        f"\"{git_tool.gitlab_host(pol)}/<group>/*\"")
     gh = pol.get("github") if isinstance(pol.get("github"), dict) else {}
     for key, tools, hint in (
             ("issue_repos", "github_create_issue",
@@ -864,7 +888,7 @@ def check_secrets(report: Report, pol: dict | None, granted: set[str],
                 continue
             if value is not None and name == "gitlab" and not git_tool._GITLAB_TOKEN_RE.fullmatch(value):
                 report.fail("the gitlab credential is not a GitLab token (20-255 letters, digits, '_', '-' or '.')",
-                            "have the deployment re-deliver a project access token")
+                            "have the deployment re-deliver a project or group access token")
                 continue
             if value is not None:
                 extra = "" if wanted else " (no granted tool uses it)"
@@ -896,7 +920,7 @@ def check_secrets(report: Report, pol: dict | None, granted: set[str],
             continue
         if name == "gitlab" and not git_tool._GITLAB_TOKEN_RE.fullmatch(value):
             report.fail("the gitlab credential is not a GitLab token (20-255 letters, digits, '_', '-' or '.')",
-                        "have the deployment re-deliver a project access token")
+                        "have the deployment re-deliver a project or group access token")
             continue
         extra = "" if wanted else " (no granted tool uses it)"
         report.ok(f"{name} credential present{extra}")
@@ -1133,10 +1157,57 @@ def check_live_issue_read(report: Report, pol: dict | None, granted: set[str], h
 _GITLAB_DEVELOPER = 30
 
 
+_GITLAB_TOKEN_HINT = ("the project or group access token needs the Developer role and the api and "
+                      "write_repository scopes")
+
+
+def _gitlab_group_access(report: Report, base: str, host: str | None, entry: str, group_path: str,
+                         token: str, http) -> bool:
+    """Check one group entry ("<host>/<group>/*"): api/v4/groups/<group>, read with the
+    same token and opener as a project. False when the host could not be reached (the
+    caller stops, as for a project)."""
+    shown = git_tool.describe_repos_entry(entry)
+    api = f"{base}api/v4/groups/{urllib.parse.quote(group_path, safe='')}"
+    try:
+        code, body = http(api, headers={"Accept": "application/json", "Authorization": f"Bearer {token}"})
+    except (urllib.error.URLError, OSError, ValueError) as e:
+        report.fail(f"cannot reach {host} to check {shown}: {getattr(e, 'reason', e)}",
+                    f"is {host} in the deployment's egress allowlist? run this from where the broker runs")
+        return False
+    only_project = ("a project access token reaches one project only: create a group access token "
+                    "(Group > Settings > Access tokens) with the Developer role and the api and "
+                    "write_repository scopes, or list the project itself instead of the group")
+    if code == 200:
+        try:
+            access = ((json.loads(body).get("permissions") or {}).get("group_access") or {}).get("access_level")
+        except (ValueError, AttributeError):
+            access = None
+        if isinstance(access, int) and not isinstance(access, bool):
+            if access >= _GITLAB_DEVELOPER:
+                report.ok(f"GitLab token can read and push {shown}")
+            else:
+                report.fail(f"GitLab token has access level {access} on {shown}, below the Developer role it "
+                            "needs to push", _GITLAB_TOKEN_HINT)
+        else:
+            report.warn(f"GitLab token can see the group in {shown}, but no membership of it: its push access "
+                        "could not be confirmed. If the token is a project access token, it reaches only its "
+                        "own project, not the group", only_project)
+    elif code == 404:
+        report.fail(f"GitLab returns 404 for the group of {shown}: it does not exist, or the token has no access "
+                    "to it. If the token is a project access token, it reaches only its own project, not the group",
+                    only_project)
+    elif code in (401, 403):
+        report.fail(f"GitLab rejects the token for {shown} (HTTP {code})",
+                    "the token may have expired or been revoked: create a new one and deliver it again")
+    else:
+        report.warn(f"GitLab answered HTTP {code} for {shown}")
+    return True
+
+
 def check_live_gitlab(report: Report, pol: dict, repos: list[str], http=_http) -> None:
-    """Can the gateway's gitlab credential read and push each GitLab project?
-    The token goes only to [gitlab].url's API, never redirected (_http); it
-    is never printed."""
+    """Can the gateway's gitlab credential read and push each GitLab project, and reach
+    each group entry? The token goes only to [gitlab].url's API, never redirected
+    (_http); it is never printed."""
     try:
         base = git_tool.gitlab_base(pol)
     except Denied:
@@ -1152,11 +1223,19 @@ def check_live_gitlab(report: Report, pol: dict, repos: list[str], http=_http) -
     for reason in reasons:
         report.warn(reason)
     if token is None or not git_tool._GITLAB_TOKEN_RE.fullmatch(token):
-        report.warn(f"no usable gitlab credential: skipped the access check for {len(repos)} GitLab project(s)",
-                    "deliver a project access token as the gitlab credential (README, Configuring credentials)")
+        report.warn(f"no usable gitlab credential: skipped the access check for {len(repos)} GitLab entr{'y' if len(repos) == 1 else 'ies'}",
+                    "deliver a project or group access token as the gitlab credential (README, Configuring credentials)")
         return
     host = urllib.parse.urlsplit(base).hostname
     for repo in repos:
+        if git_tool.is_group_entry(repo):
+            try:
+                group = git_tool.group_remote(repo, pol)
+            except Denied:
+                continue  # check_policy already failed it
+            if not _gitlab_group_access(report, base, host, repo, group.path, token, http):
+                return
+            continue
         try:
             remote = git_tool.remote_of(repo, pol)
         except Denied:
@@ -1182,11 +1261,11 @@ def check_live_gitlab(report: Report, pol: dict, repos: list[str], http=_http) -
                 report.ok(f"GitLab token can read and push {repo}")
             elif level is not None:
                 report.fail(f"GitLab token can read {repo} but not push to it (access level {level})",
-                            "the project access token needs the Developer role (and the api and "
+                            "the project or group access token needs the Developer role (and the api and "
                             "write_repository scopes)")
             else:
                 report.warn(f"GitLab token can read {repo}; its push access could not be confirmed",
-                            "the project access token needs the Developer role and the api and write_repository scopes")
+                            _GITLAB_TOKEN_HINT)
         elif code == 404:
             report.fail(f"GitLab returns 404 for {repo}: it does not exist, or the token has no access to it",
                         "check the group/project path, and that the token belongs to this project (or its group)")

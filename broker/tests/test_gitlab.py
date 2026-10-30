@@ -28,6 +28,8 @@ GL = "gitlab.acme.net"
 PROJECT = f"{GL}/platform/api"
 GL_POLICY = {**POLICY, "git": {**POLICY["git"], "repos": ["acme/widgets", PROJECT, f"{GL}/a/b/c/svc"]},
              "gitlab": {"url": f"https://{GL}/"}}
+GROUP = f"{GL}/platform/*"
+GROUP_POLICY = {**GL_POLICY, "git": {**GL_POLICY["git"], "repos": [GROUP]}}
 MR_ARGS = {"repo": PROJECT, "head": "factory/x", "title": "Add the thing", "body": "b"}
 
 
@@ -432,7 +434,9 @@ class PushTests(GitLabBase):
                                                            "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"})
         self.assertEqual(cp.returncode, 0, cp.stderr)
 
-    def test_push_carries_only_the_gitlab_header(self):
+    def push(self, policy, repo):
+        """git_push of a one-commit bundle to repo, with a local bare repo standing in for the project.
+        Returns (the tool's answer, the git runs that carried a token, the stand-in)."""
         from passdesk.core import workspace
         self.write_secret(credentials.secrets_dir() / "github", GH_TOKEN)
         config.CREDENTIAL_PROVIDERS = "file,env-file"  # standalone: the gateway holds both
@@ -467,9 +471,13 @@ class PushTests(GitLabBase):
             runs.append((cmd, extra_env))
             return real(cmd, cwd=cwd, timeout=timeout, extra_env=extra_env)
         with mock.patch.object(git, "ensure_mirror", ensure), mock.patch.object(git, "run", spy):
-            out = git.tool_git_push({"repo": PROJECT, "branch": "factory/feature", "bundle": "f.bundle"}, GL_POLICY)
-        self.assertIn(f"Pushed 1 commit(s) to {PROJECT}:factory/feature", out)
+            out = git.tool_git_push({"repo": repo, "branch": "factory/feature", "bundle": "f.bundle"}, policy)
         authed = [(cmd, env) for cmd, env in runs if env and "GIT_CONFIG_COUNT" in env]
+        return out, authed, origin
+
+    def test_push_carries_only_the_gitlab_header(self):
+        out, authed, origin = self.push(GL_POLICY, PROJECT)
+        self.assertIn(f"Pushed 1 commit(s) to {PROJECT}:factory/feature", out)
         self.assertEqual([next(a for a in cmd if a in ("fetch", "push")) for cmd, _ in authed], ["fetch", "push"])
         for cmd, env in authed:
             text = json.dumps(env)
@@ -478,6 +486,22 @@ class PushTests(GitLabBase):
             self.assertFalse(leaks(text, GH_TOKEN, GH_B64), cmd)
             self.assertNotIn("github.com", text)
         self.sh("git", "rev-parse", "--verify", "refs/heads/factory/feature", cwd=origin)  # it arrived
+
+    def test_push_through_a_group_entry(self):
+        repo = f"{GL}/Platform/Sub/Svc"
+        out, authed, origin = self.push(GROUP_POLICY, repo)
+        self.assertIn(f"Pushed 1 commit(s) to {repo}:factory/feature", out)
+        self.assertEqual(len(authed), 2)
+        self.sh("git", "rev-parse", "--verify", "refs/heads/factory/feature", cwd=origin)
+
+    def test_push_outside_a_group_entry_is_refused_before_anything_runs(self):
+        from passdesk.core import workspace
+        for repo in (f"{GL}/platform-evil/svc", f"{GL}/other/svc", "evil.example/platform/svc"):
+            with mock.patch.object(git, "ensure_mirror") as mirror, mock.patch.object(workspace, "run") as ran, \
+                    self.assertRaises(Denied, msg=repo):
+                git.tool_git_push({"repo": repo, "branch": "factory/feature", "bundle": "f.bundle"}, GROUP_POLICY)
+            mirror.assert_not_called()
+            ran.assert_not_called()
 
 
 class StricterNamesTests(GitLabBase):
@@ -495,6 +519,320 @@ class StricterNamesTests(GitLabBase):
                          deepest)
         with self.assertRaises(Denied):
             git.check_repo(too_deep, {**GL_POLICY, "git": {**GL_POLICY["git"], "repos": [too_deep]}})
+
+
+class GroupEntryTests(GitLabBase):
+    """[git].repos group entries ("<host>/<group>/*", owner decision 2026-10-30): one matcher,
+    boundaries on whole path components, malformed entries refused (and matching nothing)."""
+
+    def pol(self, *entries):
+        return {**GL_POLICY, "git": {**GL_POLICY["git"], "repos": list(entries)}}
+
+    def test_matching(self):
+        for repo in (f"{GL}/platform/api", f"{GL}/platform/a/b/c/svc", f"{GL}/PLATFORM/API", f"{GL.upper()}/Platform/x",
+                     f"{GL}/platform/x.y", f"{GL}/platform/_x"):
+            self.assertEqual(git.check_repo(repo, GROUP_POLICY), repo)
+            self.assertTrue(git.repo_allowed(repo, [GROUP]), repo)
+        # A subgroup entry covers its own subtree only.
+        sub = self.pol(f"{GL}/Platform/Tools/*")
+        self.assertEqual(git.check_repo(f"{GL}/platform/tools/cli", sub), f"{GL}/platform/tools/cli")
+        self.assertEqual(git.check_repo(f"{GL}/platform/tools/deep/er/cli", sub), f"{GL}/platform/tools/deep/er/cli")
+        for repo in (f"{GL}/platform/api", f"{GL}/platform/tools-evil/cli", f"{GL}/platform/tool/cli"):
+            with self.assertRaises(Denied, msg=repo):
+                git.check_repo(repo, sub)
+
+    def test_boundaries(self):
+        for repo in (f"{GL}/platform-evil/x", f"{GL}/platformx/y", f"{GL}/platform_/y", f"{GL}/platform.evil/y",
+                     f"{GL}/other/platform/x", f"{GL}/other/svc", f"{GL}/x/platform/y"):
+            with self.assertRaises(Denied, msg=repo) as cm:
+                git.check_repo(repo, GROUP_POLICY)
+            self.assertIn("not in the broker allowlist", str(cm.exception))
+            self.assertFalse(git.repo_allowed(repo, [GROUP]), repo)
+        # The group itself is not a project under it (the name checks refuse a one-segment path
+        # first; repo_allowed refuses it on its own too).
+        for repo in (f"{GL}/platform", f"{GL}/platform/"):
+            self.assertFalse(git.repo_allowed(repo, [GROUP]), repo)
+            with self.assertRaises(Denied, msg=repo):
+                git.check_repo(repo, GROUP_POLICY)
+
+    def test_another_instance_or_port_is_refused_by_remote_of(self):
+        for repo in ("gitlab.evil.example/platform/x", f"{GL}:8443/platform/x"):
+            with self.assertRaises(Denied, msg=repo):  # allowed by name only if the host is the entry's
+                git.check_repo(repo, GROUP_POLICY)
+        # An entry on another host: the name matches it, remote_of refuses the host.
+        other = self.pol("gitlab.evil.example/platform/*")
+        with self.assertRaises(Denied) as cm:
+            git.check_repo("gitlab.evil.example/platform/x", other)
+        self.assertIn("not on the configured GitLab", str(cm.exception))
+        with self.assertRaises(Denied) as cm:
+            git.check_repo(PROJECT, {**GROUP_POLICY, "gitlab": {"url": ""}})
+        self.assertIn("[gitlab].url is not set", str(cm.exception))
+        self.assertEqual(git.group_remote(GROUP, GROUP_POLICY).path, "platform")
+        with self.assertRaises(Denied):
+            git.group_remote("gitlab.evil.example/platform/*", GROUP_POLICY)
+        with self.assertRaises(Denied):
+            git.group_remote(f"{GL}/platform/x", GROUP_POLICY)
+
+    def test_the_name_is_checked_before_matching(self):
+        for bad in (f"{GL}/platform/x\n", f"{GL}/platform/x\r", f"{GL}/platform/../other/x", f"{GL}/platform/.x",
+                    f"{GL}/platform/-x", f"{GL}/platform/x.git", f"{GL}/platform/x.atom", f"{GL}/platform//x",
+                    f"{GL}/platform/x/", f"{GL}/platform/x y", f"{GL}/platform/x?y=1", f"{GL}/platform/*",
+                    f"{GL}/platform/%2e%2e/x", f"{GL}/platform/\u0430dmin/x", f"{GL}/platform/x\x00",
+                    f"{GL}/platform/a\\b", " " + PROJECT, 7, None, ["x"]):
+            with self.assertRaises(Denied, msg=bad):
+                git.check_repo(bad, GROUP_POLICY)
+
+    def test_a_trailing_newline_does_not_slip_through_a_group(self):
+        # "$" in a regex matches before a final newline; the names are matched whole.
+        self.assertEqual(git._GITLAB_REPO_RE.fullmatch(f"{GL}/platform/x\n"), None)
+        with self.assertRaises(Denied):
+            git.check_repo("acme/widgets\n", GL_POLICY)
+
+    def test_exact_entries_still_work_beside_a_group(self):
+        pol = self.pol(GROUP, "acme/widgets", f"{GL}/a/b/c/svc")
+        for repo in (PROJECT, "ACME/Widgets", f"{GL}/a/b/c/svc", f"{GL}/platform/q/r"):
+            self.assertEqual(git.check_repo(repo, pol), repo)
+        for repo in ("acme/other", f"{GL}/a/b/c/other", f"{GL}/a/b/x"):
+            with self.assertRaises(Denied, msg=repo):
+                git.check_repo(repo, pol)
+
+    def test_github_never_matches_a_wildcard(self):
+        for entry in ("acme/*", "*/*", "acme/wid*", "*"):
+            pol = self.pol(entry)
+            for repo in ("acme/widgets", "acme/x", "acme/*"):
+                with self.assertRaises(Denied, msg=(entry, repo)):
+                    git.check_repo(repo, pol)
+            with self.assertRaises(Denied, msg=entry):
+                git.check_repos_entry(entry)
+        with self.assertRaises(Denied) as cm:
+            git.check_repos_entry("acme/*")
+        self.assertIn("GitLab only", str(cm.exception))
+
+    def test_malformed_wildcards_are_refused_and_match_nothing(self):
+        bad = [f"{GL}/*",                    # the whole instance
+               f"{GL}/",                     # nothing
+               f"{GL}/platform/**", f"{GL}/**", f"{GL}/platform/*/*", f"{GL}/*/platform/*", f"{GL}/pla*/x/*",
+               f"{GL}/platform/x*", f"{GL}/platform*", f"{GL}/platform/*x", f"{GL}/platform*/*",
+               f"{GL}/platform//*", f"{GL}//platform/*", f"{GL}/platform/../*", f"{GL}/../*", f"{GL}/platform/./*",
+               f"{GL}/platform/.x/*", f"{GL}/platform/-x/*", f"{GL}/.platform/*", f"{GL}/platform/x.git/*",
+               f"{GL}/platform/x.atom/*", f"{GL}/platform/ x/*", f"{GL}/platform/x\n/*", f"{GL}/platform/*\n",
+               f"{GL}/platform/a?b/*", f"{GL}/platform/a%2fb/*", f"{GL}/platform/a:b/*", f"{GL}/platform/a@b/*",
+               f"https://{GL}/platform/*", f"{GL}/platform/*/", f"{GL}/{'/'.join(f'g{i}' for i in range(22))}/*",
+               "gitlab acme.net/platform/*", "-.net/platform/*", f"{GL}:99999999/platform/*",
+               "/platform/*", "*", "/*", "**", "*/*", f"{GL}/platform/*/x"]
+        for entry in bad:
+            with self.assertRaises(Denied, msg=entry):
+                git.check_repos_entry(entry)
+            pol = self.pol(entry)
+            for repo in (PROJECT, f"{GL}/platform/x", f"{GL}/platform/sub/x", f"{GL}/x/y", f"{GL}/a/b/c/svc"):
+                self.assertFalse(git.repo_allowed(repo, [entry]), (entry, repo))
+                with self.assertRaises(Denied, msg=(entry, repo)):
+                    git.check_repo(repo, pol)
+        self.assertFalse(git.repo_allowed(PROJECT, "not a list"))
+        self.assertFalse(git.repo_allowed(PROJECT, [None, 7, ["x"]]))
+
+    def test_good_group_entries(self):
+        deepest = GL + "/" + "/".join(f"g{i}" for i in range(21)) + "/*"  # top group + 20 subgroups
+        for entry in (GROUP, f"{GL}/platform/tools/*", f"{GL}/Platform/*", f"{GL}:8443/platform/*", f"{GL}/p.q/_r-s/*",
+                      "10.0.0.5/platform/*", deepest):
+            self.assertEqual(git.check_repos_entry(entry), entry)
+        self.assertEqual(git.check_repos_entry(PROJECT), PROJECT)
+        self.assertEqual(git.check_repos_entry("acme/widgets"), "acme/widgets")
+        self.assertEqual(git.describe_repos_entry(GROUP), f"{GROUP} (any project in the group)")
+        self.assertEqual(git.describe_repos_entry(PROJECT), PROJECT)
+
+
+class GroupToolTests(GitLabBase):
+    """git_fetch, gitlab_create_mr and git_push all ask the same matcher."""
+
+    def open_mr(self, repo, policy=GROUP_POLICY):
+        with mock.patch.object(git.NO_REDIRECT_OPENER, "open",
+                               side_effect=lambda req, timeout: _FakeHTTPResponse(b'{"iid": 3, "web_url": "u"}')) as opened:
+            out = git.tool_gitlab_create_mr({**MR_ARGS, "repo": repo}, policy)
+        return out, opened
+
+    def test_create_mr_in_a_group(self):
+        for repo, path in ((f"{GL}/platform/api", "platform%2Fapi"), (f"{GL}/Platform/Sub/Svc", "Platform%2FSub%2FSvc")):
+            out, opened = self.open_mr(repo)
+            self.assertTrue(out.startswith("Opened MR !3"))
+            self.assertEqual(opened.call_args.args[0].full_url, f"https://{GL}/api/v4/projects/{path}/merge_requests")
+
+    def test_create_mr_outside_a_group_is_refused_before_a_card_or_a_call(self):
+        cards = self.cards()
+        for repo in (f"{GL}/platform-evil/api", f"{GL}/other/api", f"{GL}/platform", "acme/widgets"):
+            with mock.patch.object(git.NO_REDIRECT_OPENER, "open") as opened, self.assertRaises(Denied, msg=repo):
+                git.tool_gitlab_create_mr({**MR_ARGS, "repo": repo}, GROUP_POLICY)
+            opened.assert_not_called()
+        self.assertEqual(cards, [])
+
+    def test_a_held_mr_is_checked_again_against_the_group_on_completion(self):
+        import hashlib
+        job = {"repo": f"{GL}/platform/api", "head": "factory/x", "base": "main", "title": "Draft: T", "body": "b",
+               "draft": True}
+        card = {**job, "body_sha256": hashlib.sha256(b"b").hexdigest()}
+        out = None
+        with mock.patch.object(git.NO_REDIRECT_OPENER, "open",
+                               side_effect=lambda req, timeout: _FakeHTTPResponse(b'{"iid": 3, "web_url": "u"}')):
+            out = git.complete_gitlab_create_mr(job, card, GROUP_POLICY)
+        self.assertTrue(out.startswith("Opened MR !3"), out)
+        # The policy shrank (or the job was forged) since it was staged: nothing is sent.
+        for repo in (f"{GL}/platform-evil/api", f"{GL}/other/api"):
+            with mock.patch.object(git.NO_REDIRECT_OPENER, "open") as opened, self.assertRaises(Denied, msg=repo):
+                git.complete_gitlab_create_mr({**job, "repo": repo}, {**card, "repo": repo}, GROUP_POLICY)
+            opened.assert_not_called()
+        with mock.patch.object(git.NO_REDIRECT_OPENER, "open") as opened, self.assertRaises(Denied):
+            git.complete_gitlab_create_mr(job, card, self.exact_only())
+        opened.assert_not_called()
+
+    def exact_only(self):
+        return {**GL_POLICY, "git": {**GL_POLICY["git"], "repos": [f"{GL}/platform/other"]}}
+
+    def test_group_entries_for_fetch(self):
+        srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _Recorder)
+        srv.seen = []
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        self.addCleanup(srv.server_close)
+        self.addCleanup(srv.shutdown)
+        host = f"127.0.0.1:{srv.server_address[1]}"
+        p = mock.patch.object(git, "gitlab_base", lambda policy: f"http://{host}/")
+        p.start()
+        self.addCleanup(p.stop)
+        pol = {**POLICY, "git": {**POLICY["git"], "repos": [f"{host}/platform/*"]}}
+        with self.assertRaises(RuntimeError):  # git itself fails (the stand-in answers 404), past the allowlist
+            git.tool_git_fetch({"repo": f"{host}/Platform/sub/api", "branch": "main"}, pol)
+        self.assertEqual(srv.seen[0][0].split("?")[0], "/Platform/sub/api.git/info/refs")
+        self.assertEqual({a for _, a in srv.seen}, {f"Basic {GL_B64}"})
+        seen = len(srv.seen)
+        for repo in (f"{host}/platform-evil/api", f"{host}/other/api", f"{host}/platform"):
+            with self.assertRaises(Denied, msg=repo):
+                git.tool_git_fetch({"repo": repo, "branch": "main"}, pol)
+        self.assertEqual(len(srv.seen), seen, "a refused repo reached the network")
+
+
+class GroupDoctorTests(GitLabBase):
+    """The doctor on group entries: policy shape, what it covers, and the live group check."""
+
+    def policy_report(self, pol):
+        path = Path(self.tmp.name) / "policy.toml"
+        lines = []
+        for table, values in pol.items():
+            lines.append(f"[{table}]")
+            lines += [f"{k} = {json.dumps(v)}" for k, v in values.items()]
+        path.write_text("\n".join(lines) + "\n")
+        report = doctor.Report()
+        doctor.check_policy(report, path)
+        return report
+
+    def pol(self, *entries, url=f"https://{GL}/"):
+        return {**GL_POLICY, "git": {**GL_POLICY["git"], "repos": list(entries)}, "gitlab": {"url": url}}
+
+    def test_a_group_entry_is_shown_as_a_group(self):
+        report = self.policy_report(self.pol(GROUP, PROJECT))
+        self.assertEqual(report.messages(doctor.FAIL), [])
+        self.assertIn(f"[git].repos covers {GROUP} (any project in the group)", report.messages(doctor.OK))
+        self.assertFalse(any("no [git].repos entry is on it" in m for m in report.messages(doctor.INFO)))
+        only_group = self.policy_report(self.pol(GROUP))
+        self.assertEqual(only_group.messages(doctor.FAIL), [])
+        self.assertFalse(any("no [git].repos entry is on it" in m for m in only_group.messages(doctor.INFO)))
+
+    def test_bad_group_entries_fail_at_doctor_time(self):
+        for entry in (f"{GL}/*", f"{GL}/platform/**", f"{GL}/pla*/x/*", f"{GL}/platform/../*", f"{GL}/platform//*",
+                      "acme/*", "*", f"{GL}/platform/*/x"):
+            report = self.policy_report(self.pol(entry))
+            self.assertTrue(any("[git].repos entry" in m for m in report.messages(doctor.FAIL)), (entry, report.items))
+            shape = doctor.Report()
+            doctor._check_policy_shape(shape, self.pol(entry))
+            self.assertTrue(any("[git].repos entry" in m for m in shape.messages(doctor.FAIL)), entry)
+        github = self.policy_report(self.pol("acme/*"))
+        self.assertTrue(any("GitLab only" in m for m in github.messages(doctor.FAIL)))
+
+    def test_a_group_on_another_host_or_with_no_gitlab_fails(self):
+        other = self.policy_report(self.pol("gitlab.evil.example/platform/*"))
+        self.assertTrue(any("not on the configured GitLab" in m for m in other.messages(doctor.FAIL)), other.items)
+        unset = self.policy_report(self.pol(GROUP, url=""))
+        self.assertTrue(any(GROUP in m and "not set" in m for m in unset.messages(doctor.FAIL)), unset.items)
+
+    def test_a_group_only_policy_needs_no_github(self):
+        pol = self.pol(GROUP)
+        self.assertNotIn("github.com", doctor.egress_hosts(pol))
+        self.assertIn(GL, doctor.egress_hosts(pol))
+
+    def live(self, pol, answers, default=(200, b"{}")):
+        seen = []
+
+        def fake_http(url, headers=None, data=None, timeout=10):
+            if data is not None:
+                return 401, b""
+            seen.append((url, (headers or {}).get("Authorization")))
+            answer = answers.get(url, default)
+            if isinstance(answer, Exception):
+                raise answer
+            return answer
+        report = doctor.Report()
+        doctor.check_live(report, pol, "http://127.0.0.1:1/mcp", http=fake_http)
+        self.assertFalse(leaks(json.dumps(report.to_dict())))
+        return report, seen
+
+    def test_live_group_check(self):
+        api = f"https://{GL}/api/v4/groups/platform"
+        pol = self.pol(GROUP)
+        shown = f"{GROUP} (any project in the group)"
+
+        def access(level):
+            return 200, json.dumps({"permissions": {"group_access": {"access_level": level}}}).encode()
+        for answer, level, fragment in ((access(40), doctor.OK, f"GitLab token can read and push {shown}"),
+                                        (access(30), doctor.OK, "can read and push"),
+                                        (access(20), doctor.FAIL, "below the Developer role"),
+                                        (access(10), doctor.FAIL, "below the Developer role"),
+                                        ((200, b"{}"), doctor.WARN, "project access token"),
+                                        ((200, b'{"permissions": {"group_access": null}}'), doctor.WARN, "could not be confirmed"),
+                                        ((200, b'{"permissions": "odd"}'), doctor.WARN, "could not be confirmed"),
+                                        ((200, b"not json"), doctor.WARN, "could not be confirmed"),
+                                        ((200, b'{"permissions": {"group_access": {"access_level": "40"}}}'), doctor.WARN,
+                                         "could not be confirmed"),
+                                        ((200, b'{"permissions": {"group_access": {"access_level": true}}}'), doctor.WARN,
+                                         "could not be confirmed"),
+                                        ((404, b""), doctor.FAIL, "project access token"),
+                                        ((401, b""), doctor.FAIL, "rejects the token"),
+                                        ((403, b""), doctor.FAIL, "rejects the token"),
+                                        ((500, b""), doctor.WARN, "HTTP 500")):
+            report, seen = self.live(pol, {api: answer})
+            self.assertTrue(any(fragment in m for m in report.messages(level)), (answer, report.items))
+            self.assertEqual(seen, [(api, f"Bearer {GL_TOKEN}")])
+
+    def test_a_project_token_on_a_group_entry_is_flagged_with_the_fix(self):
+        report, _ = self.live(self.pol(GROUP), {f"https://{GL}/api/v4/groups/platform": (404, b"")})
+        fails = [(text, fix) for _, level, text, fix in report.items if level == doctor.FAIL]
+        self.assertEqual(len(fails), 1)
+        text, fix = fails[0][0], " ".join(fails[0][1])
+        self.assertIn("project access token", text)
+        self.assertIn("group access token", fix)
+        self.assertIn("Developer", fix)
+
+    def test_live_subgroup_is_one_encoded_path_and_projects_keep_their_check(self):
+        pol = self.pol(f"{GL}/Platform/Tools/*", PROJECT)
+        report, seen = self.live(pol, {})
+        urls = [u for u, _ in seen if GL in u]
+        self.assertEqual(urls, [f"https://{GL}/api/v4/groups/Platform%2FTools", f"https://{GL}/api/v4/projects/platform%2Fapi"])
+        self.assertEqual({a for u, a in seen if GL in u}, {f"Bearer {GL_TOKEN}"})
+
+    def test_an_unreachable_gitlab_fails_once(self):
+        err = urllib.error.URLError("no route")
+        report, seen = self.live(self.pol(GROUP, f"{GL}/other/*"), {f"https://{GL}/api/v4/groups/platform": err})
+        self.assertTrue(any("cannot reach" in m for m in report.messages(doctor.FAIL)))
+        self.assertEqual(len(seen), 1)
+
+    def test_no_token_skips_the_group_check_and_says_so(self):
+        (credentials.secrets_dir() / "gitlab").unlink()
+        report, seen = self.live(self.pol(GROUP), {})
+        self.assertTrue(any("no usable gitlab credential: skipped the access check for 1 GitLab entry" in m
+                            for m in report.messages(doctor.WARN)), report.items)
+        self.assertEqual([u for u, _ in seen if GL in u], [])
+
+    def test_the_token_wording_covers_group_tokens(self):
+        report, _ = self.live(self.pol(PROJECT), {f"https://{GL}/api/v4/projects/platform%2Fapi":
+                                                  (200, b'{"permissions": {"project_access": {"access_level": 20}}}')})
+        self.assertTrue(any("project or group access token" in " ".join(fix) for _, _, _, fix in report.items), report.items)
 
 
 class GitLabOnlyDoctorTests(GitLabBase):

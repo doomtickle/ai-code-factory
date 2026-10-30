@@ -37,7 +37,9 @@ max_bytes = 500_000
 [git]
 # Repos agents may fetch from, push to and open PRs or merge requests on:
 # GitHub repos as owner/name, and projects on the GitLab named by
-# [gitlab].url host first, e.g. "gitlab.example.com/group/sub/project".
+# [gitlab].url host first, e.g. "gitlab.example.com/group/sub/project", or a
+# whole GitLab group with a final "/*", e.g. "gitlab.example.com/group/*"
+# (any project under it, subgroups included; GitLab only, no GitHub "owner/*").
 # Empty means git tools are disabled.
 # Keep this on a single line: some deployments' onboarding tooling parses it
 # (e.g. the AI Code Factory's bin/factory).
@@ -54,7 +56,7 @@ default_base = "main"
 # git_push and gitlab_create_mr: https://<host>[:port]/, ending in "/" (a
 # sub-path such as https://example.com/gitlab/ works). "" disables GitLab.
 # Set it in your local policy.toml, with its host in your deployment's egress
-# allowlist, and deliver a `gitlab` credential (a project access token; see
+# allowlist, and deliver a `gitlab` credential (a project or group access token; see
 # README, Configuring credentials). web_fetch never reaches this host. Its
 # TLS certificate must be one the system trust store accepts.
 url = ""

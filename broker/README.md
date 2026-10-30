@@ -247,11 +247,20 @@ Set three things:
    `"gitlab.example.com/group/project"` or, with subgroups,
    `"gitlab.example.com/group/sub/project"`. A name whose first segment has
    a dot or a port is a GitLab project and must be on `[gitlab].url`; any
-   other is `owner/name` on GitHub.
+   other is `owner/name` on GitHub. To allow every project in a group, list
+   the group with a final `/*`: `"gitlab.example.com/group/*"` (or
+   `"gitlab.example.com/group/sub/*"`) covers any project under it, subgroups
+   included, matched case-insensitively and on whole path components
+   (`group/*` does not cover `group-evil/x`, or `group` itself). The `*` is
+   valid only as that final `/*` after a group: not `host/*` (a whole
+   instance), not `**`, not in the middle, and GitHub has no `owner/*`
+   (list GitHub repos one by one). Like the rest of the allowlist it is
+   baked into the image at build time.
 3. The `gitlab` credential, delivered like the files below
    (`$BROKER_SECRETS_DIR/gitlab`, `/run/secrets/gitlab` or
-   `PASSDESK_SECRET_GITLAB_FILE`): a **project access token** (or a group
-   access token for several projects) with the **Developer** role and the
+   `PASSDESK_SECRET_GITLAB_FILE`): a **project access token** (one project)
+   or a **group access token** (every project in the group, for a
+   `"host/group/*"` entry) with the **Developer** role and the
    **api** and **write_repository** scopes, and an expiry date. Avoid a
    personal access token: `api` on it reaches everything you can. Passdesk
    refuses a value that isn't 20-255 letters, digits, `_`, `-` or `.`.

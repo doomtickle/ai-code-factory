@@ -312,7 +312,13 @@ class Doctor:
 
     def gitlab(self):
         """A warning, not a problem (owner decision): the fix is a Pro re-copy or a policy
-        edit, and `factory update` must stay usable meanwhile."""
+        edit, and `factory update` must stay usable meanwhile. A malformed [git].repos group
+        entry is a problem: the broker would ignore it and deny everything under it."""
+        for entry in policy.git_repos(self.paths):
+            if entry.endswith("/*"):
+                self.ctx.ok("[git].repos covers " + policy.describe_repo_entry(entry))
+        for problem in policy.git_repos_problems(self.paths):
+            self.fail(problem, "fix [git].repos in %s, then 'factory update'" % os.path.join(self.paths.config, "policy.toml"))
         if self.roles_ready:
             why = policy.gitlab_mr_unheld(self.paths)
             if why:

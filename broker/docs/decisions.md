@@ -2,6 +2,51 @@
 
 Dated entries, for the user to review. Newest first.
 
+## 2026-10-30
+
+- **GitLab group entries in `[git].repos`, and group access tokens** (owner decision 30 Oct 2026).
+  The owner works across many GitLab projects in one group; every switch meant editing
+  `[git].repos`, saving a new project access token (`factory secret save gitlab`) and running
+  `factory update`. Now one policy edit and one token cover the group. Choices:
+  - **Syntax: `"<gitlab host>/<group path>/*"`**, e.g. `"gitlab.example.com/my-group/*"` or
+    `"gitlab.example.com/my-group/sub/*"`. It matches any project under the group at any depth
+    (subgroups included), case-insensitively like exact entries. One matcher, `repo_allowed` in
+    `tools/git.py`, serves `check_repo` (so `git_fetch`, `git_push`, `gitlab_create_mr` and every
+    completer of a held write) and the doctor; no consumer does its own exact membership.
+  - **Still baked into the image.** The allowlist is policy, so it is read from the image's
+    `policy.toml` and never from a runtime-editable file or a tool argument; a change is a policy
+    edit and `factory update`, as before. Nothing about `push_branch_prefix`, `protected_branches`,
+    approvals holds or the token's file delivery and `[gitlab].url` scoping changed.
+  - **Match on path-component boundaries.** The entry's prefix keeps its trailing `/`, so
+    `my-group/*` covers `my-group/x` and `my-group/sub/x` but not `my-group-evil/x`, `my-group.x/y`
+    or `my-group` itself. The concrete repo name still goes through the name checks first
+    (`check_repo_name`) and `remote_of` still confirms it is on `[gitlab].url`; matching never
+    sees an unvalidated name. Those checks now use `fullmatch`: with `re.match` and `$`, a name
+    ending in a newline passed the regex, which no exact entry could ever equal but a group entry
+    would have matched.
+  - **Malformed wildcards are refused, and match nothing.** `*` is valid only as the final `/*`
+    after a host and at least one group segment (at most 21, GitLab's top group plus 20
+    subgroups). Refused: `host/*` (the whole instance), `**`, a `*` anywhere else, empty, `.`/`..`
+    and `-`-leading segments, a `.git`/`.atom` end, a bad host or port. The doctor
+    (`check_repos_entry`) and the host (`factory/policy.py`, which the image build, `factory
+    start`, `factory status` and `factory doctor` use) report them; the matcher independently
+    skips an invalid entry, so a bad entry fails closed even if nobody ran either check.
+  - **GitHub wildcards are deliberately not supported.** An `owner/*` entry is refused with a
+    clear error. A GitHub token (fine-grained, per repo) does not scale with an owner wildcard the
+    way a GitLab group token does, and a public owner would let an agent push to, or open PRs on,
+    repos nobody listed. Out of scope; list GitHub repos one by one.
+  - **Doctor: groups are checked as groups.** `api/v4/groups/<url-encoded path>` with the same
+    no-redirect opener and token handling as the project check, expecting Developer or above in
+    `permissions.group_access`. A 404, or a group the token can see but is no member of, is
+    flagged as likely a project access token (it reaches one project only) with the fix. The
+    group response's `permissions.group_access` shape was written from memory of GitLab's API, not
+    checked against a live instance (no web access); if it is absent the doctor warns that access
+    "could not be confirmed" rather than failing.
+  - **Credential exception reworded** in `CLAUDE.md` and `broker/CLAUDE.md`: "a GitLab project
+    access token" is now "a GitLab project or group access token". It is the same credential
+    delivered the same way (a file in the broker sandbox only, scoped to `[gitlab].url`); nothing
+    else in those rules changed.
+
 ## 2026-10-29
 
 - **The control unit writes two kinds of host config file, from SETUP** (owner decision 29 Oct

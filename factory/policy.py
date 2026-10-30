@@ -1,5 +1,5 @@
 """Reading policy.toml the way the bash checks did: policy_value, policy_string, git_push_enabled,
-github_repos_listed, gitlab_needs_token, gitlab_mr_unheld, jira_cloud_id_set, any_jira_tool_granted
+git_repos, git_repos_problems, github_repos_listed, gitlab_needs_token, gitlab_mr_unheld, jira_cloud_id_set, any_jira_tool_granted
 and npm_private_registry_needs_token (once in scripts/lib/common.sh and bin/factory; their bash is
 gone, and factory/test_policy.py checks the answers it gave). Not a TOML parser: a line scan good
 enough for the values these checks read. Also the lane git identity rules (policy_toml_string,
@@ -8,6 +8,7 @@ lane_identity_problem).
 
 import os
 import re
+from urllib.parse import urlsplit
 
 from factory import roles
 from factory.conf import read_text
@@ -100,6 +101,74 @@ def git_push_enabled(paths):
     neither "]" nor a space, and after it a "]"."""
     value = policy_value(paths, "git", "repos") or ""
     return re.search(r"\[.*[^\]%s].*\]" % _SPACE, value) is not None
+
+
+def git_repos(paths):
+    """The quoted entries of [git].repos, in order ([] if unset or empty)."""
+    value = policy_value(paths, "git", "repos") or ""
+    return [a or b for a, b in re.findall(r'"([^"]*)"|\'([^\']*)\'', value)]
+
+
+_GROUP_SEGMENT = r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,254}"
+_HOST_RE = re.compile(r"(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?")
+_GROUP_RE = re.compile(r"([A-Za-z0-9.-]+(?::[0-9]{1,5})?)((?:/%s){1,21})" % _GROUP_SEGMENT)
+
+
+def _gitlab_netloc(paths):
+    """The host (and port, if not 443) of [gitlab].url, lowercase, or None if it is unset or not a URL."""
+    url = policy_string(paths, "gitlab", "url")
+    try:
+        parts = urlsplit(url)
+        host, port = parts.hostname, parts.port
+    except ValueError:
+        return None
+    if not url or not host:
+        return None
+    return host + ("" if port in (None, 443) else ":%d" % port)
+
+
+def repo_entry_problem(entry, gitlab_netloc):
+    """Why a [git].repos entry with a "*" is not a valid GitLab group entry, or None. The same
+    rules as the broker's check_repos_entry (broker/passdesk/tools/git.py), which refuses at
+    run time what this refuses at build time: only a final "/*" after "<gitlab host>/<group>",
+    never GitHub "owner/*", the whole instance "host/*", "**", an empty or ".." segment.
+    GITLAB_NETLOC is [gitlab].url's host, which the entry must name (None: no usable URL).
+    Entries without a "*" are the broker's to check (they are names, not patterns)."""
+    if "*" not in entry:
+        return None
+    if not entry.endswith("/*") or "*" in entry[:-1]:
+        return ('[git].repos entry "%s": "*" is allowed only as a final "/*" after a GitLab group '
+                '("<gitlab host>/<group>/*")' % entry)
+    group = entry[:-2]
+    first = group.split("/", 1)[0]
+    if "." not in first and ":" not in first:
+        return ('[git].repos entry "%s": group entries are for GitLab only; list GitHub repos one by one as '
+                'owner/name' % entry)
+    if "/" not in group:
+        return ('[git].repos entry "%s": name a group, not the whole instance ("<gitlab host>/<group>/*")' % entry)
+    m = _GROUP_RE.fullmatch(group)
+    host_ok = bool(m) and _HOST_RE.fullmatch(m.group(1).split(":")[0].lower()) is not None
+    port = m.group(1).partition(":")[2] if m else ""
+    if (not m or not host_ok or (port and not 0 < int(port) < 65536) or ".." in group or "/." in group or "/-" in group
+            or group.lower().endswith((".git", ".atom"))):
+        return ('[git].repos entry "%s": not a valid GitLab group path ("<gitlab host>/<group>[/<subgroup>...]/*", '
+                'no empty or ".." segments)' % entry)
+    if gitlab_netloc is None:
+        return '[git].repos entry "%s" is on GitLab, but [gitlab].url is not set (or is not a URL)' % entry
+    if m.group(1).lower() != gitlab_netloc:
+        return '[git].repos entry "%s" is not on the configured GitLab (%s)' % (entry, gitlab_netloc)
+    return None
+
+
+def git_repos_problems(paths):
+    """[git].repos group entries the broker would refuse, as messages ([] if none)."""
+    netloc = _gitlab_netloc(paths)
+    return [p for p in (repo_entry_problem(e, netloc) for e in git_repos(paths)) if p]
+
+
+def describe_repo_entry(entry):
+    """An entry as the owner reads it: a group says what it covers."""
+    return "%s (any project in the group)" % entry if entry.endswith("/*") else entry
 
 
 def github_repos_listed(paths):

@@ -360,6 +360,16 @@ class HintsTest(StartTest):
             self.policy("[git]\nrepos = %s\n" % repos)
             self.assertEqual(self.hints(), "", repos)
 
+    def test_a_bad_group_entry_is_a_hint(self):
+        self.login()
+        self.write("sbx/secrets", LOGIN + "factory-broker  token  github  configured\n")
+        self.policy('[gitlab]\nurl = "https://gitlab.example.com/"\n[git]\nrepos = ["gitlab.example.com/*", "acme/*"]\n')
+        out = self.hints(FACTORY_KEYCHAIN="none")
+        self.assertIn('  ! [git].repos entry "gitlab.example.com/*": name a group, not the whole instance', out)
+        self.assertIn('[git].repos entry "acme/*": group entries are for GitLab only', out)
+        self.policy('[gitlab]\nurl = "https://gitlab.example.com/"\n[git]\nrepos = ["gitlab.example.com/g/*"]\n')
+        self.assertNotIn("[git].repos entry", self.hints(FACTORY_KEYCHAIN="none"))
+
     def test_jira(self):
         self.login()
         self.write("repo/kits/coordinator/broker.conf", 'BROKER_TOOLS="jira_my_issues jira_get_issue"\n')
