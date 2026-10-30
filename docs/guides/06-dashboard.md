@@ -234,60 +234,11 @@ newest job is still running there is no packet yet, so the tab shows a
 keeps, never the full text), model, time run so far and cost so far (shown as
 `--` until the bridge has a figure, which is usually when the job ends).
 Stepping in the packet tab never changes the transcript, which keeps updating
-live. A job's packet opens only for the lane the job ran on; pressing a row of
-the outbox opens its job's packet the same way.
+live. A job's packet opens only for the lane the job ran on; pressing a JOB
+line on the event printer opens its job's packet the same way.
 
 Stands in for: `factory watch`, `factory logs <role>` and `factory packet
 <lane>`.
-
-## The outbox
-
-The **outbox** sits under the lanes. It has one row for every `factory/*` branch
-the dispatch bridge has imported into your project, newest first, so you can
-see at a glance what is finished and what still needs you. It starts folded to
-its header bar, which shows how many branches are unmerged (the count lights up
-amber when it isn't zero); press the **Outbox** title (or Tab to it and press
-Enter or Space) to unfold or fold it. The dashboard remembers your choice in
-this browser. A row shows:
-
-- the repository, the branch and how many commits it is ahead of your current
-  `HEAD` (`+3`);
-- its merge state, one of:
-  - **UNMERGED**: the branch has commits that are not in your checked-out
-    branch yet (the host's `HEAD`). These are the ones the header counts.
-  - **MERGED**: all of the branch's commits are in your checked-out branch,
-    or the same changes are in it under other commits (the branch was rebased
-    or pushed again under another name).
-  - **GONE**: the imported branch no longer exists in your project.
-  - **?**: the dashboard couldn't check (an odd branch name, or git didn't
-    answer in time). It counts as unmerged until it is checked.
-- the reviewer's latest verdict, APPROVED or REVISE, from the reviewer packets
-  that name the branch (none if no review mentions it; `(old)` means that review
-  started before the developer's last job on the branch ended, so it may not
-  have seen the latest commits);
-- the push state: **STAGED** (a push is waiting at the write gate for your
-  approval), **PUSHED** (the gateway made the push), **FAILED** (it tried and
-  failed), or **WRITTEN** (the gateway opened a pull request for the branch but
-  has no record of the push itself);
-- the pull request or merge request, as a link, once the gateway has opened
-  one. The link is used only if it is a `https://github.com/` pull request or a
-  merge request on your configured GitLab host; anything else is shown as
-  plain text.
-
-MERGED and GONE rows drop off the list a day after the job ended; UNMERGED (and
-`?`) rows drop off after 7 days. A rebase merge, or a branch that landed under
-another name, shows MERGED because the dashboard compares the changes. A squash
-of several commits into one changes them, so that branch stays UNMERGED until
-the 7 days pass or you delete the stale remote-tracking ref (`git branch -r -d
-<ref>`, for example `git branch -r -d factory-developer/factory/foo`), which
-makes the row GONE (see [Get the work](02-build-a-feature.md#get-the-work)).
-
-Press a row to open that job's review packet in the lane monitor. The outbox
-only displays: it can't merge, push or open anything. It asks git for a branch
-list, a commit count and a changes check at most every few seconds, so a very long list is cut
-at 20 rows.
-
-Stands in for: `git branch -r | grep factory-` and `factory packet <job>`.
 
 ## The factory floor
 
@@ -841,7 +792,7 @@ factory dashboard --demo
 
 It needs no `sbx`, broker, Coordinator or `factory setup`. It shows made-up
 data (`example/app`, a few lanes, one held push, a denied broker call and a
-branch, two outbox rows) taken from `scripts/dashboard-demo/`, with times counted from the
+branch) taken from `scripts/dashboard-demo/`, with times counted from the
 moment you start it, and adds a broker call 8 seconds after the start and then
 every 20 seconds, so the factory floor has crates to move. Open the link it prints, press the floor key and
 you can see a held crate waiting at the gate and a denied one landing in the derez field.
@@ -860,10 +811,7 @@ combined with `--coordinator`, `--state`, `--project` or `--factory`;
 
 It is local: it listens only on `127.0.0.1`, refuses any request without
 this run's token, and makes no network connection of its own. Apart from
-Terminal 0 and the control unit it only reads the factory's state folder, and
-for the [outbox](#the-outbox) asks your project's git, read-only and with hooks
-off, which `factory/*` branches exist, how far ahead of `HEAD` they are and
-whether their changes are already in `HEAD`.
+Terminal 0 and the control unit it only reads the factory's state folder.
 The control unit can write only a decision file (APPROVE, DECLINE), its
 action logs and, from SETUP, a role's local tuning override or the project's notes (each after a diff and a
 confirm), and run only `factory doctor`, `factory restart`, `factory

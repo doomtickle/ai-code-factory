@@ -2,6 +2,18 @@
 
 Dated entries, for the user to review. Newest first.
 
+## 2026-10-30
+
+- **The dashboard's OUTBOX module is removed** (owner decision 30 Oct 2026; it was
+  doomtickle/passdesk-ops#189). The owner found it didn't show reliable information, so it goes
+  entirely: `scripts/dashboard_outbox.py`, the `outbox` field of `/api/state`, the page module with
+  its fold state, its demo fixture (`dispatch/demo-refs.json`), tests and docs. The space goes back
+  to the lanes. The dashboard now runs no git command of its own (the control unit's `factory
+  update --plan` runs through the `factory` command, as before). The shared file readers and job-id
+  patterns it held moved to `scripts/dashboard_jobs.py`; the lane monitor's packet tab, and opening a
+  job's packet from an event printer line, are unchanged. The older entries below that describe it
+  are left as history.
+
 ## 2026-10-29
 
 - **The control unit writes two kinds of host config file, from SETUP** (owner decision 29 Oct
