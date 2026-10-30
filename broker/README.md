@@ -255,7 +255,15 @@ Set three things:
    valid only as that final `/*` after a group: not `host/*` (a whole
    instance), not `**`, not in the middle, and GitHub has no `owner/*`
    (list GitHub repos one by one). Like the rest of the allowlist it is
-   baked into the image at build time.
+   baked into the image at build time. For example:
+
+   ```toml
+   [gitlab]
+   url = "https://gitlab.example.com/"   # the trailing "/" is required
+
+   [git]
+   repos = ["gitlab.example.com/group/*"]
+   ```
 3. The `gitlab` credential, delivered like the files below
    (`$BROKER_SECRETS_DIR/gitlab`, `/run/secrets/gitlab` or
    `PASSDESK_SECRET_GITLAB_FILE`): a **project access token** (one project)

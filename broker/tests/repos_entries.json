@@ -1,0 +1,337 @@
+{
+ "comment": "Wildcard [git].repos entries and whether they are valid GitLab group entries. Read by broker/tests/test_gitlab.py (check_repos_entry) and factory/test_policy.py (repo_entry_problem), which must agree on every row.",
+ "entries": [
+  {
+   "entry": "gitlab.example.com/my-group/*",
+   "valid": true
+  },
+  {
+   "entry": "gitlab.example.com/my-group/sub/*",
+   "valid": true
+  },
+  {
+   "entry": "gitlab.example.com/a/b/c/*",
+   "valid": true
+  },
+  {
+   "entry": "gitlab.example.com/a/b/c/d/e/f/g/*",
+   "valid": true
+  },
+  {
+   "entry": "GitLab.Example.COM/My-Group/*",
+   "valid": true
+  },
+  {
+   "entry": "gitlab.example.com/my_group.v2/*",
+   "valid": true
+  },
+  {
+   "entry": "gitlab.example.com:8443/my-group/*",
+   "valid": true
+  },
+  {
+   "entry": "gitlab.example.com:1/g/*",
+   "valid": true
+  },
+  {
+   "entry": "gitlab.example.com:65535/g/*",
+   "valid": true
+  },
+  {
+   "entry": "localhost.localdomain:8080/g/*",
+   "valid": true
+  },
+  {
+   "entry": "gitlab.example.com/g0/g1/g2/g3/g4/g5/g6/g7/g8/g9/g10/g11/g12/g13/g14/g15/g16/g17/g18/g19/g20/*",
+   "valid": true
+  },
+  {
+   "entry": "owner/*",
+   "valid": false
+  },
+  {
+   "entry": "owner/sub/*",
+   "valid": false
+  },
+  {
+   "entry": "Owner/*",
+   "valid": false
+  },
+  {
+   "entry": "*",
+   "valid": false
+  },
+  {
+   "entry": "**",
+   "valid": false
+  },
+  {
+   "entry": "*/*",
+   "valid": false
+  },
+  {
+   "entry": "*/x/*",
+   "valid": false
+  },
+  {
+   "entry": "*/*/*",
+   "valid": false
+  },
+  {
+   "entry": "gitlab.example.com/*",
+   "valid": false
+  },
+  {
+   "entry": "gitlab.example.com:8443/*",
+   "valid": false
+  },
+  {
+   "entry": "gitlab.example.com/**",
+   "valid": false
+  },
+  {
+   "entry": "gitlab.example.com/my-group/**",
+   "valid": false
+  },
+  {
+   "entry": "gitlab.example.com/*/x",
+   "valid": false
+  },
+  {
+   "entry": "gitlab.example.com/*/*",
+   "valid": false
+  },
+  {
+   "entry": "gitlab.example.com/my-*/*",
+   "valid": false
+  },
+  {
+   "entry": "gitlab.example.com/my-group/*/*",
+   "valid": false
+  },
+  {
+   "entry": "gitlab.example.com/my-group/p*",
+   "valid": false
+  },
+  {
+   "entry": "gitlab.example.com/my-group/*x",
+   "valid": false
+  },
+  {
+   "entry": "gitlab.example.com/my-group*",
+   "valid": false
+  },
+  {
+   "entry": "gitlab.example.com/my-group/*/",
+   "valid": false
+  },
+  {
+   "entry": "gitlab.example.com/my-group/*/x",
+   "valid": false
+  },
+  {
+   "entry": "*.example.com/g/*",
+   "valid": false
+  },
+  {
+   "entry": "gitlab.example.com//*",
+   "valid": false
+  },
+  {
+   "entry": "gitlab.example.com/my-group//*",
+   "valid": false
+  },
+  {
+   "entry": "gitlab.example.com//my-group/*",
+   "valid": false
+  },
+  {
+   "entry": "gitlab.example.com/my-group//sub/*",
+   "valid": false
+  },
+  {
+   "entry": "gitlab.example.com/my-group/ /*",
+   "valid": false
+  },
+  {
+   "entry": "gitlab.example.com/../*",
+   "valid": false
+  },
+  {
+   "entry": "gitlab.example.com/my-group/../*",
+   "valid": false
+  },
+  {
+   "entry": "gitlab.example.com/my-group/../x/*",
+   "valid": false
+  },
+  {
+   "entry": "gitlab.example.com/./*",
+   "valid": false
+  },
+  {
+   "entry": "gitlab.example.com/my-group/./*",
+   "valid": false
+  },
+  {
+   "entry": "gitlab.example.com/my..group/*",
+   "valid": false
+  },
+  {
+   "entry": "gitlab.example.com/.x/*",
+   "valid": false
+  },
+  {
+   "entry": "gitlab.example.com/my-group/.x/*",
+   "valid": false
+  },
+  {
+   "entry": "gitlab.example.com/-x/*",
+   "valid": false
+  },
+  {
+   "entry": "gitlab.example.com/my-group/-x/*",
+   "valid": false
+  },
+  {
+   "entry": "gitlab.example.com/my-group.git/*",
+   "valid": false
+  },
+  {
+   "entry": "gitlab.example.com/my-group/sub.git/*",
+   "valid": false
+  },
+  {
+   "entry": "gitlab.example.com/my-group.GIT/*",
+   "valid": false
+  },
+  {
+   "entry": "gitlab.example.com/my-group.atom/*",
+   "valid": false
+  },
+  {
+   "entry": "gitlab.example.com/my-group/*\n",
+   "valid": false
+  },
+  {
+   "entry": "gitlab.example.com/my-group\n/*",
+   "valid": false
+  },
+  {
+   "entry": "\ngitlab.example.com/my-group/*",
+   "valid": false
+  },
+  {
+   "entry": "gitlab.example.com/my-group/*\r",
+   "valid": false
+  },
+  {
+   "entry": "gitlab.example.com/my-group/*\u0000",
+   "valid": false
+  },
+  {
+   "entry": "gitlab.example.com/my group/*",
+   "valid": false
+  },
+  {
+   "entry": " gitlab.example.com/my-group/*",
+   "valid": false
+  },
+  {
+   "entry": "gitlab.example.com/my-group/* ",
+   "valid": false
+  },
+  {
+   "entry": "gitlab.example.com/my\tgroup/*",
+   "valid": false
+  },
+  {
+   "entry": "gitlab.example.com:0/g/*",
+   "valid": false
+  },
+  {
+   "entry": "gitlab.example.com:65536/g/*",
+   "valid": false
+  },
+  {
+   "entry": "gitlab.example.com:99999/g/*",
+   "valid": false
+  },
+  {
+   "entry": "gitlab.example.com:/g/*",
+   "valid": false
+  },
+  {
+   "entry": "gitlab.example.com:abc/g/*",
+   "valid": false
+  },
+  {
+   "entry": "gitlab.example.com:80:80/g/*",
+   "valid": false
+  },
+  {
+   "entry": "gitlab.example.com:-1/g/*",
+   "valid": false
+  },
+  {
+   "entry": "gitlab.example.com:\u0663/g/*",
+   "valid": false
+  },
+  {
+   "entry": "-bad.example.com/g/*",
+   "valid": false
+  },
+  {
+   "entry": "gitlab..example.com/g/*",
+   "valid": false
+  },
+  {
+   "entry": ".example.com/g/*",
+   "valid": false
+  },
+  {
+   "entry": "gitlab.example.com./g/*",
+   "valid": false
+  },
+  {
+   "entry": "user@gitlab.example.com/g/*",
+   "valid": false
+  },
+  {
+   "entry": "gitlab.example.com/g?x/*",
+   "valid": false
+  },
+  {
+   "entry": "gitlab.example.com/g%2fh/*",
+   "valid": false
+  },
+  {
+   "entry": "gitlab.example.com/g\\h/*",
+   "valid": false
+  },
+  {
+   "entry": "gitlab.example.com/gr\u00fcppe/*",
+   "valid": false
+  },
+  {
+   "entry": "gitlab.example.com/g#h/*",
+   "valid": false
+  },
+  {
+   "entry": "https://gitlab.example.com/g/*",
+   "valid": false
+  },
+  {
+   "entry": "/gitlab.example.com/g/*",
+   "valid": false
+  },
+  {
+   "entry": "gitlab.example.com/g/h:i/*",
+   "valid": false
+  },
+  {
+   "entry": "gitlab.example.com/g0/g1/g2/g3/g4/g5/g6/g7/g8/g9/g10/g11/g12/g13/g14/g15/g16/g17/g18/g19/g20/g21/*",
+   "valid": false
+  }
+ ]
+}

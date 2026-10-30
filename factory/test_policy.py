@@ -6,6 +6,7 @@ scripts/test_factory_config.sh. That bash is gone: every expected answer here is
 on the same policy files.
 """
 
+import json
 import os
 import re
 import unittest
@@ -220,6 +221,27 @@ class GitReposTest(PolicyTest):
             for _ in self.either_file(text):
                 self.assertEqual((policy.git_push_enabled(self.paths), policy.github_repos_listed(self.paths)),
                                  (enabled, github), repr(text))
+
+
+class SharedGroupEntryTableTest(unittest.TestCase):
+    """broker/tests/repos_entries.json is also run through the broker's check_repos_entry
+    (broker/tests/test_gitlab.py). The host never imports broker code: the two validators are
+    kept in step by agreeing on this table."""
+
+    def test_repo_entry_problem_agrees_with_the_table(self):
+        path = os.path.join(REPO, "broker", "tests", "repos_entries.json")
+        with open(path, encoding="utf-8") as f:
+            rows = json.load(f)["entries"]
+        self.assertGreater(len(rows), 60)
+        self.assertTrue(any(r["valid"] for r in rows) and any(not r["valid"] for r in rows))
+        for row in rows:
+            entry = row["entry"]
+            netloc = entry.split("/", 1)[0].lower()
+            problem = policy.repo_entry_problem(entry, netloc)
+            if row["valid"]:
+                self.assertIsNone(problem, repr(entry))
+            else:
+                self.assertIsNotNone(problem, repr(entry))
 
 
 class GitlabChecksTest(PolicyTest):

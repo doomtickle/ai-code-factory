@@ -521,12 +521,35 @@ class StricterNamesTests(GitLabBase):
             git.check_repo(too_deep, {**GL_POLICY, "git": {**GL_POLICY["git"], "repos": [too_deep]}})
 
 
+def shared_group_entries():
+    """The table broker/tests/repos_entries.json, also run through the host's validator
+    (factory/test_policy.py): both sides must agree on every row."""
+    return json.loads((Path(__file__).parent / "repos_entries.json").read_text())["entries"]
+
+
 class GroupEntryTests(GitLabBase):
     """[git].repos group entries ("<host>/<group>/*", owner decision 2026-10-30): one matcher,
     boundaries on whole path components, malformed entries refused (and matching nothing)."""
 
     def pol(self, *entries):
         return {**GL_POLICY, "git": {**GL_POLICY["git"], "repos": list(entries)}}
+
+    def test_shared_entry_table(self):
+        rows = shared_group_entries()
+        self.assertGreater(len(rows), 60)
+        self.assertTrue(any(r["valid"] for r in rows) and any(not r["valid"] for r in rows))
+        for row in rows:
+            entry = row["entry"]
+            self.assertIn("*", entry)
+            if row["valid"]:
+                self.assertEqual(git.check_repos_entry(entry), entry, entry)
+                self.assertTrue(git.is_group_entry(entry), entry)
+            else:
+                with self.assertRaises(Denied, msg=repr(entry)):
+                    git.check_repos_entry(entry)
+                # an entry that fails the check matches nothing, even a repo it looks like it covers
+                prefix = entry[:-1] if entry.endswith("*") else entry
+                self.assertFalse(git.repo_allowed(prefix + "project", [entry]), repr(entry))
 
     def test_matching(self):
         for repo in (f"{GL}/platform/api", f"{GL}/platform/a/b/c/svc", f"{GL}/PLATFORM/API", f"{GL.upper()}/Platform/x",
@@ -773,54 +796,94 @@ class GroupDoctorTests(GitLabBase):
         self.assertFalse(leaks(json.dumps(report.to_dict())))
         return report, seen
 
-    def test_live_group_check(self):
-        api = f"https://{GL}/api/v4/groups/platform"
-        pol = self.pol(GROUP)
+    USER_API = f"https://{GL}/api/v4/user"
+    MEMBER_API = f"https://{GL}/api/v4/groups/platform/members/all/4242"
+    BOT = (200, b'{"id": 4242, "username": "group_1_bot"}')
+
+    def member(self, level):
+        return 200, json.dumps({"id": 4242, "access_level": level}).encode()
+
+    def group_live(self, member_answer, user_answer=BOT):
+        return self.live(self.pol(GROUP), {self.USER_API: user_answer, self.MEMBER_API: member_answer})
+
+    def test_group_token_is_checked_by_its_role_in_the_group(self):
         shown = f"{GROUP} (any project in the group)"
+        for level in (30, 40, 50):
+            report, seen = self.group_live(self.member(level))
+            self.assertTrue(any(f"member of {shown} with push access (access level {level})" in m
+                                for m in report.messages(doctor.OK)), report.items)
+            self.assertEqual(report.messages(doctor.WARN) + report.messages(doctor.FAIL), [])
+            self.assertEqual(seen, [(self.USER_API, f"Bearer {GL_TOKEN}"), (self.MEMBER_API, f"Bearer {GL_TOKEN}")])
 
-        def access(level):
-            return 200, json.dumps({"permissions": {"group_access": {"access_level": level}}}).encode()
-        for answer, level, fragment in ((access(40), doctor.OK, f"GitLab token can read and push {shown}"),
-                                        (access(30), doctor.OK, "can read and push"),
-                                        (access(20), doctor.FAIL, "below the Developer role"),
-                                        (access(10), doctor.FAIL, "below the Developer role"),
-                                        ((200, b"{}"), doctor.WARN, "project access token"),
-                                        ((200, b'{"permissions": {"group_access": null}}'), doctor.WARN, "could not be confirmed"),
-                                        ((200, b'{"permissions": "odd"}'), doctor.WARN, "could not be confirmed"),
-                                        ((200, b"not json"), doctor.WARN, "could not be confirmed"),
-                                        ((200, b'{"permissions": {"group_access": {"access_level": "40"}}}'), doctor.WARN,
-                                         "could not be confirmed"),
-                                        ((200, b'{"permissions": {"group_access": {"access_level": true}}}'), doctor.WARN,
-                                         "could not be confirmed"),
-                                        ((404, b""), doctor.FAIL, "project access token"),
-                                        ((401, b""), doctor.FAIL, "rejects the token"),
-                                        ((403, b""), doctor.FAIL, "rejects the token"),
-                                        ((500, b""), doctor.WARN, "HTTP 500")):
-            report, seen = self.live(pol, {api: answer})
-            self.assertTrue(any(fragment in m for m in report.messages(level)), (answer, report.items))
-            self.assertEqual(seen, [(api, f"Bearer {GL_TOKEN}")])
+    def test_a_group_role_below_developer_warns(self):
+        for level in (0, 5, 10, 20):
+            report, _ = self.group_live(self.member(level))
+            self.assertTrue(any(f"access level {level}, below the Developer role" in m
+                                for m in report.messages(doctor.WARN)), report.items)
+            self.assertFalse([m for m in report.messages(doctor.OK) if "push access" in m])
 
-    def test_a_project_token_on_a_group_entry_is_flagged_with_the_fix(self):
-        report, _ = self.live(self.pol(GROUP), {f"https://{GL}/api/v4/groups/platform": (404, b"")})
-        fails = [(text, fix) for _, level, text, fix in report.items if level == doctor.FAIL]
-        self.assertEqual(len(fails), 1)
-        text, fix = fails[0][0], " ".join(fails[0][1])
+    def test_not_a_member_warns_and_names_the_project_token_cause(self):
+        report, seen = self.group_live((404, b'{"message": "404 Not found"}'))
+        warns = [(text, fix) for _, level, text, fix in report.items if level == doctor.WARN]
+        self.assertEqual(len(warns), 1)
+        text, fix = warns[0][0], " ".join(warns[0][1])
+        self.assertIn("not a member", text)
         self.assertIn("project access token", text)
         self.assertIn("group access token", fix)
         self.assertIn("Developer", fix)
+        self.assertEqual(report.messages(doctor.FAIL), [])
+        self.assertFalse([m for m in report.messages(doctor.OK) if "member" in m])
+
+    def test_group_role_that_cannot_be_confirmed_warns_and_never_says_ok(self):
+        member_answers = ((500, b""), (401, b""), (403, b""), (200, b"not json"), (200, b"{}"),
+                          (200, b'{"access_level": "40"}'), (200, b'{"access_level": true}'),
+                          (200, b'{"access_level": null}'), (200, b"[]"))
+        for answer in member_answers:
+            report, _ = self.group_live(answer)
+            self.assertTrue(any("its group role could not be confirmed" in m for m in report.messages(doctor.WARN)),
+                            (answer, report.items))
+            self.assertFalse([m for m in report.messages(doctor.OK) if "member" in m], (answer, report.items))
+            self.assertEqual(report.messages(doctor.FAIL), [], answer)
+
+    def test_a_failed_user_lookup_warns_and_skips_the_member_lookup(self):
+        for answer in ((401, b""), (403, b""), (404, b""), (500, b""), (200, b"not json"), (200, b"{}"),
+                       (200, b'{"id": "4242"}'), (200, b'{"id": true}'), (200, b'{"id": -1}'), (200, b"[]")):
+            report, seen = self.group_live(self.member(40), user_answer=answer)
+            self.assertTrue(any("its group role could not be confirmed" in m for m in report.messages(doctor.WARN)),
+                            (answer, report.items))
+            self.assertFalse([m for m in report.messages(doctor.OK) if "member" in m], (answer, report.items))
+            self.assertEqual(report.messages(doctor.FAIL), [], answer)
+            self.assertEqual([u for u, _ in seen], [self.USER_API], answer)
+
+    def test_user_is_looked_up_once_for_several_groups(self):
+        pol = self.pol(GROUP, f"{GL}/Platform/Tools/*")
+        report, seen = self.live(pol, {self.USER_API: self.BOT,
+                                       self.MEMBER_API: self.member(30),
+                                       f"https://{GL}/api/v4/groups/Platform%2FTools/members/all/4242": self.member(20)})
+        self.assertEqual([u for u, _ in seen].count(self.USER_API), 1)
+        self.assertEqual(len([m for m in report.messages(doctor.OK) if "member of" in m]), 1)
+        self.assertEqual(len(report.messages(doctor.WARN)), 1)
+
+    def test_the_token_is_only_sent_to_the_gitlab_api_and_never_shown(self):
+        report, seen = self.group_live(self.member(40))
+        self.assertEqual({a for _, a in seen}, {f"Bearer {GL_TOKEN}"})
+        self.assertTrue(all(u.startswith(f"https://{GL}/api/v4/") for u, _ in seen))
+        self.assertNotIn(GL_TOKEN, json.dumps(report.to_dict()))
+
+    def test_an_unreachable_gitlab_on_either_lookup_fails_once(self):
+        err = urllib.error.URLError("no route")
+        for answers, calls in (({self.USER_API: err}, 1), ({self.USER_API: self.BOT, self.MEMBER_API: err}, 2)):
+            report, seen = self.live(self.pol(GROUP, f"{GL}/other/*"), answers)
+            self.assertEqual(len([m for m in report.messages(doctor.FAIL) if "cannot reach" in m]), 1)
+            self.assertEqual(len(seen), calls)
 
     def test_live_subgroup_is_one_encoded_path_and_projects_keep_their_check(self):
         pol = self.pol(f"{GL}/Platform/Tools/*", PROJECT)
-        report, seen = self.live(pol, {})
+        report, seen = self.live(pol, {self.USER_API: self.BOT})
         urls = [u for u, _ in seen if GL in u]
-        self.assertEqual(urls, [f"https://{GL}/api/v4/groups/Platform%2FTools", f"https://{GL}/api/v4/projects/platform%2Fapi"])
+        self.assertEqual(urls, [self.USER_API, f"https://{GL}/api/v4/groups/Platform%2FTools/members/all/4242",
+                                f"https://{GL}/api/v4/projects/platform%2Fapi"])
         self.assertEqual({a for u, a in seen if GL in u}, {f"Bearer {GL_TOKEN}"})
-
-    def test_an_unreachable_gitlab_fails_once(self):
-        err = urllib.error.URLError("no route")
-        report, seen = self.live(self.pol(GROUP, f"{GL}/other/*"), {f"https://{GL}/api/v4/groups/platform": err})
-        self.assertTrue(any("cannot reach" in m for m in report.messages(doctor.FAIL)))
-        self.assertEqual(len(seen), 1)
 
     def test_no_token_skips_the_group_check_and_says_so(self):
         (credentials.secrets_dir() / "gitlab").unlink()

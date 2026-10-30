@@ -39,7 +39,8 @@ max_bytes = 500_000
 # GitHub repos as owner/name, and projects on the GitLab named by
 # [gitlab].url host first, e.g. "gitlab.example.com/group/sub/project", or a
 # whole GitLab group with a final "/*", e.g. "gitlab.example.com/group/*"
-# (any project under it, subgroups included; GitLab only, no GitHub "owner/*").
+# (any project under it, subgroups included; GitLab only, no GitHub "owner/*";
+# its host must be [gitlab].url's, which ends in "/": url = "https://gitlab.example.com/").
 # Empty means git tools are disabled.
 # Keep this on a single line: some deployments' onboarding tooling parses it
 # (e.g. the AI Code Factory's bin/factory).

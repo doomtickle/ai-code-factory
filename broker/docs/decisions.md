@@ -9,7 +9,8 @@ Dated entries, for the user to review. Newest first.
   `[git].repos`, saving a new project access token (`factory secret save gitlab`) and running
   `factory update`. Now one policy edit and one token cover the group. Choices:
   - **Syntax: `"<gitlab host>/<group path>/*"`**, e.g. `"gitlab.example.com/my-group/*"` or
-    `"gitlab.example.com/my-group/sub/*"`. It matches any project under the group at any depth
+    `"gitlab.example.com/my-group/sub/*"`, with `[gitlab] url = "https://gitlab.example.com/"`
+    (trailing `/` required; the entry's host must be that instance). It matches any project under the group at any depth
     (subgroups included), case-insensitively like exact entries. One matcher, `repo_allowed` in
     `tools/git.py`, serves `check_repo` (so `git_fetch`, `git_push`, `gitlab_create_mr` and every
     completer of a held write) and the doctor; no consumer does its own exact membership.
@@ -35,13 +36,17 @@ Dated entries, for the user to review. Newest first.
     clear error. A GitHub token (fine-grained, per repo) does not scale with an owner wildcard the
     way a GitLab group token does, and a public owner would let an agent push to, or open PRs on,
     repos nobody listed. Out of scope; list GitHub repos one by one.
-  - **Doctor: groups are checked as groups.** `api/v4/groups/<url-encoded path>` with the same
-    no-redirect opener and token handling as the project check, expecting Developer or above in
-    `permissions.group_access`. A 404, or a group the token can see but is no member of, is
-    flagged as likely a project access token (it reaches one project only) with the fix. The
-    group response's `permissions.group_access` shape was written from memory of GitLab's API, not
-    checked against a live instance (no web access); if it is absent the doctor warns that access
-    "could not be confirmed" rather than failing.
+  - **Doctor: groups are checked by the token's role in the group.** `GET api/v4/user` gives the
+    token's (bot) user id, then `GET api/v4/groups/<url-encoded path>/members/all/<id>` gives its
+    `access_level` (30, Developer, or above passes). Same no-redirect opener and token handling as
+    the project check; the token is never in a message. Anything short of a confirmed Developer+
+    is a warning, never an OK: below Developer, a 404 on the member lookup (not a member: likely a
+    project access token, which reaches one project only, with the fix), a failed or odd `/user`
+    answer, or any other failure ("its group role could not be confirmed"). The first version read
+    `permissions.group_access` from `GET /groups/:id`, which the reviewer believes GitLab returns
+    only on the projects API, so a correct group token would have drawn a false warning; the
+    members lookup is the documented way to read a role. Still unverified against a live GitLab
+    (no web access): that a group access token can read its own `/user` and `members/all`.
   - **Credential exception reworded** in `CLAUDE.md` and `broker/CLAUDE.md`: "a GitLab project
     access token" is now "a GitLab project or group access token". It is the same credential
     delivered the same way (a file in the broker sandbox only, scoped to `[gitlab].url`); nothing

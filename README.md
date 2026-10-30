@@ -379,7 +379,14 @@ GitHub and opens merge requests with `gitlab_create_mr`.
    ```
    To allow every project in one GitLab group (subgroups included) without
    listing each, end the group with `/*`:
-   `repos = ["gitlab.acme.net/platform/*"]`. It matches whole path
+   ```toml
+   [gitlab]
+   url = "https://gitlab.acme.net/"   # the trailing "/" is required
+
+   [git]
+   repos = ["gitlab.acme.net/platform/*"]
+   ```
+   The entry's host must be the one in `[gitlab].url`. It matches whole path
    components (`platform/*` does not cover `platform-evil/x`), is for GitLab
    only (GitHub repos are listed one by one), and is baked into the broker
    image like the rest of the list: edit it, then `factory update`.
