@@ -1548,6 +1548,7 @@ class CuScriptTests(unittest.TestCase):
                           "tuning sends changed keys only", "tuning diff is text",
                           "tuning confirm holds, then sends the token once", "tuning 409 changed",
                           "tuning cancel drops the token", "tuning demo 403 line",
+                          "SETTINGS: comma, hint and tabs", "SETTINGS: the header's message",
                           "a pending knob check is dropped when the notes editor opens"])
 
 
@@ -1574,7 +1575,7 @@ class RealPageTests(unittest.TestCase):
 
     def test_service_keys(self):
         html = (UI / "cu.html").read_text()
-        row = html[html.index('<div class="service"'):html.index('<!-- SETUP')]
+        row = html[html.index('<div class="service"'):html.index('<!-- SETTINGS')]
         self.assertEqual(re.findall(r'id="svc-([a-z]+)"', row), ["doctor", "restart", "update", "log"])
         js = (UI / "cu.js").read_text()
         self.assertIn('doctor: "factory doctor"', js)

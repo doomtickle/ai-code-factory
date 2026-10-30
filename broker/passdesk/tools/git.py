@@ -3,9 +3,13 @@ runs only in the broker's private mirrors; code crosses into the workspace as gi
 
 Two forges. A [git].repos entry is a GitHub repo ("owner/name") or, when
 [gitlab].url names a GitLab instance (self-hosted or gitlab.com), a project
-on it, host first ("gitlab.example.com/group/sub/project"). A first segment
-with a dot or a port can't be a GitHub owner, so the name alone says which
-forge a repo is on (remote_of).
+on it, host first ("gitlab.example.com/group/sub/project"), or a whole GitLab
+group, host first and ending in "/*" ("gitlab.example.com/group/*": any
+project under that group, subgroups included; owner decision 2026-10-30). A
+first segment with a dot or a port can't be a GitHub owner, so the name alone
+says which forge a repo is on (remote_of). GitHub has no wildcard entries.
+Every consumer of [git].repos asks repo_allowed / check_repos_entry, so there
+is one matcher.
 
 GitHub credential: with sbx the egress proxy attaches the token and the
 gateway never sees it (credentials.get("github") returns None). Where the
@@ -36,6 +40,7 @@ is made in the call, as before.
 from __future__ import annotations
 
 import base64
+import dataclasses
 import fnmatch
 import hashlib
 import json
@@ -87,17 +92,108 @@ def is_gitlab_name(repo: str) -> bool:
     return ("." in first or ":" in first) and re.fullmatch(r"[A-Za-z0-9.-]+(?::[0-9]{1,5})?", first) is not None
 
 
-def check_repo(repo: str, policy: dict) -> str:
+_GROUP_SUFFIX = "/*"
+_GITLAB_HOST_RE = re.compile(r"[A-Za-z0-9.-]+(?::[0-9]{1,5})?")
+_GITLAB_GROUP_RE = re.compile(rf"(?:{_GITLAB_SEGMENT})(?:/{_GITLAB_SEGMENT}){{0,20}}")
+
+
+def is_group_entry(entry: str) -> bool:
+    """True for a [git].repos entry that is meant as a GitLab group ("<host>/<group>/*").
+    It says nothing about whether the entry is well formed: see check_repos_entry."""
+    return isinstance(entry, str) and entry.endswith(_GROUP_SUFFIX)
+
+
+def check_repos_entry(entry: str) -> str:
+    """A [git].repos entry, format-checked: "owner/name", "<gitlab host>/<group>/.../<project>"
+    or a group "<gitlab host>/<group>[/<subgroup>...]/*". Returns it; raises Denied with the
+    reason when it is malformed. (That a GitLab host is [gitlab].url's is checked per repo,
+    by remote_of.)
+
+    Only a final "/*" after a host and at least one group segment is a wildcard. GitHub
+    "owner/*", the whole instance "host/*", "**", a "*" anywhere else, empty segments,
+    "..", "/." and "/-" segments and a ".git" or ".atom" end are all refused."""
+    if not isinstance(entry, str):
+        raise Denied(f"[git].repos entry {entry!r} is not a string")
+    if "*" not in entry:
+        # An exact entry is checked as the repo name it must equal.
+        return check_repo_name(entry)
+    if not entry.endswith(_GROUP_SUFFIX) or "*" in entry[:-1]:
+        raise Denied(f"[git].repos entry {entry!r}: \"*\" is allowed only as a final \"/*\" "
+                     "after a GitLab group (\"<gitlab host>/<group>/*\")")
+    group = entry[:-len(_GROUP_SUFFIX)]
+    if not is_gitlab_name(group + "/x"):
+        raise Denied(f"[git].repos entry {entry!r}: group entries are for GitLab only "
+                     "(\"<gitlab host>/<group>/*\"); GitHub repos are listed one by one as owner/name")
+    host, _, path = group.partition("/")
+    hostname, _, port = host.partition(":")
+    if not path:
+        raise Denied(f"[git].repos entry {entry!r}: name a group, not the whole instance "
+                     "(\"<gitlab host>/<group>/*\")")
+    if (not _HOST_RE.fullmatch(hostname.lower()) or (port and not 0 < int(port) < 65536)
+            or not _GITLAB_HOST_RE.fullmatch(host) or not _GITLAB_GROUP_RE.fullmatch(path) or ".." in group
+            or "/." in group or "/-" in group or group.lower().endswith((".git", ".atom"))):
+        raise Denied(f"[git].repos entry {entry!r}: not a valid GitLab group path "
+                     "(\"<gitlab host>/<group>[/<subgroup>...]/*\", no empty or \"..\" segments)")
+    return entry
+
+
+def check_repo_name(repo: str) -> str:
+    """A concrete repo name (what an agent asks for, or an exact [git].repos entry),
+    format-checked. Raises Denied. Does not look at the allowlist."""
     if not isinstance(repo, str):
         raise Denied("invalid repo")
     if is_gitlab_name(repo):
-        if (not _GITLAB_REPO_RE.match(repo) or ".." in repo
+        if (not _GITLAB_REPO_RE.fullmatch(repo) or ".." in repo
                 or repo.lower().endswith((".git", ".atom")) or "/." in repo or "/-" in repo):
             raise Denied(f"invalid repo: {repo!r} (expected owner/name, or <gitlab host>/<group>/<project>)")
-    elif not _REPO_RE.match(repo) or ".." in repo:
+    elif not _REPO_RE.fullmatch(repo) or ".." in repo:
         raise Denied(f"invalid repo: {repo!r} (expected owner/name)")
-    allowed = [r.lower() for r in policy["git"].get("repos", []) if isinstance(r, str)]
-    if repo.lower() not in allowed:
+    return repo
+
+
+def repo_allowed(repo: str, entries) -> bool:
+    """True if a format-checked repo name is listed in [git].repos: equal to an exact entry,
+    or under a group entry. Case-insensitive. A group "host/g/*" covers "host/g/p" and
+    "host/g/sub/p" and is matched on whole path components ("host/g-evil/p" and the group
+    "host/g" itself are not under it). An entry that is not well formed matches nothing."""
+    if not isinstance(repo, str):
+        return False
+    low = repo.lower()
+    for entry in entries if isinstance(entries, (list, tuple)) else ():
+        if not isinstance(entry, str):
+            continue
+        if not is_group_entry(entry) and "*" not in entry:
+            if low == entry.lower():
+                return True
+            continue
+        try:
+            check_repos_entry(entry)
+        except Denied:
+            continue
+        prefix = entry.lower()[:-1]  # "host/g/": ends at a component boundary
+        if low.startswith(prefix) and len(low) > len(prefix):
+            return True
+    return False
+
+
+def group_remote(entry: str, policy: dict) -> Remote:
+    """Where a group entry ("<host>/<group>/*") lives: a Remote whose path is the group path.
+    Raises Denied when the entry is malformed or its host is not [gitlab].url's."""
+    check_repos_entry(entry)
+    if not is_group_entry(entry):
+        raise Denied(f"[git].repos entry {entry!r} is not a group")
+    group = entry[:-len(_GROUP_SUFFIX)]
+    return dataclasses.replace(remote_of(f"{group}/x", policy), path=group.partition("/")[2])
+
+
+def describe_repos_entry(entry: str) -> str:
+    """How an entry reads to the owner: a group says what it covers."""
+    return f"{entry} (any project in the group)" if is_group_entry(entry) else entry
+
+
+def check_repo(repo: str, policy: dict) -> str:
+    check_repo_name(repo)  # before any matching: only a well-formed name reaches repo_allowed
+    if not repo_allowed(repo, policy["git"].get("repos", [])):
         raise Denied(f"repo {repo} is not in the broker allowlist (policy.toml [git].repos)")
     remote_of(repo, policy)  # a GitLab name must be on the configured instance
     return repo
@@ -240,7 +336,7 @@ def gitlab_token() -> str | None:
         return None
     if not _GITLAB_TOKEN_RE.fullmatch(token):
         raise Denied("the gitlab credential is not a GitLab token (expected 20-255 letters, digits, '_', '-' "
-                     "or '.'); deliver a project access token - see README, Configuring credentials")
+                     "or '.'); deliver a project or group access token - see README, Configuring credentials")
     filters.remember_secret(token, git_basic_auth(token, "oauth2").removeprefix("Basic ").rstrip("="))
     return token
 

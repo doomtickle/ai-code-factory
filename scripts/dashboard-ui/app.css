@@ -54,6 +54,26 @@ button { font: inherit; color: inherit; }
 /* MANUAL: a key on the header plate; the docs open in their own tab */
 a.tabkey { display: inline-block; text-decoration: none; }
 .manual { align-self: center; }
+.head-keys { display: flex; align-items: center; gap: 12px; }
+/* SETTINGS: the header's primary key. A full-size orange keycap with a lamp and the shortcut's cap, so it reads as the
+   control it is, next to MANUAL; the lamp pulses (and the key breathes) until it has been opened once (.cue). */
+.settings-key { cursor: pointer; border: 0; border-radius: 5px; padding: 9px 14px 8px 12px; display: inline-flex; align-items: center; gap: 9px;
+  background: linear-gradient(180deg, #ffb35c, var(--stripe-1)); color: #1c0f04;
+  font-family: var(--f-silk); font-weight: 700; letter-spacing: .16em; text-transform: uppercase; font-size: 1rem; line-height: 1;
+  box-shadow: 0 4px 0 #8f3f0b, 0 6px 8px rgba(0,0,0,.6), inset 0 1px 0 rgba(255,255,255,.35); transition: transform .05s, box-shadow .05s; }
+.settings-key:active:not(:disabled) { transform: translateY(3px); box-shadow: 0 1px 0 #8f3f0b, 0 2px 3px rgba(0,0,0,.6); }
+.settings-key:focus-visible { outline: 2px solid var(--stripe-2); outline-offset: 3px; }
+.settings-key:disabled { cursor: not-allowed; transform: translateY(2px); box-shadow: 0 2px 0 #8f3f0b, 0 3px 4px rgba(0,0,0,.5); filter: saturate(.45) brightness(.72); }
+.settings-key .led { width: 9px; height: 9px; box-shadow: inset 0 -2px 3px rgba(0,0,0,.5), 0 0 0 2px #5a2506; }
+.settings-key:not(:disabled) .led { background: var(--led-green); box-shadow: inset 0 -2px 3px rgba(0,0,0,.3), 0 0 0 2px #5a2506, 0 0 8px var(--led-green); }
+.settings-key.cue .led { background: var(--led-amber); animation: sk-lamp 1.4s ease-in-out infinite; }
+.settings-key.cue { animation: sk-breathe 2.8s ease-in-out infinite; }
+.sk-cap { font-family: var(--f-silk); font-weight: 700; font-size: .85rem; letter-spacing: 0; line-height: 1; min-width: 1.6em; padding: 3px 0 4px; text-align: center; border-radius: 3px;
+  color: #1c0f04; background: linear-gradient(180deg, #fff3d6, #e8cf9e); box-shadow: 0 2px 0 #8f3f0b, inset 0 1px 0 rgba(255,255,255,.7); }
+@keyframes sk-lamp { 0%, 100% { opacity: 1; box-shadow: inset 0 -2px 3px rgba(0,0,0,.3), 0 0 0 2px #5a2506, 0 0 11px var(--led-amber); }
+  50% { opacity: .35; box-shadow: inset 0 -2px 3px rgba(0,0,0,.5), 0 0 0 2px #5a2506; } }
+@keyframes sk-breathe { 0%, 100% { box-shadow: 0 4px 0 #8f3f0b, 0 6px 8px rgba(0,0,0,.6), inset 0 1px 0 rgba(255,255,255,.35), 0 0 0 0 rgba(255,174,26,0); }
+  50% { box-shadow: 0 4px 0 #8f3f0b, 0 6px 8px rgba(0,0,0,.6), inset 0 1px 0 rgba(255,255,255,.35), 0 0 16px 3px rgba(255,174,26,.55); } }
 /* ? on each module: a small keycap linking to its part of the dashboard guide */
 .help { display: inline-grid; place-items: center; width: 18px; height: 18px; flex: none; border-radius: 50%; text-decoration: none;
   font-family: var(--f-silk); font-weight: 700; font-size: .7rem; line-height: 1; color: var(--key-ink);
@@ -522,7 +542,7 @@ button.pl:focus-visible { outline: 2px solid var(--ink-red); outline-offset: -2p
 .tabkey[aria-pressed="true"] { transform: translateY(2px); box-shadow: 0 1px 0 var(--key-lo); background: linear-gradient(180deg, #ffb35c, var(--stripe-1)); }
 
 @media (prefers-reduced-motion: reduce) {
-  .led.blink, .crt .shift.first, .lcd-text .k-held, .gate-lcd .states .st-staged, .crt::after, .pl.new { animation: none !important; }
+  .led.blink, .settings-key.cue, .settings-key.cue .led, .crt .shift.first, .lcd-text .k-held, .gate-lcd .states .st-staged, .crt::after, .pl.new { animation: none !important; }
   .lane.entering, .lane.entering .lcd-text, .lane.leaving, .standby.entering, .chip.entering, .chip.entering .led { animation: none !important; }
   .crt::before { display: none; }
   .crt-roll.rolling { animation: none; transform: translateY(var(--roll-still, 0)); }
@@ -551,4 +571,7 @@ button.pl:focus-visible { outline: 2px solid var(--ink-red); outline-offset: -2p
   .lane-stats .stat:not(:first-child) { display: none; }
   .readouts { margin-left: 0; }
   .head { padding-left: 20px; padding-right: 20px; }
+  .head > .badge { order: -3; }
+  .head-keys { width: 100%; order: -2; }
+  .settings-key { flex: 1 1 auto; justify-content: center; padding-top: 12px; padding-bottom: 11px; }
 }

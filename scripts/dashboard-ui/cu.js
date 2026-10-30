@@ -5,20 +5,22 @@
 // this origin can read, goes out in the X-Factory-Control header of every POST,
 // and the <meta> is removed. Server and agent strings go in with textContent,
 // never as HTML and never as a URL.
-// The only thing it tells the main page is one of three fixed strings over
+// The only thing it tells the main page is one of four fixed strings over
 // postMessage: "cu:expand" and "cu:collapse" (grow the frame to the whole window
-// for the confirmation and log screens, and back) and "cu:reload" (after an
-// update changed the dashboard's page). The one thing it hears back is
-// {type: "cu:select", id}, from its parent at the main origin: which card to show.
-// It is a display hint (see showCard) and decides nothing.
+// for the confirmation and log screens, and back), "cu:reload" (after an
+// update changed the dashboard's page) and "cu:settings" (the SETTINGS screen
+// opened, so the header key stops pulsing). It hears two things back, from its
+// parent at the main origin: {type: "cu:select", id}, which card to show, and
+// {type: "cu:open", screen: "settings"}, the header's SETTINGS key. Both are
+// display hints (see showCard, openFromParent) and decide nothing.
 // INSPECT shows a held push's patch (/cu/api/patch): the server reads it from
 // the broker's state, checks it against the card's digest, parses and sanitises
 // it, so this page only draws lines with textContent; nothing from the patch
 // goes into an attribute, a URL, a class name or a title.
-// SETUP also tunes a role (#185): knobs for LANES, MODEL, EFFORT and the MAX_ limits write the
+// SETTINGS (formerly SETUP) also tunes a role (#185): knobs for LANES, MODEL, EFFORT and the MAX_ limits write the
 // local override file, in the same two steps (/cu/api/config-prepare shows the diff, only CONFIRM
 // sends the token to /cu/api/config-run, dark for HOLD_MS). Only those named keys; everything
-// else on SETUP stays read-only, except the project notes editor (cu-notes.js, #186), which
+// else on SETTINGS stays read-only, except the project notes editor (cu-notes.js, #186), which
 // writes through the same two endpoints; the editor owns the screen while it is open.
 // Starting a restart, an update or a diag takes two presses: the key asks the server
 // what would happen (/cu/api/prepare, which runs nothing but `factory update
@@ -411,14 +413,22 @@
     holdKeys();
     renderDeck();
   }
+  // {type: "cu:open", screen: "settings"}: the header's SETTINGS key (or its comma) asks the deck to open
+  // the SETTINGS screen, as the plate below would. Read-only: it opens a screen and nothing else, only from
+  // the deck (not over another screen, so a message can never cover a question or a decision in flight).
+  function openFromParent() {
+    if (screen !== "deck") return;
+    if (fault || !st) { flash("Settings aren't ready yet: the control unit has no state.", "err"); return; }
+    openSetup();
+  }
   window.addEventListener("message", e => {
     if (e.source !== window.parent || e.origin !== mainOrigin) return;
     const d = e.data;
     if (!d || typeof d !== "object" || Array.isArray(d)) return;
     const names = Object.keys(d);
-    if (names.length !== 2 || !names.includes("type") || !names.includes("id")) return;
-    if (d.type !== "cu:select" || typeof d.id !== "string" || !CARD_ID.test(d.id)) return;
-    showCard(d.id);
+    if (names.length !== 2 || !names.includes("type")) return;
+    if (d.type === "cu:open" && names.includes("screen") && d.screen === "settings") openFromParent();
+    else if (d.type === "cu:select" && names.includes("id") && typeof d.id === "string" && CARD_ID.test(d.id)) showCard(d.id);
   });
 
   const WHY = {
@@ -589,6 +599,40 @@
     });
   }
 
+  // ---------- the SETTINGS tabs: Roles, Project notes, Gateway, Dashboard look
+  // Fixed names and labels only; the only attributes set are role, aria-selected and tabindex.
+  const SETTINGS_TABS = [["roles", "Roles"], ["notes", "Project notes"], ["gateway", "Gateway"], ["look", "Dashboard look"]];
+  let settingsTab = "roles", tabKeys = new Map();   // tabKeys: the buttons of the strip last drawn
+  function settingsTabs(redraw) {
+    const strip = el("div", "ntabs stabs");
+    strip.setAttribute("role", "tablist");
+    strip.setAttribute("aria-label", "Settings sections");
+    const pick = id => {
+      settingsTab = id;
+      redraw();
+      const now = tabKeys.get(id);
+      if (now) now.focus();
+    };
+    const btns = SETTINGS_TABS.map(([id, label], i) => {
+      const b = el("button", `ntab${id === settingsTab ? " on" : ""}`, label);
+      b.type = "button";
+      b.setAttribute("role", "tab");
+      b.setAttribute("aria-selected", id === settingsTab ? "true" : "false");
+      b.setAttribute("tabindex", id === settingsTab ? "0" : "-1");
+      b.addEventListener("click", () => pick(id));
+      b.addEventListener("keydown", e => {
+        const step = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0;
+        if (!step || e.ctrlKey || e.metaKey || e.altKey) return;
+        e.preventDefault();
+        pick(SETTINGS_TABS[(i + step + SETTINGS_TABS.length) % SETTINGS_TABS.length][0]);
+      });
+      return b;
+    });
+    tabKeys = new Map(SETTINGS_TABS.map(([id], i) => [id, btns[i]]));
+    strip.append(...btns);
+    return strip;
+  }
+
   // ---------- the setup screen: the effective configuration (st.config), plus the notes editor
   // Built on the host from the factory's own parsers (dashboard_setup.py); nothing here
   // can change a setting. Every string goes in with textContent.
@@ -631,33 +675,23 @@
   }
   const c = () => (st && st.config && typeof st.config === "object" ? st.config : null);
 
-  function setupBlocks() {
-    const cfg = c();
-    if (!cfg) return [P("k-dim", "No configuration to show: this dashboard was started without the factory's config folder.")];
-    const out = [P("k-dim", "REPO is the committed roles/<name>/role.conf, LOCAL a value your override in the config folder puts on top of it, FIXED a value no override can change. Each role's knobs write that override (PREPARE shows the change first); everything else is read-only. → START is factory start, → UPDATE is factory update.")];
-    if (tuneNote) out.unshift(P(`banner ${tuneNote.cls}`, tuneNote.text));
-    for (const r of list(cfg.roles).filter(x => x && typeof x === "object")) out.push(...roleBlock(r));
+  // The four sections of the SETTINGS screen (shown one at a time under a tab strip).
+  const SETTINGS_HINT = "Editable here: each role's knobs and the project notes. Everything else is read-only. Nothing is written until you PREPARE and CONFIRM, and changes apply on RESTART.";
 
+  function rolesSection(cfg) {
+    const out = [P("k-dim", "REPO is the committed roles/<name>/role.conf, LOCAL a value your override in the config folder puts on top of it, FIXED a value no override can change. Each role's knobs write that override (PREPARE shows the change first); everything else is read-only. → START is factory start, → UPDATE is factory update.")];
+    for (const r of list(cfg.roles).filter(x => x && typeof x === "object")) out.push(...roleBlock(r));
     const en = cfg.enabled || {};
     out.push(H("Optional roles", "enabled-roles"));
     const optional = list(cfg.roles).filter(r => r && r.optional);
     if (!optional.length) out.push(P("k-dim", "  No role is optional."));
     for (const r of optional) out.push(row(r.name, r.on ? "ON" : "OFF", span("k-dim", `  ${en.file ? "enabled-roles file" : "no enabled-roles file"}`), applyTag(en.applies)));
     for (const n of list(en.unknown)) out.push(P("ind k-err", `  ✕ ${str(n)} is named in enabled-roles but is not a role: factory start refuses it`));
+    return out;
+  }
 
-    const ap = cfg.approvals || {}, rp = cfg.repos || {}, gl = cfg.gitlab || {}, co = cfg.coordinator || {};
-    out.push(H("Broker policy", cfg.local_policy ? "local policy.toml" : "repo policy.toml only"));
-    const src = o => span(o.source === "LOCAL" ? "k-warn" : "k-dim", `  ${SOURCES[o.source] || "NOT SET"}`);
-    const tools = list(ap.tools);
-    out.push(row("held tools", tools.join(", "), src(ap), applyTag(ap.applies)));
-    if (!tools.length) out.push(P("ind k-dim", "                      (nothing is held: the gateway makes every write at once)"));
-    out.push(row("hold expires after", ap.expire_seconds ? `${str(ap.expire_seconds)} s` : "", span("k-dim", ap.expire_seconds ? `  ${SOURCES[ap.expire_source] || "?"}` : "  default one day"), applyTag(ap.applies)));
-    const repos = list(rp.list);
-    out.push(row("allowed repos", repos.join(", "), src(rp), applyTag(rp.applies)));
-    if (!repos.length) out.push(P("ind k-dim", "                      (git tools are off until [git].repos names a repo)"));
-    out.push(row("GitLab url", gl.url, src(gl), applyTag(gl.applies)));
-    out.push(row("Coordinator tools", list(co.broker_tools).join(" "), span("k-dim", "  kits/coordinator/broker.conf"), applyTag(co.applies)));
-
+  function notesSection(cfg) {
+    const out = [];
     const nt = cfg.notes || {};
     out.push(H("Project notes", str(nt.project) || "no project"));
     const files = list(nt.files).filter(x => x && typeof x === "object");
@@ -669,11 +703,45 @@
       out.push(row(f.name, "", ...tail));
     }
     if (notes) out.push(notes.openKey());
+    return out;
+  }
 
+  function gatewaySection(cfg) {
+    const ap = cfg.approvals || {}, rp = cfg.repos || {}, gl = cfg.gitlab || {}, co = cfg.coordinator || {};
+    const out = [P("k-dim", "Read-only. These move the security boundary, so they are never edited from a browser: change the files in the config folder, then restart.")];
+    out.push(H("Broker policy", cfg.local_policy ? "local policy.toml" : "repo policy.toml only"));
+    const src = o => span(o.source === "LOCAL" ? "k-warn" : "k-dim", `  ${SOURCES[o.source] || "NOT SET"}`);
+    const tools = list(ap.tools);
+    out.push(row("held tools", tools.join(", "), src(ap), applyTag(ap.applies)));
+    if (!tools.length) out.push(P("ind k-dim", "                      (nothing is held: the gateway makes every write at once)"));
+    out.push(row("hold expires after", ap.expire_seconds ? `${str(ap.expire_seconds)} s` : "", span("k-dim", ap.expire_seconds ? `  ${SOURCES[ap.expire_source] || "?"}` : "  default one day"), applyTag(ap.applies)));
+    const repos = list(rp.list);
+    out.push(row("allowed repos", repos.join(", "), src(rp), applyTag(rp.applies)));
+    if (!repos.length) out.push(P("ind k-dim", "                      (git tools are off until [git].repos names a repo)"));
+    out.push(row("GitLab url", gl.url, src(gl), applyTag(gl.applies)));
+    out.push(row("Coordinator tools", list(co.broker_tools).join(" "), span("k-dim", "  kits/coordinator/broker.conf"), applyTag(co.applies)));
+    return out;
+  }
+
+  function lookSection(cfg) {
     const lk = cfg.look && typeof cfg.look === "object" ? cfg.look : {};
-    out.push(H("Dashboard look", "dashboard.toml"));
+    const out = [H("Dashboard look", "dashboard.toml")];
     if (lk.problem) out.push(P("ind k-err", `  ✕ ignored, the defaults show: ${str(lk.problem)}`), P("ind k-dim", "  Fix the file, then restart factory dashboard."));
     else out.push(P("k-dim", lk.file ? "  Read when factory dashboard started: the nameplate, shift names, defaults and role colours." : "  No dashboard.toml in the config folder: the defaults show."));
+    out.push(P("k-dim", "  Read-only. The Bright, Contrast, V-Hold and CRT knobs on the Coordinator's screen are remembered by this browser."));
+    return out;
+  }
+
+  const SECTIONS = { roles: rolesSection, notes: notesSection, gateway: gatewaySection, look: lookSection };
+
+  function setupBlocks() {
+    const cfg = c();
+    if (!cfg) return [P("k-dim", "No configuration to show: this dashboard was started without the factory's config folder.")];
+    const out = [P("shint", SETTINGS_HINT), settingsTabs(() => renderSetup(true))];
+    if (tuneNote) out.unshift(P(`banner ${tuneNote.cls}`, tuneNote.text));
+    const body = el("div", "spanel");
+    body.append(...SECTIONS[settingsTab](cfg));
+    out.push(body);
     return out;
   }
 
@@ -685,19 +753,19 @@
     setupKey = k;
     tuneFocus = false;
     const keep = conBody.scrollTop;
-    conBody.replaceChildren(P("banner", "Setup · effective configuration"), ...setupBlocks());
+    conBody.replaceChildren(P("banner", "Settings · effective configuration"), ...setupBlocks());
     conBody.scrollTop = keep;
     moreCue();
   }
 
   function setupHead() {
-    setText($("con-title"), "SETUP · CONFIGURATION");
+    setText($("con-title"), "SETTINGS · CONFIGURATION");
     const t = $("con-state");
     setClass(t, "state-tag st-check");
     setText(t, "Tuning");
     setClass($("con-led"), "led g");
     setText($("con-project"), st ? str(st.project) : "");
-    setText($("con-note"), "Turn a knob, then PREPARE, or edit the project notes: nothing is written until you confirm.");
+    setText($("con-note"), "Nothing is written until you confirm.");
   }
 
   function openSetup() {
@@ -705,6 +773,7 @@
     lastKey = $("svc-setup");
     svcSeq++;
     svc = null;
+    settingsTab = "roles";
     go("setup");
     tuneReset();
     setupHead();
@@ -713,6 +782,7 @@
     renderSetup(true);
     conBody.scrollTop = 0;
     cancelKey.focus();
+    tell("cu:settings");
   }
 
   function renderConfirm(d) {
@@ -1094,7 +1164,7 @@
   }
 
   function tuneHead(tag, tagCls, led, note) {
-    setText($("con-title"), `SETUP · TUNE ${str(tune.role).toUpperCase()}`);
+    setText($("con-title"), `SETTINGS · TUNE ${str(tune.role).toUpperCase()}`);
     const t = $("con-state");
     setClass(t, `state-tag st-${tagCls}`);
     setText(t, tag);
@@ -1623,6 +1693,12 @@
   // In the inspector, j/k or ↓/↑ move between files and n/p between hunks
   // (not while typing a reason).
   document.addEventListener("keydown", e => {
+    // Comma opens SETTINGS from the deck (not while typing a reason, and not with a modifier).
+    if (screen === "deck" && e.key === "," && !e.ctrlKey && !e.metaKey && !e.altKey && !(e.target && /^(input|textarea)$/i.test(str(e.target.tagName)))) {
+      e.preventDefault();
+      openFromParent();
+      return;
+    }
     if (screen === "inspect") {
       if (e.key === "Escape") { e.preventDefault(); closeInspect(); return; }
       if (e.key === "Tab") {
@@ -1659,7 +1735,7 @@
       // The editor takes the screen: a knob check still waiting for its answer is dropped (the drafts stay).
       opened: () => { tuneStop(); tuneChecking = null; },
       head: (tag, cls, led, note) => {
-        setText($("con-title"), "SETUP · NOTES");
+        setText($("con-title"), "SETTINGS · NOTES");
         setClass($("con-state"), `state-tag st-${cls}`);
         setText($("con-state"), tag);
         setClass($("con-led"), `led ${led}`);

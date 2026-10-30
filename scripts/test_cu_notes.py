@@ -238,7 +238,7 @@ class ScriptTests(unittest.TestCase):
             "changed on disk: say so, offer RELOAD", "demo: a fixed refusal, nothing saved", "refusals reach the user as text",
             "unsaved edits are asked about before they are lost", "a role already over the limit may be edited down, not up",
             "astral characters count once, as the host counts them",
-            "the editor and the tuning rack share SETUP without fighting", "no project, no editor"])
+            "the editor and the tuning rack share SETTINGS without fighting", "no project, no editor"])
 
 
 if __name__ == "__main__":

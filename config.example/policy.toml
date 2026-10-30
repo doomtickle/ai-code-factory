@@ -28,9 +28,15 @@
 
 [git]
 # Repos agents may fetch from, push to and open PRs or merge requests on:
-# GitHub repos as owner/name, GitLab projects host first, e.g.
+# GitHub repos as owner/name, GitLab projects host first, or a whole GitLab
+# group with a final "/*" (any project under it, subgroups included; GitLab
+# only, and the host must be the one in [gitlab].url), e.g.
 #   repos = ["my-org/my-project", "gitlab.example.com/my-group/my-project"]
-# Keep this on a single line: bin/factory's onboarding check depends on it.
+#   repos = ["gitlab.example.com/my-group/*"]
+# with [gitlab] url = "https://gitlab.example.com/" (the trailing "/" is required)
+# A group entry wants a GitLab group access token (Developer role, api and
+# write_repository scopes). Keep this on a single line: bin/factory's
+# onboarding check depends on it.
 repos = []
 # The git identity the developer's lane commits are authored with (repo-local
 # user.name and user.email in each lane clone). "{lane}" stands for the lane's

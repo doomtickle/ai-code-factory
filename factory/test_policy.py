@@ -6,6 +6,7 @@ scripts/test_factory_config.sh. That bash is gone: every expected answer here is
 on the same policy files.
 """
 
+import json
 import os
 import re
 import unittest
@@ -222,6 +223,27 @@ class GitReposTest(PolicyTest):
                                  (enabled, github), repr(text))
 
 
+class SharedGroupEntryTableTest(unittest.TestCase):
+    """broker/tests/repos_entries.json is also run through the broker's check_repos_entry
+    (broker/tests/test_gitlab.py). The host never imports broker code: the two validators are
+    kept in step by agreeing on this table."""
+
+    def test_repo_entry_problem_agrees_with_the_table(self):
+        path = os.path.join(REPO, "broker", "tests", "repos_entries.json")
+        with open(path, encoding="utf-8") as f:
+            rows = json.load(f)["entries"]
+        self.assertGreater(len(rows), 60)
+        self.assertTrue(any(r["valid"] for r in rows) and any(not r["valid"] for r in rows))
+        for row in rows:
+            entry = row["entry"]
+            netloc = entry.split("/", 1)[0].lower()
+            problem = policy.repo_entry_problem(entry, netloc)
+            if row["valid"]:
+                self.assertIsNone(problem, repr(entry))
+            else:
+                self.assertIsNotNone(problem, repr(entry))
+
+
 class GitlabChecksTest(PolicyTest):
     """Ported from scripts/test_factory_gitlab.sh (doomtickle/passdesk-ops#122): the repo's policy
     has an empty [git] repos list and an empty [gitlab] url, and this machine's overlay varies."""
@@ -260,6 +282,69 @@ class GitlabChecksTest(PolicyTest):
                            ("[git]\nrepos = []", False)):
             self.overlay(text)
             self.assertEqual(policy.github_repos_listed(self.paths), want, text)
+
+    GL = "gitlab.acme.net"
+
+    def test_git_repos_reads_every_quoted_entry(self):
+        self.overlay('[git]\nrepos = [\n  "acme/widgets",  # one\n  \'%s/g/*\',\n  "%s/a/b/svc"\n]' % (self.GL, self.GL))
+        self.assertEqual(policy.git_repos(self.paths), ["acme/widgets", "%s/g/*" % self.GL, "%s/a/b/svc" % self.GL])
+        self.overlay("[git]\nrepos = []")
+        self.assertEqual(policy.git_repos(self.paths), [])
+
+    def test_group_entries_the_broker_would_accept_have_no_problem(self):
+        for entry in ("%s/g/*" % self.GL, "%s/G/Sub/*" % self.GL, "%s:8443/g/*" % self.GL.upper(), "10.0.0.5/g/*",
+                      "%s/%s/*" % (self.GL, "/".join("g%d" % i for i in range(21))),
+                      "acme/widgets", "%s/g/p" % self.GL):
+            netloc = (self.GL + ":8443") if ":8443" in entry else ("10.0.0.5" if entry.startswith("10.") else self.GL)
+            self.assertIsNone(policy.repo_entry_problem(entry, netloc.lower()), entry)
+
+    def test_malformed_group_entries_are_refused(self):
+        for entry, fragment in (("acme/*", "GitLab only"), ("*/*", '"*" is allowed only'), ("*", '"*" is allowed only'),
+                                ("%s/*" % self.GL, "whole instance"), ("%s/g/**" % self.GL, '"*" is allowed only'),
+                                ("%s/*/g/*" % self.GL, '"*" is allowed only'), ("%s/g*" % self.GL, '"*" is allowed only'),
+                                ("%s/g/*/x" % self.GL, '"*" is allowed only'), ("%s/g/x*/*" % self.GL, '"*" is allowed only'),
+                                ("%s//g/*" % self.GL, "not a valid GitLab group"), ("%s/g//*" % self.GL, "not a valid GitLab group"),
+                                ("%s/g/../*" % self.GL, "not a valid GitLab group"), ("%s/g/.x/*" % self.GL, "not a valid GitLab group"),
+                                ("%s/g/-x/*" % self.GL, "not a valid GitLab group"), ("%s/g/x.git/*" % self.GL, "not a valid GitLab group"),
+                                ("%s/g/x y/*" % self.GL, "not a valid GitLab group"), ("-.net/g/*", "not a valid GitLab group"),
+                                ("%s:99999/g/*" % self.GL, "not a valid GitLab group"), ("%s:0/g/*" % self.GL, "not a valid GitLab group"),
+                                ("https://%s/g/*" % self.GL, "not a valid GitLab group"),
+                                ("%s/%s/*" % (self.GL, "/".join("g%d" % i for i in range(22))), "not a valid GitLab group")):
+            problem = policy.repo_entry_problem(entry, self.GL)
+            self.assertIsNotNone(problem, entry)
+            self.assertIn(fragment, problem, entry)
+            self.assertIn(entry, problem)
+
+    def test_a_group_must_be_on_the_configured_gitlab(self):
+        self.assertIn("not on the configured GitLab (gitlab.acme.net)",
+                      policy.repo_entry_problem("gitlab.evil.example/g/*", self.GL))
+        self.assertIn("not on the configured GitLab", policy.repo_entry_problem("%s:8443/g/*" % self.GL, self.GL))
+        self.assertIn("[gitlab].url is not set", policy.repo_entry_problem("%s/g/*" % self.GL, None))
+
+    def test_git_repos_problems_reads_the_policy(self):
+        self.overlay(self.GITLAB + '[git]\nrepos = ["acme/widgets", "%s/g/*", "%s/*", "acme/*", "other.example/g/*"]' % (self.GL, self.GL))
+        problems = policy.git_repos_problems(self.paths)
+        self.assertEqual(len(problems), 3, problems)
+        self.assertTrue(any("whole instance" in p for p in problems))
+        self.assertTrue(any("GitLab only" in p for p in problems))
+        self.assertTrue(any("other.example/g/*" in p and "not on the configured" in p for p in problems))
+        self.overlay(self.GITLAB + '[git]\nrepos = ["%s/g/*"]' % self.GL)
+        self.assertEqual(policy.git_repos_problems(self.paths), [])
+        self.overlay('[git]\nrepos = ["%s/g/*"]' % self.GL)  # no [gitlab].url
+        self.assertIn("[gitlab].url is not set", policy.git_repos_problems(self.paths)[0])
+        self.overlay(self.GITLAB.replace("acme.net/", "acme.net:443/") + '[git]\nrepos = ["%s/g/*"]' % self.GL)
+        self.assertEqual(policy.git_repos_problems(self.paths), [])  # :443 is the default port
+        self.overlay('[git]\nrepos = []')
+        self.assertEqual(policy.git_repos_problems(self.paths), [])
+
+    def test_describe_repo_entry(self):
+        self.assertEqual(policy.describe_repo_entry("%s/g/*" % self.GL), "%s/g/* (any project in the group)" % self.GL)
+        self.assertEqual(policy.describe_repo_entry("acme/widgets"), "acme/widgets")
+
+    def test_a_group_entry_enables_push_and_is_not_a_github_repo(self):
+        self.overlay('[git]\nrepos = ["%s/g/*"]' % self.GL)
+        self.assertTrue(policy.git_push_enabled(self.paths))
+        self.assertFalse(policy.github_repos_listed(self.paths))
 
     def test_gitlab_mr_unheld(self):
         for text, want in (
