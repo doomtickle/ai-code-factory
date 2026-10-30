@@ -33,7 +33,7 @@ out="$("$DEMO" 2>&1)" && rc=0 || rc=$?
 [ "$rc" = 2 ] && case "$out" in *"Usage: factory-demo"*) true ;; *) false ;; esac \
   && ok "no argument prints usage" || bad "no argument prints usage ($rc): $out"
 
-out="$(FACTORY_SCRATCH= "$DEMO" start 2>&1)" && rc=0 || rc=$?
+out="$(FACTORY_SCRATCH='' "$DEMO" start 2>&1)" && rc=0 || rc=$?
 [ "$rc" = 1 ] && ok "start needs FACTORY_SCRATCH" || bad "start needs FACTORY_SCRATCH ($rc): $out"
 
 out="$("$DEMO" start "$tmp" 2>&1)" && rc=0 || rc=$?
