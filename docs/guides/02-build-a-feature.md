@@ -180,10 +180,6 @@ git log -p main..factory-developer/factory/rate-limit
 git merge factory-developer/factory/rate-limit
 ```
 
-The dashboard's [outbox](06-dashboard.md#the-outbox) lists the same branches
-with the reviewer's verdict, whether the push went out and the pull request
-link, and marks a branch MERGED once it is in your `HEAD`.
-
 Or check it out as a local branch first:
 
 ```bash

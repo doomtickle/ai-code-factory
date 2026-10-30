@@ -17,9 +17,6 @@ factory config folder (--config) it compares them with; no command is run for it
 dashboard.toml from that folder once at start (dashboard_config.py), for the page's nameplate, shift names, defaults and role colours.
 The FIRST SHIFT banner and start-up hints (dashboard_hints.py) run only `sbx secret ls` and `sbx ls -q`,
 in a background thread every 30 s at most, each cut off after 5 s, never for a request.
-The OUTBOX module (dashboard_outbox.py) also reads dispatch/jobs.json and runs three fixed,
-read-only git forms in the host project (a for-each-ref listing of the imported refs,
-rev-list --count HEAD..<object id> and cherry HEAD <object id>; hooks and fsmonitor off, no shell), cached for a few seconds.
 It reuses watch.py's transcript model and approvals.py's card reader rather
 than parsing either command's output. The main page only displays: nothing
 it can reach acts.
@@ -124,7 +121,6 @@ import dashboard_demo as demo
 import dashboard_hints as dh
 import dashboard_jobs as jobs_mod
 import dashboard_labels as labels
-import dashboard_outbox as ob
 import dashboard_service as ds
 import dashboard_setup
 import dashboard_term as dt
@@ -313,7 +309,6 @@ class Dashboard:
         self.watch = w.Watch(state / "dispatch", roles, project)
         self.broker = BrokerAudit(state / "broker" / "audit.jsonl")
         self.verdicts: dict = {}
-        self.outbox = ob.Outbox(state, project, paths, ob.FixtureGit(state) if demo else ob.HostGit(state))
         self.lock = threading.Lock()
         self._writes: tuple = (0.0, [])
 
@@ -475,7 +470,6 @@ class Dashboard:
         with self.lock:
             self.refresh()
             cards = self.cards(now)
-            calls = list(self.broker.calls)
             lanes = [self.lane_json(lane, now, TAIL) for lane in self.watch.lanes]
 
             midnight = local_midnight(now)
@@ -502,8 +496,8 @@ class Dashboard:
                 ev = {"t": ts, "kind": "JOB", "red": status in ("failed", "cancelled", "interrupted"), "text": text}
                 # Which job, on which lane, so the line can open that lane's monitor on its packet.
                 job_id, lane_name = rec.get("job_id"), rec.get("lane")
-                if (isinstance(job_id, str) and ob.JOB_ID.fullmatch(job_id)
-                        and isinstance(lane_name, str) and ob.LANE.fullmatch(lane_name)):
+                if (isinstance(job_id, str) and jobs_mod.JOB_ID.fullmatch(job_id)
+                        and isinstance(lane_name, str) and jobs_mod.LANE.fullmatch(lane_name)):
                     ev["job_id"], ev["lane"] = job_id, lane_name
                 events.append(ev)
             for rec in self.broker.calls:
@@ -515,8 +509,6 @@ class Dashboard:
 
         total = sum(num(rec.get("cost_usd")) or 0.0 for _, rec in jobs)
         writes = self.writes(now)
-        # Read outside the lock, like SETUP: it runs git (cached a few seconds, bounded).
-        outbox = self.outbox.rows(now, calls, {c["id"] for c in cards}, writes)
         return {
             "now": now, "clock": clock(now), "project": self.project, "demo": self.demo, "look": self.look,
             "bridge": self.watch.bridge_alive(),
@@ -528,7 +520,6 @@ class Dashboard:
             "events": events,
             "gate": cards,
             "writes": writes,
-            "outbox": outbox,
             "service": self.service(now),
             "hints": self.hints(now),
             "briefing": self.briefing(now),
@@ -583,11 +574,11 @@ class Dashboard:
                 "elapsed": None if elapsed is None else int(elapsed), "when": jobs_mod.when(started, now)}
 
     def job_packet_exists(self, job: str) -> bool:
-        return ob.read_regular(self.state / "dispatch" / "packets" / f"{job}.md", 1) is not None
+        return jobs_mod.read_regular(self.state / "dispatch" / "packets" / f"{job}.md", 1) is not None
 
     def job_packet(self, job: str) -> str:
         """The review packet of one job (an id in the bridge's form: it names a file under packets/)."""
-        raw = ob.read_regular(self.state / "dispatch" / "packets" / f"{job}.md", PACKET_MAX) if ob.JOB_ID.fullmatch(job) else None
+        raw = jobs_mod.read_regular(self.state / "dispatch" / "packets" / f"{job}.md", PACKET_MAX) if jobs_mod.JOB_ID.fullmatch(job) else None
         if raw is None:
             return f"(no packet for job {job} yet: it is written when the job ends)"
         return raw.decode("utf-8", "replace")
@@ -671,7 +662,7 @@ def make_handler(board: Dashboard, token: str, port: int, term: dt.Term | None =
             elif url.path == "/api/lane":
                 query = parse_qs(url.query)
                 job = query.get("job", [""])[0]
-                if job and not ob.JOB_ID.fullmatch(job):
+                if job and not jobs_mod.JOB_ID.fullmatch(job):
                     self.refuse(400, "bad job id")
                     return
                 try:

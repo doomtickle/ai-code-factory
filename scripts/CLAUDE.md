@@ -21,7 +21,7 @@ factory checkout, rendered once at start-up by `docs.py` `build_served()` with C
 JS as separate files, held in memory, served under the same CSP minus `frame-src`, no
 git run and no `file://` links), and is GET-only on its main port.
 
-Its state view reads the state folder, plus the OUTBOX's git (below); at start-up it starts the browser opener
+Its state view reads the state folder and runs no git of its own; at start-up it starts the browser opener
 (fixed argv, no shell: `rundll32.exe url.dll,FileProtocolHandler <url>` then `wslview`
 on WSL, else Python's `webbrowser`; never `explorer.exe`, `cmd.exe` or
 `powershell -Command`). Agent-written text reaches the main page only as JSON and is
@@ -212,35 +212,6 @@ gauge mirrors `dashboard_setup._notes` (SAVE is dark when a role would be over a
 refuses it); the host decides regardless. `test_cu_notes.py` drives the real endpoints with the bodies the editor
 sends.
 
-OUTBOX (doomtickle/passdesk-ops#189, `scripts/dashboard_outbox.py`) lists the `factory/*`
-branches the bridge imported, newest first, as `outbox` in the main page's state: the repo,
-the branch, the commits ahead of host `HEAD`, the latest reviewer verdict, the push state and
-the PR or MR. It reads `dispatch/jobs.json` and `dispatch/packets/` (regular files only, opened
-`O_NOFOLLOW`, size-capped) and the audit and deferred writes the dashboard already holds, and runs
-only three git forms, all read-only, hooks and fsmonitor off (`-c core.hooksPath=/dev/null -c
-core.fsmonitor=false`), argv list, no shell, `GIT_*` stripped, `GIT_OPTIONAL_LOCKS=0`:
-`for-each-ref --format=%(objectname) %(refname) refs/remotes/factory-<lane>/factory/`,
-`rev-list --count HEAD..<object id>` and, only for a branch that is ahead (count above 0),
-`cherry HEAD <object id>`. A branch is MERGED when the count is 0, or when `cherry` succeeds and
-prints at least one line, every one starting `- ` (each commit has a patch-equivalent in `HEAD`:
-rebased, or re-pushed under another name); any `+` line, an error or a timeout leaves it OPEN
-(never UNCHECKED, the count worked). Since `HEAD` isn't known without a fourth form, an answer is
-cached per (repo, object id) for 60 s and dropped when the ahead count differs; a failure is cached
-likewise, and `cherry` runs only for rows that will be shown. A branch name is only compared with what `for-each-ref`
-printed and never reaches git, and the only thing passed on is a full object id the listing gave
-(`[0-9a-f]{40,64}`, so it can't be an option). A name that isn't a plain ref gives an UNCHECKED
-row and no git run. The result is cached 8 s, there are at most 20 rows and 40 branches looked
-at, one run is cut at 5 s and a recomputation at 12 s. A MERGED or GONE row retires 24 h after its
-job ended, an OPEN or UNCHECKED one (abandoned work) after 7 days, and a row past 7 days costs no git run. A link is built only from the gateway's own
-`Opened PR #N: <url>` result and only when it is `https://github.com/<owner>/<repo>/pull/N` or
-`https://<the policy's GitLab host>/<project>/-/merge_requests/N` with the same number (no
-userinfo, query or fragment); anything else is shown as text, and the page re-checks that it is
-an https URL before it sets `href`. Every other string is drawn with `textContent`, and classes
-come from fixed maps, never from the data. A row opens that job's packet through `GET
-/api/lane?name=&job=` (the job id must match `[0-9]{8}-[0-9]{6}-[0-9a-f]{6}`, else 400, and be a job of that lane, else 404; the
-packet is a regular file `dispatch/packets/<id>.md`, opened `O_NOFOLLOW`, capped). The module acts on nothing. Demo mode runs
-no git: `FixtureGit` reads `dispatch/demo-refs.json`.
-
 ATTENTION (doomtickle/passdesk-ops#192, `app.js`, with the cues in `sound.js`) is display only and adds no
 endpoint: the title and favicon badge, the cues and the optional notifications come from `/api/state`
 diffs the page already polls. Only counts, a fixed tool list and the lane-name pattern ever reach the
@@ -272,12 +243,13 @@ add no endpoint, run no git, and are drawn with `textContent`; `lanelabel.js` is
 loaded before `app.js` and `floor.js` (no inline script).
 
 LANE JOBS (doomtickle/passdesk-ops#191, `scripts/dashboard_jobs.py`, `app.js`) let the lane monitor's PACKET tab step through a
-lane's past jobs and show a pending view for a running one. They add no endpoint: `/api/lane?name=&job=` (the #189 path, one
+lane's past jobs and show a pending view for a running one. They add no endpoint: `/api/lane?name=&job=` (one
 `Dashboard.job_packet`) now returns `jobs` (the lane's newest 50 job ids, newest first), `job` (the one whose packet this is; none
 asked for means the newest) and `sel` (state, task, model, cost, elapsed, when), and `pending` (the job is running and has no
 packet yet). The ids come from `dispatch/jobs.json` (regular file, `O_NOFOLLOW`, capped), the audit and the lane's transcript, only
 those matching the bridge's job-id pattern; a `job` that is not one of that lane's is a 404 (`NoSuchJob`), a malformed one still a
-400, and the id is joined onto `packets/` only after it matched. Tasks are cut to one line; everything is drawn with `textContent`
+400, and the id is joined onto `packets/` only after it matched (the packet is a regular file `dispatch/packets/<id>.md`,
+opened `O_NOFOLLOW`, size-capped). Tasks are cut to one line; everything is drawn with `textContent`
 and the page sets no class or attribute from it.
 
 EVENT PRINTER (doomtickle/passdesk-ops#190, `app.js` `renderPaper`) lines are buttons. They add no endpoint:
