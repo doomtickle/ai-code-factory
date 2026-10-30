@@ -1458,6 +1458,7 @@ templates/<image>/           Pinned images: developer (+ruff, shellcheck), revie
 templates/agent/factory-test Runs tests in a sandbox-local copy (baked into developer and reviewer)
 templates/agent/factory-lane Lane clones: prepare, export bundles, bundle a branch for git_push, check out a branch to review
 templates/agent/factory-shot Renders a page the role built to a PNG with the image's headless Chrome (file:// and loopback only)
+templates/agent/factory-demo Runs the demo dashboard for screenshots and stops only the PID it recorded (start, url, stop)
 templates/agent/extract-tar-member   Unpacks one file from a .tar.xz with python3 (the images have no xz program); installs shellcheck at image build
 config.example/              Example local settings for ~/.config/ai-code-factory/
 factory/                     The host CLI in Python, being ported from bin/factory command by command

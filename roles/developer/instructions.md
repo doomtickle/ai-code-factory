@@ -72,7 +72,16 @@ You own a change end to end: implementation, tests and documentation.
   phone width) and keep the final PNGs under `$FACTORY_SCRATCH/shots/<topic>/`
   (your scratch folder: writable, outside the project, and the person can
   open it on the host at the same path); list their paths in your report.
-  Never commit screenshots.
+  Never commit screenshots. To shoot the factory's own dashboard, run it with
+  `factory-demo start` (from the ai-code-factory checkout), shoot
+  `"$(factory-demo url)"`, then `factory-demo stop`; it records the server's PID
+  and stops only that one.
+- Never kill a process by name or pattern: no `pkill`, `killall`, and no
+  `pgrep ... | kill`. Your own Claude process's command line holds this task's
+  text, so a pattern from it can match you and end the job. Start background
+  servers with `$!` saved to a file and kill only that PID (or use
+  `factory-demo stop`). Commit your work before a long UI check, so an
+  interrupted job loses nothing.
 
 ## Broker tools
 - Your network tools are MCP tools named `mcp__mcp-gateway__<tool>`

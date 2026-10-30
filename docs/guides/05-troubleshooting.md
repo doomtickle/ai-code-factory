@@ -338,6 +338,29 @@ dashboard) restarts everything; running jobs end (they show as interrupted
 afterwards), but the job list, saved sessions, branches already brought back
 and logs are kept. See [What survives an update or a disconnect](#what-survives-an-update-or-a-disconnect).
 
+### A job failed with "killed by signal 15 (SIGTERM)"
+
+```text
+claude was killed by signal 15 (SIGTERM), exit status 143: the role may have
+stopped its own process ...; see `factory logs developer-lane2`
+```
+
+The role's Claude process was ended by a signal, not by an error of its own. The
+usual cause is a role that cleaned up a background server (often the demo
+dashboard it started for a screenshot) with `pkill -f`, `killall` or
+`pgrep -f ... | kill`: the pattern also matched the role's own Claude command line,
+which holds the task text. Exit status 137 is SIGKILL, 143 is SIGTERM. Older
+versions reported this as `claude exited with status 143` followed by an unrelated
+`[claude-code:unrecognized_model]` line, which Claude prints on every run and
+which was not the cause. Check the end of `factory logs <lane>` for the command
+that ran last.
+
+Roles now have `factory-demo start | url | stop`, which runs the demo dashboard
+and stops only the PID it recorded, and their instructions forbid killing by name or
+pattern. The helper lives in the role images (`factory update` rebuilds them) and
+the instructions load at `factory start`. Re-delegate the task: work the role
+committed is on its `factory/*` branch.
+
 ### What survives an update or a disconnect
 
 `factory restart`, a reconnect, a reboot and `factory update` all stop the

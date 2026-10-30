@@ -4,6 +4,31 @@ Dated entries, for the user to review. Newest first.
 
 ## 2026-10-30
 
+- **`factory-demo` for dashboard screenshots; a signal exit is reported as a signal** (owner asked
+  for it ASAP, 30 Oct 2026). Developer jobs kept dying as `claude exited with status 143:
+  [claude-code:unrecognized_model] ...`: the role started `dashboard.py --demo` for `factory-shot`,
+  `pkill -f` was refused, and `pgrep -f ... | kill` matched its own Claude process (the task text is in
+  its command line). Choices:
+  - **A bash helper in the images** (`templates/agent/factory-demo`, `start|url|stop|status`, copied
+    next to `factory-shot`), not an extension of `factory-shot` (which stays a renderer that refuses
+    anything but `file://` and loopback). It runs the demo from a given checkout on loopback, records
+    PID, start time and checkout under `$FACTORY_SCRATCH/factory-demo/$FACTORY_LANE/` (one demo per
+    lane; lanes of a role share a scratch folder), and `stop` signals only that PID after checking
+    the start time and that its argv holds exactly `<checkout>/scripts/dashboard.py` and `--demo`.
+    Whole-argv-element matching, not a substring, because a substring is what matches the Claude CLI.
+    SIGTERM first (the dashboard deletes its demo data), SIGKILL after 5 s, same checks.
+  - **Instructions forbid killing by name or pattern** (developer, reviewer). Not enforced by a
+    managed-settings deny rule: the refusal of `pkill` was already there, and `pgrep | kill` has no
+    stable pattern to deny.
+  - **Bridge**: exit status 128+N or negative is reported as "killed by signal N (NAME)" with a hint
+    to read `factory logs <lane>`. The `[claude-code:<tag>]` lines Claude prints on stderr (the
+    `unrecognized_model` one fires for a model id its own table lacks, on runs that succeed too) are
+    dropped from a signal exit's stderr, since they were never its cause; any other exit keeps its
+    stderr verbatim, tag included, because there it may be the cause. Exit 128+N from a role's own
+    `exit` is indistinguishable from a signal; the wording says "may have".
+  - Takes effect: the helper after `factory update` (image rebuild), the instructions after `factory
+    start`, the bridge message after `factory start` (the bridge restarts).
+
 - **The dashboard's OUTBOX module is removed** (owner decision 30 Oct 2026; it was
   doomtickle/passdesk-ops#189). The owner found it didn't show reliable information, so it goes
   entirely: `scripts/dashboard_outbox.py`, the `outbox` field of `/api/state`, the page module with
