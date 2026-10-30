@@ -1616,6 +1616,35 @@ class PageTests(unittest.TestCase):
         self.assertEqual(js.count("wake()"), 3)   # its definition, the key's click, the first-gesture hook
         self.assertIn("GAP = 0.25", js)
 
+    def test_settings_entry_is_wired_and_speaks_only_its_fixed_messages(self):
+        # The header's SETTINGS key (and the comma shortcut) ask the control unit's frame to open its
+        # configuration screen: one fixed object to the frame's exact origin, no request, no key.
+        js = (UI / "app.js").read_text()
+        html = (UI / "index.html").read_text()
+        self.assertRegex(html, r'<button class="settings-key" type="button" id="settings-key" disabled aria-keyshortcuts=","')
+        self.assertIn('<span class="sk-label">Settings</span>', html)
+        self.assertEqual(js.count("postMessage("), 2)
+        self.assertIn('postMessage({ type: "cu:open", screen: "settings" }, cuOrigin);', js)
+        self.assertIn('postMessage({ type: "cu:select", id }, cuOrigin);', js)
+        body = js[js.index("const SETTINGS_SEEN"):js.index("function setCuExpanded")]
+        for call in ("fetch(", "XMLHttpRequest", "WebSocket", "sendBeacon", "innerHTML", "location", "setAttribute"):
+            self.assertNotIn(call, body, f"the settings entry uses {call}")
+        # The first-run cue is one localStorage flag, always in try/catch (no storage means the cue shows).
+        self.assertEqual(js.count("fc1984-settings-seen"), 1)
+        self.assertEqual(body.count("localStorage."), 2)
+        self.assertEqual(body.count("try {"), 2)
+        # The frame may say exactly four strings, from its own window and origin.
+        handler = js[js.index('window.addEventListener("message"'):]
+        handler = handler[:handler.index("});")]
+        self.assertIn("e.source !== cuFrame.contentWindow || e.origin !== cuOrigin", handler)
+        self.assertEqual(sorted(re.findall(r'e\.data === "(cu:[a-z]+)"', handler)),
+                         ["cu:collapse", "cu:expand", "cu:reload", "cu:settings"])
+        self.assertIn('if (e.key === ",") { settingsKey.click(); return; }', js)
+        # The unit side accepts only the two fixed shapes, from the main origin and window.
+        cu = (UI / "cu.js").read_text()
+        self.assertIn('d.type === "cu:open" && names.includes("screen") && d.screen === "settings"', cu)
+        self.assertIn("e.source !== window.parent || e.origin !== mainOrigin", cu)
+
     def test_attention_signals_are_wired(self):
         # #192: the badge, cues and notifications come from the state the page polls; only counts,
         # a fixed tool list and the lane-name pattern reach the title, favicon or a notification.

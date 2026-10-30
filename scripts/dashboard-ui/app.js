@@ -961,6 +961,7 @@
     if (e.key === "f" || e.key === "F") { $("floor-key").click(); return; }
     if (e.key === "s" || e.key === "S") { $("sound-key").click(); return; }
     if (e.key === "n" || e.key === "N") { notifyKey.click(); return; }
+    if (e.key === ",") { settingsKey.click(); return; }
     const n = parseInt(e.key, 10);
     if (state && n >= 1 && n <= Math.min(9, state.lanes.length)) openMon(state.lanes[n - 1].name);
   });
@@ -1157,12 +1158,31 @@
   // It lives on the second origin (cu.html, with its own key), framed under the
   // gate display; this page shows agent-written text, so it holds no action
   // endpoint and no key, and never reads the frame. The frame may say exactly
-  // three things: "cu:expand" (grow to the whole window, for its confirmation
-  // and log screens), "cu:collapse" and "cu:reload". Anything else, from anywhere
-  // else, is ignored. The one thing this page says to the frame is
-  // {type: "cu:select", id: <card id>} (selectCard, from a printer line): which
-  // card to show. It decides nothing, and the unit checks it before it acts on it.
+  // four things: "cu:expand" (grow to the whole window, for its confirmation
+  // and log screens), "cu:collapse", "cu:reload" and "cu:settings" (the SETTINGS
+  // screen opened). Anything else, from anywhere else, is ignored. This page says
+  // two things to the frame: {type: "cu:select", id: <card id>} (selectCard, from
+  // a printer line): which card to show; and {type: "cu:open", screen: "settings"}
+  // (the SETTINGS key in the header): open the read-only configuration screen.
+  // Both decide nothing, and the unit checks them before it acts on them.
   let cuFrame = null, cuOrigin = null, cuExpanded = false;
+  // SETTINGS: its header key is live once the frame has loaded, and pulses until the
+  // screen has been opened once (remembered in this browser; no storage = it pulses each load).
+  const SETTINGS_SEEN = "fc1984-settings-seen";
+  const settingsKey = $("settings-key");
+  let settingsSeen = false;
+  try { settingsSeen = localStorage.getItem(SETTINGS_SEEN) === "1"; } catch (e) { /* no storage: the cue shows */ }
+  function markSettingsSeen() {
+    settingsSeen = true;
+    settingsKey.classList.remove("cue");
+    try { localStorage.setItem(SETTINGS_SEEN, "1"); } catch (e) { /* not remembered */ }
+  }
+  function openSettings() {
+    if (!cuFrame || !cuFrame.contentWindow || !cuOrigin || cuExpanded || settingsKey.disabled) return;
+    cuFrame.focus();  // Esc and Tab then work inside the screen
+    cuFrame.contentWindow.postMessage({ type: "cu:open", screen: "settings" }, cuOrigin);
+  }
+  settingsKey.addEventListener("click", openSettings);
   function setCuExpanded(on) {
     cuExpanded = on;
     // The frame is never moved in the DOM (that would reload it): its slot becomes
@@ -1183,7 +1203,12 @@
     cuFrame.setAttribute("referrerpolicy", "no-referrer");
     cuFrame.src = `${cuOrigin}/cu`;
     // A (re)loaded control unit starts on its compact deck.
-    cuFrame.addEventListener("load", () => setCuExpanded(false));
+    cuFrame.addEventListener("load", () => {
+      setCuExpanded(false);
+      settingsKey.disabled = false;
+      settingsKey.title = "Settings (,)";
+      settingsKey.classList.toggle("cue", !settingsSeen);
+    });
     $("cu-slot").append(cuFrame);
     $("cu-slot").hidden = false;
     $("rail").classList.add("has-cu");
@@ -1195,6 +1220,7 @@
     if (e.data === "cu:expand") setCuExpanded(true);
     else if (e.data === "cu:collapse") setCuExpanded(false);
     else if (e.data === "cu:reload") location.reload();
+    else if (e.data === "cu:settings") markSettingsSeen();
   });
 
   // ---------- attention: title and favicon badge, cues, notifications (doomtickle/passdesk-ops#192)

@@ -419,6 +419,7 @@ const card = (over) => Object.assign({ id: "c1", tool: "git_push", role: "develo
   const rack = role => kids().find(n => n.attrs["aria-label"] === `Tuning ${role}`);
   const inRack = (role, pred) => walk(rack(role)).find(pred);
   const byLabel = (role, label) => inRack(role, n => n.attrs["aria-label"] === label);
+  const tabBtn = label => kids().find(n => n.attrs.role === "tab" && n.textContent === label);
   const byText = (role, tag, text) => inRack(role, n => n.tagName === tag && n.textContent === text);
   const prepKey = role => byText(role, "button", "Prepare");
   const row = (key, value, source, repo) => Object.assign({ key, value, applies: "START", source }, source === "LOCAL" ? { repo } : {});
@@ -440,7 +441,7 @@ const card = (over) => Object.assign({ id: "c1", tool: "git_push", role: "develo
   };
   await advance(2000);
   $("svc-setup").click(); await flush();
-  assert.strictEqual($("con-title").textContent, "SETUP · CONFIGURATION");
+  assert.strictEqual($("con-title").textContent, "SETTINGS · CONFIGURATION");
   const turnsNow = role => byLabel(role, "Turns");
   assert.strictEqual(turnsNow("developer").value, "80", "a LOCAL value shows in its field");
   assert.strictEqual(turnsNow("reviewer").value, "", "a REPO value leaves the field empty: it follows the repo");
@@ -467,7 +468,7 @@ const card = (over) => Object.assign({ id: "c1", tool: "git_push", role: "develo
   results.push("tuning sends changed keys only");
 
   // The diff is drawn as text, in classes from a fixed map.
-  assert.strictEqual($("con-title").textContent, "SETUP · TUNE DEVELOPER");
+  assert.strictEqual($("con-title").textContent, "SETTINGS · TUNE DEVELOPER");
   const lines = kids().filter(n => n.tagName === "p" && n.className.startsWith("diff "));
   assert.deepStrictEqual(lines.map(n => n.className), ["diff k-dim", "diff k-err", "diff k-ok", "diff k-dim"]);
   assert.strictEqual(lines[2].textContent, `+ ${AGENTISH}`, "agent-looking markup stays text");
@@ -507,13 +508,13 @@ const card = (over) => Object.assign({ id: "c1", tool: "git_push", role: "develo
   $("con-cancel").fire("click"); await flush();
   const esc = { key: "Escape", preventDefault() {} };
   (doc.listeners.keydown || []).forEach(f => f(esc)); await flush();
-  assert.strictEqual($("con-title").textContent, "SETUP · TUNE DEVELOPER", "Esc and CANCEL did not leave the diff");
+  assert.strictEqual($("con-title").textContent, "SETTINGS · TUNE DEVELOPER", "Esc and CANCEL did not leave the diff");
   release(); await flush();
   assert.deepStrictEqual(wrote.slice(1), [["config-run", { token: "tok1" }]], "the token goes once");
   assert.match($("con-body").textContent, /SERVICE DUE · RESTART TO APPLY/);
   assert.strictEqual($("con-cancel").disabled, false, "CANCEL is back");
   assert.ok(calls.filter(c => c[0] === "state").length >= 1, "state is refreshed");
-  assert.strictEqual($("con-title").textContent, "SETUP · CONFIGURATION");
+  assert.strictEqual($("con-title").textContent, "SETTINGS · CONFIGURATION");
   assert.strictEqual(turnsNow("developer").value, "", "the drafts are gone and the knobs show the written file: MAX_TURNS back on the repo's");
   assert.strictEqual(byLabel("developer", "Lanes").attrs["aria-valuenow"], "5", "LANES shows the new value");
   assert.strictEqual(byText("developer", "button", "high").className.split(" ").includes("on"), true, "EFFORT shows the new value");
@@ -532,7 +533,7 @@ const card = (over) => Object.assign({ id: "c1", tool: "git_push", role: "develo
   assert.match($("con-body").textContent, /file changed on disk after it was checked, so nothing was written\. Go back and prepare again/);
   assert.strictEqual($("con-go").hidden, true);
   $("con-cancel").click(); await flush();
-  assert.strictEqual($("con-title").textContent, "SETUP · CONFIGURATION", "back on the knobs, not out of SETUP");
+  assert.strictEqual($("con-title").textContent, "SETTINGS · CONFIGURATION", "back on the knobs, not out of SETTINGS");
   assert.strictEqual(byLabel("reviewer", "Lanes").attrs["aria-valuenow"], "2", "the draft is kept, to prepare again");
   results.push("tuning 409 changed");
 
@@ -549,7 +550,7 @@ const card = (over) => Object.assign({ id: "c1", tool: "git_push", role: "develo
   // Demo mode: prepare is refused with 403 and the rack says so, in a fixed line.
   cfgReply = (name, body) => [403, { error: "demo mode: this dashboard shows made-up data and nothing here acts" }];
   prepKey("reviewer").click(); await flush();
-  assert.strictEqual($("con-title").textContent, "SETUP · CONFIGURATION");
+  assert.strictEqual($("con-title").textContent, "SETTINGS · CONFIGURATION");
   assert.ok(walk(rack("reviewer")).some(n => n.textContent === "DEMO · CHANGES DISABLED"));
   assert.ok(!$("con-body").textContent.includes("made-up data"), "the fixed line, not the server's text");
   // Another refusal shows its reason, as text.
@@ -558,6 +559,78 @@ const card = (over) => Object.assign({ id: "c1", tool: "git_push", role: "develo
   assert.ok(walk(rack("reviewer")).some(n => n.textContent === "✕ LANES must be 1 to 8 <b>"));
   results.push("tuning demo 403 line");
   $("con-cancel").click(); await flush();
+
+  // ---- SETTINGS: the ways in (comma, the header's message), the one-line hint and the section tabs
+  assert.strictEqual($("scr-console").hidden, true, "the deck is up");
+  const sent = [];
+  parent.postMessage = m => sent.push(m);
+  const keyOn = (k, target, mods) => (doc.listeners.keydown || []).forEach(f => f(Object.assign({ key: k, preventDefault() {}, target: target || doc }, mods)));
+  const isOpen = () => $("con-title").textContent === "SETTINGS · CONFIGURATION" && $("scr-console").hidden === false;
+  keyOn(",", { tagName: "INPUT" }); await flush();
+  assert.strictEqual(isOpen(), false, "a comma typed in the reason tape is a comma");
+  keyOn(",", doc, { ctrlKey: true }); keyOn(",", doc, { metaKey: true }); keyOn(",", doc, { altKey: true }); await flush();
+  assert.strictEqual(isOpen(), false, "a modified comma is not the shortcut");
+  keyOn(";"); await flush();
+  assert.strictEqual(isOpen(), false);
+  keyOn(","); await flush();
+  assert.ok(isOpen(), "comma opens SETTINGS from the deck");
+  assert.ok(sent.includes("cu:settings"), "and tells the page, so its key stops pulsing");
+  assert.ok(sent.includes("cu:expand"));
+  const hint = kids().find(n => n.className === "shint");
+  assert.ok(hint && /Editable here/.test(hint.textContent) && /read-only/.test(hint.textContent) && /RESTART/.test(hint.textContent), "a one-line hint says what is editable and when it applies");
+  const tabs = () => kids().filter(n => n.attrs.role === "tab");
+  assert.deepStrictEqual(tabs().map(n => n.textContent), ["Roles", "Project notes", "Gateway", "Dashboard look"]);
+  assert.deepStrictEqual(tabs().map(n => n.attrs["aria-selected"]), ["true", "false", "false", "false"], "it opens on Roles");
+  assert.ok(rack("developer") && rack("reviewer"), "the knobs are on Roles");
+  assert.ok(kids().some(n => n.attrs.role === "tablist" && n.attrs["aria-label"] === "Settings sections"));
+  byLabel("developer", "More lanes").click();
+  const turned = byLabel("developer", "Lanes").attrs["aria-valuenow"];
+  tabBtn("Gateway").click(); await flush();
+  assert.deepStrictEqual(tabs().map(n => n.attrs["aria-selected"]), ["false", "false", "true", "false"]);
+  assert.ok(!rack("developer"), "Roles' knobs are not drawn on Gateway");
+  assert.ok($("con-body").textContent.includes("Broker policy") && $("con-body").textContent.includes("never edited from a browser"));
+  assert.ok(!$("con-body").textContent.includes("Project notes ·"), "one section at a time");
+  assert.strictEqual(doc.activeElement, tabBtn("Gateway"), "the tab keeps the focus through its own redraw");
+  tabBtn("Gateway").fire("keydown", { key: "ArrowRight" }); await flush();
+  assert.ok($("con-body").textContent.includes("dashboard.toml"), "ArrowRight moves to the next tab");
+  assert.strictEqual(tabs().filter(n => n.attrs["aria-selected"] === "true").length, 1);
+  tabBtn("Dashboard look").fire("keydown", { key: "ArrowRight" }); await flush();
+  assert.strictEqual(tabs()[0].attrs["aria-selected"], "true", "and wraps round to Roles");
+  assert.strictEqual(byLabel("developer", "Lanes").attrs["aria-valuenow"], turned, "a knob turned before leaving Roles is still turned");
+  tabBtn("Project notes").click(); await flush();
+  assert.ok($("con-body").textContent.includes("Project notes"));
+  keyOn(","); await flush();
+  assert.ok(isOpen(), "comma over SETTINGS does nothing more");
+  $("con-cancel").click(); await flush();
+  assert.strictEqual($("scr-console").hidden, true);
+  $("svc-setup").click(); await flush();
+  assert.strictEqual(tabs()[0].attrs["aria-selected"], "true", "SETTINGS always opens on Roles");
+  $("con-cancel").click(); await flush();
+  results.push("SETTINGS: comma, hint and tabs");
+
+  // The header's key asks the unit for the same screen with {type:"cu:open", screen:"settings"} and nothing else.
+  sent.length = 0;
+  const requests = () => calls.filter(c => c[0] !== "state").length, requestsBefore = requests();
+  const staysOnDeck = async (what, fn) => { fn(); await flush(); assert.strictEqual($("scr-console").hidden, true, what); };
+  await staysOnDeck("wrong sender", () => deliver({ type: "cu:open", screen: "settings" }, { source: {} }));
+  await staysOnDeck("wrong origin", () => deliver({ type: "cu:open", screen: "settings" }, { origin: "http://127.0.0.1:9999" }));
+  await staysOnDeck("lookalike origin", () => deliver({ type: "cu:open", screen: "settings" }, { origin: ORIGIN + ".evil.test" }));
+  await staysOnDeck("another screen", () => deliver({ type: "cu:open", screen: "log" }));
+  await staysOnDeck("the old name", () => deliver({ type: "cu:open", screen: "setup" }));
+  await staysOnDeck("an extra field", () => deliver({ type: "cu:open", screen: "settings", id: "x" }));
+  await staysOnDeck("a missing field", () => deliver({ type: "cu:open" }));
+  await staysOnDeck("a field that is not text", () => deliver({ type: "cu:open", screen: ["settings"] }));
+  await staysOnDeck("an array", () => deliver(["cu:open", "settings"]));
+  await staysOnDeck("a bare string", () => deliver("cu:open"));
+  assert.deepStrictEqual(sent, [], "a refused message says nothing");
+  assert.strictEqual(requests(), requestsBefore, "no request came of any of it");
+  deliver({ type: "cu:open", screen: "settings" }); await flush();
+  assert.ok(isOpen(), "the header's message opens SETTINGS");
+  assert.ok(sent.includes("cu:settings"));
+  deliver({ type: "cu:open", screen: "settings" }); await flush();
+  assert.ok(isOpen(), "asked again while open: still open, nothing else");
+  $("con-cancel").click(); await flush();
+  results.push("SETTINGS: the header's message");
 
   // A knob check still waiting for its answer when the notes editor opens is dropped: its diff never lands on the editor.
   $("svc-setup").click(); await flush();
@@ -569,16 +642,18 @@ const card = (over) => Object.assign({ id: "c1", tool: "git_push", role: "develo
   byLabel("reviewer", "More lanes").click();
   prepKey("reviewer").click(); await flush();
   const before = writes();
+  tabBtn("Project notes").click(); await flush();
   editBtn().click(); await flush();
   assert.ok(kids().some(n => n.tagName === "textarea"), "the editor is open");
   answer(); await flush(); await advance(3000);
   assert.ok(kids().some(n => n.tagName === "textarea"), "the late answer left the editor on the glass");
-  assert.strictEqual($("con-title").textContent, "SETUP · NOTES");
+  assert.strictEqual($("con-title").textContent, "SETTINGS · NOTES");
   assert.ok(!$("con-body").textContent.includes('LANES="2"'), "no tune diff over the editor");
   assert.strictEqual($("con-go").hidden === false && $("con-go").disabled === false, false, "no key armed for a write that was dropped");
   assert.strictEqual(writes(), before, "nothing was sent");
-  $("con-cancel").click(); await flush();                               // the editor's Close: back to the knobs
-  assert.strictEqual($("con-title").textContent, "SETUP · CONFIGURATION");
+  $("con-cancel").click(); await flush();                               // the editor's Close: back to SETTINGS, on the notes tab
+  assert.strictEqual($("con-title").textContent, "SETTINGS · CONFIGURATION");
+  tabBtn("Roles").click(); await flush();
   assert.strictEqual(byLabel("reviewer", "Lanes").attrs["aria-valuenow"], "2", "the knob draft is kept");
   assert.strictEqual(prepKey("reviewer").disabled, false, "and can be prepared again");
   results.push("a pending knob check is dropped when the notes editor opens");

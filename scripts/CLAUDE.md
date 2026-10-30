@@ -96,17 +96,21 @@ time), the `Content-Type` is JSON and the body is at most 8 KiB (128 KiB for `co
 which carries a notes file: CONFIG WRITE below), checked on `Content-Length` before any of it is read; every other method
 (`OPTIONS` included) is refused, and no response carries CORS headers. The main page
 can't script the frame (another origin); the frame may tell it
-exactly three strings by `postMessage` (`cu:expand`, `cu:collapse`, `cu:reload`),
-accepted only from that frame's window and origin. The main page may tell the frame
-exactly one thing, `{type: "cu:select", id: <card id>}` (a printer line, #190), sent to
-the unit's exact origin; the unit accepts it only from `window.parent` with
-`e.origin` exactly the main origin, as a plain object with exactly those two keys and an
-id that fullmatches the card-id format (`[A-Za-z0-9_-]{1,64}`, checked on both sides). It
-is a display hint and nothing else: it acts only on the deck (not over another screen,
-an open APPROVE question or a decision in flight), only picks among the cards the unit
-already holds (an unknown id flashes a fixed "no longer held" line), at most once per
-400 ms, never presses a key or moves focus, and treats the card like one that arrived
-unasked (typed reason cleared, keys dark for the 2.5 s hold). Agent-written strings (card titles,
+exactly four strings by `postMessage` (`cu:expand`, `cu:collapse`, `cu:reload`, `cu:settings`),
+accepted only from that frame's window and origin (`cu:settings` only records that Settings was opened,
+for the header key's first-run cue). The main page may tell the frame
+exactly two things, each a plain object with exactly its keys, sent to the unit's exact origin and accepted
+only from `window.parent` with `e.origin` exactly the main origin: `{type: "cu:open", screen: "settings"}` (the
+header's SETTINGS key, or the comma shortcut: it opens the read-only Settings screen the unit's own plate
+opens, only from the deck, and never over an open question or a decision in flight) and
+`{type: "cu:select", id: <card id>}` (a printer line, #190; the id fullmatches the card-id format
+`[A-Za-z0-9_-]{1,64}`, checked on both sides). Both are display hints and nothing else: they act only on the
+deck (not over another screen, an open APPROVE question or a decision in flight), `cu:select` only picks among
+the cards the unit already holds (an unknown id flashes a fixed "no longer held" line), at most once per
+400 ms, never presses a key (`cu:open` moves focus to the frame, as the user's own click would), and
+treats the card like one that arrived unasked (typed reason cleared, keys dark for the 2.5 s hold). The header
+key is disabled until the frame has loaded, and its first-run cue is one `localStorage` flag
+(`fc1984-settings-seen`, read and written in try/catch) and nothing else. Agent-written strings (card titles,
 branches, the action log) are inserted as text only.
 
 APPROVE and DECLINE are one press each, as `factory approvals approve` is one command:
@@ -163,7 +167,7 @@ without seeing N files?" with CANCEL and CONFIRM APPROVE (dark for 1 s), and the
 changing or going cancels the question.
 
 An unexpected exception in any control is a 500 with a fixed message, and only its
-type is logged. SETUP (doomtickle/passdesk-ops#183) shows the effective configuration read-only: `config`
+type is logged. SETUP, now labelled SETTINGS (doomtickle/passdesk-ops#183; the ids, `setup` screen and `svc-setup` plate keep the old name; four tabs, Roles / Project notes / Gateway / Dashboard look, one section drawn at a time, and no new request or write) shows the effective configuration read-only: `config`
 in the unit's state, built by `scripts/dashboard_setup.py` from the factory's parsers, cached
 a few seconds and read outside the board's lock. Its read-only view adds no endpoint and runs nothing
 (its one write is CONFIG WRITE below); it takes
