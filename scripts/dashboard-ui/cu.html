@@ -57,12 +57,12 @@
       <button class="svckey warnkey" type="button" id="svc-update"><span class="led" id="led-update"></span>Update</button>
       <button class="svckey logkey" type="button" id="svc-log" hidden><span class="led" id="led-log"></span>Log</button>
     </div>
-    <!-- SETUP: the effective configuration, the tuning knobs and the project notes editor. A blanking plate that is a key. -->
-    <button class="blank" type="button" id="svc-setup" aria-label="Setup: the effective configuration, the tuning knobs for each role, and the project notes"><span class="silk">Setup</span></button>
+    <!-- SETTINGS (id svc-setup, formerly SETUP): the effective configuration, the tuning knobs and the project notes editor. A blanking plate that is a key; the dashboard's header has the main SETTINGS key and the comma shortcut. -->
+    <button class="blank" type="button" id="svc-setup" aria-keyshortcuts="," aria-label="Settings: the effective configuration, the tuning knobs for each role, and the project notes (shortcut: comma)"><span class="silk">Settings</span></button>
   </div>
 </section>
 
-<!-- Screens "confirm", "log" and "setup": the expanded service monitor. -->
+<!-- Screens "confirm", "log" and "setup" (SETTINGS): the expanded service monitor. -->
 <section class="screen console" id="scr-console" hidden role="dialog" aria-modal="true" aria-labelledby="con-title">
   <div class="monitor">
     <div class="mon-h">

@@ -33,8 +33,13 @@
       <div class="readout"><span class="silk">Running</span><div class="lcd seg-box" id="ro-run"></div></div>
       <div class="readout"><span class="silk">Clock</span><div class="lcd seg-box" id="ro-clock"></div></div>
     </div>
-    <!-- The docs open in one named tab, which every MANUAL and ? link reuses (same origin: /docs/). -->
-    <a class="tabkey manual" href="/docs/" target="factory-docs">Manual</a>
+    <div class="head-keys">
+      <!-- SETTINGS: the configuration screen, which lives in the control unit's frame (cu.html). app.js asks the frame to open it
+           (one fixed message, comma is the shortcut); the lamp pulses until it has been opened once. -->
+      <button class="settings-key" type="button" id="settings-key" disabled aria-keyshortcuts="," aria-label="Settings: roles, project notes, gateway and dashboard look (shortcut: comma)" title="Settings: waiting for the control unit"><span class="led" id="settings-led"></span><span class="sk-label">Settings</span><kbd class="sk-cap" aria-hidden="true">,</kbd></button>
+      <!-- The docs open in one named tab, which every MANUAL and ? link reuses (same origin: /docs/). -->
+      <a class="tabkey manual" href="/docs/" target="factory-docs">Manual</a>
+    </div>
   </header>
 
   <div class="bays">
@@ -73,7 +78,7 @@
         <div class="lcd standby-lcd"><p class="big">Standby</p><p>No jobs running. A lane powers on here when the Coordinator hands it a job.</p>
           <!-- The shift briefing (app.js renderBriefing): host-derived facts, drawn as text. -->
           <div class="briefing" id="briefing" hidden></div>
-          <p class="bf-keys">Keys: 1–9 open a lane · F floor · S sound · N notify · Enter on a printer line acts on it · Esc closes · MANUAL in the header opens the docs</p></div>
+          <p class="bf-keys">Keys: 1–9 open a lane · F floor · S sound · N notify · , settings · Enter on a printer line acts on it · Esc closes · MANUAL in the header opens the docs</p></div>
       </div>
       <!-- Idle lanes: one chip each, numbered like the modules. -->
       <div class="lane-strip" id="lane-strip" role="group" aria-label="Idle lanes" hidden></div>

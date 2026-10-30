@@ -318,7 +318,7 @@ factory update
   (`[roles.colors]`, `designer = "#d08cff"`). The dashboard reads it once when it
   starts, so restart it to see a change. It is display only and strict: an
   unknown key or a bad value makes it ignore the whole file, show the defaults
-  and say why in its log and on SETUP. It needs no rebuild and grants nothing
+  and say why in its log and on SETTINGS. It needs no rebuild and grants nothing
   (Use the dashboard, "Your own look").
 - `plugins/<module>/` holds broker plugins (Python packages that add tools to
   the gateway; see the broker's `docs/plugin-tools.md`). `factory update`
@@ -1195,7 +1195,7 @@ your browser. It shows:
     Coordinator's terminal attached; its report scrolls on the same screen
     and ends with NO PROBLEMS FOUND or PROBLEMS FOUND (each with its fix
     indented under it). It runs one at a time with RESTART and UPDATE.
-  - a blanking plate marked SETUP, where settings will go.
+  - a plate marked Settings, which opens the same screen as the header's SETTINGS key.
 - **Spend:** today's cost per hour and per role, from `dispatch/audit.jsonl`.
 - **Event printer:** today's broker calls (allowed, denied, staged, decided) and
   finished jobs, with STAGED, WRITTEN and FAILED lines for the gateway's
@@ -1219,7 +1219,7 @@ It is local. Apart from the terminal and the control unit, it only reads the
 state folder (lane transcripts, both audit logs, review packets, approval
 cards, and for INSPECT the stored patch), and at start-up the factory's docs,
 and makes no network connection. The
-control unit writes only a decision file (approve, decline), its action logs and, from SETUP, a role's
+control unit writes only a decision file (approve, decline), its action logs and, from SETTINGS (formerly SETUP), a role's
 local tuning override (`roles/<role>.conf`, named keys only) or the bound project's notes files, each after a diff and a confirm, and runs only
 `factory restart`, `factory update --yes`, `factory update --plan` and `factory doctor` (a fixed
 command line, never a shell; `--factory PATH` runs another `factory`); its fonts and xterm.js are

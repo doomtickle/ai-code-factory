@@ -24,6 +24,7 @@ module.exports = async function run(h) {
   const text = () => $("con-body").textContent;
   const goKey = $("con-go"), cancelKey = $("con-cancel");
   const type = async v => { const ta = area(); ta.value = v; ta.fire("input"); await flush(); };
+  const tab = async label => { find(n => (n.attrs || {}).role === "tab" && n.textContent === label).click(); await flush(); };
   const countCalls = name => calls.filter(c => c[0] === name).length;
 
   // The host: the shared file holds 100 characters and the developer's 50. A role's total is its
@@ -64,7 +65,9 @@ module.exports = async function run(h) {
   }
   async function openEditor() {
     $("svc-setup").click(); await flush();
-    assert.ok(!find(n => n.tagName === "textarea"), "SETUP alone has no editor");
+    assert.ok(!find(n => n.tagName === "textarea"), "SETTINGS alone has no editor");
+    assert.ok(!button("Edit notes"), "the key is on the Project notes tab");
+    await tab("Project notes");
     button("Edit notes").click(); await flush();
     assert.ok(area(), "the editor loaded the shared file");
   }
@@ -266,7 +269,7 @@ module.exports = async function run(h) {
     assert.ok(!text().includes("Unsaved changes in DEVELOPER"));
     cancelKey.click(); await flush();
     button("Discard").click(); await flush();
-    assert.ok(text().includes("Setup · effective configuration"), "back on SETUP");
+    assert.ok(text().includes("Settings · effective configuration"), "back on SETTINGS");
     assert.strictEqual($("scr-console").hidden, false);
     cancelKey.click(); await flush();
     assert.strictEqual($("scr-console").hidden, true, "Close closes");
@@ -310,10 +313,12 @@ module.exports = async function run(h) {
     assert.ok(!/[\ud800-\udbff](?![\udc00-\udfff])/.test(area().value), "no split surrogate pair");
   });
 
-  await test("the editor and the tuning rack share SETUP without fighting", async () => {
+  await test("the editor and the tuning rack share SETTINGS without fighting", async () => {
     const rack = () => find(n => (n.attrs || {})["aria-label"] === "Tuning developer");
     $("svc-setup").click(); await flush();
-    assert.ok(rack(), "SETUP shows the knobs");
+    assert.ok(rack(), "SETTINGS shows the knobs");
+    await tab("Project notes");
+    assert.ok(!rack(), "the knobs are on the Roles tab");
     button("Edit notes").click(); await flush();
     assert.ok(area() && !rack(), "the editor owns the screen");
     await type("typed, not saved");
@@ -322,18 +327,21 @@ module.exports = async function run(h) {
     key("Escape"); await flush();                         // unsaved: asks first, stays on the editor
     assert.ok(area() && !rack());
     button("Discard").click(); await flush();
-    assert.ok(!area() && rack(), "back on the knobs");
-    assert.strictEqual($("scr-console").hidden, false, "Esc left the editor, not SETUP");
+    assert.ok(!area() && !rack() && button("Edit notes"), "back on the Project notes tab");
+    await tab("Roles");
+    assert.ok(rack(), "and the knobs are one tab away");
+    assert.strictEqual($("scr-console").hidden, false, "Esc left the editor, not SETTINGS");
     assert.strictEqual(cancelKey.textContent, "Close");
     assert.strictEqual(cancelKey.disabled, false);
     key("Escape"); await flush();
-    assert.strictEqual($("scr-console").hidden, true, "a second Esc closes SETUP");
+    assert.strictEqual($("scr-console").hidden, true, "a second Esc closes SETTINGS");
   });
 
   await test("no project, no editor", async () => {
     server.config = Object.assign(config(), { notes: { project: "(no project)", limit: LIMIT, files: [] } });
     await advance(2500);
     $("svc-setup").click(); await flush();
+    await tab("Project notes");
     assert.ok(!button("Edit notes"));
     assert.ok(text().includes("once the factory is bound to a project"));
   });

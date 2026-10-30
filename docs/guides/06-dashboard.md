@@ -192,7 +192,7 @@ this machine, changes nothing, and refreshes every few seconds:
   whether it is on.
 - **Holds.** Whether held writes are on, and for which tools (`[approvals]`).
   Credentials, the allowed repos and the GitLab address aren't shown; the
-  [Setup](#setup-the-configuration-in-force) screen has the rest.
+  [Settings](#settings-the-configuration-in-force) screen has the rest.
 - **A work order.** One example task to give the Coordinator in Terminal 0,
   picked from a short fixed list (the first is the slugify task from the
   [first session](01-first-session.md#6-give-the-coordinator-a-small-first-task)).
@@ -584,19 +584,32 @@ designer = "#d08cff"                    # a role's colour on the floor, its lane
   a key set twice, a file over 16 KiB, a symlink or text that is not UTF-8
   makes the dashboard ignore the whole file, show the defaults, print a
   warning naming the file, line and key, and show the same reason on the
-  SETUP screen. The dashboard still starts. With no file you get the defaults.
+  Settings screen. The dashboard still starts. With no file you get the defaults.
   `--demo` never reads your file.
 
-### Setup: the configuration in force
+### Settings: the configuration in force
 
-The **SETUP** key opens the configuration the factory will use, read on this
-machine with the same code `factory start` uses. Most of it is read-only: edit
-the files as [Make it yours](04-customize.md) describes. Two things can be
-changed here: a role's tuning ([below](#tuning-a-role-from-setup)) and the
-[project notes](#the-notes-editor). It refreshes every few seconds while open,
-except while you are in the middle of turning a knob or editing the notes.
+**SETTINGS** was called SETUP in earlier versions of the dashboard. It is the
+big key at the left of the header, under the nameplate (on a phone it fills the
+top row), and the keyboard shortcut `,` (comma) opens it from anywhere on the
+page, as it does from the control unit's deck. Esc closes it. The first time
+you open the dashboard in a browser the key's lamp pulses; it stops for good
+once you have opened Settings once (the browser remembers that in
+`localStorage`, nothing else). The small **Settings** plate on the control
+unit's deck opens the same screen.
 
-- **Roles.** One block per role: whether it is on (an optional role is on only
+It shows the configuration the factory will use, read on this machine with the
+same code `factory start` uses. A line under the title says what you can do
+here: most of it is read-only (edit the files as [Make it
+yours](04-customize.md) describes), and two things can be changed, a role's
+tuning ([below](#tuning-a-role-from-settings)) and the [project
+notes](#the-notes-editor). Every change is read at `factory start`, so it
+applies after **RESTART**, not live. The screen has four tabs, one section at a
+time, and refreshes every few seconds while open, except while you are in the
+middle of turning a knob or editing the notes. Switching tabs keeps your
+unsent knob changes.
+
+- **Roles** tab. One block per role: whether it is on (an optional role is on only
   if it is listed in `enabled-roles`), and `MODEL`, `MODELS`, `EFFORT`,
   `LANES`, `MAX_SESSION_TOKENS`, `MAX_TURNS` and `MAX_JOB_SECONDS`, each
   marked **REPO** (from the role's own `role.conf`) or **LOCAL** (your
@@ -604,18 +617,18 @@ except while you are in the middle of turning a knob or editing the notes.
   replaced. `WORKSPACE`, `TEMPLATE` and `BROKER_TOOLS` are marked **FIXED**:
   an override can't change them, and a block says so if your override file
   tries.
-- **Optional roles** and the names in `enabled-roles` (a name that matches no
+  Also on this tab: the **optional roles** and the names in `enabled-roles` (a name that matches no
   role is flagged).
-- **Gateway.** The held tools and their expiry (`[approvals]`), the allowed
+- **Gateway** tab. The held tools and their expiry (`[approvals]`), the allowed
   repos (`[git].repos`), the GitLab address if one is set (without any user
   name, password or query), each marked REPO or LOCAL by the file it came
   from, and the Coordinator's broker tools.
-- **Project notes.** The notes files for the project the dashboard is bound to,
+- **Project notes** tab. The notes files for the project the dashboard is bound to,
   and for each running role its instructions plus the notes against the
   20,000-character limit. A role over it is flagged: the dispatch
   bridge refuses that role's tasks. **Edit notes** opens the
   [notes editor](#the-notes-editor).
-- **Dashboard look.** Whether `dashboard.toml` was read at start-up, or the
+- **Dashboard look** tab. Whether `dashboard.toml` was read at start-up, or the
   reason it was ignored. It does not show the values; the page itself does.
 
 Each line ends with the command that applies a change to it, **START** or
@@ -623,9 +636,9 @@ Each line ends with the command that applies a change to it, **START** or
 Tokens, passwords and other credentials are never shown, and it never runs a
 command. If the files can't be read the screen says it is unavailable.
 
-#### Tuning a role from SETUP
+#### Tuning a role from Settings
 
-Each role block has a small rack of controls for the keys people change most.
+On the Roles tab, each role block has a small rack of controls for the keys people change most.
 They write the role's local override (`roles/<role>.conf` in the config
 folder), never the repo's `role.conf`:
 
@@ -665,9 +678,9 @@ credentials have no knobs here: they stay read-only.
 
 ### The notes editor
 
-**Edit notes** (under Project notes on SETUP) opens an editor for the project's
+**Edit notes** (on the Project notes tab of Settings) opens an editor for the project's
 notes files, the ones [Make it yours](04-customize.md#per-project-notes)
-describes. Like the tuning knobs, it is a write from SETUP, after a diff and a confirm.
+describes. Like the tuning knobs, it is a write from Settings, after a diff and a confirm.
 It appears once the factory is bound to a project.
 
 - **Tabs.** **SHARED** is `projects/<folder>.md`, which every role gets; each
@@ -756,6 +769,9 @@ Stands in for: part of `factory analytics` and of `factory logs broker` /
 | Anywhere | `f` | Factory floor on / off |
 | Anywhere | `s` | Sound on / off |
 | Anywhere | `n` | Browser notifications on / off |
+| Anywhere, control unit's deck | `,` | Open Settings (not while typing in a box) |
+| Settings | Esc | Back to the deck (from a diff, back to the knobs) |
+| Settings tabs | ← → | Previous / next tab |
 | Lane monitor | `t` / `p` | Transcript / review packet |
 | Lane monitor, patch viewer | Esc | Close |
 | Event printer line | Enter / Esc | Act on the line / shut an opened line |
@@ -800,7 +816,7 @@ you can see a held crate waiting at the gate and a denied one landing in the der
 Demo mode is display only. It never reads your real state folder: it copies
 the fixture into a fresh temporary folder and deletes it when you press
 Ctrl-C. Terminal 0 is off, APPROVE, DECLINE, RESTART, UPDATE, DIAG and the notes editor's SAVE answer
-that nothing here acts, INSPECT shows the fixture's patch, and SETUP shows
+that nothing here acts, INSPECT shows the fixture's patch, and Settings shows
 the fixture's configuration (`scripts/dashboard-demo/setup/`), not yours, and its
 PREPARE says DEMO · CHANGES DISABLED. It also ignores your `dashboard.toml` and shows the defaults. The same
 token, cookie and content rules apply as for a real run. `--demo` can't be
@@ -813,7 +829,7 @@ It is local: it listens only on `127.0.0.1`, refuses any request without
 this run's token, and makes no network connection of its own. Apart from
 Terminal 0 and the control unit it only reads the factory's state folder.
 The control unit can write only a decision file (APPROVE, DECLINE), its
-action logs and, from SETUP, a role's local tuning override or the project's notes (each after a diff and a
+action logs and, from Settings, a role's local tuning override or the project's notes (each after a diff and a
 confirm), and run only `factory doctor`, `factory restart`, `factory
 update --yes` and `factory update --plan`, each after a confirm screen. The README's
 [Dashboard](../../README.md#dashboard) section has the details.

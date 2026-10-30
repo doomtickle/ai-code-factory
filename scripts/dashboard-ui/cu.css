@@ -143,7 +143,7 @@ button, input { font: inherit; color: inherit; }
 .svckey.warnkey:active:not(:disabled) { box-shadow: 0 1px 0 #8a6510; }
 .svckey.warnkey:disabled { box-shadow: 0 2px 0 #8a6510, 0 3px 4px rgba(0,0,0,.5); }
 
-/* SETUP: a blanking plate held by two slotted screws, which is also a key (it opens the configuration screen) */
+/* SETTINGS (id svc-setup): a blanking plate held by two slotted screws, which is also a key (it opens the configuration screen) */
 .blank { flex: none; position: relative; height: 18px; border-radius: 2px; display: flex; align-items: center; justify-content: center;
   background: repeating-linear-gradient(90deg, rgba(255,255,255,.03) 0 1px, transparent 1px 2px), linear-gradient(180deg, #3c3e42, #26272a 60%, #1b1c1f);
   box-shadow: inset 0 1px 0 rgba(255,255,255,.12), inset 0 -1px 0 rgba(0,0,0,.6), 0 1px 2px rgba(0,0,0,.7); }
@@ -247,7 +247,7 @@ button.blank:disabled { cursor: not-allowed; filter: brightness(.75); }
 .mon-actions { margin-left: auto; display: flex; justify-content: flex-end; gap: 12px; flex-wrap: wrap; padding-bottom: 4px; }
 .mon-actions .bigkey { min-width: 11em; padding: 10px 14px 9px; font-size: .95rem; }
 
-/* ---------- SETUP tuning rack (#185): knobs, a detent switch and number tapes on the amber tube */
+/* ---------- SETTINGS tuning rack (#185): knobs, a detent switch and number tapes on the amber tube */
 .crt-body .banner.k-ok, .crt-body .banner.k-warn { margin-bottom: 8px; }
 .rack { margin: 4px 0 12px 1.2em; padding: 6px 12px 8px; border-left: 2px solid var(--dim); background: linear-gradient(90deg, color-mix(in srgb, var(--c) 6%, transparent), transparent 60%); }
 .trow { display: grid; grid-template-columns: 9.5em minmax(0, auto) minmax(0, 1fr) 2em; align-items: center; gap: 4px 14px; padding: 5px 0; min-height: 3.1em;
@@ -456,6 +456,16 @@ button.blank:disabled { cursor: not-allowed; filter: brightness(.75); }
   .crt-body { padding: 10px 14px; }
   .mon-actions .bigkey { min-width: 0; flex: 1; }
   .mon-actions { width: 100%; }
+}
+
+/* ---------- SETTINGS: the one-line hint and the section tabs (cu.js settingsTabs) */
+.crt-body .shint { margin: 0 0 8px; padding: 3px 0 3px 10px; border-left: 3px solid var(--c); color: var(--amber-pale); text-shadow: 0 0 5px var(--glow); }
+.crt-body .ntabs.stabs { position: sticky; top: 0; z-index: 2; margin: 0 -4px 10px; padding: 6px 4px 7px; background: var(--crt-bg); border-bottom: 1px solid var(--dim); }
+.crt-body .ntabs.stabs .ntab { font-size: .95em; padding: 2px 12px; }
+.crt-body .spanel > h5:first-child { margin-top: 0; }
+@media (max-width: 640px) {
+  .crt-body .ntabs.stabs { gap: 5px; }
+  .crt-body .ntabs.stabs .ntab { flex: 1 1 auto; padding: 3px 6px; letter-spacing: .06em; }
 }
 
 /* ---------- NOTES editor on SETUP (cu-notes.js): tabs, a phosphor edit box, per-role gauges, the diff */

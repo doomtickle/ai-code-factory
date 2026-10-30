@@ -1548,6 +1548,7 @@ class CuScriptTests(unittest.TestCase):
                           "tuning sends changed keys only", "tuning diff is text",
                           "tuning confirm holds, then sends the token once", "tuning 409 changed",
                           "tuning cancel drops the token", "tuning demo 403 line",
+                          "SETTINGS: comma, hint and tabs", "SETTINGS: the header's message",
                           "a pending knob check is dropped when the notes editor opens"])
 
 

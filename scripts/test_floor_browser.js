@@ -9,6 +9,7 @@
 // The attention signals (#192, app.js) are driven by rewriting the /api/state the page polls: the title and
 // favicon badge, the cues' events, the jobs-done count clearing on focus, and the NOTIFY key (a stubbed
 // Notification: permission asked only from the key, a body of fixed words and validated names only).
+// SETTINGS' header key, comma shortcut, hint and tabs (settingsEntry).
 // The SHIFT BUDGET (#195): the amber/red thresholds of the header's spend readout, the meter, and the stored figure.
 "use strict";
 const { spawn } = require("node:child_process");
@@ -477,6 +478,104 @@ async function lookFile(url) {
   } finally { await b.close(); }
 }
 
+// SETTINGS: the header's primary key (and its comma shortcut) opens the configuration screen in the control unit's frame,
+// with one fixed message; the key pulses until the screen has been opened once, remembered in this browser; the screen has
+// its hint and four tabs, at phone width too; and reduced motion keeps the key still.
+async function settingsEntry(url) {
+  const ANIMS = `const anims = n => n.getAnimations().filter(a => a.animationName).length;`;   // keyframe animations only: a key's 50 ms press transition isn't a pulse
+  const deckReady = async b => {
+    for (let i = 0; i < 40; i++) {
+      try { if (await b.evFrame(`!document.getElementById("scr-deck").hidden && document.getElementById("deck-body").textContent.length > 0`) && !(await b.ev(`document.getElementById("settings-key").disabled`))) return; } catch (e) { /* not loaded yet */ }
+      await b.sleep(250);
+    }
+    throw new Error("the control unit never showed its deck, or SETTINGS never went live");
+  };
+  const frameScreen = b => b.evFrame(`[document.getElementById("scr-console").hidden, document.getElementById("con-title").textContent]`);
+  let b = await launch(url);
+  try {
+    await deckReady(b);
+    const key = () => b.ev(`(() => { ${ANIMS} const k = document.getElementById("settings-key"), r = k.getBoundingClientRect(), s = getComputedStyle(k);
+      return { disabled: k.disabled, name: k.getAttribute("aria-label"), keys: k.getAttribute("aria-keyshortcuts"), text: k.textContent, w: r.width, h: r.height, x: r.x + r.width / 2, y: r.y + r.height / 2,
+        cue: k.classList.contains("cue"), pulses: anims(k) + anims(k.querySelector(".led")), bg: s.backgroundImage,
+        top: document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2) === k || k.contains(document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2)) }; })()`);
+    let k = await key();
+    assert.strictEqual(k.disabled, false, "the SETTINGS key is live once the control unit has loaded");
+    assert.ok(/^Settings/.test(k.name) && k.keys === "," && /Settings/.test(k.text), `SETTINGS has a name and a shortcut (${k.name})`);
+    assert.ok(k.w >= 100 && k.h >= 30, `SETTINGS is sized as a primary control (${k.w}x${k.h})`);
+    assert.ok(k.top, "nothing lies over the SETTINGS key");
+    assert.ok(k.cue && k.pulses > 0, "the lamp pulses until the screen has been opened");
+    assert.strictEqual(await b.ev(`localStorage.getItem("fc1984-settings-seen")`), null);
+
+    await b.click(k.x, k.y); await b.sleep(900);
+    assert.deepStrictEqual(await frameScreen(b), [false, "SETTINGS · CONFIGURATION"], "a click on the key opens SETTINGS in the frame");
+    assert.strictEqual(await b.evFrame(`document.activeElement.id`), "con-cancel", "the frame has the focus, so Esc works");
+    assert.strictEqual(await b.ev(`document.documentElement.classList.contains("cu-open")`), true, "the frame grew over the page");
+    assert.strictEqual(await b.ev(`localStorage.getItem("fc1984-settings-seen")`), "1", "opening it is remembered");
+    assert.strictEqual(await b.ev(`document.getElementById("settings-key").classList.contains("cue")`), false, "and the pulse stops");
+    assert.deepStrictEqual(await b.evFrame(`[...document.querySelectorAll(".stabs [role=tab]")].map(n => [n.textContent, n.getAttribute("aria-selected")])`),
+      [["Roles", "true"], ["Project notes", "false"], ["Gateway", "false"], ["Dashboard look", "false"]]);
+    assert.ok(await b.evFrame(`/Editable here/.test(document.querySelector(".shint").textContent) && /RESTART/.test(document.querySelector(".shint").textContent)`), "the hint is on the glass");
+    await b.evFrame(`[...document.querySelectorAll(".stabs [role=tab]")].find(n => n.textContent === "Project notes").click()`); await b.sleep(150);
+    assert.ok(await b.evFrame(`[...document.querySelectorAll("#con-body button")].some(n => n.textContent === "Edit notes")`), "the notes editor is on its tab");
+    await b.key("Escape", "Escape"); await b.sleep(400);
+    assert.strictEqual((await frameScreen(b))[0], true, "Esc closes SETTINGS");
+    assert.strictEqual(await b.ev(`document.documentElement.classList.contains("cu-open")`), false);
+
+    // The shortcut, with the keyboard on the page itself, and again from inside the frame.
+    await b.ev(`document.activeElement && document.activeElement.blur(); document.body.focus()`);
+    await b.key(",", "Comma", ","); await b.sleep(900);
+    assert.deepStrictEqual(await frameScreen(b), [false, "SETTINGS · CONFIGURATION"], "comma on the page opens SETTINGS");
+    await b.key("Escape", "Escape"); await b.sleep(400);
+    assert.strictEqual((await frameScreen(b))[0], true);
+    await b.evFrame(`document.getElementById("btn-approve").focus()`);
+    await b.key(",", "Comma", ","); await b.sleep(500);
+    assert.deepStrictEqual(await frameScreen(b), [false, "SETTINGS · CONFIGURATION"], "comma inside the frame opens it too");
+    await b.key("Escape", "Escape"); await b.sleep(300);
+    await b.ev(`document.activeElement && document.activeElement.blur(); document.body.focus()`);
+    await b.ev(`(() => { const i = document.getElementById("budget-in"); i.focus(); return null; })()`);
+    await b.key(",", "Comma", ","); await b.sleep(500);
+    assert.strictEqual((await frameScreen(b))[0], true, "a comma typed in the budget box is a comma");
+
+    // The small plate on the deck is the same screen.
+    await b.evFrame(`document.getElementById("svc-setup").click()`); await b.sleep(400);
+    assert.deepStrictEqual(await frameScreen(b), [false, "SETTINGS · CONFIGURATION"]);
+    assert.strictEqual(await b.evFrame(`document.getElementById("svc-setup").textContent`), "Settings");
+  } finally { await b.close(); }
+
+  // Remembered: no pulse on a later visit.
+  b = await launch(url, undefined, `localStorage.setItem("fc1984-settings-seen", "1")`);
+  try {
+    await deckReady(b);
+    const seen = await b.ev(`(() => { ${ANIMS} const k = document.getElementById("settings-key"); return [k.disabled, k.classList.contains("cue"), anims(k)]; })()`);
+    assert.deepStrictEqual(seen, [false, false, 0], "an opened-once key is live and still");
+  } finally { await b.close(); }
+
+  // Phone width: the key leads the header and fills it; the screen's tabs all fit.
+  b = await launch(url);
+  try {
+    await b.resize(390, 844);
+    await deckReady(b);
+    const m = await b.ev(`(() => { const k = document.getElementById("settings-key").getBoundingClientRect(), l = document.querySelector(".lamps").getBoundingClientRect();
+      return { left: k.left, right: k.right, w: k.width, h: k.height, aboveLamps: k.bottom <= l.top, headRight: document.querySelector(".head").getBoundingClientRect().right }; })()`);
+    assert.ok(m.left >= 0 && m.right <= 390 && m.w >= 200 && m.h >= 36, `SETTINGS fits the phone and is thumb-sized (${JSON.stringify(m)})`);
+    assert.ok(m.aboveLamps, "SETTINGS sits above the lamps, in the first screenful");
+    assert.ok(m.headRight <= 390, "the header does not run past the phone's edge");
+    await b.ev(`document.getElementById("settings-key").click()`); await b.sleep(900);
+    assert.deepStrictEqual(await frameScreen(b), [false, "SETTINGS · CONFIGURATION"]);
+    const tabs = await b.evFrame(`[...document.querySelectorAll(".stabs [role=tab]")].map(n => { const r = n.getBoundingClientRect(); return [r.left >= 0, r.right <= innerWidth, r.height > 0]; })`);
+    assert.strictEqual(tabs.length, 4);
+    assert.ok(tabs.every(t => t.every(Boolean)), `every tab is on the phone's screen (${JSON.stringify(tabs)})`);
+  } finally { await b.close(); }
+
+  // Reduced motion: the cue stays (an amber lamp) but nothing moves.
+  b = await launch(url, [{ name: "prefers-reduced-motion", value: "reduce" }]);
+  try {
+    await deckReady(b);
+    const still = await b.ev(`(() => { ${ANIMS} const k = document.getElementById("settings-key"); return [k.classList.contains("cue"), anims(k) + anims(k.querySelector(".led"))]; })()`);
+    assert.deepStrictEqual(still, [true, 0], "the cue does not move under reduced motion");
+  } finally { await b.close(); }
+}
+
 async function run(url) {
   // ---- motion allowed
   let b = await launch(url);
@@ -554,4 +653,4 @@ async function run(url) {
   } finally { await b.close(); }
 }
 
-run(process.argv[2]).then(() => attention(process.argv[2])).then(() => printer(process.argv[2])).then(() => budget(process.argv[2])).then(() => lookFile(process.argv[2])).then(() => console.log("floor browser checks passed"), e => { console.error(e.stack || e); process.exit(1); });
+run(process.argv[2]).then(() => attention(process.argv[2])).then(() => printer(process.argv[2])).then(() => budget(process.argv[2])).then(() => lookFile(process.argv[2])).then(() => settingsEntry(process.argv[2])).then(() => console.log("floor browser checks passed"), e => { console.error(e.stack || e); process.exit(1); });

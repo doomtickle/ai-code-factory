@@ -94,7 +94,7 @@ socket, or host credentials. Full picture: README.md.
   must meet the same bar: one fixed argv with no shell, a key in a request header
   (not just the cookie) on a POST or WebSocket with its `Origin` checked, kept out of
   reach of the page that shows agent-written content, and a confirm step before any
-  host command. Its one config write (owner decision 29 Oct 2026): from SETUP, a role's
+  host command. Its one config write (owner decision 29 Oct 2026): from SETTINGS (formerly SETUP), a role's
   tuning override `FACTORY_CONFIG/roles/<role>.conf` (`ROLE_OVERRIDE_KEYS` only, validated
   as `factory start` does) and the bound project's notes `FACTORY_CONFIG/projects/<project>[.<role>].md`,
   through one path (`scripts/dashboard_configwrite.py`), behind a prepare/run token, no symlink

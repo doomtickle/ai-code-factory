@@ -16,7 +16,7 @@ affected, after listing what each one loses and asking you.
 
 | You changed | Run |
 |---|---|
-| Per-project notes (`projects/<folder>.md`, `projects/<folder>.<role>.md`), by hand or in the dashboard's SETUP notes editor | `factory start` |
+| Per-project notes (`projects/<folder>.md`, `projects/<folder>.<role>.md`), by hand or in the dashboard's Settings notes editor | `factory start` |
 | A role's instructions, `MODEL`, `MODELS`, `EFFORT`, `LANES`, `MAX_SESSION_TOKENS`, `MAX_TURNS`, `MAX_JOB_SECONDS` | `factory start` |
 | A role's `BROKER_TOOLS` (it already had some) | `factory start` |
 | A new role, or a removed one | `factory start` |
@@ -26,9 +26,9 @@ affected, after listing what each one loses and asking you.
 | The Coordinator's default model or briefing (`kits/coordinator/spec.yaml`) | `factory update` |
 | `dashboard.toml` (the dashboard's look) | restart `factory dashboard` |
 
-The dashboard's **SETUP** key shows the effective value of each line above and
+The dashboard's **SETTINGS** key (formerly SETUP; or `,`) shows the effective value of each line above and
 which of the two commands applies it: see
-[Setup](06-dashboard.md#setup-the-configuration-in-force). For a role's
+[Settings](06-dashboard.md#settings-the-configuration-in-force). For a role's
 `MODEL`, `EFFORT`, `LANES`, `MAX_SESSION_TOKENS`, `MAX_TURNS` and
 `MAX_JOB_SECONDS` it also has knobs (see [Tune a role](#tune-a-role)).
 
@@ -91,7 +91,7 @@ start` appends each one after the shared notes, to that role alone, under a
 `# This project (my-api), for the developer` heading, so the other roles don't
 carry it in every prompt.
 
-You can also edit these files from the dashboard: **SETUP**, then **Edit notes**
+You can also edit these files from the dashboard: **SETTINGS**, the **Project notes** tab, then **Edit notes**
 has a tab for the shared file and one per role, a gauge of each role's
 characters against the limit below, and a two-step save that shows the diff
 first. The change applies on restart, like an edit in a terminal: press
@@ -147,8 +147,8 @@ MODELS="claude-haiku-5-5 opus claude-fable-5-1"
 ```
 
 You can also set these six from the dashboard instead of editing the file:
-open **SETUP**, turn the role's knobs and press **PREPARE** (see [Tuning a role
-from SETUP](06-dashboard.md#tuning-a-role-from-setup)). It shows the exact change
+open **SETTINGS**, turn the role's knobs and press **PREPARE** (see [Tuning a role
+from Settings](06-dashboard.md#tuning-a-role-from-settings)). It shows the exact change
 to `roles/<role>.conf` first and writes it only when you confirm. The dashboard
 then says when it applies: **SERVICE DUE · RESTART TO APPLY** means press
 RESTART (the key checks what it would stop first); every change here waits for
