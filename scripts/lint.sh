@@ -55,7 +55,7 @@ fi
 files=()
 while IFS= read -r f; do files+=("$f"); done < <(
   git -C "$ROOT" -c core.fsmonitor=false ls-files -- '*.sh' bin/factory \
-    templates/agent/factory-test templates/agent/factory-lane | grep -v '^broker/'
+    templates/agent/factory-test templates/agent/factory-lane templates/agent/factory-demo | grep -v '^broker/'
 )
 echo "shellcheck $SHELLCHECK_VERSION: ${#files[@]} scripts"
 cd "$ROOT"

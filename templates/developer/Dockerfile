@@ -103,6 +103,7 @@ RUN : "${SHELLCHECK_VERSION:?build arg SHELLCHECK_VERSION is required}" \
 # manages the role's private git clones of the read-only project (lanes) and
 # the reviewer's checkouts of branches to review.
 COPY --chmod=0555 templates/agent/factory-shot /usr/local/bin/factory-shot
+COPY --chmod=0555 templates/agent/factory-demo /usr/local/bin/factory-demo
 COPY --chmod=0555 templates/agent/factory-test /usr/local/bin/factory-test
 COPY --chmod=0555 templates/agent/factory-lane /usr/local/bin/factory-lane
 USER agent

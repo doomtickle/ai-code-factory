@@ -1,0 +1,137 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Usage: factory-demo start [<checkout>] | url | stop | status
+#
+# Runs the factory's demo dashboard (scripts/dashboard.py --demo: made-up data,
+# nothing acts, 127.0.0.1 only) from <checkout> (default: the current directory)
+# in the background, so a role can screenshot it with factory-shot:
+#
+#   factory-demo start                    # prints http://127.0.0.1:PORT/?... once it answers
+#   factory-shot "$(factory-demo url)" "$FACTORY_SCRATCH/shots/topic/board.png"
+#   factory-demo stop
+#
+# It records the server's PID, start time and URL under
+# $FACTORY_SCRATCH/factory-demo/$FACTORY_LANE/ (scratch, never the project), and
+# `stop` signals only that recorded PID, and only after checking it is still the
+# process it started: same start time, and a command line whose argv holds
+# exactly <checkout>/scripts/dashboard.py and --demo. It never looks a process
+# up by name or pattern: `pkill -f` / `pgrep -f` match the role's own Claude
+# process (its command line holds the task text) and kill the job.
+#
+# One demo per lane; `start` while one runs prints that one's URL.
+
+die() { echo "factory-demo: $*" >&2; exit 1; }
+
+cmd="${1:-}"
+[ -n "$cmd" ] || { sed -n '4p' "$0" | cut -c3- >&2; exit 2; }
+shift
+
+scratch="${FACTORY_SCRATCH:-}"
+[ -n "$scratch" ] || die "FACTORY_SCRATCH is not set (it is in a role's sandbox)"
+lane="${FACTORY_LANE:-default}"
+case "$lane" in *[!A-Za-z0-9._-]* | "" | .*) die "FACTORY_LANE '$lane' is not a plain name" ;; esac
+state="$scratch/factory-demo/$lane"
+pidfile="$state/pid"
+urlfile="$state/url"
+logfile="$state/log"
+
+# start time (clock ticks since boot, /proc/PID/stat field 22) of a live PID, else nothing.
+start_time() {
+  local stat
+  stat="$(cat "/proc/$1/stat" 2>/dev/null)" || return 0
+  stat="${stat##*) }" # drop "pid (comm) ", which may hold spaces and parens
+  # shellcheck disable=SC2086
+  set -- $stat
+  echo "${20}"
+}
+
+# Any HTTP reply counts as answering (the token URL redirects and sets a cookie; don't follow it).
+answers() {
+  python3 -c 'import http.client, sys, urllib.parse
+u = urllib.parse.urlsplit(sys.argv[1])
+c = http.client.HTTPConnection(u.hostname, u.port, timeout=2)
+c.request("GET", u.path + "?" + u.query)
+c.getresponse().read(1)' "$1" 2> /dev/null
+}
+
+# The recorded demo is alive and is still the process we started: print its PID.
+recorded_pid() {
+  local pid start checkout cur
+  [ -f "$pidfile" ] || return 1
+  read -r pid start checkout < "$pidfile" || return 1
+  case "$pid" in '' | *[!0-9]*) return 1 ;; esac
+  cur="$(start_time "$pid")"
+  [ -n "$cur" ] && [ "$cur" = "$start" ] || return 1
+  # Exact argv elements, not a substring: a Claude process whose task text mentions the demo must not match.
+  tr '\0' '\n' < "/proc/$pid/cmdline" 2>/dev/null | grep -qxF -- "$checkout/scripts/dashboard.py" || return 1
+  tr '\0' '\n' < "/proc/$pid/cmdline" 2>/dev/null | grep -qxF -- "--demo" || return 1
+  echo "$pid"
+}
+
+case "$cmd" in
+  start)
+    checkout="$(cd "${1:-.}" 2>/dev/null && pwd -P)" || die "no such checkout: ${1:-.}"
+    [ -f "$checkout/scripts/dashboard.py" ] || die "$checkout has no scripts/dashboard.py (pass the ai-code-factory checkout)"
+    if pid="$(recorded_pid)"; then
+      echo "factory-demo: already running (pid $pid)" >&2
+      cat "$urlfile"
+      exit 0
+    fi
+    mkdir -p "$state"
+    chmod 700 "$scratch/factory-demo" "$state" 2>/dev/null || true
+    rm -f "$pidfile" "$urlfile"
+    : > "$logfile"
+    (cd "$checkout" && exec python3 "$checkout/scripts/dashboard.py" --demo --no-open --port 0) > "$logfile" 2>&1 < /dev/null &
+    pid=$!
+    start="$(start_time "$pid")"
+    [ -n "$start" ] || { wait "$pid" 2>/dev/null || true; die "the demo dashboard exited at once; see $logfile"; }
+    printf '%s %s %s\n' "$pid" "$start" "$checkout" > "$pidfile"
+    url=""
+    for _ in $(seq 1 100); do
+      kill -0 "$pid" 2>/dev/null || die "the demo dashboard exited; see $logfile"
+      url="$(sed -n 's/^Factory dashboard: \(http:\/\/127\.0\.0\.1:[0-9]*\/.*\)$/\1/p' "$logfile" | head -n 1)"
+      if [ -n "$url" ] && answers "$url"; then
+        break
+      fi
+      url=""
+      sleep 0.2
+    done
+    if [ -z "$url" ]; then
+      kill -TERM "$pid" 2>/dev/null || true
+      rm -f "$pidfile"
+      die "the demo dashboard did not answer within 20 s; see $logfile"
+    fi
+    printf '%s\n' "$url" > "$urlfile"
+    chmod 600 "$urlfile" "$pidfile" 2>/dev/null || true
+    echo "$url"
+    ;;
+  url)
+    recorded_pid > /dev/null || die "no demo is running (factory-demo start)"
+    cat "$urlfile"
+    ;;
+  status)
+    if pid="$(recorded_pid)"; then echo "running (pid $pid): $(cat "$urlfile")"; else echo "not running"; exit 1; fi
+    ;;
+  stop)
+    if [ ! -f "$pidfile" ]; then echo "factory-demo: no demo recorded for this lane"; exit 0; fi
+    if ! pid="$(recorded_pid)"; then
+      # The recorded process is gone or is no longer our dashboard: touch nothing, drop the stale record.
+      rm -f "$pidfile" "$urlfile"
+      echo "factory-demo: the recorded demo is not running; nothing signalled"
+      exit 0
+    fi
+    kill -TERM "$pid" 2>/dev/null || true
+    for _ in $(seq 1 50); do
+      kill -0 "$pid" 2>/dev/null || break
+      sleep 0.1
+    done
+    if kill -0 "$pid" 2>/dev/null && recorded_pid > /dev/null; then kill -KILL "$pid" 2>/dev/null || true; fi
+    rm -f "$pidfile" "$urlfile"
+    echo "factory-demo: stopped pid $pid"
+    ;;
+  *)
+    sed -n '4p' "$0" | cut -c3- >&2
+    exit 2
+    ;;
+esac
