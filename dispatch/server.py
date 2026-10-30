@@ -14,13 +14,17 @@ for roles defined in roles/*/role.conf, and all it may do to get there is:
   fsmonitor forced off, then `git for-each-ref` to report what arrived, and,
   for the job's review packet, a read-only `git log` and `git diff --stat` of
   each imported branch against the host's HEAD (same flags, external diff and
-  textconv off). No other git command, and nothing from the sandbox ever
-  picks the host path.
+  textconv off), and for the dashboard's diff view the same range's full patch
+  (`git rev-parse` of HEAD and the branch, then `git diff` between those two
+  ids, output cut at MAX_DIFF_BYTES / MAX_DIFF_LINES). No other git command,
+  and nothing from the sandbox ever picks the host path.
 
 After every job it writes a review packet, <DISPATCH_STATE>/packets/<job>.md:
 the task, the branches (commits and diffstat), the tests the role reported,
 the broker calls its role made meanwhile, cost, and the report. `factory
-packet` prints it.
+packet` prints it. Next to it, for a job that brought branches back, goes
+<job>.diff.json: the branches' full patches, pinned to the commits imported
+(the dashboard's lane monitor shows it; it runs no git itself).
 
 The job list outlives the bridge: <DISPATCH_STATE>/jobs.json holds a short
 record of the last MAX_INDEXED_JOBS jobs (never the full task or the full
@@ -55,6 +59,7 @@ import signal
 import stat
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import uuid
@@ -127,6 +132,8 @@ GIT_SAFE = ("-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false")
 # The broker's audit log, for the broker calls a job's role made (review packet).
 BROKER_AUDIT = Path(os.environ.get("DISPATCH_BROKER_AUDIT") or STATE.parent / "broker" / "audit.jsonl")
 MAX_PACKET_LINES = 80  # per packet section: commits, diffstat lines, broker calls
+MAX_DIFF_BYTES = 1_000_000  # of patch text kept per job (all its branches together), for the dashboard's diff view
+MAX_DIFF_LINES = 20_000     # and of patch lines, whichever is reached first
 
 ROLE_PREAMBLE = (
     "You are the {role} in a multi-agent software factory. You received this task "
@@ -1083,6 +1090,112 @@ def branch_detail(repo: Path, ref: str) -> list:
     return lines
 
 
+def diff_path(job_id: str) -> Path:
+    return STATE / "packets" / f"{job_id}.diff.json"
+
+
+def host_git_capped(repo: Path, cap: int, *args: str) -> tuple:
+    """host_git's invocation, but the output is read only up to cap bytes and git is stopped
+    there (a branch can hold a diff of any size). (output, cut, returncode, stderr); cut says
+    git had more than cap bytes to give."""
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    with tempfile.TemporaryFile() as err:
+        proc = subprocess.Popen(["git", *GIT_SAFE, "-C", str(repo), *args], stdin=subprocess.DEVNULL,
+                                stdout=subprocess.PIPE, stderr=err, env=env)
+        watchdog = threading.Timer(GIT_TIMEOUT_SECONDS, proc.kill)
+        watchdog.start()
+        try:
+            data = proc.stdout.read(cap + 1)
+            cut = len(data) > cap
+            if cut:
+                proc.kill()
+            proc.wait()
+        finally:
+            watchdog.cancel()
+            proc.stdout.close()
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait()
+        err.seek(0)
+        return data[:cap], cut, proc.returncode, err.read(2000)
+
+
+def branch_patch(repo: Path, ref: str, commit: str, max_bytes: int, max_lines: int) -> dict:
+    """The full patch of an imported branch against the host repo's HEAD (the range the packet's
+    diffstat covers), pinned to the commits that are there right now: HEAD and the branch tip are
+    resolved once and the diff runs between those two ids, so the file never changes with a ref
+    that moves later. Same hardening as branch_detail (fixed argv, hooks and fsmonitor off, no
+    external diff or textconv), and cut at max_bytes / max_lines (at a line end), with
+    "truncated" set. A branch that no longer points at the job's commit gets an "error"."""
+    full = ref if ref.startswith("refs/") else f"refs/remotes/{ref}"
+    out = {"ref": one_line(ref, 200), "commit": one_line(commit, 40), "base": "", "tip": "", "patch": "",
+           "truncated": False, "error": ""}
+    ids = []
+    for rev in ("HEAD", full):
+        cp = host_git(repo, "rev-parse", "--verify", "--quiet", f"{rev}^{{commit}}")
+        sha = cp.stdout.decode("ascii", "replace").strip()
+        if cp.returncode != 0 or not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", sha):
+            out["error"] = f"could not resolve {rev}"
+            return out
+        ids.append(sha)
+    out["base"], out["tip"] = ids
+    if not out["tip"].startswith(out["commit"]):
+        out["error"] = "the branch no longer points at the job's commit"
+        return out
+    if max_bytes <= 0 or max_lines <= 0:
+        out["truncated"] = True
+        return out
+    data, cut, code, stderr = host_git_capped(
+        repo, max_bytes, "diff", "--no-color", "--no-ext-diff", "--no-textconv", "--submodule=short",
+        "--src-prefix=a/", "--dst-prefix=b/", f"{ids[0]}...{ids[1]}", "--")
+    if code != 0 and not cut:
+        out["error"] = f"git diff failed: {excerpt(stderr, 300)}"
+        return out
+    if cut:
+        data = data[:data.rfind(b"\n") + 1]
+    lines = data.split(b"\n")
+    if lines and lines[-1] == b"":
+        lines.pop()
+    if len(lines) > max_lines:
+        lines, cut = lines[:max_lines], True
+    data = b"".join(line + b"\n" for line in lines)
+    out["patch"], out["truncated"] = data.decode("utf-8", "replace"), cut
+    return out
+
+
+def write_diff(job: Job) -> None:
+    """Write STATE/packets/<job id>.diff.json: the full patch of each branch the job brought back
+    (see branch_patch), next to the review packet, for the dashboard to show. One file per job:
+    {"version": 1, "job", "max_bytes", "max_lines", "branches": [branch_patch dict + "repo"]}.
+    The caps are shared by the job's branches, in order. No file when the job brought nothing back."""
+    if not job.branches:
+        return
+    left_bytes, left_lines, branches = MAX_DIFF_BYTES, MAX_DIFF_LINES, []
+    for b in job.branches:
+        repo = PROJECT if b["repo"] == "." else PROJECT / b["repo"]
+        try:
+            entry = branch_patch(repo, b["ref"], b["commit"], left_bytes, left_lines)
+        except (OSError, subprocess.SubprocessError) as e:
+            entry = {"ref": one_line(b["ref"], 200), "commit": one_line(b["commit"], 40), "base": "", "tip": "",
+                     "patch": "", "truncated": False,
+                     "error": f"could not read the branch: {type(e).__name__}: {one_line(str(e), 200)}"}
+        entry["repo"] = one_line(b["repo"], 100)
+        left_bytes -= len(entry["patch"].encode("utf-8"))
+        left_lines -= entry["patch"].count("\n")
+        branches.append(entry)
+    path = diff_path(job.id)
+    path.parent.mkdir(exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    try:
+        tmp.write_text(json.dumps({"version": 1, "job": job.id, "max_bytes": MAX_DIFF_BYTES,
+                                   "max_lines": MAX_DIFF_LINES, "branches": branches}, ensure_ascii=False),
+                       encoding="utf-8")
+        os.replace(tmp, path)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
 def broker_calls(role: str, start: float, end: float) -> list:
     """The broker audit records of this role between start and end (epoch seconds),
     one line each. Lanes share a role, so parallel lanes' calls show up together.
@@ -1298,6 +1411,10 @@ def run_job(job: Job) -> None:
             log.write(f"📄 review packet: factory packet {job.id}")
         except Exception as e:  # noqa: BLE001 - the packet is a convenience, never the job's verdict
             log.write(f"   (no review packet: {one_line(f'{type(e).__name__}: {e}', 300)})")
+        try:
+            write_diff(job)
+        except Exception as e:  # noqa: BLE001 - likewise the diff the dashboard shows
+            log.write(f"   (no diff for the dashboard: {one_line(f'{type(e).__name__}: {e}', 300)})")
         log.write(f"■ job {job.id} {job.status} after {round(job.finished - job.started)}s")
         audit({"event": "job-end", **job.summary()})
         save_job_index()

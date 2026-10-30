@@ -1,0 +1,18 @@
+{
+ "version": 1,
+ "job": "20261023-094500-a1b2c3",
+ "max_bytes": 1000000,
+ "max_lines": 20000,
+ "branches": [
+  {
+   "ref": "factory-developer/factory/greet-readme",
+   "commit": "3f9c1ab",
+   "base": "c0ffee0000000000000000000000000000000000",
+   "tip": "3f9c1abbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+   "patch": "diff --git a/README.md b/README.md\nindex 59d6d39..3ac2d42 100644\n--- a/README.md\n+++ b/README.md\n@@ -5,3 +5,18 @@ A tiny greeting library.\n ## Install\n \n     npm install greet\n+\n+## Usage\n+\n+```js\n+const { greet } = require(\"greet\");\n+\n+greet(\"Ada\");   // \"Hello, Ada!\"\n+greet(\"\");      // \"Hello, friend!\"\n+```\n+\n+An empty or blank name greets the default, `friend`.\n+\n+## Shouting\n+\n+`shout(name)` is `greet(name)` in capitals.\n",
+   "truncated": false,
+   "error": "",
+   "repo": "."
+  }
+ ]
+}

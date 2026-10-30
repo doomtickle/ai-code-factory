@@ -135,7 +135,11 @@ with everything you need to judge it: the task, each branch's commits and
 diffstat against your checked-out branch, the `factory-test` modes the role
 reported, the broker calls its role made meanwhile, the cost, and the role's
 report (with its APPROVED or REVISE verdict for a review). The job result
-carries its path as `packet`; read it with:
+carries its path as `packet`. For a job that brought a branch back, the bridge
+also saves the branch's full patch next to the packet
+(`<job-id>.diff.json`, cut at about 1 MB), which the
+[dashboard](06-dashboard.md#lanes)'s lane monitor shows on its DIFF tab. Read
+the packet with:
 
 ```bash
 factory packet                      # the latest job

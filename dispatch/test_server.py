@@ -1563,6 +1563,123 @@ class ImportTests(Base):
                if '"job-end"' in l][-1]
         self.assertEqual(end["packet"], report["packet"])
 
+    def diff_file(self, report):
+        return json.loads(d.diff_path(report["job_id"]).read_text(encoding="utf-8"))
+
+    def test_diff_sidecar_holds_the_patch_pinned_to_the_imported_commit(self):
+        self.make_host(d.PROJECT)
+        commits = self.make_lane(d.PROJECT, "developer", ".", ["rate-limit", "docs"])
+        head = git("rev-parse", "HEAD", cwd=d.PROJECT)
+        # What a hostile checkout could name: neither a diff driver nor an external diff may run.
+        (d.PROJECT / ".gitattributes").write_text("*.txt diff=evil\n")
+        git("config", "diff.evil.textconv", f"sh -c 'echo textconv >> {self.marker}; cat' --", cwd=d.PROJECT)
+        git("config", "diff.external", f"{self.marker}.sh", cwd=d.PROJECT)
+        report = self.wait(self.delegate("developer", "build"))
+        self.assertEqual(report["packet"], str(d.STATE / "packets" / f"{report['job_id']}.md"))
+        self.assertEqual(d.diff_path(report["job_id"]), d.STATE / "packets" / f"{report['job_id']}.diff.json")
+        data = self.diff_file(report)
+        self.assertEqual((data["version"], data["job"]), (1, report["job_id"]))
+        by_ref = {b["ref"]: b for b in data["branches"]}
+        self.assertEqual(sorted(by_ref), ["factory-developer/factory/docs", "factory-developer/factory/rate-limit"])
+        for name, tip in commits.items():
+            b = by_ref[f"factory-developer/factory/{name}"]
+            self.assertEqual((b["repo"], b["tip"], b["base"], b["truncated"], b["error"]), (".", tip, head, False, ""))
+            self.assertTrue(tip.startswith(b["commit"]))
+            self.assertEqual(b["patch"].splitlines()[0], f"diff --git a/{name}.txt b/{name}.txt")
+            self.assertIn("new file mode 100644", b["patch"])
+            self.assertTrue(b["patch"].endswith(f"+{name}\n\\ No newline at end of file\n"))
+        self.assertFalse(self.marker.exists(), "a diff driver, textconv or hook ran on the host")
+        # Pinned: the file keeps the imported commit when the ref later moves.
+        before = d.diff_path(report["job_id"]).read_bytes()
+        git("update-ref", "refs/remotes/factory-developer/factory/docs", head, cwd=d.PROJECT)
+        self.assertEqual(d.diff_path(report["job_id"]).read_bytes(), before)
+
+    def test_diff_is_cut_at_the_byte_and_line_caps_and_says_so(self):
+        self.make_host(d.PROJECT)
+        self.make_lane(d.PROJECT, "developer", ".", ["a", "b"])
+        clone = self.lanes / "developer"
+        git("checkout", "-q", "factory/a", cwd=clone)
+        (clone / "big.txt").write_text("".join(f"line {i} of a long file\n" for i in range(500)))
+        git("add", ".", cwd=clone)
+        git("commit", "-q", "-m", "big", cwd=clone)
+        with mock.patch.object(d, "MAX_DIFF_BYTES", 600), mock.patch.object(d, "MAX_DIFF_LINES", 20_000):
+            report = self.wait(self.delegate("developer", "build"))
+        data = self.diff_file(report)
+        by_ref = {b["ref"].rsplit("/", 1)[1]: b for b in data["branches"]}
+        a = by_ref["a"]
+        self.assertTrue(a["truncated"])
+        self.assertLessEqual(len(a["patch"].encode()), 600)
+        self.assertTrue(a["patch"].endswith("\n"))           # cut at a line end
+        self.assertIn("diff --git a/big.txt b/big.txt", a["patch"])
+        self.assertNotIn("line 499 of", a["patch"])
+        # The caps are shared by the job's branches in order: nothing is left for the second.
+        self.assertLessEqual(len(a["patch"].encode()) + len(by_ref["b"]["patch"].encode()), 600)
+        self.assertTrue(by_ref["b"]["truncated"] or by_ref["b"]["patch"].startswith("diff --git"))
+        self.assertEqual(data["max_bytes"], 600)
+        (clone / "more.txt").write_text("more\n")
+        git("add", ".", cwd=clone)
+        git("commit", "-q", "-m", "more", cwd=clone)
+        with mock.patch.object(d, "MAX_DIFF_LINES", 12):
+            report = self.wait(self.delegate("developer", "build again"))
+        a = {b["ref"].rsplit("/", 1)[1]: b for b in self.diff_file(report)["branches"]}["a"]
+        self.assertTrue(a["truncated"])
+        self.assertEqual(a["patch"].count("\n"), 12)
+
+    def test_a_diff_within_the_caps_is_not_marked_truncated(self):
+        self.make_host(d.PROJECT)
+        self.make_lane(d.PROJECT, "developer", ".", ["a"])
+        report = self.wait(self.delegate("developer", "build"))
+        self.assertFalse(self.diff_file(report)["branches"][0]["truncated"])
+
+    def test_diff_of_a_branch_that_moved_is_an_error_not_another_patch(self):
+        self.make_host(d.PROJECT)
+        commits = self.make_lane(d.PROJECT, "developer", ".", ["a"])
+        report = self.wait(self.delegate("developer", "build"))
+        git("fetch", "-q", str(self.lanes / "developer"), "+HEAD:refs/remotes/factory-developer/factory/a", cwd=d.PROJECT)
+        b = d.branch_patch(d.PROJECT, "factory-developer/factory/a", commits["a"][:7], 1000, 100)
+        self.assertEqual((b["error"], b["patch"]), ("", b["patch"]))  # same commit again: fine
+        git("update-ref", "refs/remotes/factory-developer/factory/a", git("rev-parse", "HEAD", cwd=d.PROJECT), cwd=d.PROJECT)
+        b = d.branch_patch(d.PROJECT, "factory-developer/factory/a", commits["a"][:7], 1000, 100)
+        self.assertEqual(b["patch"], "")
+        self.assertIn("no longer points", b["error"])
+        b = d.branch_patch(d.PROJECT, "factory-developer/factory/nope", "abc1234", 1000, 100)
+        self.assertIn("could not resolve", b["error"])
+        self.assertEqual(report["status"], "done")
+
+    def test_diff_output_is_read_only_up_to_the_cap(self):
+        self.make_host(d.PROJECT)
+        (d.PROJECT / "huge.txt").write_text("x\n" * 100_000)
+        git("add", ".", cwd=d.PROJECT)
+        git("commit", "-q", "-m", "huge", cwd=d.PROJECT)
+        out, cut, _, _ = d.host_git_capped(d.PROJECT, 1000, "show", "--format=", "HEAD")
+        self.assertTrue(cut)
+        self.assertEqual(len(out), 1000)
+        out, cut, code, _ = d.host_git_capped(d.PROJECT, 10_000_000, "show", "--format=", "HEAD")
+        self.assertEqual((cut, code), (False, 0))
+        self.assertGreater(len(out), 200_000)
+        out, cut, code, err = d.host_git_capped(d.PROJECT, 1000, "rev-parse", "--verify", "nope^{commit}")
+        self.assertEqual((out, cut), (b"", False))
+        self.assertNotEqual(code, 0)
+        self.assertTrue(err)
+
+    def test_no_diff_file_when_no_branch_came_back_or_the_role_is_read_only(self):
+        self.make_host(d.PROJECT)
+        self.make_lane(d.PROJECT, "developer", ".", [])
+        report = self.wait(self.delegate("developer", "build"))
+        self.assertFalse(d.diff_path(report["job_id"]).exists())
+        report = self.wait(self.delegate("reviewer", "look"))
+        self.assertFalse(d.diff_path(report["job_id"]).exists())
+        self.assertEqual(list((d.STATE / "packets").glob("*.tmp")), [])
+
+    def test_a_failing_diff_does_not_lose_the_packet(self):
+        self.make_host(d.PROJECT)
+        self.make_lane(d.PROJECT, "developer", ".", ["a"])
+        with mock.patch.object(d, "write_diff", side_effect=OSError("disk full")):
+            report = self.wait(self.delegate("developer", "build"))
+        self.assertEqual(report["status"], "done")
+        self.assertTrue(Path(report["packet"]).is_file())
+        self.assertIn("no diff for the dashboard: OSError: disk full", (d.STATE / "logs" / "developer.log").read_text())
+
     def test_review_packet_without_a_broker_log_or_branches(self):
         self.make_host(d.PROJECT)
         self.make_lane(d.PROJECT, "developer", ".", [])

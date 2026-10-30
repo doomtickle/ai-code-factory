@@ -1161,6 +1161,104 @@ class LaneJobsTests(unittest.TestCase):
         real.symlink_to(other)
         self.assertEqual(jobs_mod._index(self.fx.state, "developer"), {})
 
+    # The DIFF tab: /api/diff serves the sidecar the dispatch bridge wrote (packets/<job>.diff.json).
+    PATCH = ("diff --git a/f.txt b/f.txt\nindex 1111111..2222222 100644\n--- a/f.txt\n+++ b/f.txt\n@@ -1,3 +1,3 @@\n one\n-two\n+2\n three\n"
+             "diff --git a/g.txt b/g.txt\nnew file mode 100644\nindex 0000000..3333333\n--- /dev/null\n+++ b/g.txt\n@@ -0,0 +1 @@\n+new\n")
+
+    def diff_file(self, n, **over):
+        branch = dict({"ref": "factory-developer/factory/x", "repo": ".", "commit": "8d02e47", "base": "a" * 40, "tip": "8d02e47" + "b" * 33,
+                       "patch": self.PATCH, "truncated": False, "error": ""}, **over)
+        doc = {"version": 1, "job": self.job_id(n), "max_bytes": 1000000, "max_lines": 20000, "branches": [branch]}
+        (self.dispatch / "packets" / f"{self.job_id(n)}.diff.json").write_text(json.dumps(doc))
+
+    def test_a_job_diff_comes_back_as_parsed_files(self):
+        self.diff_file(5)
+        out = self.board.job_diff(self.job_id(5))
+        self.assertEqual((out["state"], out["message"], len(out["branches"])), ("ok", "", 1))
+        b = out["branches"][0]
+        self.assertEqual((b["ref"], b["commit"], b["tip"], b["truncated"], b["error"]), ("factory-developer/factory/x", "8d02e47", "8d02e47bbbbb", False, ""))
+        self.assertEqual([(f["path"], f["status"], f["adds"], f["dels"]) for f in b["files"]], [("f.txt", "M", 1, 1), ("g.txt", "A", 1, 0)])
+        self.assertEqual((b["adds"], b["dels"]), (2, 1))
+        self.assertEqual(b["files"][0]["hunks"][0]["lines"], [[" ", "one"], ["-", "two"], ["+", "2"], [" ", "three"]])
+
+    def test_a_job_with_no_diff_file_says_so(self):
+        out = self.board.job_diff(self.job_id(5))
+        self.assertEqual((out["state"], out["message"], out["branches"]), ("none", "NO DIFF FOR THIS JOB", []))
+
+    def test_a_symlinked_oversized_or_unreadable_diff_is_not_shown(self):
+        packets = self.dispatch / "packets"
+        secret = Path(self.tmp.name) / "secret.json"
+        secret.write_text(json.dumps({"version": 1, "job": self.job_id(5), "branches": [{"ref": "TOP SECRET", "patch": self.PATCH}]}))
+        (packets / f"{self.job_id(5)}.diff.json").symlink_to(secret)
+        out = self.board.job_diff(self.job_id(5))
+        self.assertEqual((out["state"], out["branches"]), ("none", []))
+        self.assertNotIn("TOP SECRET", json.dumps(out))
+        (packets / f"{self.job_id(6)}.diff.json").write_text(" " * (jobs_mod.DIFF_FILE_MAX + 1))
+        self.assertEqual(self.board.job_diff(self.job_id(6))["state"], "bad")
+        self.assertIn("TOO LARGE", self.board.job_diff(self.job_id(6))["message"])
+        bad = {7: "not json", 8: json.dumps([1]), 9: json.dumps({"version": 2, "job": self.job_id(9), "branches": []}),
+               10: json.dumps({"version": 1, "job": self.job_id(7), "branches": []}),   # another job's file
+               11: json.dumps({"version": 1, "job": self.job_id(11), "branches": "x"})}
+        for n, text in bad.items():
+            (packets / f"{self.job_id(n)}.diff.json").write_text(text)
+            out = self.board.job_diff(self.job_id(n))
+            self.assertEqual((out["state"], out["branches"]), ("bad", []), n)
+            self.assertIn("CANNOT BE READ", out["message"])
+        os.mkfifo(packets / f"{self.job_id(12)}.diff.json")
+        self.assertEqual(self.board.job_diff(self.job_id(12))["state"], "none")
+
+    def test_a_diff_is_cut_to_the_caps_whatever_the_file_says(self):
+        long = "diff --git a/f b/f\n--- a/f\n+++ b/f\n@@ -1 +1,3000 @@\n" + "".join(f"+{i:06d} {'x' * 400}\n" for i in range(3000))
+        self.assertGreater(len(long), jobs_mod.DIFF_BYTES_MAX)
+        self.diff_file(5, patch=long, truncated=False)
+        b = self.board.job_diff(self.job_id(5))["branches"][0]
+        self.assertTrue(b["truncated"])
+        shown = sum(len(h["lines"]) for f in b["files"] for h in f["hunks"])
+        self.assertLess(shown, 3000)
+        many = "diff --git a/f b/f\n--- a/f\n+++ b/f\n@@ -1 +1,30000 @@\n" + "+x\n" * 30000
+        self.diff_file(6, patch=many)
+        b = self.board.job_diff(self.job_id(6))["branches"][0]
+        self.assertTrue(b["truncated"])
+        self.assertLessEqual(sum(len(h["lines"]) for f in b["files"] for h in f["hunks"]), jobs_mod.DIFF_LINES_MAX)
+        # The bridge's own flag survives, and so does a branch the bridge could not diff.
+        self.diff_file(7, truncated=True)
+        self.assertTrue(self.board.job_diff(self.job_id(7))["branches"][0]["truncated"])
+        self.diff_file(8, patch="", error="could not resolve the branch")
+        b = self.board.job_diff(self.job_id(8))["branches"][0]
+        self.assertEqual((b["files"], b["error"]), ([], "could not resolve the branch"))
+
+    def test_diff_text_comes_back_with_hostile_characters_made_visible(self):
+        patch = ("diff --git a/f.txt b/f.txt\n--- a/f.txt\n+++ b/f.txt\n@@ -1 +1 @@\n-old\n+ok\u202eevil\x1b[31m\u200b\n")
+        self.diff_file(5, patch=patch, ref="refs/\u202e<img src=x onerror=alert(1)>", commit="zz<script>", tip="not hex", error="a\nb\x07")
+        out = self.board.job_diff(self.job_id(5))
+        b = out["branches"][0]
+        text = json.dumps(out, ensure_ascii=False)
+        for raw in ("\u202e", "\x1b", "\u200b", "\x07"):
+            self.assertNotIn(raw, text, repr(raw))
+        self.assertIn("\u27e8U+202E\u27e9", text)
+        self.assertEqual((b["commit"], b["tip"]), ("", ""))   # only hex is kept
+        self.assertEqual(b["error"], "a b\u27e8U+0007\u27e9")
+        self.assertIn("bidi", b["files"][0]["flags"])
+
+    def test_no_more_than_the_first_branches_are_returned(self):
+        doc = {"version": 1, "job": self.job_id(5), "branches": [{"ref": f"r{i}", "patch": ""} for i in range(jobs_mod.DIFF_BRANCHES_MAX + 5)]
+               + ["x", None]}
+        (self.dispatch / "packets" / f"{self.job_id(5)}.diff.json").write_text(json.dumps(doc))
+        self.assertEqual(len(self.board.job_diff(self.job_id(5))["branches"]), jobs_mod.DIFF_BRANCHES_MAX)
+
+    def test_the_demo_has_diffs_for_its_two_finished_jobs_with_branches(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            demo.build(Path(tmp))
+            board = d.Dashboard(Path(tmp), d.DOCS_ROOT / "roles", demo.PROJECT, demo=True)
+            full = board.job_diff("20261023-100000-c3d4e5")
+            self.assertEqual(full["state"], "ok")
+            files = full["branches"][0]["files"]
+            self.assertEqual([f["status"] for f in files], ["B", "M", "R", "M"])
+            self.assertTrue(all(not b["truncated"] for b in full["branches"]))
+            readme = board.job_diff("20261023-094500-a1b2c3")
+            self.assertEqual((readme["state"], readme["branches"][0]["files"][0]["path"]), ("ok", "README.md"))
+            self.assertEqual(board.job_diff("20261023-080000-f0a1b2")["state"], "none")
+
 
 class BriefingTests(unittest.TestCase):
     """The STANDBY plate's shift briefing in /api/state: host-derived facts from config and the project folder."""
@@ -1331,6 +1429,26 @@ class PageTests(unittest.TestCase):
     def test_the_monitor_fetches_a_job_packet_by_its_validated_id(self):
         js = (UI / "app.js").read_text()
         self.assertIn("&job=${encodeURIComponent(monJob)}", js)
+
+    def test_the_diff_tab_fetches_by_job_id_and_draws_text_only(self):
+        js, html, css = (UI / "app.js").read_text(), (UI / "index.html").read_text(), (UI / "app.css").read_text()
+        self.assertIn('data-tab="diff"', html)
+        self.assertIn('e.key === "d"', js)
+        self.assertIn("/api/diff?job=${encodeURIComponent(job)}", js)
+        body = js[js.index("const diffs = new Map"):js.index("const transcriptLine")]
+        for sink in ("innerHTML", "outerHTML", "insertAdjacentHTML", "setAttribute(\"style\"", ".style.", "className = ", ".href", ".src"):
+            self.assertNotIn(sink, body, sink)
+        # Patch text only ever goes into a node as text, and a class is only ever picked from a fixed table.
+        self.assertIn("textContent", js[js.index("const el = "):js.index("const el = ") + 400])
+        for table in ("DF_KIND", "DF_STATUS", "DF_FLAG"):
+            self.assertIn(f"const {table} = ", body)
+        for rule in (".df-add", ".df-del", ".df-name", ".df-chip", "@media (max-width: 640px)"):
+            self.assertIn(rule, css, rule)
+
+    def test_the_dashboard_serves_the_diff_endpoint_on_the_main_port_by_get(self):
+        src = Path(d.__file__).read_text()
+        self.assertIn('"/api/diff"', src)
+        self.assertIn("JOB_ID.fullmatch(job)", src[src.index('"/api/diff"'):src.index('"/api/diff"') + 600])
 
     def test_floor_only_displays(self):
         # The factory floor draws from the state app.js hands it: it makes no request

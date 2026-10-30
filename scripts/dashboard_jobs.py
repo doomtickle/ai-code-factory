@@ -20,10 +20,18 @@ import stat
 import time
 from pathlib import Path
 
+import patchview
+
 LIST_MAX = 50       # job ids /api/lane returns for a lane (the newest)
 TASK_MAX = 200      # characters of a job's one-line task
 STATUSES = ("running", "done", "failed", "cancelled", "interrupted")
 INDEX_MAX = 5_000_000  # bytes read of jobs.json (the bridge writes at most this)
+
+DIFF_FILE_MAX = 8_000_000   # bytes read of dispatch/packets/<job>.diff.json (the bridge keeps its patch text to 1 MB)
+DIFF_BYTES_MAX = 1_000_000  # characters of patch text shown per job, whatever the file holds (the bridge's own cap)
+DIFF_LINES_MAX = 20_000     # and lines of it
+DIFF_BRANCHES_MAX = 20      # branches of one job shown
+HEX = re.compile(r"[0-9a-f]{4,64}")
 
 JOB_ID = re.compile(r"[0-9]{8}-[0-9]{6}-[0-9a-f]{6}")
 LANE = re.compile(r"[a-z][a-z0-9-]{1,40}")
@@ -148,3 +156,63 @@ def newest(jobs: dict, pick: str = "") -> list:
     if pick and pick in jobs and pick not in ids:
         ids.append(pick)
     return ids
+
+
+def job_diff(packets: Path, job: str) -> dict:
+    """The finished job's diff for the lane monitor's DIFF tab, from the sidecar the dispatch bridge wrote
+    next to the packet (packets/<job>.diff.json: the patch of each branch the job brought back, made from
+    the commits imported, so nothing here runs git). {"job", "state", "message", "branches"}; state is
+    "ok", "none" (no file: a job that brought back no branch, an older bridge, or one still running) or
+    "bad" (a file that cannot be used). Each branch: ref, repo, commit, tip, error, truncated, files
+    (patchview.parse's file records: path, old_path, status, adds, dels, flags, hunks), adds, dels. The file
+    is untrusted: it is a regular file opened O_NOFOLLOW and read up to DIFF_FILE_MAX, the patch text is cut
+    to the bridge's caps whatever it says, and every string that reaches the page is cleaned by patchview
+    (control, bidi and invisible characters made visible), for the page to draw with textContent. `job` must
+    already match JOB_ID."""
+    out: dict = {"job": job, "state": "none", "message": "NO DIFF FOR THIS JOB", "branches": [],
+                 "limits": {"bytes": DIFF_BYTES_MAX, "lines": DIFF_LINES_MAX}}
+    raw = read_regular(packets / f"{job}.diff.json", DIFF_FILE_MAX + 1)
+    if raw is None:
+        return out
+    bad = dict(out, state="bad", message="THE DIFF FILE CANNOT BE READ")
+    if len(raw) > DIFF_FILE_MAX:
+        return dict(bad, message="THE DIFF FILE IS TOO LARGE TO SHOW")
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except ValueError:
+        return bad
+    if (not isinstance(data, dict) or data.get("version") != 1 or data.get("job") != job
+            or not isinstance(data.get("branches"), list)):
+        return bad
+    for rec in data["branches"][:DIFF_BRANCHES_MAX]:
+        if isinstance(rec, dict):
+            out["branches"].append(_diff_branch(rec))
+    out["state"], out["message"] = "ok", ""
+    return out
+
+
+def _diff_branch(rec: dict) -> dict:
+    flags: set = set()
+    patch = rec.get("patch") if isinstance(rec.get("patch"), str) else ""
+    truncated = rec.get("truncated") is True
+    if len(patch) > DIFF_BYTES_MAX:
+        patch, truncated = patch[:patch.rfind("\n", 0, DIFF_BYTES_MAX) + 1], True
+    lines = patch.split("\n")
+    if len(lines) > DIFF_LINES_MAX + 1:
+        patch, truncated = "\n".join(lines[:DIFF_LINES_MAX]) + "\n", True
+    files = []
+    for commit in patchview.parse(patch, truncated)["commits"]:
+        files += commit["files"]
+    error = rec.get("error")
+    return {
+        "ref": patchview.clean(_text(rec.get("ref"))[:200], flags),
+        "repo": patchview.clean(_text(rec.get("repo"))[:100], flags),
+        "commit": _hex(rec.get("commit"))[:12], "tip": _hex(rec.get("tip"))[:12],
+        "error": patchview.clean(one_line(error, 300), flags) if isinstance(error, str) else "",
+        "truncated": truncated, "files": files,
+        "adds": sum(f["adds"] for f in files), "dels": sum(f["dels"] for f in files),
+    }
+
+
+def _hex(value) -> str:
+    return value if isinstance(value, str) and HEX.fullmatch(value) else ""
