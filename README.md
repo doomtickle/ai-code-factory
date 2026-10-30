@@ -1316,6 +1316,9 @@ hasn't dispatched any jobs yet just shows an empty report.
   - `dispatch/imports/`: bundles being imported from a developer lane (deleted
     once imported)
   - `dispatch/packets/<job-id>.md`: the job's review packet (`factory packet`)
+  - `dispatch/packets/<job-id>.diff.json`: the full patch of each branch the job
+    brought back, cut at about 1 MB and 20,000 lines, for the dashboard's lane
+    monitor (DIFF tab)
   - `dispatch/jobs.json`: the job list (last 200 jobs, short records), written
     at every status change and reloaded when the bridge starts, so
     `job_status`, `wait_for_job` and `factory packet` still know old ids after

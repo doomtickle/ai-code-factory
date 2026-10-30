@@ -252,6 +252,19 @@ those matching the bridge's job-id pattern; a `job` that is not one of that lane
 opened `O_NOFOLLOW`, size-capped). Tasks are cut to one line; everything is drawn with `textContent`
 and the page sets no class or attribute from it.
 
+JOB DIFF (`/api/diff?job=`, `Dashboard.job_diff`, `dashboard_jobs.job_diff`, `app.js` `renderDiffTab`) is the monitor's DIFF tab. The
+dashboard runs no git for it: the dispatch bridge writes `dispatch/packets/<id>.diff.json` when it imports a branch (the patch of
+`HEAD...tip`, both ends resolved to commit ids first, so it is pinned to the job; capped at about 1 MB and 20,000 lines with
+`truncated` set). The route is GET on the main port, answers 400 unless `job` fullmatches `JOB_ID`, and joins the id onto `packets/` only
+after it matched. The file is a regular file opened `O_NOFOLLOW` (`read_regular`), read to at most 8 MB and treated as untrusted JSON:
+version, job id and shape are checked (else `state: "bad"`), at most 20 branches, the caps are applied again whatever it says, and the
+patch goes through `patchview.parse(text, truncated)` (the second argument carries the bridge's cut, which has no trailer line; the
+trailer still counts), so control, bidi and invisible characters become `⟨U+XXXX⟩` tokens and flagged. `ref`, `repo` and `error` are
+cleaned the same way; `commit` and `tip` are kept only if hex. A job with no file is `state: "none"`. It is not checked against a lane
+(the id is a bridge-made one and the file holds only what the lane's own packet already names). The page asks once per job (a "none"
+answer again after 8 s, since the file lands at job end), draws everything with `el()`/`textContent`, picks every class from the fixed
+`DF_*` tables, and folds file bodies lazily (a diff of thousands of lines is not built until opened).
+
 EVENT PRINTER (doomtickle/passdesk-ops#190, `app.js` `renderPaper`) lines are buttons. They add no endpoint:
 `/api/state` events carry `job_id` and `lane` on a JOB line (only when they match `JOB_ID` and the lane pattern) and
 `card_id` on approval lines (only when it fullmatches `approvals.CARD_ID`). A JOB line opens the lane monitor through the

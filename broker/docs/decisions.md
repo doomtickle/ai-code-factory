@@ -28,6 +28,37 @@ Dated entries, for the user to review. Newest first.
     `exit` is indistinguishable from a signal; the wording says "may have".
   - Takes effect: the helper after `factory update` (image rebuild), the instructions after `factory
     start`, the bridge message after `factory start` (the bridge restarts).
+- **The dispatch bridge, not the dashboard, makes a finished job's diff** (the lane monitor's DIFF
+  tab; `dispatch/server.py` `write_diff`, `dashboard_jobs.job_diff`). The dashboard runs no git
+  (above), and a diff made later from a branch name would show whatever the branch had become, so
+  the bridge writes the patch while it imports the branch, as it already writes the packet's
+  `diff --stat`. Choices:
+  - **Pinned to the imported commit.** The bridge resolves `HEAD` and the imported ref to commit
+    ids (`rev-parse --verify --quiet <rev>^{commit}`) and diffs those two ids (`base...tip`, the
+    same range as the packet's diffstat). If the ref no longer starts with the job's recorded
+    commit, the entry says so instead of showing another patch. Same hardening as the packet's
+    git calls: `core.hooksPath=/dev/null`, `core.fsmonitor=false`, `--no-color --no-ext-diff
+    --no-textconv`, fixed arguments, a timeout, and only a ref that already passed validation.
+    This is one more fixed git command, listed in the root `CLAUDE.md`.
+  - **A JSON sidecar, `packets/<job>.diff.json`, not a section of the packet.** The packet is the
+    Markdown a person reads with `factory packet`; a megabyte of patch in it would bury the
+    report, and the dashboard would have to cut it back out. Per branch the file holds the ref,
+    repo, commit, base and tip ids, the patch, `truncated` and an `error`, so a cut or failed diff
+    is data, not a guess from the text. It is written atomically (temp file, then `os.replace`),
+    and a failure to write it is logged and never costs the job its packet.
+  - **Capped at 1,000,000 bytes and 20,000 lines for the job**, shared by its branches. The bridge
+    reads git's output only up to the cap and stops git there (a patch of any size costs bounded
+    memory), cuts at a line end, and sets `truncated`; the tab shows `CUT HERE`. The dashboard
+    applies the same caps again, since the file is data from a lane's machine path, not trusted.
+  - **The dashboard parses with `patchview`** (the approval card's patch viewer), so control, bidi
+    and invisible characters are made visible and flagged and the page draws only text. For that,
+    `patchview.parse` gained a `truncated` argument: the bridge's cut has no trailer line, and a
+    hunk cut short must not be read as complete.
+  - **No lane check on `/api/diff`**, unlike the packet endpoint: the id must match the job-id
+    pattern and the file holds only what the job's packet already names; the job list is not
+    needed to find it.
+  - Live diffs of a running job are out of scope, and a job from before this change simply has no
+    file (`NO DIFF FOR THIS JOB`).
 
 - **The dashboard's OUTBOX module is removed** (owner decision 30 Oct 2026; it was
   doomtickle/passdesk-ops#189). The owner found it didn't show reliable information, so it goes
