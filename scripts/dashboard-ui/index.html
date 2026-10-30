@@ -77,11 +77,6 @@
       </div>
       <!-- Idle lanes: one chip each, numbered like the modules. -->
       <div class="lane-strip" id="lane-strip" role="group" aria-label="Idle lanes" hidden></div>
-      <!-- The outbox: finished factory/* branches (app.js renderOutbox), one row each; a row opens that job's packet. -->
-      <section class="plate mod outbox collapsed" id="outbox" aria-labelledby="outbox-h">
-        <div class="mod-h"><button class="ob-fold" type="button" id="outbox-fold" aria-expanded="false" aria-controls="outbox-list"><span class="ob-caret" aria-hidden="true"></span><span class="silk" id="outbox-h">Outbox</span></button><span class="right silk" id="outbox-sub"></span><a class="help" href="/docs/#guide-dashboard:the-outbox" target="factory-docs" aria-label="Help: outbox">?</a></div>
-        <div class="lcd outbox-lcd" id="outbox-list" role="list" aria-label="Finished branches" hidden></div>
-      </section>
       <!-- The factory floor (floor.js): the same lanes as a panel with an amber tube, one loop track inside it, FLOOR or F toggles it. -->
       <div class="floor" id="floor" hidden></div>
     </section>
@@ -134,6 +129,7 @@
       <span class="right">
         <button class="tabkey" type="button" data-tab="transcript" aria-pressed="true">Transcript</button>
         <button class="tabkey" type="button" data-tab="packet" aria-pressed="false">Packet</button>
+        <button class="tabkey" type="button" data-tab="diff" aria-pressed="false">Diff</button>
         <button class="tabkey" type="button" id="mon-close">Esc</button>
       </span>
     </div>

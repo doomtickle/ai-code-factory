@@ -238,6 +238,12 @@ class HandWrittenTests(unittest.TestCase):
     def head(self, message="m"):
         return f"commit {SHA}\nAuthor: A <a@b>\nDate:   2026-10-20T00:00:00Z\n\n    {message}\n\n---\n x | 1 +\n\n"
 
+    def test_a_caller_can_say_the_text_was_cut_without_a_trailer(self):
+        text = "diff --git a/f b/f\n--- a/f\n+++ b/f\n@@ -1,3 +1,3 @@\n one\n-two\n"
+        self.assertFalse(pv.parse(text)["truncated"])
+        self.assertTrue(pv.parse(text, truncated=True)["truncated"])
+        self.assertTrue(pv.parse(text + "[passdesk: patch truncated at 1 of 2 bytes]\n")["truncated"])
+
     def test_trailer_only_counts_as_the_last_line(self):
         t = self.head() + ("diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1,2 +1,2 @@\n"
                            "-[passdesk: patch truncated at 1 of 2 bytes]\n+b\n c\n")

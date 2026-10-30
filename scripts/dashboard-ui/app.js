@@ -33,7 +33,7 @@
   // Monitor state: the open lane, its tab, the latest /api/lane data, a request
   // sequence number (stale responses are dropped) and what the body shows now.
   let monLane = null, monTab = "transcript", monData = null, monSeq = 0, monBusy = false;
-  let monJob = "", monBack = "";  // the job whose packet the monitor shows ("" = the lane's newest, followed live), and the OUTBOX row to return focus to
+  let monJob = "", monBack = "";  // the job whose packet the monitor shows ("" = the lane's newest, followed live), and the printer line to return focus to
   let shown = { lane: null, tab: null, keys: [], packet: null };
   // ---------- 7-segment LCD digits, drawn as SVG
   const SEG = { a: "4,2 6,0 16,0 18,2 16,4 6,4", b: "18,3 20,5 20,15 18,17 16,15 16,5", c: "18,19 20,21 20,31 18,33 16,31 16,21",
@@ -575,72 +575,6 @@
     $("print-sub").textContent = `${events.filter(e => e.kind === "DENY").length} denied`;
   }
 
-  // ---------- outbox: finished factory/* branches (display only; a row opens that job's packet)
-  // Every string is set as text. Classes come from the fixed maps below, never from the data, and
-  // the one link is the server's own validated https PR/MR URL, re-checked here before it is used.
-  const OB_STATUS = { OPEN: "unmerged", MERGED: "merged", GONE: "gone", UNCHECKED: "unchecked" };
-  const OB_VERDICT = { APPROVED: "ob-approved", REVISE: "ob-revise" };
-  const OB_PUSH = { PUSHED: "ob-pushed", STAGED: "ob-staged", WRITTEN: "ob-written", FAILED: "ob-failed" };
-  const SAFE_URL = /^https:\/\/[A-Za-z0-9.-]+(?::[0-9]+)?\/[\x21-\x7e]*$/;
-  const obRows = new Map();  // row key -> its button, for focus
-  let obSig = "";
-  const obKey = r => `${r.job}|${r.branch}`;
-  function obRow(r) {
-    const row = el("div", `ob-row${r.status === "MERGED" || r.status === "GONE" ? " retired" : ""}`);
-    row.setAttribute("role", "listitem");
-    const btn = el("button", "ob-main");
-    btn.type = "button";
-    const lane = state.lanes.some(l => l.name === r.lane);
-    btn.disabled = !lane;
-    btn.title = lane ? "Open this job's packet" : "That lane is no longer configured";
-    btn.append(el("span", "ob-repo", r.repo), el("span", "ob-branch", r.branch),
-      el("span", "ob-ahead", r.ahead == null ? "" : `+${r.ahead}`));
-    if (OB_STATUS[r.status]) btn.append(el("span", `ob-tag ${OB_STATUS[r.status]}`, r.status === "OPEN" ? "UNMERGED" : r.status === "UNCHECKED" ? "?" : r.status));
-    if (r.verdict) btn.append(el("span", `ob-tag ${OB_VERDICT[r.verdict] || ""}`, r.verdict + (r.stale ? " (old)" : "")));
-    if (r.push) btn.append(el("span", `ob-tag ${OB_PUSH[r.push] || ""}`, r.push));
-    btn.addEventListener("click", () => openMon(r.lane, r.job, obKey(r)));
-    row.append(btn);
-    obRows.set(obKey(r), btn);
-    if (r.pr) {
-      const label = String(r.pr.label || "PR");
-      if (r.pr.url && SAFE_URL.test(r.pr.url)) {
-        const a = el("a", "ob-pr", label);
-        a.href = r.pr.url; a.target = "_blank"; a.rel = "noopener noreferrer"; a.title = r.pr.url;
-        row.append(a);
-      } else {
-        row.append(el("span", "ob-pr nolink", label));
-      }
-    }
-    return row;
-  }
-  function renderOutbox() {
-    const rows = state.outbox || [];
-    const lanes = state.lanes.map(l => l.name).join(",");
-    const sig = JSON.stringify([rows, lanes]);
-    if (sig === obSig) return;
-    obSig = sig;
-    const list = $("outbox-list");
-    const back = document.activeElement && list.contains(document.activeElement)
-      ? [...obRows].find(([, b]) => b === document.activeElement) : null;
-    obRows.clear();
-    const live = rows.filter(r => r.status !== "MERGED" && r.status !== "GONE").length;
-    setText($("outbox-sub"), rows.length ? `${live} unmerged` : "");
-    $("outbox-sub").classList.toggle("lit", live > 0);
-    list.replaceChildren(...(rows.length ? rows.map(obRow) : [el("p", "ob-empty", "Nothing waiting. Finished branches land here.")]));
-    if (back && obRows.get(back[0])) obRows.get(back[0]).focus({ preventScroll: true });
-  }
-
-  // The module folds to its header bar. The choice is this browser's (localStorage, own key, a "1" or "0" only).
-  const OB_FOLD_KEY = "fc1984-outbox";
-  function setOutboxOpen(open, save) {
-    $("outbox").classList.toggle("collapsed", !open);
-    $("outbox-fold").setAttribute("aria-expanded", open ? "true" : "false");
-    $("outbox-list").hidden = !open;
-    if (save) { try { localStorage.setItem(OB_FOLD_KEY, open ? "1" : "0"); } catch (e) { /* no storage: this tab only */ } }
-  }
-  $("outbox-fold").addEventListener("click", () => setOutboxOpen($("outbox-fold").getAttribute("aria-expanded") !== "true", true));
-  try { if (localStorage.getItem(OB_FOLD_KEY) === "1") setOutboxOpen(true, false); } catch (e) { /* no storage: folded */ }
-
   // ---------- STANDBY: the shift briefing (state.briefing, dashboard_setup.briefing): the project, its notes, the
   // roles, the holds and one example work order. Host-derived facts; every string goes in with textContent.
   let bfSig = "";
@@ -706,7 +640,7 @@
   function closeMon() {
     if (!monLane) return;
     const r = cards.get(monLane);  // back to this lane's card, looked up by name
-    const row = monBack && (obRows.get(monBack) || plBtns.get(monBack));  // or to the OUTBOX row or printer line that opened it
+    const row = monBack && plBtns.get(monBack);  // or to the printer line that opened it
     monLane = null; monJob = ""; monBack = ""; monData = null; monSeq++;
     $("scrim").hidden = true;
     if (row && row.isConnected) row.focus();
@@ -729,9 +663,9 @@
     monTab = tab;
     renderMon();
     const body = $("mon-body");
-    body.scrollTop = tab === "packet" ? 0 : body.scrollHeight;
+    body.scrollTop = tab === "transcript" ? body.scrollHeight : 0;
   }
-  // The PACKET tab steps through the lane's jobs (monData.jobs, newest first). ◀ / [ go to an older job,
+  // The PACKET and DIFF tabs step through the lane's jobs (monData.jobs, newest first). ◀ / [ go to an older job,
   // ▶ / ] to a newer one; the newest is followed live (monJob "") so a job that starts shows its pending view.
   const secs = n => (n == null ? "--" : n < 3600 ? `${Math.floor(n / 60)}:${String(n % 60).padStart(2, "0")}` : `${Math.floor(n / 3600)}h${String(Math.floor(n % 3600 / 60)).padStart(2, "0")}`);
   function monPos() {
@@ -740,7 +674,7 @@
     return { jobs, i: jobs.indexOf(cur) };
   }
   function stepJob(dir) {  // dir +1: older, -1: newer
-    if (!monLane || monTab !== "packet") return;
+    if (!monLane || monTab === "transcript") return;
     const { jobs, i } = monPos();
     const to = i < 0 ? -1 : i + dir;
     if (to < 0 || to >= jobs.length) return;
@@ -752,7 +686,7 @@
   function renderMonNav() {
     const nav = $("mon-nav");
     const sel = monData && monData.sel;
-    const show = monTab === "packet" && monData && monData.jobs && monData.jobs.length > 0;
+    const show = monTab !== "transcript" && monData && monData.jobs && monData.jobs.length > 0;
     nav.hidden = !show;
     if (!show) { setText($("mon-note"), ""); return; }
     const { jobs, i } = monPos();
@@ -767,9 +701,9 @@
     }
     setText($("mon-note"), parts.join(" · "));
   }
-  function pendingView(sel) {
+  function pendingView(sel, what) {
     const box = el("div", "pending");
-    box.append(el("p", "pending-h", "JOB RUNNING"), el("p", "pending-n", "The packet is written when the job ends."));
+    box.append(el("p", "pending-h", "JOB RUNNING"), el("p", "pending-n", `The ${what || "packet"} is written when the job ends.`));
     const rows = [["TASK", sel.task || "--"], ["MODEL", sel.model || "--"], ["ELAPSED", secs(sel.elapsed)],
       ["COST SO FAR", sel.cost == null ? "-- (not reported until the job ends)" : usd(sel.cost)], ["STARTED", sel.when || "--"]];
     for (const [k, v] of rows) {
@@ -778,6 +712,168 @@
       box.append(row);
     }
     return box;
+  }
+  // ---------- the DIFF tab: what a finished job changed (GET /api/diff?job=, made by the bridge from the
+  // commits it imported; the dashboard runs no git). Everything is drawn with textContent; the only
+  // classes come from the fixed tables below, never from the data.
+  const diffs = new Map();  // job id -> { data, rev, at }: a finished job's diff does not change, an absent one is asked again
+  let diffAsk = "", diffRev = 0, diffFailed = "";
+  const DIFF_RETRY_MS = 8000, DIFF_OPEN_LINES = 400;
+  const DF_KIND = { " ": "df-ctx", "+": "df-add", "-": "df-del", "\\": "df-nl" };
+  const DF_STATUS = { A: ["ADD", "df-s-a"], D: ["DEL", "df-s-d"], M: ["MOD", "df-s-m"], R: ["REN", "df-s-r"], B: ["BIN", "df-s-b"] };
+  const DF_FLAG = { bidi: "BIDI", invisible: "INVISIBLE", control: "CONTROL", crlf: "CRLF", longline: "LONG LINE", malformed: "MALFORMED" };
+  async function ensureDiff(job) {
+    const have = diffs.get(job);
+    if (diffAsk === job || (have && (have.data.state !== "none" || Date.now() - have.at < DIFF_RETRY_MS))) return;
+    diffAsk = job;
+    try {
+      const r = await fetch(`/api/diff?job=${encodeURIComponent(job)}`, { cache: "no-store" });
+      if (!r.ok) throw new Error(String(r.status));
+      const data = await r.json();
+      const same = have && have.data.state === data.state && data.state !== "ok";
+      diffs.set(job, { data, rev: same ? have.rev : ++diffRev, at: Date.now() });
+      diffFailed = "";
+    } catch (e) { diffFailed = job; }
+    finally {
+      diffAsk = "";
+      if (monLane && monTab === "diff") renderMon();
+    }
+  }
+  const dfNum = n => Number(n).toLocaleString("en-US");
+  function dfStat(adds, dels) {
+    const box = el("span", "df-stat");
+    box.append(el("span", "df-plus", `+${dfNum(adds)}`), el("span", "df-minus", `−${dfNum(dels)}`));
+    return box;
+  }
+  function dfBlocks(adds, dels) {  // five squares in the ratio of added to removed lines
+    const box = el("span", "df-blocks");
+    box.setAttribute("aria-hidden", "true");
+    const total = adds + dels;
+    let green = total ? Math.round(5 * adds / total) : 0;
+    if (adds && green < 1) green = 1;
+    if (dels && green > 4) green = 4;
+    for (let i = 0; i < 5; i++) box.append(el("i", !total ? "o" : i < green ? "g" : "r"));
+    return box;
+  }
+  function dfLines(file) {  // the file's hunks as rows: old/new number, +/- mark, text
+    const box = el("div", "df-body");
+    if (!file.hunks.length) {
+      box.append(el("p", "df-empty", file.status === "B" ? "BINARY FILE · NO TEXT DIFF" : "NO TEXT CHANGES · MODE OR NAME ONLY"));
+      return box;
+    }
+    for (const h of file.hunks) {
+      const m = /^@@ -(\d+)(?:,\d+)? \+(\d+)/.exec(h.header);
+      let oldN = m ? Number(m[1]) : 0, newN = m ? Number(m[2]) : 0;
+      if (h.header) {
+        const row = el("div", "df-l df-hh");
+        row.append(el("span", "n", ""), el("span", "m", ""), el("span", "t", h.header));
+        box.append(row);
+      }
+      for (const [kind, text] of h.lines) {
+        const row = el("div", `df-l ${DF_KIND[kind] || "df-ctx"}`);
+        let n = "";
+        if (kind === "-") { n = oldN++; }
+        else if (kind === "+") { n = newN++; }
+        else if (kind === " ") { n = newN++; oldN++; }
+        if (!m) n = "";
+        row.append(el("span", "n", n), el("span", "m", kind === "+" ? "+" : kind === "-" ? "−" : ""), el("span", "t", text));
+        box.append(row);
+      }
+    }
+    return box;
+  }
+  function dfFile(file, open) {
+    const sec = el("section", "df-file");
+    const [label, cls] = DF_STATUS[file.status] || ["MOD", "df-s-m"];
+    const head = el("button", "df-fh");
+    head.type = "button";
+    const name = el("span", "df-name");
+    if (file.old_path != null) name.append(el("span", "df-old", file.old_path), el("span", "df-arrow", " → "));
+    name.append(el("span", "df-path", file.path));
+    const right = el("span", "df-right");
+    for (const f of file.flags) if (DF_FLAG[f]) right.append(el("span", "df-flag", DF_FLAG[f]));
+    right.append(dfStat(file.adds, file.dels), dfBlocks(file.adds, file.dels));
+    head.append(el("span", `df-chip ${cls}`, label), name, right);
+    sec.append(head);
+    let body = null;
+    const set = on => {
+      head.setAttribute("aria-expanded", String(on));
+      sec.classList.toggle("shut", !on);
+      if (on && !body) { body = dfLines(file); sec.append(body); }
+    };
+    head.addEventListener("click", () => set(head.getAttribute("aria-expanded") !== "true"));
+    sec.setOpen = set;
+    set(open);
+    return sec;
+  }
+  function diffView(data) {
+    const root = el("div", "df");
+    if (data.state !== "ok") {
+      const box = el("div", "df-none");
+      box.append(el("p", "df-none-h", data.message || "NO DIFF FOR THIS JOB"));
+      box.append(el("p", "df-none-n", data.state === "none"
+        ? "A job that brings back no branch has none (a review, or work that was not committed), and neither has one that finished before the dashboard could show diffs."
+        : "The file the bridge wrote next to this job's packet could not be used."));
+      root.append(box);
+      return root;
+    }
+    const files = [], branches = el("div", "df-branches");
+    let budget = DIFF_OPEN_LINES, adds = 0, dels = 0, count = 0;
+    for (const b of data.branches) {
+      const br = el("section", "df-br");
+      const head = el("div", "df-br-h");
+      head.append(el("span", "df-br-ref", b.ref || "?"));
+      const bits = [];
+      if (b.repo && b.repo !== ".") bits.push(`in ${b.repo}`);
+      if (b.tip) bits.push(`at ${b.tip.slice(0, 7)}`);
+      if (bits.length) head.append(el("span", "df-br-at", bits.join(" · ")));
+      head.append(el("span", "df-br-n", `${b.files.length} file${b.files.length === 1 ? "" : "s"}`), dfStat(b.adds, b.dels));
+      br.append(head);
+      adds += b.adds; dels += b.dels; count += b.files.length;
+      if (b.error) br.append(el("p", "df-warn", `COULD NOT MAKE THIS DIFF · ${b.error}`));
+      else if (!b.files.length) br.append(el("p", "df-empty", b.truncated ? "NOTHING OF THIS DIFF FIT UNDER THE CAP" : "NO CHANGES · THE CHECKED-OUT BRANCH ALREADY HAS THIS ONE"));
+      for (const f of b.files) {
+        const lines = f.hunks.reduce((n, h) => n + h.lines.length + 1, 0);
+        const sec = dfFile(f, budget >= lines);
+        budget -= lines;
+        files.push(sec);
+        br.append(sec);
+      }
+      if (b.truncated) {
+        const lim = data.limits || {};
+        br.append(el("p", "df-warn", `✂ CUT HERE · THE REST OF THIS DIFF WAS NOT KEPT (THE BRIDGE KEEPS THE FIRST ${lim.bytes ? Math.round(lim.bytes / 1000) + " KB" : "FEW"}${lim.lines ? " / " + dfNum(lim.lines) + " LINES" : ""} OF A JOB'S PATCH). THE PACKET'S DIFFSTAT LISTS EVERY FILE.`));
+      }
+      branches.append(br);
+    }
+    const bar = el("div", "df-bar");
+    bar.append(el("span", "df-bar-n", `${data.branches.length} branch${data.branches.length === 1 ? "" : "es"} · ${count} file${count === 1 ? "" : "s"}`), dfStat(adds, dels));
+    if (files.length > 1) {
+      const all = el("button", "tabkey df-all", "Expand all"), none = el("button", "tabkey df-all", "Collapse all");
+      all.type = none.type = "button";
+      all.addEventListener("click", () => files.forEach(f => f.setOpen(true)));
+      none.addEventListener("click", () => files.forEach(f => f.setOpen(false)));
+      bar.append(el("span", "df-bar-gap"), all, none);
+    }
+    root.append(bar, branches);
+    return root;
+  }
+  function renderDiffTab(body, same) {
+    const job = monData ? monData.job || "" : "";
+    let view, sig;
+    if (!monData) { view = el("p", null, "LOADING…"); sig = "loading"; }
+    else if (monData.pending && monData.sel) { view = pendingView(monData.sel, "diff"); sig = JSON.stringify(["pending", monData.sel]); }
+    else if (!job) { view = el("p", null, "NO JOB ON THIS LANE YET."); sig = "nojob"; }
+    else {
+      ensureDiff(job);
+      const have = diffs.get(job);
+      if (have) { view = diffView(have.data); sig = `diff:${job}:${have.rev}`; }
+      else if (diffFailed === job) { view = el("p", null, "COULD NOT LOAD THE DIFF · TRYING AGAIN…"); sig = `failed:${job}`; }
+      else { view = el("p", null, "LOADING THE DIFF…"); sig = `loading:${job}`; }
+    }
+    if (same && shown.packet === sig) return;
+    body.replaceChildren(view);
+    if (!same || shown.job !== job) body.scrollTop = 0;
+    shown = { lane: monLane, tab: monTab, keys: [], packet: sig, job };
   }
   const transcriptLine = e => { const n = el("div", `ln k-${e.kind}`); n.append(el("span", "ts", e.ts), el("span", "tx", lineText(e))); return n; };
   function renderMon() {
@@ -789,6 +885,7 @@
     document.querySelectorAll(".tabkey[data-tab]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.tab === monTab)));
     const body = $("mon-body");
     const same = shown.lane === monLane && shown.tab === monTab;
+    if (monTab === "diff") { renderDiffTab(body, same); return; }
     if (monTab === "packet") {
       const pending = !!(monData && monData.pending && monData.sel);
       const text = monData ? monData.packet : "LOADING…";
@@ -855,6 +952,7 @@
       if (e.key === "Escape") { e.preventDefault(); closeMon(); }
       else if (e.key === "Tab") trapTab(e);
       else if (e.key === "p") setTab("packet");
+      else if (e.key === "d") setTab("diff");
       else if (e.key === "t") setTab("transcript");
       else if (e.key === "[") stepJob(1);
       else if (e.key === "]") stepJob(-1);
@@ -1206,7 +1304,7 @@
       state = await r.json();
       polledAt = Date.now();
       applyLook();
-      renderCu(); renderHeader(); renderLanes(); renderGate(); renderSpend(); renderPaper(); renderOutbox(); renderBriefing(); renderTerm(); attention();
+      renderCu(); renderHeader(); renderLanes(); renderGate(); renderSpend(); renderPaper(); renderBriefing(); renderTerm(); attention();
       // The factory floor (floor.js) draws from the same state; it fetches nothing itself.
       document.dispatchEvent(new CustomEvent("factory:state", { detail: state }));
       if (monLane) loadMon();

@@ -218,9 +218,10 @@ Each module shows:
 
 A lane keeps its number as a module and as a chip. Press it (1 to 9), or
 click the module or chip, to open the **lane monitor**: the
-full transcript (**T**) and a job's review packet (**P**), which has
+full transcript (**T**), a job's review packet (**P**), which has
 the task, each branch's commits and diffstat, the tests it ran, the broker
-calls it made, its cost and the role's report. **Esc** closes it.
+calls it made, its cost and the role's report, and its **diff** (**D**).
+**Esc** closes it.
 
 The packet tab opens on the lane's newest job and steps back through the
 lane's past ones: **◀** (or **[**) goes to the next older job, **▶** (or **]**)
@@ -234,60 +235,36 @@ newest job is still running there is no packet yet, so the tab shows a
 keeps, never the full text), model, time run so far and cost so far (shown as
 `--` until the bridge has a figure, which is usually when the job ends).
 Stepping in the packet tab never changes the transcript, which keeps updating
-live. A job's packet opens only for the lane the job ran on; pressing a row of
-the outbox opens its job's packet the same way.
+live. A job's packet opens only for the lane the job ran on; pressing a JOB
+line on the event printer opens its job's packet the same way.
+
+The **DIFF** tab shows what a finished job changed, for the same job the
+packet tab is on (so ◀ ▶ and `[` `]` step through it too). Each branch the
+job brought back gets a header with its name, the commit it was imported at
+and the files, lines added and lines removed; under it every file is a plate
+with a status chip (ADD, DEL, MOD, REN, or BIN for a binary file), its path
+(a rename shows the old one struck through), `+n −n` and a bar of five blocks
+for the split between the two. Click a plate (or press Enter on it) to fold
+it; EXPAND ALL and COLLAPSE ALL do the whole job, and a big diff opens with
+only its first files unfolded. Added lines are green, removed lines red, with
+the old and new line numbers in the margin; a long line wraps rather than
+scrolling sideways, so the tab reads the same on a phone.
+
+The patch is the one the dispatch bridge made when it imported the branch,
+from the commit it imported: it is pinned to that job, so it doesn't change
+if the branch later moves or is deleted. A patch bigger than about 1 MB or
+20,000 lines is cut, and the tab says where (`✂ CUT HERE`). Anything the bridge
+could not diff says why instead, and a job that brought back no branch (a
+review, a failed job) or ran before this existed shows `NO DIFF FOR THIS JOB`;
+the tab asks again every few seconds, so a job that has only just finished
+fills in. The dashboard runs no git for this: it reads a file, like the
+packet. Control, direction-changing and invisible characters in a patch are
+shown as `⟨U+XXXX⟩` and the file flagged, so a file can't hide what it says.
+Only the diff of a finished job is shown here; for a job still running, read
+the transcript.
 
 Stands in for: `factory watch`, `factory logs <role>` and `factory packet
 <lane>`.
-
-## The outbox
-
-The **outbox** sits under the lanes. It has one row for every `factory/*` branch
-the dispatch bridge has imported into your project, newest first, so you can
-see at a glance what is finished and what still needs you. It starts folded to
-its header bar, which shows how many branches are unmerged (the count lights up
-amber when it isn't zero); press the **Outbox** title (or Tab to it and press
-Enter or Space) to unfold or fold it. The dashboard remembers your choice in
-this browser. A row shows:
-
-- the repository, the branch and how many commits it is ahead of your current
-  `HEAD` (`+3`);
-- its merge state, one of:
-  - **UNMERGED**: the branch has commits that are not in your checked-out
-    branch yet (the host's `HEAD`). These are the ones the header counts.
-  - **MERGED**: all of the branch's commits are in your checked-out branch,
-    or the same changes are in it under other commits (the branch was rebased
-    or pushed again under another name).
-  - **GONE**: the imported branch no longer exists in your project.
-  - **?**: the dashboard couldn't check (an odd branch name, or git didn't
-    answer in time). It counts as unmerged until it is checked.
-- the reviewer's latest verdict, APPROVED or REVISE, from the reviewer packets
-  that name the branch (none if no review mentions it; `(old)` means that review
-  started before the developer's last job on the branch ended, so it may not
-  have seen the latest commits);
-- the push state: **STAGED** (a push is waiting at the write gate for your
-  approval), **PUSHED** (the gateway made the push), **FAILED** (it tried and
-  failed), or **WRITTEN** (the gateway opened a pull request for the branch but
-  has no record of the push itself);
-- the pull request or merge request, as a link, once the gateway has opened
-  one. The link is used only if it is a `https://github.com/` pull request or a
-  merge request on your configured GitLab host; anything else is shown as
-  plain text.
-
-MERGED and GONE rows drop off the list a day after the job ended; UNMERGED (and
-`?`) rows drop off after 7 days. A rebase merge, or a branch that landed under
-another name, shows MERGED because the dashboard compares the changes. A squash
-of several commits into one changes them, so that branch stays UNMERGED until
-the 7 days pass or you delete the stale remote-tracking ref (`git branch -r -d
-<ref>`, for example `git branch -r -d factory-developer/factory/foo`), which
-makes the row GONE (see [Get the work](02-build-a-feature.md#get-the-work)).
-
-Press a row to open that job's review packet in the lane monitor. The outbox
-only displays: it can't merge, push or open anything. It asks git for a branch
-list, a commit count and a changes check at most every few seconds, so a very long list is cut
-at 20 rows.
-
-Stands in for: `git branch -r | grep factory-` and `factory packet <job>`.
 
 ## The factory floor
 
@@ -805,7 +782,7 @@ Stands in for: part of `factory analytics` and of `factory logs broker` /
 | Anywhere | `f` | Factory floor on / off |
 | Anywhere | `s` | Sound on / off |
 | Anywhere | `n` | Browser notifications on / off |
-| Lane monitor | `t` / `p` | Transcript / review packet |
+| Lane monitor | `t` / `p` / `d` | Transcript / review packet / diff |
 | Lane monitor, patch viewer | Esc | Close |
 | Event printer line | Enter / Esc | Act on the line / shut an opened line |
 | Patch viewer | `j` `k` ↓ ↑ | Next / previous file |
@@ -841,7 +818,7 @@ factory dashboard --demo
 
 It needs no `sbx`, broker, Coordinator or `factory setup`. It shows made-up
 data (`example/app`, a few lanes, one held push, a denied broker call and a
-branch, two outbox rows) taken from `scripts/dashboard-demo/`, with times counted from the
+branch) taken from `scripts/dashboard-demo/`, with times counted from the
 moment you start it, and adds a broker call 8 seconds after the start and then
 every 20 seconds, so the factory floor has crates to move. Open the link it prints, press the floor key and
 you can see a held crate waiting at the gate and a denied one landing in the derez field.
@@ -860,10 +837,7 @@ combined with `--coordinator`, `--state`, `--project` or `--factory`;
 
 It is local: it listens only on `127.0.0.1`, refuses any request without
 this run's token, and makes no network connection of its own. Apart from
-Terminal 0 and the control unit it only reads the factory's state folder, and
-for the [outbox](#the-outbox) asks your project's git, read-only and with hooks
-off, which `factory/*` branches exist, how far ahead of `HEAD` they are and
-whether their changes are already in `HEAD`.
+Terminal 0 and the control unit it only reads the factory's state folder.
 The control unit can write only a decision file (APPROVE, DECLINE), its
 action logs and, from SETUP, a role's local tuning override or the project's notes (each after a diff and a
 confirm), and run only `factory doctor`, `factory restart`, `factory
