@@ -1575,7 +1575,7 @@ class RealPageTests(unittest.TestCase):
 
     def test_service_keys(self):
         html = (UI / "cu.html").read_text()
-        row = html[html.index('<div class="service"'):html.index('<!-- SETUP')]
+        row = html[html.index('<div class="service"'):html.index('<!-- SETTINGS')]
         self.assertEqual(re.findall(r'id="svc-([a-z]+)"', row), ["doctor", "restart", "update", "log"])
         js = (UI / "cu.js").read_text()
         self.assertIn('doctor: "factory doctor"', js)
