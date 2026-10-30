@@ -1191,6 +1191,36 @@ def claude_argv(job: Job, workdir: str, lane_root: str | None, resume: str | Non
     return argv
 
 
+_STDERR_TAG = re.compile(r"^\s*\[claude-code:[^\]]*\]")
+
+
+def exit_signal(code: int) -> int | None:
+    """The signal a claude exit status means, or None: negative (the child of this
+    process was signalled) or 128+N (`sbx exec` reports the sandbox process's death by N that way)."""
+    n = -code if code < 0 else code - 128 if 128 < code < 128 + 32 else 0
+    return n if 0 < n < 32 else None
+
+
+def describe_failed_exit(code: int, stderr: str, lane: str) -> str:
+    """The job result for a claude process that exited non-zero without reporting.
+
+    A signal exit says so and names the likeliest cause. Its stderr is not the cause: claude
+    prints generic `[claude-code:<tag>] {...}` lines (e.g. unrecognized_model for a model id
+    its own table lacks) on every run, so for a signal exit those tag lines are left out
+    rather than read as the reason the job died. Any other exit keeps its stderr as is."""
+    sig = exit_signal(code)
+    if sig is None:
+        return f"claude exited with status {code}: {sanitize(stderr, 3000)}"
+    try:
+        name = signal.Signals(sig).name
+    except ValueError:
+        name = f"signal {sig}"
+    text = (f"claude was killed by signal {sig} ({name}), exit status {code}: the role may have stopped "
+            f"its own process (a kill or pkill that matched its own command line); see `factory logs {lane}`")
+    rest = "\n".join(line for line in stderr.splitlines() if line.strip() and not _STDERR_TAG.match(line))
+    return text + (f"\nlast stderr: {sanitize(rest, 1500)}" if rest else "")
+
+
 def run_claude(job: Job, log: Transcript, workdir: str, lane_root: str | None) -> None:
     attempt_resume = job.resume if job.resume and _SESSION_ID.match(job.resume) else None
     while job.status != "cancelled":
@@ -1250,7 +1280,7 @@ def run_claude(job: Job, log: Transcript, workdir: str, lane_root: str | None) -
             continue
         if code != 0 and job.status == "running":
             job.status = "failed"
-            job.result = job.result or f"claude exited with status {code}: {sanitize(stderr, 3000)}"
+            job.result = job.result or describe_failed_exit(code, stderr, job.lane)
         break
 
 
