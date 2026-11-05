@@ -518,8 +518,8 @@ numbers and lane names filled in: "A push is waiting for you. Its arm has stoppe
 until you decide." Nothing else an agent wrote is spoken. Names such as a branch
 or a repo go in the small detail line, as text.
 
-**Other sound.** There is also a quiet low tone, and the chime when a write
-starts waiting. These play without the voice service.
+**Other sound.** There is also the chime when a write starts waiting. It plays
+without the voice service.
 
 **To mute,** press `v` or the speaker key. The browser remembers it.
 
