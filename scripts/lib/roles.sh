@@ -32,7 +32,8 @@ list_roles() {
 
 # conf_get FILE KEY -> value of KEY="value" in FILE (parsed, never sourced)
 conf_get() {
-  sed -n "s/^$2=\"\(.*\)\"[[:space:]]*\$/\1/p" "$1" | tail -n 1
+  # LC_ALL=C: what counts as [[:space:]] depends on the locale (macOS 15 takes a no-break space under C.UTF-8), and factory/conf.py must agree everywhere.
+  LC_ALL=C sed -n "s/^$2=\"\(.*\)\"[[:space:]]*\$/\1/p" "$1" | tail -n 1
 }
 
 # --- Optional roles ---------------------------------------------------------------
@@ -80,7 +81,7 @@ role_override_file() { printf '%s/roles/%s.conf' "$FACTORY_CONFIG" "$1"; }
 role_conf_file() {
   local o
   o="$(role_override_file "$1")"
-  if in_list "$2" "$ROLE_OVERRIDE_KEYS" && [ -f "$o" ] && grep -q "^$2=\".*\"[[:space:]]*\$" "$o"; then
+  if in_list "$2" "$ROLE_OVERRIDE_KEYS" && [ -f "$o" ] && LC_ALL=C grep -q "^$2=\".*\"[[:space:]]*\$" "$o"; then
     printf '%s' "$o"
   else
     printf '%s' "$ROOT/roles/$1/role.conf"
