@@ -1,4 +1,4 @@
-"""factory voice <start|stop|status|build>: LOIS's local voice service, one Docker container
+"""factory voice <start|stop|status|build|test>: LOIS's local voice service, one Docker container
 on loopback (voice/README.md). Every docker call is a fixed argv naming the one container or
 image in factory/voice.py. Nothing else in the factory needs Docker or this command."""
 
@@ -8,7 +8,7 @@ import shutil
 from factory import voice
 from factory.context import FactoryError
 
-USAGE = "usage: factory voice <start [--build]|stop|status|build>"
+USAGE = "usage: factory voice <start [--build]|stop|status|build|test>"
 TIMEOUT = 120  # A docker call other than the build, in seconds.
 PUBLISH = "127.0.0.1:%d:%d" % (voice.PORT, voice.PORT)
 # exec: phonemizer copies libespeak-ng.so to a temp folder and loads the copy, so that each
@@ -61,7 +61,12 @@ def _docker_step(ctx, argv, what):
 def _build(ctx, docker):
     folder = os.path.join(ctx.paths.root, "voice")
     ctx.step("Building %s (several GB, takes a while)" % voice.IMAGE)
-    status = ctx.run([docker, "build", "-t", voice.IMAGE, "-f", os.path.join(folder, "Dockerfile"), folder])
+    if ctx.uname[1] in ("arm64", "aarch64"):
+        # Named, so a DOCKER_DEFAULT_PLATFORM left at amd64 can't put it under emulation.
+        target = ["--platform", "linux/arm64", "-t", voice.IMAGE, "-f", os.path.join(folder, "Dockerfile.arm64")]
+    else:
+        target = ["-t", voice.IMAGE, "-f", os.path.join(folder, "Dockerfile")]
+    status = ctx.run([docker, "build"] + target + [folder])
     if status != 0:
         raise FactoryError("docker build failed (status %d)" % status)
     ctx.ok("built %s" % voice.IMAGE)
@@ -141,7 +146,32 @@ def status(ctx, args):
     return 0
 
 
-SUBCOMMANDS = {"start": start, "stop": stop, "status": status, "build": build}
+def test(ctx, args):
+    """Whether speech works here and keeps up: one fixed passage, timed, nothing played."""
+    if args:
+        raise FactoryError(USAGE)
+    health = voice.health()
+    voices = health.get("voices") if health else None
+    if not voices or not isinstance(voices[0], str):
+        raise FactoryError("the voice service isn't answering. Run: factory voice start, "
+                           "then wait for factory voice status to say it is running")
+    ctx.say("Speaking a test passage (nothing plays)...")
+    try:
+        speech, taken, first, loudest = voice.speak_test(voices[0])
+    except (OSError, ValueError) as e:
+        raise FactoryError("the voice service failed the test: %s" % e)
+    if speech <= 0 or loudest < 0.01:
+        raise FactoryError("the voice service returned silence. See: docker logs %s" % voice.CONTAINER)
+    ctx.say("%.1f s of speech took %.1f s on %s. The first sentence was ready after %.1f s." % (
+        speech, taken, health.get("device", "unknown"), first))
+    if taken <= speech:
+        ctx.ok("it keeps up: LOIS will speak without gaps")
+    else:
+        ctx.say("It is slower than real time here: LOIS will speak, with pauses between sentences.")
+    return 0
+
+
+SUBCOMMANDS = {"start": start, "stop": stop, "status": status, "build": build, "test": test}
 
 
 def run(ctx, args):

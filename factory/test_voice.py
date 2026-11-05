@@ -2,9 +2,13 @@
 records every argv and answers as a scripted docker would; one test runs a stand-in docker for
 real, through the real capture."""
 
+import http.server
 import io
+import json
 import os
 import re
+import struct
+import threading
 import unittest
 from unittest import mock
 
@@ -43,6 +47,7 @@ class VoiceCommandTest(CommandTest):
         self.nvidia_status = 0
         self.overrides = {}
         self.build_status = 0
+        self.machine = "x86_64"
 
     def answer(self, argv):
         if os.path.basename(argv[0]) == "nvidia-smi":
@@ -63,7 +68,9 @@ class VoiceCommandTest(CommandTest):
             self.calls.append(list(argv))
             return self.build_status
 
-        return FakeContext(self, self.paths, self.environ, self.out, self.err, runner, self.execer)
+        ctx = FakeContext(self, self.paths, self.environ, self.out, self.err, runner, self.execer)
+        ctx.uname = ("Linux", self.machine)
+        return ctx
 
     def cmd(self, *args):
         return command.run(self.voice_ctx(), list(args))
@@ -184,9 +191,54 @@ class VoiceCommandTest(CommandTest):
             self.cmd("status")
         self.assertIn("Cannot connect", str(caught.exception))
 
+    def test_an_arm64_machine_builds_its_own_image_and_nothing_else_changes(self):
+        for machine in ("arm64", "aarch64"):
+            self.machine, self.calls = machine, []
+            self.assertEqual(self.cmd("build"), 0)
+            folder = os.path.join(self.root, "voice")
+            self.assertEqual(self.acting(), [["build", "--platform", "linux/arm64", "-t", "factory-voice:1", "-f",
+                                              os.path.join(folder, "Dockerfile.arm64"), folder]])
+        self.calls = []
+        self.assertEqual(self.cmd("start"), 0)     # no NVIDIA here: the same run, on the CPU
+        self.assertEqual(self.acting(), [RUN_FLAGS + ["factory-voice:1"]])
+
+    def test_the_test_needs_the_service_and_runs_no_docker(self):
+        with mock.patch.object(voice, "health", return_value=None):
+            with self.assertRaises(FactoryError) as caught:
+                self.cmd("test")
+        self.assertIn("factory voice start", str(caught.exception))
+        self.assertEqual(self.calls, [])
+
+    def run_test_with(self, speech, taken, first=0.4, loudest=0.5):
+        health = {"ok": True, "device": "cpu", "voices": ["af_heart", "bf_emma"]}
+        with mock.patch.object(voice, "health", return_value=health), \
+                mock.patch.object(voice, "speak_test", return_value=(speech, taken, first, loudest)) as spoken:
+            status = self.cmd("test")
+        spoken.assert_called_once_with("af_heart")
+        return status
+
+    def test_the_test_says_whether_it_keeps_up(self):
+        self.assertEqual(self.run_test_with(9.0, 3.0), 0)
+        self.assertIn("9.0 s of speech took 3.0 s on cpu", self.out.getvalue())
+        self.assertIn("keeps up", self.out.getvalue())
+        self.assertEqual(self.run_test_with(9.0, 20.0), 0)
+        self.assertIn("slower than real time", self.out.getvalue())
+        self.assertNotIn("keeps up", self.out.getvalue())
+
+    def test_silence_or_a_failure_fails_the_test(self):
+        with self.assertRaises(FactoryError):
+            self.run_test_with(9.0, 3.0, loudest=0.0)
+        with self.assertRaises(FactoryError):
+            self.run_test_with(0.0, 3.0)
+        health = {"voices": ["af_heart"]}
+        for error in (OSError("503"), ValueError("cut")):
+            with mock.patch.object(voice, "health", return_value=health), mock.patch.object(voice, "speak_test", side_effect=error):
+                with self.assertRaises(FactoryError):
+                    self.cmd("test")
+
     def test_unknown_use_is_refused_and_runs_nothing(self):
         for args in ([], ["nope"], ["start", "--evil"], ["start", "factory-voice; rm -rf /"], ["stop", "other"],
-                     ["status", "x"], ["build", "--no-cache"]):
+                     ["status", "x"], ["build", "--no-cache"], ["test", "--evil"]):
             with self.assertRaises(FactoryError):
                 self.cmd(*args)
         self.assertEqual(self.calls, [])
@@ -242,6 +294,45 @@ class ConstantsTest(unittest.TestCase):
         self.assertIsNone(voice.health(port=1, timeout=0.2))
 
 
+class SpeakTestTest(unittest.TestCase):
+    """speak_test against a stand-in that speaks the real protocol."""
+
+    def serve(self, body):
+        got = {}
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):
+                got["host"] = self.headers.get("Host")
+                got["body"] = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *args):
+                pass
+
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        return server.server_address[1], got
+
+    def test_it_counts_the_frames(self):
+        frame = lambda n, v, lips=b"": struct.pack("<II", n, len(lips)) + lips + struct.pack("<f", v) * n
+        port, got = self.serve(frame(24000, 0.25, b'{"p":"h"}') + frame(12000, -0.5))
+        speech, taken, first, loudest = voice.speak_test("bf_emma", port=port)
+        self.assertEqual(speech, 1.5)
+        self.assertEqual(loudest, 0.5)
+        self.assertLessEqual(first, taken)
+        self.assertEqual(got["host"], "127.0.0.1:%d" % port)
+        self.assertEqual(got["body"], {"text": voice.TEST_TEXT, "mix": [["bf_emma", 1]], "speed": 1, "lang": "b"})
+
+    def test_a_cut_frame_is_an_error(self):
+        port, _ = self.serve(struct.pack("<II", 100, 0) + b"\0\0\0\0")
+        with self.assertRaises(ValueError):
+            voice.speak_test("af_heart", port=port)
+
+
 class PinsTest(unittest.TestCase):
     """The repo rule: everything in the image is pinned."""
 
@@ -253,6 +344,25 @@ class PinsTest(unittest.TestCase):
         froms = re.findall(r"^FROM (\S+)", self.read("Dockerfile"), re.M)
         self.assertEqual(len(froms), 1)
         self.assertRegex(froms[0], r"@sha256:[0-9a-f]{64}$")
+
+    def test_the_arm64_image_differs_only_in_its_lock(self):
+        body = lambda name: self.read(name)[self.read(name).index("FROM "):]
+        self.assertEqual(body("Dockerfile.arm64"),
+                         body("Dockerfile").replace("COPY requirements.lock ", "COPY requirements-arm64.lock "))
+
+    def test_the_arm64_lock_is_exact_hashed_and_has_no_cuda(self):
+        entries = lambda name: [e for e in re.sub(r"\s*\\\n\s*", " ", self.read(name)).splitlines() if e and not e.startswith("#")]
+        arm = entries("requirements-arm64.lock")
+        self.assertGreater(len(arm), 80)
+        for entry in arm:
+            self.assertRegex(entry, r"^\S+( @ https://\S+|==\S+)( --hash=sha256:[0-9a-f]{64})+$")
+        pins = lambda lines: dict(re.match(r"^([^=\s]+)(?:==(\S+)| @ (\S+))", e).groups()[:2] for e in lines)
+        arm_pins, x86_pins = pins(arm), pins(entries("requirements.lock"))
+        self.assertEqual(arm_pins.pop("torch"), "2.7.1")
+        x86_pins.pop("torch")
+        cuda_only = {n for n in x86_pins if n.startswith("nvidia-") or n == "triton"}
+        self.assertEqual(len(cuda_only), 15)
+        self.assertEqual(arm_pins, {n: v for n, v in x86_pins.items() if n not in cuda_only})   # the same versions
 
     def test_every_download_has_a_checksum_and_a_fixed_revision(self):
         adds = [l for l in self.read("Dockerfile").splitlines() if l.startswith("ADD ")]

@@ -124,7 +124,7 @@ ${B}Usage${N}
   factory secret ls          List credentials managed by 'factory secret set'
   factory docs [--print]     Open these docs, with guides, in your browser (offline);
                              --print writes the HTML to stdout instead
-  factory voice <start [--build]|stop|status|build>
+  factory voice <start [--build]|stop|status|build|test>
                              LOIS's local voice (Kokoro in Docker, loopback only);
                              the first build is several GB
   factory analytics          Cost, token and performance report from the audit logs

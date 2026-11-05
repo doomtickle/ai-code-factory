@@ -480,6 +480,7 @@ turn it on:
 factory voice build     # first time only: several GB, takes a while
 factory voice start     # or: factory voice start --build
 factory voice status    # running or not, and the device
+factory voice test      # speaks a test passage, silently: does it work, and keep up here?
 factory voice stop      # stops and removes the container, keeps the image
 ```
 
@@ -491,10 +492,12 @@ reload.
 
 - It doesn't start with `factory start`, and it doesn't come back after a
   reboot: run `factory voice start` again.
-- The image is large, about 12 GB on disk, even on a machine with no GPU. It
-  uses the GPU when `nvidia-smi` works there.
-- It is pinned for Linux x86_64. It has not been tried on Docker Desktop for
-  macOS or on arm64.
+- On Linux x86_64 the image is large, about 12 GB on disk, even on a machine with
+  no GPU. It uses the GPU when `nvidia-smi` works there.
+- On an Apple silicon Mac, `factory voice build` makes a much smaller image that
+  runs on the CPU, since Docker on a Mac can't reach the GPU. Run
+  `factory voice test` to see whether it keeps up on your Mac. If it doesn't, LOIS
+  still speaks, with pauses between sentences.
 - English only.
 
 **What LOIS says.** Fixed sentences only, with numbers, times and lane names

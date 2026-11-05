@@ -4,6 +4,15 @@ Dated entries, for the user to review. Newest first.
 
 ## 2026-11-05
 
+- **The voice has a second image for Apple silicon, on the CPU** (owner asked for LOIS to speak on a Mac, as long as it doesn't harm the working PC,
+  doomtickle/passdesk-ops#214). Choices to review:
+  - **`voice/Dockerfile` and `requirements.lock` are untouched,** at the cost of a second Dockerfile that repeats the weights' pins. A shared file with a build argument
+    would have changed the x86 build's cache key, forcing a 12 GB rebuild on the PC's next build. A test keeps the two the same apart from the lock.
+  - **CPU only.** Docker on a Mac can't reach the GPU. A native Metal service would be faster but is a new kind of listener outside the container, against the rule that names
+    the container as the exception. `factory voice test` measures whether the CPU keeps up.
+  - **A separate workflow on a real arm64 runner,** only when the voice changes, since it downloads PyTorch and the model. It proves the build and speech on Linux arm64, not
+    on Docker Desktop for Mac or at a Mac's speed.
+
 - **Terminal 0 has a Thoughtfield look, chosen for readability first** (owner asked for it to match the theme and to "try hard to maximize
   readability", doomtickle/passdesk-ops#213). `/term/field` is the same terminal, key, serving rule, CSP and WebSocket as `/term`; the classic page
   keeps its tube. Choices to review:
