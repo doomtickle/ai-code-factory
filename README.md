@@ -1466,7 +1466,7 @@ hasn't dispatched any jobs yet just shows an empty report.
   (or `dispatch/token.sha256`) in the state folder, run `factory start`, run `sbx daemon restart`, then
   `factory start` again.
 - **Tests:** CI (`.github/workflows/ci.yml`) runs all of these on every pull
-  request and push to main: on Linux with Python 3.9 and 3.14, on macOS 14 with
+  request and push to main: on Linux with Python 3.9 and 3.14, on macOS 15 with
   the system bash and Python, plus shellcheck and an image build. To run them
   yourself (use `/usr/bin/python3` on macOS):
   - shell lint: `scripts/lint.sh` (uses a `shellcheck` on PATH that reports exactly the
