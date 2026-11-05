@@ -147,3 +147,4 @@ body.holding #t-gold { stroke-width: 2; }
 .vl-keys { display: flex; flex-wrap: wrap; gap: 16px; } .vl-keys button { color: var(--ink); font: 500 14px var(--f-data); border-bottom: 1px solid rgba(203,218,238,.45); }
 #vl-sliders { display: grid; gap: 8px; } #vl-sliders label { display: grid; grid-template-columns: 130px 1fr 50px; gap: 12px; align-items: center; color: var(--ink-2); } #vl-sliders input { width: 100%; accent-color: var(--blue); } #vl-sliders output { color: #fff; text-align: right; }
 .vl-note { font-size: 13px; color: var(--ink-3); } .vl-note code { color: #fff; }
+@media (max-width: 640px) { .top { flex-wrap: wrap; gap: 2px 10px; padding-bottom: 14px; } .compact { order: 3; width: 100%; margin: 0; white-space: nowrap; font-size: 12.5px; } .top .r { gap: 2px; } #classic-key, #full, .top .r a.ic { display: none; } .ic { width: 32px; height: 32px; } .textkey { width: auto; } }
