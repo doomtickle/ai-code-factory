@@ -139,7 +139,7 @@ class RulesTests(unittest.TestCase):
         self.assertIn("frame-ancestors http://127.0.0.1:2", dt.line_csp(1, 2))
 
     def test_every_new_page_loads_only_served_files(self):
-        for page, served in (("field.html", d.STATIC), ("voice.html", d.STATIC), ("cu-field.html", dt.STATIC), ("line.html", dt.STATIC)):
+        for page, served in (("field.html", d.STATIC), ("voice.html", d.STATIC), ("cu-field.html", dt.STATIC), ("line.html", dt.STATIC), ("term-field.html", dt.STATIC)):
             html = (UI / page).read_text()
             self.assertNotRegex(html, r"<script(?![^>]*\bsrc=)", page)
             self.assertNotIn("<style", html, page)
@@ -168,6 +168,59 @@ class RulesTests(unittest.TestCase):
         self.assertEqual(sorted(set(re.findall(r'url\("([^"]+)"\)', css))), ["/fonts/cormorant-garamond-variable.woff2", "/fonts/hanken-grotesk-variable.woff2"])
         for old in ("VT323", "scanline", "--lcd-", "--amber-glow"):
             self.assertNotIn(old, css)
+
+    def test_the_terminal_here_has_every_node_the_classic_one_has(self):
+        ids = lambda name: set(re.findall(r'\bid="([^"]+)"', (UI / name).read_text()))
+        self.assertEqual(ids("term.html") - ids("term-field.html"), set())
+
+    def test_the_old_look_never_reaches_the_thoughtfields_terminal(self):
+        html = (UI / "term-field.html").read_text()
+        self.assertNotIn("/term.css", html)
+        self.assertLess(html.index("/term-field.js"), html.index("/term.js"), "the skin must be set before term.js reads it")
+        self.assertEqual(re.findall(r'<script src="([^"]+)"', html), ["/vendor/xterm/xterm.js", "/vendor/xterm/addon-fit.js", "/term-field.js", "/term.js"])
+        css = (UI / "term-field.css").read_text()
+        self.assertNotIn("@import", css)
+        for old in ("VT323", "--matrix", "scanline"):
+            self.assertNotIn(old, css)
+        self.assertIn('"calt" 0', css)   # JetBrains Mono's ligatures would redraw code
+        self.assertIn("`${termOrigin}/term/field`", (UI / "field-hud.js").read_text())
+        self.assertNotIn("term-field", (UI / "term.html").read_text())   # the classic page keeps its tube
+
+    def test_the_terminal_skin_is_only_data(self):
+        js = (UI / "term-field.js").read_text()
+        for word in ("fetch", "WebSocket", "XMLHttpRequest", "postMessage", "term-key", "getElementById", "querySelector", "document."):
+            self.assertNotIn(word, js)
+
+    def test_the_terminal_stays_readable(self):
+        code = ('globalThis.window = {innerWidth: 0}; require(process.argv[1]); const s = window.TermSkin; const sizes = [];'
+                'for (const r of [1, 1.25, 1.5, 1.75, 2, 2.25, 3]) for (const w of [390, 619, 620, 899, 900, 1440, 3840]) {'
+                ' window.devicePixelRatio = r; window.innerWidth = w; sizes.push([r, s.fontSize()]); }'
+                'console.log(JSON.stringify({sizes, options: s.options}));')
+        proc = subprocess.run(["node", "-e", code, str(UI / "term-field.js")], capture_output=True, text=True, timeout=60)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        got = json.loads(proc.stdout)
+        # A cell is 0.6em wide: anything but a whole device pixel softens text and shows seams through block characters.
+        for scale, size in got["sizes"]:
+            device = size * 0.6 * scale
+            self.assertAlmostEqual(device, round(device), places=6, msg=f"{size} at {scale}")
+            self.assertGreaterEqual(size, 13, f"{size} at {scale}")
+        options = got["options"]
+        self.assertFalse(options["allowTransparency"])
+        self.assertGreaterEqual(options["minimumContrastRatio"], 9)   # xterm halves it for dimmed text: 4.5 at the least
+        def luminance(colour):
+            channel = lambda v: v / 12.92 if v <= .03928 else ((v + .055) / 1.055) ** 2.4
+            r, g, b = (channel(int(colour[i:i + 2], 16) / 255) for i in (1, 3, 5))
+            return .2126 * r + .7152 * g + .0722 * b
+        theme = options["theme"]
+        back = luminance(theme["background"])
+        for name, colour in theme.items():
+            if name in ("background", "black", "cursorAccent") or not colour.startswith("#"):
+                continue
+            self.assertGreaterEqual((luminance(colour) + .05) / (back + .05), 9, name)
+        # Dimmed text on the plain background has its own colour, not xterm's half strength.
+        dim = re.search(r'span\.xterm-dim:not\(\[class\*="xterm-bg-"\]\):not\(\[style\*="background"\]\) \{ color: (#[0-9a-f]{6}) !important', (UI / "term-field.css").read_text())
+        self.assertIsNotNone(dim)
+        self.assertGreaterEqual((luminance(dim.group(1)) + .05) / (back + .05), 9)
 
     def test_inspect_approves_by_the_same_hold_as_the_decision_row(self):
         html = (UI / "cu-field.html").read_text()

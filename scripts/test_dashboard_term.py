@@ -687,6 +687,15 @@ class WebSocketTests(unittest.TestCase):
         self.assertEqual(srv.get("/term.html")[0].status, 404)
         self.assertEqual(srv.get("/../dashboard.py")[0].status, 404)
         self.assertEqual(srv.get("/term", method="POST")[0].status, 405)
+        # The Thoughtfield's look of the same terminal: the same key slot, CSP and refusals.
+        resp, body = srv.get("/term/field")
+        self.assertEqual(resp.status, 200)
+        self.assertEqual(resp.getheader("Content-Security-Policy"), dt.term_csp(srv.tport, srv.port))
+        self.assertNotIn(dt.KEY_SLOT, body.decode())
+        self.assertIn(srv.key, body.decode())
+        self.assertEqual(srv.get("/term/field", headers={"Cookie": None})[0].status, 403)
+        self.assertEqual(srv.get("/term/field", headers={"Host": f"127.0.0.1:{srv.port}"})[0].status, 403)
+        self.assertEqual(srv.get("/term/field", method="POST")[0].status, 405)
 
     def test_term_page_only_for_a_same_site_iframe(self):
         srv = self.srv
@@ -702,11 +711,12 @@ class WebSocketTests(unittest.TestCase):
             "same-site iframe": ({}, 200),
             "same-origin iframe": ({"Sec-Fetch-Site": "same-origin"}, 200),
         }
-        for name, (over, code) in cases.items():
-            resp, body = srv.get("/term", headers=over)
-            self.assertEqual(resp.status, code, name)
-            if code != 200:
-                self.assertNotIn(srv.key, body.decode(), name)
+        for path in ("/term", "/term/field"):
+            for name, (over, code) in cases.items():
+                resp, body = srv.get(path, headers=over)
+                self.assertEqual(resp.status, code, f"{path} {name}")
+                if code != 200:
+                    self.assertNotIn(srv.key, body.decode(), f"{path} {name}")
         # Its static files don't carry the key and stay as they are.
         self.assertEqual(srv.get("/term.js", headers={"Sec-Fetch-Dest": "script", "Sec-Fetch-Site": "same-origin"})[0].status, 200)
 

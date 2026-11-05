@@ -212,6 +212,13 @@ the Coordinator's live terminal, with the same POWER ON and RESUME keys, COPY
 prompt and messages as the classic view. See
 [Terminal 0: the Coordinator](#terminal-0-the-coordinator).
 
+It is built to read easily. The text is JetBrains Mono on a solid dark
+background, not the sky, and the world behind the panel dims. The Coordinator
+chooses many of its own colours, so the terminal lifts any text that would be
+hard to read against its background, including dimmed text. Box and block
+drawings keep their colours. To make the text larger, use your browser's zoom
+(Ctrl and +, or ⌘ and + on a Mac).
+
 The panel takes the keyboard when it opens, so `t` and Esc then go to the
 Coordinator. Press **Close** to close it, or click outside it first and press
 `t` or Esc.
@@ -668,18 +675,18 @@ and **POWER ON** starts a fresh one.
 
 - **The COPY prompt.** When the Coordinator copies something to your
   clipboard (Claude Code sends its copies through the terminal), a strip at the bottom
-  of the screen says "COORDINATOR COPIED N CHARACTERS · PRESS TO COPY" and
+  of the screen says "Coordinator copied N characters. Press to copy." and
   shows the start of the text. Press **COPY** to put it on your clipboard, or
   **DISMISS**. This copies the exact text, without the screen's line breaks or
   padding, so prefer it for commands. Nothing reaches your clipboard until you
   press COPY, because the text comes from an agent; check the preview first.
   COPY stays dark for 2.5 seconds after the text appears or changes, so a
   newer copy can't slip in just before your click. A
-  newer copy replaces the one waiting, and "⚠ CONTAINS HIDDEN CHARACTERS" means
+  newer copy replaces the one waiting, and "⚠ Contains hidden characters" means
   the preview shows invisible or right-to-left characters as `⟨U+XXXX⟩`. If
   the browser blocks the copy, the prompt selects the text in a box and asks
   you to press Ctrl+C (⌘C on a Mac). A copy over 64 KiB can't be taken: the
-  strip says "COORDINATOR COPIED ABOUT N KiB · TOO LARGE TO COPY (LIMIT 64 KiB)",
+  strip says "Coordinator copied about N KiB. Too large to copy (limit 64 KiB).",
   with DISMISS only.
 - **Select it on the screen.** The Coordinator takes the mouse, so a plain
   drag selects nothing. Hold **Shift** while you drag on Windows (WSL) and
@@ -718,11 +725,11 @@ The screen tells you when it can't attach:
 
 | The screen says | What to do |
 |---|---|
-| OPEN ELSEWHERE | The Coordinator is open in `factory chat`. Close it there, then POWER ON or RESUME. |
-| NO COORDINATOR | Its sandbox doesn't exist yet: run `factory start`. |
-| NO SBX | `sbx` couldn't run: run `factory doctor`. |
-| SERVICE | A RESTART or UPDATE is running. The Coordinator comes back when it's done. |
-| NO SIGNAL | The page lost the dashboard. If `factory dashboard` stopped, run it again and open the new link it prints. |
+| Open elsewhere | The Coordinator is open in `factory chat`. Close it there, then POWER ON or RESUME. |
+| No Coordinator yet | Its sandbox doesn't exist yet: run `factory start`. |
+| sbx can't run | `sbx` couldn't run: run `factory doctor`. |
+| Restarting or updating | A RESTART or UPDATE is running. The Coordinator comes back when it's done. |
+| Lost the dashboard | The page lost the dashboard. If `factory dashboard` stopped, run it again and open the new link it prints. |
 
 **The knobs** under the screen, in the classic view only, change only how it looks, in this browser:
 BRIGHT and CONTRAST; V-HOLD, which makes the picture roll when you turn it off

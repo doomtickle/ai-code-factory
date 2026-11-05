@@ -65,10 +65,10 @@ into a host shell). No xterm.js clipboard addon is loaded; term.js's own OSC 52 
 only one, and it is write-only: a query (`?`) or an empty payload is refused and never answered,
 the selection target is ignored, the payload is at most 64 KiB of strict base64 and strict UTF-8
 (a well-formed one over that, sized from its base64 length and never decoded, only shows
-"COORDINATOR COPIED ABOUT N KiB · TOO LARGE TO COPY (LIMIT 64 KiB)" with DISMISS and no COPY key),
+"Coordinator copied about N KiB. Too large to copy (limit 64 KiB)." with DISMISS and no COPY key),
 and one carrying a C0 or C1 control (other than tab and newline; CR is made a newline) is dropped,
 as is any OSC 52 parsed during the muted replay. A valid one only raises a prompt in the terminal
-frame ("COORDINATOR COPIED N CHARACTERS · PRESS TO COPY") with a preview drawn by `textContent`
+frame ("Coordinator copied N characters. Press to copy.") with a preview drawn by `textContent`
 (cut at 240 characters, invisible and bidi characters shown as `⟨U+XXXX⟩` and flagged); a newer
 copy replaces the pending one, DISMISS or a new session drops it, and only a click on its COPY key
 writes it. Each new text disables COPY and sets a `holdUntil` 2.5 s on (the control unit's
@@ -328,7 +328,10 @@ The page's actions stay on the second origin, in frames it can't script, under t
   list `spend|stuck|kinds|time|home|sent|off|noconn`, from that frame's window and origin, never anything typed. Only a short plain question about
   the whole day counts as a sky question (`field-ask.js`); everything else goes to the Coordinator, and Enter goes to whatever Terminal 0 is showing.
 - The Terminal 0 frame is loaded at start as before, inside a panel kept `inert` and hidden while closed, so `term.focus()` can't take the page's
-  keys to the Coordinator.
+  keys to the Coordinator. It is `/term/field` (doomtickle/passdesk-ops#213): `term-field.html` has the same ids as `term.html` and runs the same
+  `term.js` behind the same key, serving rule, CSP and WebSocket. `term-field.css` is its whole look and `term.css` is not loaded. `term-field.js`,
+  loaded first, is data only (`window.TermSkin`: type, colours, a contrast floor), with no request and no reach for the key. The classic page sets
+  no skin and keeps its tube. The words are plain sentence case in `term.js`; `term.css` uppercases the classic page's titles.
 
 VOICE (`voice/`, `factory/commands/voice.py`, `dashboard-ui/voice.js`) is the optional local speech service, the one server other than the
 dashboard the main page talks to: a Docker container on `127.0.0.1:8873` built from pinned, hash-checked inputs, read-only, non-root, no

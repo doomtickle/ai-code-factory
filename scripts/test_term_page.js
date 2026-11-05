@@ -3,7 +3,7 @@
 // OSC 52 copy prompt (doomtickle/passdesk-ops#142): a copy only raises the
 // prompt, and the clipboard is written only by a click on COPY, never within
 // the hold after the text changed; a query and bad base64 raise nothing, and
-// an oversized copy only a TOO LARGE note; a newer copy replaces the pending
+// an oversized copy only a "too large" note; a newer copy replaces the pending
 // one; DISMISS discards it; the muted replay raises no prompt; a refused
 // writeText falls back to a selected textarea; the page never reads the
 // clipboard; a selection is copied trimmed (then cleared) by the copy event and
@@ -136,7 +136,7 @@ const done = [];
   // A copy raises the prompt and writes nothing.
   assert.strictEqual(osc("c;" + b64("git push origin factory/x")), true);
   assert.strictEqual(box.hidden, false);
-  assert.strictEqual($("copy-title").textContent, "COORDINATOR COPIED 25 CHARACTERS · PRESS TO COPY");
+  assert.strictEqual($("copy-title").textContent, "Coordinator copied 25 characters. Press to copy.");
   assert.strictEqual($("copy-preview").textContent, "git push origin factory/x");
   assert.deepStrictEqual(writes, []);
   // A newer one replaces it; only the click writes, and the newest, once the hold is over.
@@ -158,7 +158,7 @@ const done = [];
   click("copy-go");
   await tick();
   assert.deepStrictEqual(writes, ["ls -la\nexit"]);
-  assert.strictEqual($("copy-title").textContent, "COPIED TO THE CLIPBOARD");
+  assert.strictEqual($("copy-title").textContent, "Copied to the clipboard");
   click("copy-go");  // nothing pending any more
   await tick();
   assert.strictEqual(writes.length, 1);
@@ -192,7 +192,7 @@ const done = [];
   later();
   osc("c;" + b64("x".repeat(64 * 1024 + 1)));
   assert.strictEqual(box.hidden, false);
-  assert.strictEqual($("copy-title").textContent, "COORDINATOR COPIED ABOUT 65 KiB · TOO LARGE TO COPY (LIMIT 64 KiB)");
+  assert.strictEqual($("copy-title").textContent, "Coordinator copied about 65 KiB. Too large to copy (limit 64 KiB).");
   assert.strictEqual($("copy-go").hidden, true);
   assert.strictEqual($("copy-x").hidden, false);
   assert.strictEqual($("copy-preview").textContent, "");
@@ -200,13 +200,13 @@ const done = [];
   await tick();
   assert.strictEqual(writes.length, 2, "the replaced copy is gone too");
   osc("c;" + "QUJD".repeat(50 * 1024));
-  assert.strictEqual($("copy-title").textContent, "COORDINATOR COPIED ABOUT 150 KiB · TOO LARGE TO COPY (LIMIT 64 KiB)");
+  assert.strictEqual($("copy-title").textContent, "Coordinator copied about 150 KiB. Too large to copy (limit 64 KiB).");
   click("copy-x");
   assert.strictEqual(box.hidden, true);
   osc("c;" + b64("x".repeat(70 * 1024)));
   osc("c;" + b64("echo ok"));
   assert.strictEqual($("copy-go").hidden, false);
-  assert.match($("copy-title").textContent, /PRESS TO COPY/);
+  assert.match($("copy-title").textContent, /Press to copy/);
   later();
   click("copy-go");
   await tick();
@@ -240,7 +240,7 @@ const done = [];
   osc("c;" + b64("y".repeat(1000)));
   assert.strictEqual(Array.from($("copy-preview").textContent).length, 240);
   assert.strictEqual($("copy-note").hidden, true);
-  assert.strictEqual($("copy-title").textContent, "COORDINATOR COPIED 1000 CHARACTERS · PRESS TO COPY");
+  assert.strictEqual($("copy-title").textContent, "Coordinator copied 1000 characters. Press to copy.");
   done.push("preview is visible text");
 
   // writeText refused: the textarea fallback copies, else stays selected for the user.
@@ -252,7 +252,7 @@ const done = [];
   assert.strictEqual($("copy-manual").hidden, false);
   assert.strictEqual($("copy-manual").value, "make test");
   assert($("copy-manual").selected);
-  assert.match($("copy-title").textContent, /BLOCKED/);
+  assert.match($("copy-title").textContent, /blocked/);
   osc("c;" + b64("make lint"));
   assert.strictEqual($("copy-manual").hidden, true, "a new copy clears the fallback");
   assert.strictEqual(doc.activeElement, termTextarea, "and hands the keys back to the terminal");

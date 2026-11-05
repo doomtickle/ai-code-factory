@@ -103,7 +103,11 @@ STATIC = {
     "/cu.js": ("cu.js", "text/javascript; charset=utf-8"),
     "/cu.css": ("cu.css", "text/css; charset=utf-8"),
     "/cu-notes.js": ("cu-notes.js", "text/javascript; charset=utf-8"),   # the NOTES editor on SETUP; cu.js loads after it
-    # The Thoughtfield's frames: the control unit in its decision-row skin (/cu/field) and the typed line (/term/line).
+    # The Thoughtfield's frames: the control unit in its decision-row skin (/cu/field), Terminal 0 in its skin (/term/field) and the typed line (/term/line).
+    "/term-field.js": ("term-field.js", "text/javascript; charset=utf-8"),
+    "/term-field.css": ("term-field.css", "text/css; charset=utf-8"),
+    "/fonts/jetbrains-mono-400.woff2": ("fonts/jetbrains-mono-400.woff2", "font/woff2"),
+    "/fonts/jetbrains-mono-700.woff2": ("fonts/jetbrains-mono-700.woff2", "font/woff2"),
     "/cu-field.js": ("cu-field.js", "text/javascript; charset=utf-8"),
     "/cu-field.css": ("cu-field.css", "text/css; charset=utf-8"),
     "/field-ask.js": ("field-ask.js", "text/javascript; charset=utf-8"),
@@ -840,16 +844,18 @@ def make_handler(term: Term | None, token: str, cookie: str, key: str, port: int
                 return
             if path.startswith(CU_API):
                 self.refuse(405, "POST only")
-            elif path == "/term" and term is not None:
+            elif path in ("/term", "/term/field") and term is not None:
                 # The page carrying the key: only for the main page's iframe,
                 # never a top-level navigation another local page could open.
+                # /term/field is the same terminal in the Thoughtfield's look.
                 if not self.framed():
                     self.refuse(403, "the terminal opens inside the dashboard: open the link 'factory dashboard' printed")
                     return
+                page = "term-field.html" if path == "/term/field" else "term.html"
                 try:
-                    html = (UI / "term.html").read_text(encoding="utf-8")
+                    html = (UI / page).read_text(encoding="utf-8")
                 except OSError:
-                    self.refuse(500, "missing term.html")
+                    self.refuse(500, f"missing {page}")
                     return
                 self.send(200, html.replace(KEY_SLOT, key).encode("utf-8"), "text/html; charset=utf-8")
             elif path == "/term/line" and term is not None:

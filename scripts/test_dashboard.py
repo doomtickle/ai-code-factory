@@ -20,6 +20,7 @@ from pathlib import Path
 from unittest import mock
 
 import dashboard as d
+import dashboard_term
 import dashboard_demo as demo
 import dashboard_jobs as jobs_mod
 import dashboard_setup
@@ -1402,12 +1403,12 @@ class PageTests(unittest.TestCase):
     def test_fonts_match_checksums(self):
         sums = (UI / "fonts" / "SHA256SUMS").read_text().split("\n")
         pinned = dict(reversed(line.split()) for line in sums if line.strip())
-        served = {Path(name).name for name, ctype in d.STATIC.values() if ctype == "font/woff2"}
+        served = {Path(name).name for name, ctype in [*d.STATIC.values(), *dashboard_term.STATIC.values()] if ctype == "font/woff2"}
         self.assertEqual(set(pinned), served)
         for name, digest in pinned.items():
             self.assertEqual(hashlib.sha256((UI / "fonts" / name).read_bytes()).hexdigest(), digest, name)
         licenses = {p.name for p in (UI / "fonts").glob("OFL-*.txt")}
-        self.assertEqual(licenses, {"OFL-VT323.txt", "OFL-BarlowCondensed.txt", "OFL-DotGothic16.txt", "OFL-CormorantGaramond.txt", "OFL-HankenGrotesk.txt"})
+        self.assertEqual(licenses, {"OFL-VT323.txt", "OFL-BarlowCondensed.txt", "OFL-DotGothic16.txt", "OFL-CormorantGaramond.txt", "OFL-HankenGrotesk.txt", "OFL-JetBrainsMono.txt"})
 
     def test_no_html_sinks(self):
         for name in ("app.js", "floor.js", "sound.js", "radio.js", "lanelabel.js", "look.js", "field-hud.js", "field-sky.js", "field-face.js",
