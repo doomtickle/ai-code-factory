@@ -178,28 +178,32 @@ Type in the line and press Enter. Nothing is sent until you do.
   Terminal 0. LOIS says "Sent to the Coordinator." The reply appears in
   Terminal 0, not in the caption: press **Terminal** to read it.
 - If the Coordinator is off, your text stays in the line, nothing is sent, and
-  Terminal 0 opens so you can power it on.
+  LOIS says so. Open **Terminal** at the top to power it on.
 
 There is no speech-to-text. Browser speech recognition sends audio to a cloud
 service, so it was dropped. You type.
 
 ### What stays in the browser
 
-A line is a sky question if it has at most seven words, doesn't start with
-"why", ends in `?` or starts with what, when, which, where, how, who, show or back,
-**and** it contains one of these words:
+Only a short, plain question about the whole day stays in the browser: one
+sentence of at most seven words, starting with what, which, where, how, when or
+show, with no "in", "on", "for", "about", "with", "from" or "to", and containing
+one of these words:
 
 | Words | Answer |
 |---|---|
-| back, galaxy, home, reset | Back to the galaxy |
-| cost, spend, spent, expensive, money, budget, price | What cost the most |
-| stuck, wrong, fail, problem, broken, trouble, attention | What's stuck |
-| when, busy, busiest, quiet, timeline, hour | When it was busiest |
-| doing, kind of, actions, blocked, reading, work, working, worked | What they've been doing |
+| cost, spend, spent, expensive, money, budget | What cost the most |
+| stuck, wrong, failed, failing, broken, problem, trouble, attention | What's stuck |
+| busy, busiest, quiet, timeline | When it was busiest |
+| doing, actions, blocked, reading, kind of | What they've been doing |
 
-So "What failed?" draws the stuck view, and "Why did the auth job fail?" goes to the
-Coordinator. If the sky takes a question you meant for the Coordinator, type it in
-Terminal 0, or phrase it as a statement: "Tell me what failed on the auth job."
+"Back", "home" or "back to the galaxy" alone also return to the galaxy.
+
+So "What failed?" draws the stuck view, while "Why did the auth job fail?", "What
+failed on the auth job?" and "Back out the auth change" all go to the Coordinator.
+
+Enter goes to whatever Terminal 0 is showing. If the Coordinator is waiting on a
+prompt of its own, your line answers that prompt, so open Terminal 0 when it may be.
 
 ### Terminal 0
 

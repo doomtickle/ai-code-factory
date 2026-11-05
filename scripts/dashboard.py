@@ -619,7 +619,7 @@ class Dashboard:
         """Today's jobs and what each did, for the galaxy (dashboard_field). Cached a moment: the page polls it."""
         now = time.time() if now is None else now
         cached = getattr(self, "_field_cache", None)
-        if cached and now - cached[0] < FIELD_TTL:
+        if cached and 0 <= now - cached[0] < FIELD_TTL:
             return cached[1]
         with self.lock:
             self.refresh()

@@ -9,9 +9,11 @@ with textContent. Standard library only; runs on the macOS system Python (3.9).
 
 from __future__ import annotations
 
+import math
 import re
 import time
 
+import dashboard_jobs as jobs_mod
 import dashboard_labels as labels
 
 ACTIONS_MAX = 800   # actions kept per job (evenly thinned past that: the galaxy needs the shape, not every one)
@@ -63,8 +65,21 @@ def thin(items: list, limit: int) -> list:
     return [items[int(i * step)] for i in range(limit)]
 
 
+def finite(value):
+    """A number fit to use, or None: audit files are parsed JSON, so this can be anything (inf and NaN included)."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    try:
+        value = float(value)
+    except OverflowError:
+        return None
+    return value if math.isfinite(value) and abs(value) < 1e12 else None
+
+
 def lane_runs(lane) -> list:
-    """A lane's transcript cut into jobs: [{id, start, end, status, model, task, brief, branches, actions}]."""
+    """A lane's transcript cut into jobs: [{id, start, end, status, model, task, brief, branches, actions}]. Only the
+    lane's own current job can still be running: Lane.job holds what watch knows about it (a dead bridge marks it
+    interrupted, and the model line isn't kept in entries), and any earlier job left open was interrupted."""
     runs, cur = [], None
     for e in list(lane.entries):
         if e.kind == "start":
@@ -88,6 +103,14 @@ def lane_runs(lane) -> list:
             at = clock_minutes(e.ts)
             if at is not None:
                 cur["actions"].append([round(at, 2), action_kind(str(e.text), lane.role)])
+    live = getattr(lane, "job", None) or {}
+    for run in runs:
+        if run["id"] == live.get("id"):
+            run["status"] = str(live.get("status") or run["status"])
+            run["model"] = str(live.get("model") or run["model"])
+            run["task"] = run["task"] or str(live.get("task") or "")
+        elif run["status"] == "running":
+            run["status"] = "interrupted"
     return runs
 
 
@@ -101,11 +124,9 @@ def build(lanes, audit_jobs: dict, denials, midnight: float, now: float, verdict
     for lane in lanes:
         for run in lane_runs(lane):
             jid, rec = run["id"], audit_jobs.get(run["id"]) or {}
-            # Today's: named in today's audit, or still running. A transcript has no date of its own.
-            if jid in seen or (jid not in today_ids and run["status"] != "running"):
-                continue
-            # A running job's start can't be later than now, so a clock past now is yesterday's lane.
-            if run["status"] == "running" and (run["start"] is None or run["start"] > now_min + 1):
+            # Today's: named in today's audit, or still running (lane_runs: only the lane's live job can be).
+            # A transcript has no date of its own. One that crossed midnight comes out with a negative start.
+            if jid in seen or (jid not in today_ids and run["status"] != "running") or run["start"] is None:
                 continue
             seen.add(jid)
             jobs.append(job_record(jid, lane, run, rec, verdict, epoch_of, now_min))
@@ -115,8 +136,7 @@ def build(lanes, audit_jobs: dict, denials, midnight: float, now: float, verdict
         ended = epoch_of(rec.get("ts"))
         if ended is None:
             continue
-        secs = rec.get("elapsed_seconds")
-        secs = secs if isinstance(secs, (int, float)) else 0
+        secs = finite(rec.get("elapsed_seconds")) or 0
         run = {"id": jid, "start": epoch_minutes(ended - secs), "end": epoch_minutes(ended),
                "status": str(rec.get("status") or "done"), "model": str(rec.get("model") or ""), "task": "",
                "brief": "", "branches": [], "actions": []}
@@ -125,12 +145,13 @@ def build(lanes, audit_jobs: dict, denials, midnight: float, now: float, verdict
     jobs.sort(key=lambda j: j["start"])
     blocked = []
     for rec in denials:
-        if rec.get("decision") != "deny":
+        if not isinstance(rec, dict) or rec.get("decision") != "deny":
             continue
         at = epoch_of(rec.get("ts"))
         if at is not None and at >= midnight:
             blocked.append({"t": round(epoch_minutes(at), 2), "role": one_line(rec.get("role") or rec.get("principal"), 40)})
-    return {"now": round(now_min, 2), "jobs": jobs[-JOBS_MAX:], "blocked": blocked[-DENIALS_MAX:]}
+    return {"now": round(now_min, 2), "date": time.strftime("%Y-%m-%d", time.localtime(now)), "jobs": jobs[-JOBS_MAX:],
+            "blocked": blocked[-DENIALS_MAX:]}
 
 
 def rewind_past(t, now_min: float):
@@ -145,17 +166,16 @@ def job_record(jid: str, lane, run: dict, rec: dict, verdict, epoch_of, now_min:
     role = lane.role
     # Jobs on one branch are one order, a reviewer's included. Any other job stands alone.
     topic = labels.branch_topic(brief) or next((labels.branch_topic(b) or b for b in run["branches"]), "")
-    cost = rec.get("cost_usd")
     return {
-        "id": jid, "lane": lane.name, "role": role,
-        "order": one_line(topic, 80) or jid,
+        "id": one_line(jid, 64), "lane": one_line(lane.name, 41), "role": one_line(role, 40),
+        "order": one_line(topic, 80) or one_line(jid, 64),
         "label": one_line(labels.desk_label(brief), 40) or one_line(lane.name, 40),
         "task": one_line(run["task"]),
         "model": one_line(str(run["model"] or rec.get("model") or "").replace("claude-", ""), 40),
         "status": one_line(rec.get("status") or run["status"], 20),
-        "verdict": (verdict(jid) or "").lower() if run["status"] != "running" else "",
+        "verdict": (verdict(jid) or "").lower() if run["status"] != "running" and jobs_mod.JOB_ID.fullmatch(jid) else "",
         "start": round(run["start"], 2) if run["start"] is not None else 0,
         "end": round(run["end"], 2) if run["end"] is not None else None,
-        "cost": round(float(cost), 4) if isinstance(cost, (int, float)) and not isinstance(cost, bool) else None,
+        "cost": None if finite(rec.get("cost_usd")) is None else round(finite(rec.get("cost_usd")), 4),
         "actions": thin(run["actions"], ACTIONS_MAX),
     }

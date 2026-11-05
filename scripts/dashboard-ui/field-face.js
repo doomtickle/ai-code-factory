@@ -119,10 +119,10 @@
       W.ready = true; W.eyeY = eyeW.y; W.eyeZ = eyeW.z;
       LF.sky = window.makeSky(scene, camera, new THREE.Vector3(0, eyeW.y, eyeW.z - .08), U, W); LF.camera = camera; LF.onReady && LF.onReady();
     };
-    const onFail = err => { W.failed = true; console.error("glb:", err); LF.fail && LF.fail("The bust did not load."); };
+    const onFail = err => { W.failed = true; console.error("glb:", err); (LF.failMsg = "The bust did not load."), LF.fail && LF.fail(LF.failMsg); };
     const loader = new THREE.GLTFLoader();
     loader.load("/witness/witness.glb", g => { try { onModel(g); } catch (e) { onFail(e); } }, undefined, onFail);
-  } catch (e) { W.failed = true; console.error(e); LF.fail && LF.fail("This view needs WebGL."); }
+  } catch (e) { W.failed = true; console.error(e); LF.failMsg = "This view needs WebGL."; LF.fail && LF.fail(LF.failMsg); }
 
   const tmpF = typeof THREE !== "undefined" ? new THREE.Vector3() : null;
   const ease = (a, b, k) => a + (b - a) * k;

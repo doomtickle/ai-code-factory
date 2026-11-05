@@ -293,14 +293,14 @@
 
     // Blinking while a held write waits for a person; steady while all of them wait for the agent.
     setClass($("cu-led"), cs.some(x => !closed(x)) ? "led a blink" : cs.length ? "led a" : "led g");
-    if (document.documentElement.dataset) document.documentElement.dataset.cards = String(cs.length);   // the Thoughtfield's skin (cu-field.css) shows the decision row only then
+    if (document.documentElement.dataset) { document.documentElement.dataset.cards = String(cs.length); document.documentElement.dataset.sel = selId == null ? "" : `${selId}:${selFp}`; }   // the Thoughtfield's skin (cu-field.css) shows the decision row only then
     $("sel").hidden = cs.length < 2;
     if (cs.length > 1) setText($("sel-n"), `${cs.indexOf(c) + 1}/${cs.length}`);
 
     const k = JSON.stringify([c ? Object.assign({}, c, { seconds_left: c.seconds_left == null, expired: expired(c) }) : "empty", writes()]);
     if (k !== shownKey) {
       shownKey = k;
-      body.replaceChildren(...(c ? cardLines(c) : [el("div", "ln idle", "No writes staged")]), ...writeLines());
+      body.replaceChildren(...(c ? cardLines(c) : [el("div", "ln idle", "No writes staged")]), ...writeLines().map(n => { n.className += " wr"; return n; }));
       body.scrollTop = 0;
     }
     moreCue();

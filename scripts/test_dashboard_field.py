@@ -6,6 +6,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import subprocess
 import time
 import unittest
 from pathlib import Path
@@ -22,6 +23,30 @@ class Lane:
     def __init__(self, name, role, lines):
         self.name, self.role = name, role
         self.entries = [w.Entry(*x) for x in lines]
+        starts = [x[2] for x in lines if x[1] == "start"]
+        ended = bool(lines) and lines[-1][1] == "end"
+        self.job = {"id": starts[-1], "status": "done" if ended else "running"} if starts else None   # as watch.Lane keeps it
+
+
+class AskTests(unittest.TestCase):
+    """What stays in the browser. Node runs the one copy both lines use."""
+
+    def view(self, q):
+        code = (f"global.window = {{}}; require({str(UI / 'field-ask.js')!r}); "
+                f"process.stdout.write(JSON.stringify(window.FieldAsk.view({json.dumps(q)})))")
+        return json.loads(subprocess.run(["node", "-e", code], capture_output=True, text=True, check=True).stdout)
+
+    def test_questions_about_the_day_stay(self):
+        for q, v in (("What cost the most?", "spend"), ("What's stuck?", "stuck"), ("What have they been doing?", "kinds"),
+                     ("When was it busiest?", "time"), ("how much did we spend today", "spend"), ("What failed?", "stuck"),
+                     ("back", "home"), ("Back to the galaxy", "home")):
+            self.assertEqual(self.view(q), v, q)
+
+    def test_everything_else_reaches_the_coordinator(self):
+        for q in ("Back out the auth change", "When you finish, start the review", "What failed? Fix it now", "Fix the failing auth test?",
+                  "Why did the auth job fail?", "What failed on the auth job?", "Add a budget flag", "How much would it cost to rewrite the broker in rust today?",
+                  "What is blocking the release?", "Show me the spend flag on the page"):
+            self.assertIsNone(self.view(q), q)
 
 
 class FeedTests(unittest.TestCase):
@@ -58,6 +83,43 @@ class FeedTests(unittest.TestCase):
         out = self.build([], calls=[{"ts": at, "decision": "deny", "role": "developer", "args": {"url": "https://paste.example/x"}}, {"ts": at, "decision": "allow", "role": "developer"}])
         self.assertEqual(len(out["blocked"]), 1)
         self.assertNotIn("paste.example", json.dumps(out))
+
+    def test_a_dead_bridge_means_no_running_job(self):
+        lane = w.Lane("developer", "developer", Path("/nonexistent"))
+        for line in ("13:50:00  ▶ job 20261105-135000-abc123 from the Coordinator", "13:50:01     > Do it", "13:50:02     model: claude-opus-5-5", "13:51:00  🔧 Read: {\"file_path\": \"a\"}"):
+            lane.add(line)
+        job = self.build([lane])["jobs"][0]
+        self.assertEqual((job["status"], job["model"]), ("running", "opus-5-5"))
+        lane.interrupt()
+        self.assertEqual(self.build([lane])["jobs"], [])
+
+    def test_only_a_lanes_last_job_can_be_running(self):
+        lane = Lane("developer", "developer", [("13:00:00", "start", "old"), ("13:30:00", "start", "new")])
+        lane.job = {"id": "new", "status": "running"}
+        self.assertEqual([j["id"] for j in self.build([lane])["jobs"]], ["new"])
+
+    def test_a_live_job_that_crossed_midnight_is_kept(self):
+        lane = Lane("developer", "developer", [("23:50:00", "start", "j1")])
+        lane.job = {"id": "j1", "status": "running"}
+        self.assertLess(self.build([lane])["jobs"][0]["start"], 0)
+
+    def test_damaged_audit_values_are_dropped(self):
+        at = time.mktime((2026, 11, 5, 13, 0, 0, 0, 0, -1))
+        for bad in (float("inf"), float("nan"), 10 ** 400, True, "1.5", None):
+            out = self.build([], audit={"j1": {"ts": at, "cost_usd": bad, "elapsed_seconds": bad, "status": "done"}}, calls=["x", 3])
+            self.assertIsNone(out["jobs"][0]["cost"])
+            json.dumps(out, allow_nan=False)
+
+    def test_the_date_is_sent(self):
+        self.assertEqual(self.build([])["date"], "2026-11-05")
+
+    def test_an_odd_job_id_is_never_used_for_a_verdict_and_is_cut(self):
+        asked = []
+        lane = Lane("developer", "developer", [("13:00:00", "start", "../" + "x" * 5000), ("13:01:00", "end", "done 60")])
+        midnight, now = time.mktime((2026, 11, 5, 0, 0, 0, 0, 0, -1)), time.mktime((2026, 11, 5, 14, 0, 0, 0, 0, -1))
+        out = f.build([lane], {"../" + "x" * 5000: {"ts": now - 60}}, [], midnight, now, lambda jid: asked.append(jid), lambda ts: ts)
+        self.assertEqual(asked, [])
+        self.assertLessEqual(len(out["jobs"][0]["id"]), 64)
 
     def test_words_are_one_printable_line(self):
         self.assertEqual(f.one_line("a\n\tb\x1b[31m c‮"), "a b[31m c")
@@ -102,6 +164,9 @@ class RulesTests(unittest.TestCase):
         self.assertNotIn("fetch(", js)
         self.assertNotIn("X-Factory-Control", js)
         self.assertIn("approve.disabled", js)
+        self.assertIn("e.button !== 0 || !e.isPrimary", js)
+        for ender in ("visibilitychange", "lostpointercapture", "window.addEventListener(\"blur\""):
+            self.assertIn(ender, js)
         self.assertIn("HOLD_MS = 2500", js)
 
     def test_the_line_sends_only_what_was_typed_and_never_powers_on(self):
@@ -111,7 +176,7 @@ class RulesTests(unittest.TestCase):
         self.assertRegex(js, r'typeof ev\.data !== "string"\) return')
 
     def test_main_page_takes_only_fixed_words_from_the_line(self):
-        self.assertIn(r"/^ln:(spend|stuck|kinds|time|home|unknown|sent|off|on|terminal)$/", (UI / "field-hud.js").read_text())
+        self.assertIn(r"/^ln:(spend|stuck|kinds|time|home|sent|off|noconn)$/", (UI / "field-hud.js").read_text())
 
     def test_vendored_files_match_their_checksums(self):
         for folder in ("vendor/three", "witness"):

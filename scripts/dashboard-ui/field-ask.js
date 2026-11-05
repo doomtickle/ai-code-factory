@@ -1,10 +1,17 @@
-// Which shape of the sky a typed question asks for, or null. One copy for the main page's line (demo, no Terminal 0) and the
-// terminal origin's line. Plain text in, a fixed word out; nothing typed goes further than this function.
+// Which shape of the sky a typed line asks for, or null. One copy for the main page's line (demo, no Terminal 0) and the
+// terminal origin's line. Deliberately narrow: only a short plain question about the whole day, one sentence with no
+// aside. Anything else (an order, a question about one job) is for the Coordinator, so nothing it asked for is ever lost
+// to the sky. Plain text in, a fixed word out; nothing typed goes further than this function.
 "use strict";
 window.FieldAsk = {
-  // A short question about the day, nothing more: "why" and longer questions are for the Coordinator, so "Why did the auth job fail?" reaches it.
-  isQuestion: q => !/^\s*why\b/i.test(q) && String(q).trim().split(/\s+/).length <= 7 && (/\?\s*$/.test(q) || /^(what|when|which|where|how|who|show|back)\b/i.test(q)),
-  view(q) { const t = String(q).toLowerCase();
-    if (/\b(back|galaxy|home|reset)\b/.test(t)) return "home"; if (/cost|spen[dt]|expens|money|budget|price/.test(t)) return "spend"; if (/stuck|wrong|fail|problem|broken|trouble|attention/.test(t)) return "stuck";
-    if (/\bwhen\b|busiest|busy|quiet|timeline|\bhours?\b/.test(t)) return "time"; if (/doing|kind of|actions|blocked|reading|\bwork(ing|ed)?\b/.test(t)) return "kinds"; return null; },
+  isQuestion: q => window.FieldAsk.view(q) !== null,
+  view(q) { const t = String(q).trim().toLowerCase().replace(/[?]+$/, "").trim();
+    if (/^(back|home|reset|go back|back to the galaxy|show the galaxy)$/.test(t)) return "home";
+    if (/[,.;:!?]/.test(t) || t.split(/\s+/).length > 7) return null;
+    if (!/^(what|what's|whats|which|where|how|when|show)\b/.test(t) || /\b(in|on|for|about|with|from|to)\b/.test(t)) return null;
+    if (/\b(costs?|spend|spent|expensive|money|budget)\b/.test(t)) return "spend";
+    if (/\b(stuck|wrong|failed|failing|broken|problems?|trouble|attention)\b/.test(t)) return "stuck";
+    if (/\b(busiest|busy|quiet|timeline)\b/.test(t)) return "time";
+    if (/\b(doing|actions|blocked|reading)\b|\bkind of\b/.test(t)) return "kinds";
+    return null; },
 };

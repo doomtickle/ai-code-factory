@@ -85,6 +85,20 @@ class VoiceCommandTest(CommandTest):
         self.assertEqual(self.acting(), [RUN_FLAGS + ["--gpus", "all", "factory-voice:1"]])
         self.assertIn("GPU", self.out.getvalue())
 
+    def test_a_gpu_docker_refuses_falls_back_to_cpu(self):
+        self.tool("nvidia-smi", "exit 0\n")
+        real = self.answer
+
+        def refuses(argv):
+            if "--gpus" in argv:
+                return Captured(125, "", "could not select device driver")
+            return real(argv)
+
+        self.answer = refuses
+        self.assertEqual(self.cmd("start"), 0)
+        self.assertEqual(self.acting(), [RUN_FLAGS + ["--gpus", "all", "factory-voice:1"], ["rm", "factory-voice"], RUN_FLAGS + ["factory-voice:1"]])
+        self.assertIn("CPU", self.out.getvalue())
+
     def test_a_failing_nvidia_smi_means_cpu(self):
         self.tool("nvidia-smi", "exit 9\n")
         self.nvidia_status = 9

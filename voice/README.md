@@ -2,7 +2,7 @@
 
 A local speech service for the LOIS dashboard. It runs Kokoro-82M in one Docker container, on the
 GPU when there is one. It listens on `127.0.0.1:8873` only. No text and no audio leave this machine.
-It needs no network once built.
+It needs no network once built and makes no calls of its own, though the container sits on Docker's default bridge and is not firewalled from it.
 
 ## Use
 

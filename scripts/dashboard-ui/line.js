@@ -19,8 +19,9 @@
   input.addEventListener("input", () => form.classList.toggle("has", !!input.value.trim()));
   // The frame is sandboxed without allow-forms, so Enter and the arrow key send it directly; the form never submits.
   const submit = () => { const q = clean(input.value).trim(); if (!q) return;
-    const view = window.FieldAsk.isQuestion(q) ? window.FieldAsk.view(q) : null; if (view) { input.value = ""; form.classList.remove("has"); tell(view); return; }
-    if (!running || !ws || ws.readyState !== WebSocket.OPEN) { tell("off"); return; }   // keep the text: nothing was sent
+    const view = window.FieldAsk.view(q); if (view) { input.value = ""; form.classList.remove("has"); tell(view); return; }
+    if (!ws || ws.readyState !== WebSocket.OPEN) { tell("noconn"); return; }   // keep the text: nothing was sent
+    if (!running) { tell("off"); return; }
     input.value = ""; form.classList.remove("has"); ws.send(encoder.encode(q)); setTimeout(() => { if (ws && ws.readyState === WebSocket.OPEN) ws.send(encoder.encode("\r")); }, 120); tell("sent"); };
   form.addEventListener("submit", e => e.preventDefault());
   input.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); submit(); } });

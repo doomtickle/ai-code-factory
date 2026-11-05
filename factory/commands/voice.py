@@ -93,8 +93,15 @@ def start(ctx, args):
     argv = [docker, "run", "-d", "--name", voice.CONTAINER, "--restart", "no", "-p", PUBLISH,
             "--read-only", "--tmpfs", TMPFS, "--cap-drop", "ALL", "--security-opt", "no-new-privileges"]
     if gpu:
-        argv += ["--gpus", "all"]
-    _docker_step(ctx, argv + [voice.IMAGE], "docker run")
+        # nvidia-smi working doesn't prove Docker has the NVIDIA runtime. If it refuses, run on the CPU.
+        got = ctx.capture(argv + ["--gpus", "all", voice.IMAGE], timeout=TIMEOUT)
+        if got.status == 0:
+            argv = None
+        else:
+            gpu = False
+            ctx.capture([docker, "rm", voice.CONTAINER], timeout=TIMEOUT)  # docker run can leave a created container
+    if argv is not None:
+        _docker_step(ctx, argv + [voice.IMAGE], "docker run")
     ctx.ok("started on 127.0.0.1:%d (%s). The model takes a moment to load; see: factory voice status" % (
         voice.PORT, "GPU" if gpu else "CPU"))
     return 0

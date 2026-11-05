@@ -11,11 +11,12 @@ html:not(.expanded) #scr-deck { background: transparent; padding: 0; height: 100
 #scr-deck .deck-lcd { display: block; margin: 0; background: none; border: 0; box-shadow: none; padding: 0; min-height: 0; height: auto; max-height: 92px; color: var(--i2); position: relative; overflow: hidden; }
 #scr-deck .deck-lcd::before, #scr-deck .deck-lcd::after { display: none; }
 #scr-deck .deck-body { max-height: 92px; overflow-y: auto; scrollbar-width: none; text-shadow: none; font: 400 12.5px/1.35 var(--f-data); color: var(--i2); }
-#scr-deck .deck-body .ln { color: var(--i2); font: 400 12.5px/1.35 var(--f-data); text-transform: none; letter-spacing: 0; text-shadow: none; white-space: normal; overflow-wrap: anywhere; }
+#scr-deck .deck-body .ln { color: var(--i2); font: 400 12.5px/1.35 var(--f-data); text-transform: none; letter-spacing: 0; text-shadow: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }   /* one row each, as on the classic deck: an agent-written title can never push the real target out of view */
 #scr-deck .deck-body .ln.big { font: 600 20px/1.12 var(--f-voice); color: #fff; }
 #scr-deck .deck-body { padding: 0; }
-#scr-deck .deck-body .ln.idle, #scr-deck .deck-body .ln.warn, #scr-deck .deck-body .ln.lane, #scr-deck .deck-body .ln.files, #scr-deck .deck-body .ln.dim, #scr-deck .deck-body .ln.dim ~ .ln { display: none; }   /* the whole card and the deferred-writes list are on INSPECT and the classic view */
-#scr-deck .flash { position: absolute; inset: 0; display: flex; align-items: center; justify-content: flex-end; background: rgba(2,4,9,.94); color: #fff; font: 500 13px/1.3 var(--f-data); text-align: right; padding: 0; border: 0; box-shadow: none; }
+#scr-deck .deck-body .ln.idle, #scr-deck .deck-body .ln.warn, #scr-deck .deck-body .ln.lane, #scr-deck .deck-body .ln.files, #scr-deck .deck-body .ln.dim:not(.st-ok), #scr-deck .deck-body .ln.wr { display: none; }   /* the whole card and the deferred-writes list are on INSPECT and the classic view */
+#scr-deck .flash { position: absolute; left: 0; right: 0; bottom: 0; top: auto; display: block; background: #03060d; color: #fff; font: 500 13px/1.3 var(--f-data); text-align: right; padding: 0; border: 0; box-shadow: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#scr-deck .flash.ask { top: 0; white-space: normal; display: flex; align-items: center; justify-content: flex-end; }
 #scr-deck .flash[hidden] { display: none; }
 #scr-deck .more { display: none; }
 .sun { position: relative; width: 78px; height: 78px; border-radius: 50%; cursor: pointer; touch-action: none; user-select: none; -webkit-user-select: none; --f: 0; outline-offset: 3px; }
@@ -44,7 +45,7 @@ html:not(.expanded) #scr-deck { background: transparent; padding: 0; height: 100
 #scr-deck .svckey .led { display: inline-block; width: 6px; height: 6px; margin-right: 6px; vertical-align: 1px; box-shadow: none; border: 0; }
 .svc-more { color: var(--i3); border-bottom-color: rgba(163,183,209,.35); }
 #scr-deck .gate-row { display: none; background: none; border: 0; padding: 0; }
-html.why #scr-deck .gate-row { display: block; } html.why #scr-deck .deck-lcd { display: none; }
+html.why #scr-deck .gate-row { display: block; } html.why #scr-deck .deck-body { display: none; }
 #scr-deck .reason { width: 100%; background: none; border: 0; border-bottom: 1px solid var(--crit2); padding: 5px 2px; font: 500 17px var(--f-voice); color: #fff; text-align: right; outline: none; box-shadow: none; }
 #scr-deck .reason::placeholder { color: var(--i3); opacity: 1; }
 #scr-deck .service { display: none; grid-column: 1 / -1; justify-content: center; align-items: center; gap: 16px; background: none; border: 0; padding: 0; margin: 0; }
@@ -55,7 +56,9 @@ html[data-cards="0"] #scr-deck .dec-l { text-align: center; } html[data-cards="0
 html[data-cards="0"] #scr-deck .service, html:not([data-cards]) #scr-deck .service, html.svc #scr-deck .service { display: flex; }
 html.svc #scr-deck .sun, html.svc #scr-deck .dec-l, html.svc #scr-deck .dec-r { display: none; } html.svc #scr-deck .unit { grid-template-columns: 1fr; }
 html.svc #svc-back { display: inline; } #svc-back[hidden] { display: none; }
-@media (max-width: 660px) { #scr-deck .unit { grid-template-columns: 58px minmax(0, 1fr); gap: 2px 12px; grid-template-rows: auto auto; align-content: center; } #scr-deck .unit > .sun { width: 58px; height: 58px; grid-area: 1 / 1 / 3 / 2 !important; } .sun .core { inset: 17px; } #scr-deck .unit > .dec-l { grid-area: 1 / 2 / 2 / 3 !important; text-align: left; } #scr-deck .unit > .dec-r { grid-area: 2 / 2 / 3 / 3 !important; } .dec-r { gap: 1px; } #hint { font-size: 18px; } #scr-deck .deck-body { max-height: 44px; } #scr-deck .deck-body .ln:not(.big) { display: none; } #scr-deck .deck-h { display: none; } #scr-deck .reason { text-align: left; } }
+@media (max-width: 440px) { #scr-deck .unit { grid-template-columns: 58px minmax(0, 1fr); gap: 2px 12px; grid-template-rows: auto auto; align-content: center; } #scr-deck .unit > .sun { width: 58px; height: 58px; grid-area: 1 / 1 / 3 / 2 !important; } .sun .core { inset: 17px; } #scr-deck .unit > .dec-l { grid-area: 1 / 2 / 2 / 3 !important; text-align: left; } #scr-deck .unit > .dec-r { grid-area: 2 / 2 / 3 / 3 !important; } .dec-r { gap: 1px; } #hint { font-size: 17px; } #scr-deck .deck-body { max-height: 74px; } #scr-deck .deck-lcd { max-height: 74px; } #scr-deck .dec-l { max-height: 74px; } #scr-deck .deck-body .ln.title { display: none; } #scr-deck .flash { text-align: left; } #scr-deck .reason { text-align: left; } }
+/* a short window gives this frame about 76 px: the light shrinks and the title gives way, never the repo or the branch */
+@media (max-height: 84px) { #scr-deck .unit { grid-template-columns: minmax(0, 1fr) 62px minmax(0, 1fr); } .sun { width: 62px; height: 62px; } .sun .core { inset: 18px; } #scr-deck .deck-body .ln.title { display: none; } #scr-deck .deck-body, #scr-deck .deck-lcd, #scr-deck .dec-l { max-height: 74px; } #hint { font-size: 18px; } .dec-r { gap: 1px; } }
 @media (prefers-reduced-motion: reduce) { .sun .core { animation: none; } }
 /* The expanded screens (Settings, Inspect, Service): the same unit on the world's dark, in the same type. */
 html.expanded, html.expanded body { background: #03060d !important; }
