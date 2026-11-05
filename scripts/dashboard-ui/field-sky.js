@@ -140,11 +140,15 @@ window.makeSky = function (scene, camera, C, U, W) {
 
   // ---- where the packets go: rings round the witness's outline on screen, never through it
   const vp = new THREE.Vector3(), angOf = (dx, dy) => ((Math.atan2(-dx, dy) % TAU) + TAU) % TAU;   // 0 straight down, a quarter turn left, half up, three quarters right
-  let sil = null, rings = null, seq = [], seqKey = "", fitKey = "";
+  let sil = null, rings = null, seq = [], seqKey = "", fitKey = "", silTry = 0, noOutline = false;
   function outline() { // the model's meshes projected from the camera; only what's above the horizon counts (the world hides the rest)
-    const g = W.geo(); if (!g.R) return null; const pts = []; scene.children.forEach(ch => { if (ch === root) return; ch.traverse(o => { const p = o.isMesh && o.geometry && o.geometry.attributes.position; if (!p) return; o.updateMatrixWorld(true); const step = Math.max(1, Math.floor(p.count / 4000)); for (let i = 0; i < p.count; i += step) { vp.fromBufferAttribute(p, i).applyMatrix4(o.matrixWorld).project(camera); const x = (vp.x * .5 + .5) * g.w, y = (-vp.y * .5 + .5) * g.h; if (y < W.rimAt(x)) pts.push(x, y); } }); });
+    const g = W.geo(); if (!g.R || noOutline) return null; const pts = []; scene.children.forEach(ch => { if (ch === root) return; ch.traverse(o => { const p = o.isMesh && o.geometry && o.geometry.attributes.position; if (!p) return; o.updateMatrixWorld(true); const step = Math.max(1, Math.floor(p.count / 4000)); for (let i = 0; i < p.count; i += step) { vp.fromBufferAttribute(p, i).applyMatrix4(o.matrixWorld).project(camera); const x = (vp.x * .5 + .5) * g.w, y = (-vp.y * .5 + .5) * g.h; if (y < W.rimAt(x)) pts.push(x, y); } }); });
     if (!pts.length) return null; let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9; for (let i = 0; i < pts.length; i += 2) { x0 = Math.min(x0, pts[i]); x1 = Math.max(x1, pts[i]); y0 = Math.min(y0, pts[i + 1]); y1 = Math.max(y1, pts[i + 1]); }
     const s = { cx: (x0 + x1) / 2, cy: (y0 + y1) / 2, NB: 240, box: [x0, y0, x1, y1] }; s.rho = new Float32Array(s.NB); for (let i = 0; i < pts.length; i += 2) { const dx = pts[i] - s.cx, dy = pts[i + 1] - s.cy, b = Math.min(s.NB - 1, Math.floor(angOf(dx, dy) / TAU * s.NB)); s.rho[b] = Math.max(s.rho[b], Math.hypot(dx, dy)); } return s; }
+  // no witness point above the horizon (an odd viewport size): a round stand-in at the middle of the sky, so the packets still
+  // ring something; update() tries the real outline again once a second
+  function standIn() { const g = W.geo(), cx = g.w / 2, top = 60, cy = (top + W.rimAt(cx)) / 2, r = Math.max(20, Math.min(g.w, W.rimAt(cx) - top) * .12);
+    return { cx, cy, NB: 240, box: [cx - r, cy - r, cx + r, cy + r], rho: new Float32Array(240).fill(r), standIn: true }; }
   const binAt = (s, b) => s.rho[((b % s.NB) + s.NB) % s.NB];
   function reach(s, phi, pad) { const b0 = Math.floor(phi / TAU * s.NB), win = Math.ceil(Math.atan(pad / Math.max(30, binAt(s, b0))) / TAU * s.NB) + 1; let m = 0; for (let k = -win; k <= win; k++) m = Math.max(m, binAt(s, b0 + k)); return m + pad; }
   function inOutline(x, y, pad = 0) { if (!sil) return false; const dx = x - sil.cx, dy = y - sil.cy; return Math.hypot(dx, dy) < binAt(sil, Math.floor(angOf(dx, dy) / TAU * sil.NB)) + pad; }
@@ -162,7 +166,7 @@ window.makeSky = function (scene, camera, C, U, W) {
       if (!best || cap > best.cap) best = r; }
     return Object.assign(best, { gaps: false }); }
   function relayout(force) { // the sequence: orders by their first job, each order's jobs by start and then its held writes
-    if (force) { sil = null; fitKey = ""; } if (!sil) sil = outline(); if (!sil) return;
+    if (force) { sil = null; fitKey = ""; } if (!sil) { sil = outline(); if (!sil && W.geo().R) { sil = standIn(); silTry = performance.now(); } } if (!sil) return;
     const list = [], byOrder = new Map(); PK.forEach(pk => { if (!byOrder.has(pk.order)) byOrder.set(pk.order, []); byOrder.get(pk.order).push(pk); });
     const t0 = o => Math.min(...byOrder.get(o).map(pk => pk.job ? pk.job.start : 1e6)); [...byOrder.keys()].sort((a, b) => t0(a) - t0(b) || a.i - b.i).forEach(o => byOrder.get(o).sort((a, b) => (a.job ? a.job.start : 1e6) - (b.job ? b.job.start : 1e6)).forEach((pk, k) => { pk.gap = k === 0; list.push(pk); }));
     const key = list.map(pk => pk.key).join(",") + "|" + W.geo().w + "x" + W.geo().h; if (key === seqKey && !force) return; seqKey = key; seq = list;
@@ -230,7 +234,7 @@ window.makeSky = function (scene, camera, C, U, W) {
   const tether = new THREE.LineSegments(new THREE.BufferGeometry(), new THREE.LineBasicMaterial(basic({ vertexColors: true, opacity: .55 }))); tether.geometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array(256 * 6), 3)); tether.geometry.setAttribute("color", new THREE.BufferAttribute(new Float32Array(256 * 6), 3)); tether.frustumCulled = false; root.add(tether);
   function update(now, px, py) { const s = nowMin(), t = now / 1000, realDt = (now - lastNow) / 1000, dt = Math.min(.1, realDt); lastNow = now; u.uPx.value = Math.min(1.5, devicePixelRatio || 1) * (innerHeight / 900);
     if (scrubT != null) tEff = scrubT; else if (tEff < s - .001) tEff = replaySpeed ? Math.min(s, tEff + Math.min(1, realDt) * replaySpeed) : s; else tEff = s; if (tEff >= s) replaySpeed = 0; u.uT.value = tEff; const rewinding = tEff < s - .5;
-    if (!sil && W.geo().R) relayout(true);
+    if (!sil && W.geo().R) relayout(true); else if (sil && sil.standIn && now - silTry > 1000) { silTry = now; const real = outline(); if (real) { relayout(true); } }
     orders.forEach(o => { o.rate += ((o.frozen ? 0 : 1) - o.rate) * Math.min(1, dt * .9); const fx = u.uOrdFx.value[oi(o)]; fx.y = Math.max(0, fx.y - dt * .6); });
     const mp = Math.min(1, (now - morphT0) / morphDur); u.uMorph.value = mp; const tv = view === "home" || view === "stuck" ? 0 : 1; u.uViewAmt.value += (tv - u.uViewAmt.value) * Math.min(1, dt * 1.6); u.uPure.value += ((view === "kinds" ? 1 : view === "spend" || view === "time" ? .35 : 0) - u.uPure.value) * Math.min(1, dt * 1.6); u.uVA.value += ((view === "time" ? .36 : 1) - u.uVA.value) * Math.min(1, dt * 1.6);
     const hovJob = hovered ? jobOf(hovered) : null, hovPk = pkOfUn(hovered), hovOrder = hovJob ? hovJob.order : hovPk ? hovPk.order : null, trouble = j => bad(j) || j.verdict === "revise" || j.order.frozen;
@@ -253,7 +257,7 @@ window.makeSky = function (scene, camera, C, U, W) {
       const sz = gold ? 1.3 : running ? (j.role === "reviewer" ? .7 : sizeOf(j.model) * 4.2) : 0, pulse = gold ? (pk.card.decided ? .7 : .86 + .22 * Math.sin(t * 2.6)) : .92 + .12 * Math.sin(t * 7 + pk.R); pk.core.material.color.copy(gold ? GOLD : j && j.role === "reviewer" ? REVIEW : o.spark); pk.core.scale.setScalar(sz * pulse + 1e-4); pk.core.material.opacity = sz ? Math.min(1, homeAmt * (view === "stuck" && !(gold || trouble(j)) ? .2 : 1)) : 0; pk.core.visible = sz > 0;
       pk.mark = open ? "open" : isSel ? "last" : isHov ? "hover" : ""; const lockOn = isHov ? .95 : open ? 1 : isSel ? .6 : 0; pk.lockA += (lockOn - pk.lockA) * Math.min(1, dt * 7); pk.lock.material.opacity = pk.lockA * homeAmt; pk.lock.visible = pk.lockA > .01; pk.lock.material.color.copy(gold ? GOLD : isHov && !open ? HOVER : LOCKC); pk.lock.material.rotation = open ? t * .6 : isHov ? t * .25 : isSel ? t * .12 : 0; pk.lock.scale.setScalar(3.1 * (isHov ? 1 + .04 * Math.sin(t * 5) : 1));
       if (j && hasSlot(j)) { const n = Math.max(1, j.stars.length), dens = Math.max(.04, Math.min(1, Math.sqrt(.07 * pk.R * pk.R / n))); u.uJob.value[ji(j)].set(0, j.scanOn ? 1 : 0, pk.spin, dens); u.uJobP.value[ji(j)].set(pk.pos.x, pk.pos.y, pk.pos.z, shown ? pk.g.scale.x : 0); }
-      if (running && j.role !== "reviewer" && !rewinding && view === "home" && Math.random() < dt * .25) { const sp = sprite(FLARE, new THREE.Color(.75, .92, 1), .035, .95); sp.renderOrder = 4; sp.position.copy(pk.pos); root.add(sp); tmp.set(pk.sx - sil.cx, -(pk.sy - sil.cy), 0).normalize(); ships.push({ s: sp, from: pk.pos.clone(), dir: tmp.clone(), len: pk.w * 3.2, t0: now, dur: 1200 }); } });
+      if (running && j.role !== "reviewer" && !rewinding && view === "home" && sil && Math.random() < dt * .25) { const sp = sprite(FLARE, new THREE.Color(.75, .92, 1), .035, .95); sp.renderOrder = 4; sp.position.copy(pk.pos); root.add(sp); tmp.set(pk.sx - sil.cx, -(pk.sy - sil.cy), 0).normalize(); ships.push({ s: sp, from: pk.pos.clone(), dir: tmp.clone(), len: pk.w * 3.2, t0: now, dur: 1200 }); } });
     jobs.forEach(j => { const tg = view === "stuck" ? (trouble(j) ? 2.1 : .09) : hovOrder ? (j.order === hovOrder ? 1.45 : .62) : bad(j) ? .45 : 1; j.glow = (j.glow == null ? 1 : j.glow) + (tg - (j.glow == null ? 1 : j.glow)) * Math.min(1, dt * 3.2); if (hasSlot(j)) u.uJob.value[ji(j)].x = j.glow; });
     // one order's packets are joined by a thread, only between neighbours on the same stretch of ring
     const tp = tether.geometry.attributes.position, tc = tether.geometry.attributes.color, lim = (rings ? rings.R * 2.6 : 60) * 2.2; let ns2 = 0;
@@ -278,6 +282,8 @@ window.makeSky = function (scene, camera, C, U, W) {
     starSlots() { let drawn = 0, hidden = 0; const wrong = []; for (let i = 0; i < nStars; i++) { if (aMeta[i * 4] > 1e5) continue; const j = jobs[aJ[i]]; if (aMeta[i * 4 + 3] < u.uJobLo.value) { hidden++; continue; } drawn++;
       const P = u.uJobP.value[aMeta[i * 4 + 3] % MAXJOB], pk = PK.get("j" + j.id); if (!pk || Math.hypot(P.x - pk.pos.x, P.y - pk.pos.y, P.z - pk.pos.z) > 1e-4) wrong.push(j.id); }
       return { drawn, hidden, wrong: [...new Set(wrong)], lo: u.uJobLo.value }; },
+    // for the browser test: pretend the witness has no outline (on), or let it have one again
+    noOutline(on) { noOutline = !!on; relayout(true); return sil ? !!sil.standIn : null; },
     overWitness(x, y, pad) { return inOutline(x, y, pad); },
     jobMesh(id) { const pk = pkFor(id); return pk ? pk.g : null; }, goldMesh(id) { const g = id ? golds.get(id) : golds.values().next().value; return g ? g.pk.g : null; },
     job: id => J.get(id) || null, brush(un, at) { brush = un; brushAt = at || null; lastPick = 0; }, jobU(id) { const j = J.get(id); return j ? { kind: bad(j) ? "failed" : "job", job: j } : null; },

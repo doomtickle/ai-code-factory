@@ -5,7 +5,8 @@
 // with /api/field padded to 65 jobs (one past MAXJOB), every job and held write has a packet on screen, above the horizon and
 // below the header, no two overlap, and no vertex of the witness model (projected here from its own meshes, all of
 // them, independently of the page's outline) falls inside a packet. The head turns to follow the pointer, so that is
-// checked again with the pointer on the leftmost and the rightmost packet. Every star drawn sits in its own job's packet:
+// checked again with the pointer on the leftmost and the rightmost packet. With no witness outline at all, the packets
+// still show on the sky and the page throws nothing. Every star drawn sits in its own job's packet:
 // past MAXJOB jobs the shader's slots would wrap, so the oldest job's stars are hidden rather than drawn in the newest's. A packet takes hover and a click across its
 // whole body and a ring round it, the click opens that job's monitor, and the packet stays marked while it is open.
 "use strict";
@@ -19,8 +20,9 @@ async function launch(url, media, init) {
     "--disable-dev-shm-usage", "--hide-scrollbars", "--no-first-run", "--disable-extensions", "--remote-debugging-pipe",
     `--user-data-dir=${profile}`, "--window-size=1280,900", "about:blank"], { stdio: ["ignore", "ignore", "ignore", "pipe", "pipe"] });
   let next = 1, buf = "";
-  const pending = new Map(), listeners = [], contexts = new Map();
+  const pending = new Map(), listeners = [], contexts = new Map(), errors = [];
   listeners.push(m => {
+    if (m.method === "Runtime.exceptionThrown") errors.push(m.params.exceptionDetails.exception ? m.params.exceptionDetails.exception.description : m.params.exceptionDetails.text);
     if (m.method === "Runtime.executionContextCreated") contexts.set(m.params.context.id, m.params.context);
     else if (m.method === "Runtime.executionContextDestroyed") contexts.delete(m.params.executionContextId);
     else if (m.method === "Runtime.executionContextsCleared") contexts.clear();
@@ -51,6 +53,7 @@ async function launch(url, media, init) {
   await loaded;
   return {
     s,   // a raw DevTools call on the page
+    errors,   // uncaught exceptions on the page so far
     sleep: ms => new Promise(r => setTimeout(r, ms)),
     async ev(expr) {
       const r = await s("Runtime.evaluate", { expression: expr, returnByValue: true, awaitPromise: true });
@@ -192,6 +195,15 @@ async function picking(url) {
     await until(`LF.sky.packets().length === 0`, "packets fade out while a question's shape is up");
     await b.ev(`LF.sky.show("home")`);
     await until(`LF.sky.packets().length >= 6`, "and come back");
+    // no witness outline at all (some odd viewport size): the packets ring a stand-in instead, and nothing throws per frame
+    const n = await b.ev(`LF.sky.packets().length`);
+    assert.strictEqual(await b.ev(`LF.sky.noOutline(true)`), true, "the stand-in outline is in use");
+    await b.sleep(2500); await settle(b);
+    const off = await b.ev(`(() => { const top = document.querySelector(".top").getBoundingClientRect().bottom; return LF.sky.packets().filter(p => p.x - p.r < 0 || p.x + p.r > innerWidth || p.y - p.r < top || p.y + p.r > LF.W.rimAt(p.x)).map(p => p.id); })()`);
+    assert.strictEqual(await b.ev(`LF.sky.packets().length`), n, "every packet still shows with no outline");
+    assert.deepStrictEqual(off, [], "and is on the sky");
+    assert.deepStrictEqual(b.errors, [], "no page errors with no outline");
+    assert.strictEqual(await b.ev(`LF.sky.noOutline(false)`), false, "the real outline comes back");
   } finally { await b.close(); }
 }
 
