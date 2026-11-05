@@ -35,11 +35,11 @@ window.makeSky = function (scene, camera, C, U, W) {
   const aHome = new Float32Array(MAXSTARS * 3), aMeta = new Float32Array(MAXSTARS * 4), aSeed = new Float32Array(MAXSTARS * 2), aA = new Float32Array(MAXSTARS * 3), aB = new Float32Array(MAXSTARS * 3), aJ = new Int32Array(MAXSTARS);   // aJ: which job, exactly (the shader's indexes wrap)
   for (let i = 0; i < MAXSTARS; i++) { aMeta[i * 4] = 1e6; const r = Math.random(); aSeed[i * 2] = Math.random(); aSeed[i * 2 + 1] = r > .992 ? 3.4 + Math.random() * 2.2 : r > .9 ? 1.75 + Math.random() * .9 : .85 + Math.random() * .75; }
   const VS = `attribute vec3 aHome, aA, aB; attribute vec4 aMeta; attribute vec2 aSeed;
-    uniform float uT, uTime, uMorph, uAHome, uBHome, uPure, uViewAmt, uPx, uVA; uniform vec3 uOrdC[${MAXORD}]; uniform vec2 uOrdFx[${MAXORD}]; uniform vec4 uJob[${MAXJOB}], uJobP[${MAXJOB}]; uniform vec3 uKindC[6];
+    uniform float uT, uTime, uMorph, uAHome, uBHome, uPure, uViewAmt, uPx, uVA, uJobLo; uniform vec3 uOrdC[${MAXORD}]; uniform vec2 uOrdFx[${MAXORD}]; uniform vec4 uJob[${MAXJOB}], uJobP[${MAXJOB}]; uniform vec3 uKindC[6];
     varying vec3 vC; varying float vA;
     vec3 home(int ji){ vec4 P = uJobP[ji]; float a = uJob[ji].z, c = cos(a), s = sin(a); vec3 l = vec3(c * aHome.x - s * aHome.z, aHome.y, s * aHome.x + c * aHome.z);
       l = vec3(l.x, l.y * ${Math.cos(TILT).toFixed(5)} - l.z * ${Math.sin(TILT).toFixed(5)}, l.y * ${Math.sin(TILT).toFixed(5)} + l.z * ${Math.cos(TILT).toFixed(5)}); return P.xyz + l * P.w; }
-    void main(){ float age = uT - aMeta.x; int ji = int(aMeta.w); if (age < 0. || uJobP[ji].w <= 0.) { gl_Position = vec4(2., 2., 2., 1.); gl_PointSize = 0.; vA = 0.; vC = vec3(0.); return; }
+    void main(){ float age = uT - aMeta.x; int ji = int(mod(aMeta.w, ${MAXJOB}.)); if (age < 0. || (aMeta.w < uJobLo && uAHome + uBHome > .5) || uJobP[ji].w <= 0.) { gl_Position = vec4(2., 2., 2., 1.); gl_PointSize = 0.; vA = 0.; vC = vec3(0.); return; }
       float o = aMeta.z, k = aMeta.y; vec3 h = home(ji);
       #ifdef GAS
         vec4 mv = viewMatrix * vec4(h, 1.); gl_Position = projectionMatrix * mv; gl_PointSize = aSeed.y * uPx * 700. * uJobP[ji].w / -mv.z; vC = uOrdC[int(o)]; vA = .025 * (1. - uViewAmt) * min(1., age * .25) * uJob[ji].x;
@@ -64,7 +64,7 @@ window.makeSky = function (scene, camera, C, U, W) {
     #endif
     gl_FragColor = vec4(vC, a * vA); }`;
   const u = { uT: { value: nowMin() }, uTime: U.uTime, uMorph: { value: 1 }, uAHome: { value: 1 }, uBHome: { value: 1 }, uPure: { value: 0 }, uViewAmt: { value: 0 }, uVA: { value: 1 }, uPx: { value: 1 },
-    uOrdC: { value: Array.from({ length: MAXORD }, () => new THREE.Color(.6, .7, 1)) }, uOrdFx: { value: Array.from({ length: MAXORD }, () => new THREE.Vector2(1, 0)) }, uJob: { value: Array.from({ length: MAXJOB }, () => new THREE.Vector4(1, 0, 0, 1)) }, uJobP: { value: Array.from({ length: MAXJOB }, () => new THREE.Vector4(0, 0, 0, 0)) }, uKindC: { value: KINDS.map(k => k[1]) } };
+    uOrdC: { value: Array.from({ length: MAXORD }, () => new THREE.Color(.6, .7, 1)) }, uOrdFx: { value: Array.from({ length: MAXORD }, () => new THREE.Vector2(1, 0)) }, uJob: { value: Array.from({ length: MAXJOB }, () => new THREE.Vector4(1, 0, 0, 1)) }, uJobP: { value: Array.from({ length: MAXJOB }, () => new THREE.Vector4(0, 0, 0, 0)) }, uKindC: { value: KINDS.map(k => k[1]) }, uJobLo: { value: 0 } };
   const geo = new THREE.BufferGeometry(), attr = (n, a, s) => { const b = new THREE.BufferAttribute(a, s); geo.setAttribute(n, b); return b; };
   attr("position", new Float32Array(MAXSTARS * 3), 3); const bHome = attr("aHome", aHome, 3), bMeta = attr("aMeta", aMeta, 4); attr("aSeed", aSeed, 2); const bA = attr("aA", aA, 3), bB = attr("aB", aB, 3);
   const points = new THREE.Points(geo, new THREE.ShaderMaterial({ vertexShader: VS, fragmentShader: FS, uniforms: u, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending })); points.frustumCulled = false; points.renderOrder = 2; root.add(points);
@@ -94,12 +94,14 @@ window.makeSky = function (scene, camera, C, U, W) {
     cols.needsUpdate = true; pk.bandN = j ? j.actions.length + (j.blocked || 0) * 1000 : 0; }
 
   // ---- orders, jobs and stars
-  const oi = o => o.i % MAXORD, ji = j => j.i % MAXJOB;
+  // a job's uniforms sit in slot j.i % MAXJOB; only the newest MAXJOB jobs hold one, so no two share it, and the
+  // shader hides the stars of older jobs (aMeta.w is the job's exact index; below uJobLo, no slot of its own)
+  const oi = o => o.i % MAXORD, ji = j => j.i % MAXJOB, hasSlot = j => j.i >= u.uJobLo.value;
   function orderFor(key, label) { let o = O.get(key); if (o) return o; o = { key, label, hue: hashHue(key), i: orders.length, rate: 1, jobs: [], frozen: false }; o.color = hsl(o.hue, .72, .62); o.spark = hsl(o.hue, .6, .82); orders.push(o); O.set(key, o); u.uOrdC.value[oi(o)].copy(hsl(o.hue, .72, .6)); return o; }
   function putStar(j, t, kind, f, hull) { if (nStars >= MAXSTARS) return -1; const i = nStars++;
     if (hull) { const a = Math.random() * TAU, b = Math.acos(2 * Math.random() - 1); aHome[i * 3] = .8 * Math.sin(b) * Math.cos(a); aHome[i * 3 + 1] = .8 * Math.cos(b); aHome[i * 3 + 2] = .8 * Math.sin(b) * Math.sin(a); }
     else { const stray = Math.random() < .1, r = Math.min(.68, Math.max(.05, .08 + .52 * Math.sqrt(f) + gauss() * (stray ? .05 : .016))), th = (i % 2) * Math.PI + 2.4 * Math.log(r / .08) + gauss() * (stray ? .5 : .14 + .015 / r); aHome[i * 3] = r * Math.cos(th); aHome[i * 3 + 1] = gauss() * (stray ? .06 : .022); aHome[i * 3 + 2] = r * Math.sin(th); }
-    aMeta[i * 4] = t; aMeta[i * 4 + 1] = kind; aMeta[i * 4 + 2] = oi(j.order); aMeta[i * 4 + 3] = ji(j); aJ[i] = j.i; j.stars.push(i); return i; }
+    aMeta[i * 4] = t; aMeta[i * 4 + 1] = kind; aMeta[i * 4 + 2] = oi(j.order); aMeta[i * 4 + 3] = j.i; aJ[i] = j.i; j.stars.push(i); return i; }
   const pickKind = role => { const mix = MIX[role] || MIX.developer; let r = Math.random(), k = 0; for (; k < mix.length; k++) { r -= mix[k]; if (r <= 0) break; } return Math.min(k, mix.length - 1); };
   const jobCost = j => j.cost != null ? j.cost : j.actions.length * .012;
   const targetOf = j => Math.max(j.actions.length ? 4 : 0, Math.round(jobCost(j) * RATE));
@@ -124,7 +126,7 @@ window.makeSky = function (scene, camera, C, U, W) {
   function ingest(field, state) { // one poll of /api/field, with the /api/state it goes with
     const list = (field && field.jobs) || []; if (dayKey !== null && field.date !== dayKey) reset(); dayKey = field.date;
     list.forEach(f => { let j = J.get(f.id); if (!j) { const o = orderFor(f.order, f.label); j = { id: f.id, i: jobs.length, order: o, stars: [], placed: 0, blocked: 0 }; jobs.push(j); J.set(f.id, j); o.jobs.push(j); makePacket("j" + j.id, o, j, null); }
-      const was = j.status; Object.assign(j, { lane: f.lane, role: f.role, label: f.label, task: f.task, model: f.model, status: f.status, verdict: f.verdict, start: f.start, end: f.end, cost: f.cost, actions: f.actions || [] });
+      const was = j.status; u.uJobLo.value = Math.max(0, jobs.length - MAXJOB); Object.assign(j, { lane: f.lane, role: f.role, label: f.label, task: f.task, model: f.model, status: f.status, verdict: f.verdict, start: f.start, end: f.end, cost: f.cost, actions: f.actions || [] });
       const pk = PK.get("j" + j.id); if (was === "running" && j.status !== "running" && pk && pk.placed && !first) flashAt(pk.pos, bad(j) ? RED.clone() : j.verdict === "revise" ? new THREE.Color(1, .65, .2) : new THREE.Color(.3, 1, .6), pk.w * 3); });
     if (first) { first = false; layoutAll(field); } else {
       const outstanding = jobs.reduce((s, j) => s + Math.max(0, targetOf(j) - j.placed), 0); if (RATE > 150 && nStars + outstanding > MAXSTARS - 1500) { layoutAll(field); }   // at the lowest rate there's nothing left to shrink: new stars just stop
@@ -250,9 +252,9 @@ window.makeSky = function (scene, camera, C, U, W) {
       if (failed && !pk.voidS) { pk.voidS = sprite(VOIDT, new THREE.Color(1, 1, 1), 1.25, .95, false); pk.voidS.renderOrder = 3; pk.g.add(pk.voidS); } if (pk.voidS) pk.voidS.material.opacity = .95 * homeAmt;
       const sz = gold ? 1.3 : running ? (j.role === "reviewer" ? .7 : sizeOf(j.model) * 4.2) : 0, pulse = gold ? (pk.card.decided ? .7 : .86 + .22 * Math.sin(t * 2.6)) : .92 + .12 * Math.sin(t * 7 + pk.R); pk.core.material.color.copy(gold ? GOLD : j && j.role === "reviewer" ? REVIEW : o.spark); pk.core.scale.setScalar(sz * pulse + 1e-4); pk.core.material.opacity = sz ? Math.min(1, homeAmt * (view === "stuck" && !(gold || trouble(j)) ? .2 : 1)) : 0; pk.core.visible = sz > 0;
       pk.mark = open ? "open" : isSel ? "last" : isHov ? "hover" : ""; const lockOn = isHov ? .95 : open ? 1 : isSel ? .6 : 0; pk.lockA += (lockOn - pk.lockA) * Math.min(1, dt * 7); pk.lock.material.opacity = pk.lockA * homeAmt; pk.lock.visible = pk.lockA > .01; pk.lock.material.color.copy(gold ? GOLD : isHov && !open ? HOVER : LOCKC); pk.lock.material.rotation = open ? t * .6 : isHov ? t * .25 : isSel ? t * .12 : 0; pk.lock.scale.setScalar(3.1 * (isHov ? 1 + .04 * Math.sin(t * 5) : 1));
-      if (j) { const n = Math.max(1, j.stars.length), dens = Math.max(.04, Math.min(1, Math.sqrt(.07 * pk.R * pk.R / n))); u.uJob.value[ji(j)].set(0, j.scanOn ? 1 : 0, pk.spin, dens); u.uJobP.value[ji(j)].set(pk.pos.x, pk.pos.y, pk.pos.z, shown ? pk.g.scale.x : 0); }
+      if (j && hasSlot(j)) { const n = Math.max(1, j.stars.length), dens = Math.max(.04, Math.min(1, Math.sqrt(.07 * pk.R * pk.R / n))); u.uJob.value[ji(j)].set(0, j.scanOn ? 1 : 0, pk.spin, dens); u.uJobP.value[ji(j)].set(pk.pos.x, pk.pos.y, pk.pos.z, shown ? pk.g.scale.x : 0); }
       if (running && j.role !== "reviewer" && !rewinding && view === "home" && Math.random() < dt * .25) { const sp = sprite(FLARE, new THREE.Color(.75, .92, 1), .035, .95); sp.renderOrder = 4; sp.position.copy(pk.pos); root.add(sp); tmp.set(pk.sx - sil.cx, -(pk.sy - sil.cy), 0).normalize(); ships.push({ s: sp, from: pk.pos.clone(), dir: tmp.clone(), len: pk.w * 3.2, t0: now, dur: 1200 }); } });
-    jobs.forEach(j => { const tg = view === "stuck" ? (trouble(j) ? 2.1 : .09) : hovOrder ? (j.order === hovOrder ? 1.45 : .62) : bad(j) ? .45 : 1; j.glow = (j.glow == null ? 1 : j.glow) + (tg - (j.glow == null ? 1 : j.glow)) * Math.min(1, dt * 3.2); u.uJob.value[ji(j)].x = j.glow; });
+    jobs.forEach(j => { const tg = view === "stuck" ? (trouble(j) ? 2.1 : .09) : hovOrder ? (j.order === hovOrder ? 1.45 : .62) : bad(j) ? .45 : 1; j.glow = (j.glow == null ? 1 : j.glow) + (tg - (j.glow == null ? 1 : j.glow)) * Math.min(1, dt * 3.2); if (hasSlot(j)) u.uJob.value[ji(j)].x = j.glow; });
     // one order's packets are joined by a thread, only between neighbours on the same stretch of ring
     const tp = tether.geometry.attributes.position, tc = tether.geometry.attributes.color, lim = (rings ? rings.R * 2.6 : 60) * 2.2; let ns2 = 0;
     for (let k = 1; k < seq.length && ns2 < 256; k++) { const a = seq[k - 1], b = seq[k]; if (a.order !== b.order || !a.g.visible || !b.g.visible || Math.hypot(a.sx - b.sx, a.sy - b.sy) > lim) continue; tmp.subVectors(b.pos, a.pos); const L = tmp.length(); if (L < 1e-6) continue; tmp.multiplyScalar(1 / L); tmp2.copy(a.pos).addScaledVector(tmp, a.g.scale.x * .95); tp.setXYZ(ns2 * 2, tmp2.x, tmp2.y, tmp2.z); tmp2.copy(b.pos).addScaledVector(tmp, -b.g.scale.x * .95); tp.setXYZ(ns2 * 2 + 1, tmp2.x, tmp2.y, tmp2.z); const c = a.order.color, m = homeAmt * (hovOrder === a.order ? 1 : hovOrder ? .3 : .7); tc.setXYZ(ns2 * 2, c.r * m, c.g * m, c.b * m); tc.setXYZ(ns2 * 2 + 1, c.r * m, c.g * m, c.b * m); ns2++; }
@@ -272,6 +274,10 @@ window.makeSky = function (scene, camera, C, U, W) {
     sparkList() { const out = []; PK.forEach(pk => { if (pk.card) out.push({ id: pk.card.id, name: "Waiting for you", mesh: pk.g, size: pk.w, gold: true }); else if (pk.job.status === "running") out.push({ id: pk.job.id, name: pk.job.label, mesh: pk.g, size: pk.w, gold: false }); }); return out; },
     // where every packet is on screen now: for the labels, and for the browser test that checks none is behind the witness
     packets() { const out = []; PK.forEach(pk => { if (!pk.g.visible) return; const P = screenOf(pk); out.push({ id: pk.card ? pk.card.id : pk.job.id, kind: pk.card ? "gold" : pk.job.status, x: P.x, y: P.y, r: P.r, mark: pk.mark || "" }); }); return out; },
+    // for the browser test: each star the shader would draw, in the packet whose slot it reads; any landing in another job's packet
+    starSlots() { let drawn = 0, hidden = 0; const wrong = []; for (let i = 0; i < nStars; i++) { if (aMeta[i * 4] > 1e5) continue; const j = jobs[aJ[i]]; if (aMeta[i * 4 + 3] < u.uJobLo.value) { hidden++; continue; } drawn++;
+      const P = u.uJobP.value[aMeta[i * 4 + 3] % MAXJOB], pk = PK.get("j" + j.id); if (!pk || Math.hypot(P.x - pk.pos.x, P.y - pk.pos.y, P.z - pk.pos.z) > 1e-4) wrong.push(j.id); }
+      return { drawn, hidden, wrong: [...new Set(wrong)], lo: u.uJobLo.value }; },
     overWitness(x, y, pad) { return inOutline(x, y, pad); },
     jobMesh(id) { const pk = pkFor(id); return pk ? pk.g : null; }, goldMesh(id) { const g = id ? golds.get(id) : golds.values().next().value; return g ? g.pk.g : null; },
     job: id => J.get(id) || null, brush(un, at) { brush = un; brushAt = at || null; lastPick = 0; }, jobU(id) { const j = J.get(id); return j ? { kind: bad(j) ? "failed" : "job", job: j } : null; },

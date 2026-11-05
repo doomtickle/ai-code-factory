@@ -1,5 +1,5 @@
 """The Thoughtfield in a real browser (headless Chrome) against `factory dashboard --demo`: every job is one packet,
-none sits behind the witness at any viewport size (with the demo's jobs and with 64), and a packet takes hover and a click
+none sits behind the witness at any viewport size (with the demo's jobs and with 65, one past the shader's 64 job slots, where each star must still land in its own job's packet), and a packet takes hover and a click
 across its whole body, opens its job's monitor and stays marked while it is open. The browser steps are in
 test_field_browser.js. Skipped when node or chrome-headless-shell is missing.
 

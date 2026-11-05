@@ -2,10 +2,11 @@
 // DevTools pipe) against a running `factory dashboard --demo`. Run by test_field_browser.py:
 //   node scripts/test_field_browser.js <dashboard url with token>
 // Each job is one packet, and none may sit behind the witness: at every viewport size below, with the demo's jobs and
-// with /api/field padded to 64 jobs (MAXJOB), every job and held write has a packet on screen, above the horizon and
+// with /api/field padded to 65 jobs (one past MAXJOB), every job and held write has a packet on screen, above the horizon and
 // below the header, no two overlap, and no vertex of the witness model (projected here from its own meshes, all of
 // them, independently of the page's outline) falls inside a packet. The head turns to follow the pointer, so that is
-// checked again with the pointer on the leftmost and the rightmost packet. A packet takes hover and a click across its
+// checked again with the pointer on the leftmost and the rightmost packet. Every star drawn sits in its own job's packet:
+// past MAXJOB jobs the shader's slots would wrap, so the oldest job's stars are hidden rather than drawn in the newest's. A packet takes hover and a click across its
 // whole body and a ring round it, the click opens that job's monitor, and the packet stays marked while it is open.
 "use strict";
 const assert = require("node:assert");
@@ -138,8 +139,14 @@ async function layouts(url, pad) {
     const field = async () => (await b.ev(`fetch("/api/field").then(r => r.json()).then(j => j.jobs.map(x => x.id))`));
     const cards = await b.ev(`fetch("/api/state").then(r => r.json()).then(s => (s.gate || []).map(c => c.id))`);
     const ids = (await field()).concat(cards);
-    if (pad) assert.strictEqual(ids.length - cards.length, pad, "padded to MAXJOB jobs");
+    if (pad) assert.strictEqual(ids.length - cards.length, pad, "padded past MAXJOB jobs");
     await ready(b, ids.length);
+    await settle(b);
+    const st = await b.ev(`LF.sky.starSlots()`);
+    assert.ok(st.drawn > 0, `stars are drawn: ${JSON.stringify(st)}`);
+    assert.deepStrictEqual(st.wrong, [], "every star drawn is in its own job's packet");
+    assert.strictEqual(st.lo, Math.max(0, ids.length - cards.length - 64), "only the newest 64 jobs hold a slot");
+    if (pad > 64) assert.ok(st.hidden > 0, "the oldest job's stars are hidden, not drawn in another packet");
     for (const [w, h] of SIZES) {
       await b.resize(w, h);
       const label = `${pad ? pad + " jobs" : "demo"} at ${w}x${h}`;
@@ -189,4 +196,4 @@ async function picking(url) {
 }
 
 const url = process.argv[2];
-(process.env.FIELD_ONLY === "picking" ? picking(url) : layouts(url, 0).then(() => layouts(url, 64)).then(() => picking(url))).then(() => console.log("field browser checks passed"), e => { console.error(e.stack || e); process.exit(1); });
+(process.env.FIELD_ONLY === "picking" ? picking(url) : layouts(url, 0).then(() => layouts(url, 65)).then(() => picking(url))).then(() => console.log("field browser checks passed"), e => { console.error(e.stack || e); process.exit(1); });
