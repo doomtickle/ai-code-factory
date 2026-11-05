@@ -23,6 +23,10 @@ Dated entries, for the user to review. Newest first.
   - **Only fixed sentences are spoken.** An agent can influence task and branch text, and a voice saying "approve this now" would be a new way to
     reach the owner. Those labels appear only in the detail line, as text.
   - **The voice is a plain Docker container, not an sbx sandbox.** It runs no agent and no agent reaches it. Optional: nothing depends on it.
+    It is a second listener with no key: any local program or loopback page can make it speak, and it does nothing else. It answers CORS for
+    loopback origins only and checks `Host` against rebinding. `/tmp` in the container is a tmpfs mounted `exec`, the one loosening: phonemizer
+    copies `libespeak-ng.so` there and loads it, and on a noexec `/tmp` Kokoro silently drops every word outside its lexicon. The server refuses
+    to start if espeak did not load. The alternative was patching vendored code. The image is 12 GB because of CUDA torch; x86_64 Linux only.
   - **The bust and its textures are committed (about 16 MB with three.js).** A dashboard that must work offline can't fetch them, and the
     MakeHuman base is CC0 by the project's own licence files (`scripts/dashboard-ui/witness/README.md` has the quotes and URLs).
   - **Settings, Inspect and the service screens keep their classic inner look**, on the new dark background. Restyling them is a follow-up.
