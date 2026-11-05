@@ -42,6 +42,19 @@ class ProgramsTest(CommandTest):
 class StdinTest(ProgramsTest):
     ECHO = "import sys; sys.stdout.buffer.write(sys.stdin.buffer.read())"
 
+    def setUp(self):
+        super().setUp()
+        # Point this process's fd 0 at a pipe holding b"inherited", so a run_tool that lets the child
+        # inherit stdin is caught however the suite was started (stdin on /dev/null, a pipe, a tty).
+        read, write = os.pipe()
+        os.write(write, b"inherited")
+        os.close(write)
+        saved = os.dup(0)
+        self.addCleanup(os.close, saved)
+        self.addCleanup(os.dup2, saved, 0)
+        os.dup2(read, 0)
+        os.close(read)
+
     def test_no_data_means_the_child_reads_eof_at_once(self):
         # A child that would block on an inherited terminal or pipe returns instead.
         status, out, _ = self.run_(py("import sys; sys.stdout.write(repr(sys.stdin.buffer.read()))"), out=KEEP)
