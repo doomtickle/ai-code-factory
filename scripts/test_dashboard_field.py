@@ -165,7 +165,7 @@ class RulesTests(unittest.TestCase):
         self.assertNotIn("/theme.css", html)
         css = (UI / "cu-field.css").read_text()
         self.assertNotIn("@import", css)
-        self.assertEqual(sorted(set(re.findall(r'url\("([^"]+)"\)', css))), ["/fonts/cormorant-garamond-variable.woff2", "/fonts/hanken-grotesk-variable.woff2"])
+        self.assertEqual(sorted(set(re.findall(r'url\("([^"]+)"\)', css))), ["/fonts/nunito-variable.woff2"])
         for old in ("VT323", "scanline", "--lcd-", "--amber-glow"):
             self.assertNotIn(old, css)
 
@@ -255,6 +255,52 @@ class RulesTests(unittest.TestCase):
 
     def test_main_page_takes_only_fixed_words_from_the_line(self):
         self.assertIn(r"/^ln:(spend|stuck|kinds|time|home|sent|off|noconn)$/", (UI / "field-hud.js").read_text())
+
+    def test_the_coordinators_own_lines_are_only_text_and_only_new_ones_are_spoken(self):
+        js = (UI / "field-hud.js").read_text()
+        self.assertNotIn("innerHTML", js)
+        self.assertIn("(s.said || []).forEach(l => prev.said.add(l.id)); return;", js, "what was said before you came isn't replayed")
+        self.assertIn('if (prev.said.has(l.id)) return; prev.said.add(l.id); if (typeof l.text === "string" && l.text) sayOwn(l.text);', js)
+        self.assertIn('el.textContent = w;', js)
+
+    def test_nothing_on_the_thoughtfield_speaks_of_the_coordinator_as_someone_else(self):
+        for name in ("field-hud.js", "field.html", "line.html", "term-field.html"):
+            code = "\n".join(l for l in (UI / name).read_text().splitlines() if not l.lstrip().startswith("//"))
+            self.assertNotIn("Coordinator", code, name)
+
+    def test_the_classic_page_keeps_its_words(self):
+        js = (UI / "term.js").read_text()
+        self.assertIn('skin.who || "Coordinator"', js)
+        self.assertIn("Coordinator", (UI / "term.html").read_text())
+
+    def test_the_world_lets_only_a_little_through_and_is_solid_where_the_small_text_sits(self):
+        js = (UI / "field-hud.js").read_text()
+        stops = re.search(r'id: "surf".*?(\[\[0, "#[^;]*?\]\])\.forEach\(\(\[o, c, a\]\) => lg\.append\(svg\("stop", \{ offset: o, "stop-color": c, "stop-opacity": a \}\)\)\); const rg', js)
+        self.assertIsNotNone(stops, "the world's gradient is built, and the code after it on the line is still live")
+        alphas = [float(a) for a in re.findall(r', (\.?\d*\.?\d+)\]', stops.group(1))]
+        self.assertGreaterEqual(min(alphas), .95)
+        self.assertEqual(alphas[-1], 1)
+
+    def test_no_small_type_in_the_thoughtfield(self):
+        for name in ("field.css", "cu-field.css", "field-monitor.css", "line.css"):
+            css = re.sub(r"/\*.*?\*/", "", (UI / name).read_text(), flags=re.S)
+            for px in re.findall(r"(?:font-size: |font: \d+ )(?:clamp\()?(\d+(?:\.\d+)?)px", css):
+                self.assertGreaterEqual(float(px), 13.5, name)
+            for rem in re.findall(r"(?:font-size: |font: \d+ )(\.\d+)rem", css):
+                self.assertGreaterEqual(float(rem), .82, name)
+
+    def test_one_soft_face_outside_the_terminals_grid(self):
+        for name in ("field.css", "cu-field.css", "line.css", "term-field.css"):
+            css = (UI / name).read_text()
+            self.assertIn('"Nunito"', css, name)
+            for gone in ("Cormorant", "Hanken"):
+                self.assertNotIn(gone, css, name)
+
+    def test_there_is_no_clock_and_the_greeting_gives_no_time(self):
+        self.assertNotIn('id="clock"', (UI / "field.html").read_text())
+        js = (UI / "field-hud.js").read_text()
+        self.assertNotIn('$("clock")', js)
+        self.assertNotIn("It's ${", js)
 
     def test_vendored_files_match_their_checksums(self):
         for folder in ("vendor/three", "witness"):

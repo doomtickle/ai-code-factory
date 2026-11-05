@@ -314,6 +314,75 @@ class OptionalRoleTests(Base):
                 d.load_roles()
 
 
+class SayTests(Base):
+    """The Coordinator's own spoken lines (doomtickle/passdesk-ops#216)."""
+
+    def said(self):
+        return json.loads((d.STATE / "said.json").read_text())["said"]
+
+    def setUp(self):
+        super().setUp()
+        self.addCleanup(d._said.clear)
+
+    def test_a_line_is_kept_for_the_dashboard_and_nothing_else_happens(self):
+        log = os.environ["FAKE_SBX_LOG"]
+        before = Path(log).read_text() if os.path.exists(log) else ""
+        text, is_error = d.call_tool("say", {"text": "The auth branch is through review."})
+        self.assertEqual((text, is_error), ("Said.", False))
+        line = self.said()[0]
+        self.assertEqual(line["text"], "The auth branch is through review.")
+        self.assertRegex(line["id"], r"^[0-9a-f]{12}$")
+        self.assertEqual(stat.S_IMODE((d.STATE / "said.json").stat().st_mode), 0o600)
+        self.assertEqual(Path(log).read_text() if os.path.exists(log) else "", before, "say drives no sandbox")
+
+    def test_a_line_is_flattened_and_control_characters_are_removed(self):
+        d.call_tool("say", {"text": "  Done.\n\n\x1b[31mAll\x07 of it.\x00\t "})
+        self.assertEqual(self.said()[0]["text"], "Done. All of it.")
+
+    def test_what_cannot_be_spoken_is_refused_and_says_why(self):
+        for text, why in (("   ", "nothing to say"), ("x" * (d.MAX_SAY_CHARS + 1), "too long to say"),
+                          ("Look at `main.py`.", "can't be spoken"), ("It's at https://example.com now.", "can't be spoken"),
+                          ("See WWW.example.com.", "can't be spoken")):
+            answer, is_error = d.call_tool("say", {"text": text})
+            self.assertTrue(is_error, text)
+            self.assertIn(why, answer)
+        self.assertFalse((d.STATE / "said.json").exists())
+
+    def test_a_line_at_the_limit_is_kept(self):
+        self.assertFalse(d.call_tool("say", {"text": "x" * d.MAX_SAY_CHARS})[1])
+
+    def test_only_the_newest_lines_are_kept_and_each_has_its_own_id(self):
+        for n in range(d.MAX_SAID + 3):
+            d.call_tool("say", {"text": f"Line {n}."})
+        lines = self.said()
+        self.assertEqual([l["text"] for l in lines], [f"Line {n}." for n in range(3, d.MAX_SAID + 3)])
+        self.assertEqual(len({l["id"] for l in lines}), d.MAX_SAID)
+
+    def test_a_symlink_at_the_temp_path_is_replaced_not_followed(self):
+        outside = d.STATE.parent / "outside"
+        outside.write_text("keep")
+        (d.STATE / "said.json.tmp").symlink_to(outside)
+        d.call_tool("say", {"text": "Hello."})
+        self.assertEqual(outside.read_text(), "keep")
+        self.assertEqual(self.said()[0]["text"], "Hello.")
+
+    def test_the_call_is_audited(self):
+        d.call_tool("say", {"text": "Hello."})
+        rec = [json.loads(l) for l in (d.STATE / "audit.jsonl").read_text().splitlines()][-1]
+        self.assertEqual((rec["tool"], rec["decision"], rec["args"]["text"]), ("say", "allow", "Hello."))
+
+    def test_the_tool_is_listed_and_the_owner_side_of_it_is_near_the_front(self):
+        # Clients may cut long tool descriptions and server instructions short, so both must carry this early.
+        tool = next(t for t in d.tool_list() if t["name"] == "say")
+        self.assertLess(len(tool["description"]), 2000)
+        self.assertEqual(tool["inputSchema"]["required"], ["text"])
+        brief = d.server_instructions()
+        self.assertIn("you as LOIS", brief)
+        self.assertLess(brief.index("Roles:"), 2000)
+        self.assertLess(brief.index("the say tool"), brief.index("Roles:"))
+        self.assertIn("don't mention the time of day", brief)
+
+
 class RoleOverrideTests(Base):
     """STATE/role-overrides/<role>.conf: this machine's local tuning of a role,
     snapshotted by start-dispatch.sh and layered over role.conf."""
@@ -1004,7 +1073,7 @@ class ProtocolTests(Base):
     def test_tools_list(self):
         res = d.handle_rpc({"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
         self.assertEqual({t["name"] for t in res["result"]["tools"]},
-                         {"list_roles", "delegate", "wait_for_job", "job_status", "cancel_job", "factory_docs"})
+                         {"list_roles", "delegate", "wait_for_job", "job_status", "cancel_job", "factory_docs", "say"})
 
     def test_initialize_briefs_the_coordinator_with_live_roles(self):
         res = d.handle_rpc({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})

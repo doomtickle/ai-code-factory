@@ -384,6 +384,58 @@ class HeldTests(unittest.TestCase):
         self.assertIsNotNone(board.lane_detail("developer", self.now))
 
 
+class SaidTests(unittest.TestCase):
+    """The Coordinator's spoken lines, checked on the way to the main page (doomtickle/passdesk-ops#216)."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.state = Path(tmp.name) / "state"
+        (self.state / "dispatch").mkdir(parents=True)
+        self.path = self.state / "dispatch" / "said.json"
+        self.board = d.Dashboard(self.state, Path(tmp.name) / "roles", "proj")
+
+    def write(self, *lines):
+        self.path.write_text(json.dumps({"said": list(lines)}))
+
+    def test_the_reader_and_the_bridge_agree_on_the_limit(self):
+        bridge = (Path(d.__file__).resolve().parent.parent / "dispatch" / "server.py").read_text()
+        self.assertEqual(int(re.search(r"^MAX_SAY_CHARS = (\d+)", bridge, re.M).group(1)), d.SAID_MAX_TEXT)
+
+    def test_absent_is_empty(self):
+        self.assertEqual(self.board.said(), [])
+        self.assertEqual(self.board.snapshot()["said"], [])
+
+    def test_a_good_line_reaches_the_state_with_only_its_id_and_text(self):
+        self.write({"id": "ab12cd34ef56", "t": 1.5, "text": "On it.", "extra": "no"})
+        self.assertEqual(self.board.snapshot()["said"], [{"id": "ab12cd34ef56", "text": "On it."}])
+
+    def test_bad_lines_are_dropped_and_good_ones_kept(self):
+        good = {"id": "ab12cd34ef56", "text": "Fine."}
+        self.write({"id": "../x", "text": "bad id"}, {"id": 5, "text": "bad id"}, {"id": "ab12cd34ef57", "text": 7},
+                   {"id": "ab12cd34ef58", "text": ""}, {"id": "ab12cd34ef59", "text": "x" * (d.SAID_MAX_TEXT + 1)}, "nope", good)
+        self.assertEqual(self.board.said(), [good])
+
+    def test_only_the_newest_eight(self):
+        self.write(*[{"id": "%012x" % n, "text": "Line."} for n in range(20)])
+        self.assertEqual([l["id"] for l in self.board.said()], ["%012x" % n for n in range(12, 20)])
+
+    def test_a_broken_file_is_empty(self):
+        for raw in ("{not json", "[]", '{"said": 3}', '{"other": []}', "null"):
+            self.path.write_text(raw)
+            self.assertEqual(self.board.said(), [], raw)
+
+    def test_a_symlink_is_not_followed(self):
+        outside = self.state / "outside.json"
+        outside.write_text(json.dumps({"said": [{"id": "ab12cd34ef56", "text": "Followed."}]}))
+        self.path.symlink_to(outside)
+        self.assertEqual(self.board.said(), [])
+
+    def test_a_file_cut_at_the_size_limit_is_empty(self):
+        self.path.write_text('{"said": [' + " " * d.SAID_MAX_BYTES + "]}")
+        self.assertEqual(self.board.said(), [])
+
+
 class BrokerEventTests(unittest.TestCase):
     def test_kinds(self):
         self.assertIsNone(d.broker_event({"tool": "git_push", "event": "intent"}))
@@ -1408,7 +1460,7 @@ class PageTests(unittest.TestCase):
         for name, digest in pinned.items():
             self.assertEqual(hashlib.sha256((UI / "fonts" / name).read_bytes()).hexdigest(), digest, name)
         licenses = {p.name for p in (UI / "fonts").glob("OFL-*.txt")}
-        self.assertEqual(licenses, {"OFL-VT323.txt", "OFL-BarlowCondensed.txt", "OFL-DotGothic16.txt", "OFL-CormorantGaramond.txt", "OFL-HankenGrotesk.txt", "OFL-JetBrainsMono.txt"})
+        self.assertEqual(licenses, {"OFL-VT323.txt", "OFL-BarlowCondensed.txt", "OFL-DotGothic16.txt", "OFL-Nunito.txt", "OFL-JetBrainsMono.txt"})
 
     def test_no_html_sinks(self):
         for name in ("app.js", "floor.js", "sound.js", "radio.js", "lanelabel.js", "look.js", "field-hud.js", "field-sky.js", "field-face.js",

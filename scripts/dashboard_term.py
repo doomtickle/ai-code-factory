@@ -118,8 +118,7 @@ STATIC = {
     "/fonts/barlow-condensed-600.woff2": ("fonts/barlow-condensed-600.woff2", "font/woff2"),
     "/fonts/barlow-condensed-700.woff2": ("fonts/barlow-condensed-700.woff2", "font/woff2"),
     "/fonts/dotgothic16.woff2": ("fonts/dotgothic16.woff2", "font/woff2"),
-    "/fonts/cormorant-garamond-variable.woff2": ("fonts/cormorant-garamond-variable.woff2", "font/woff2"),
-    "/fonts/hanken-grotesk-variable.woff2": ("fonts/hanken-grotesk-variable.woff2", "font/woff2"),
+    "/fonts/nunito-variable.woff2": ("fonts/nunito-variable.woff2", "font/woff2"),
 }
 
 # Opcodes (RFC 6455 5.2)

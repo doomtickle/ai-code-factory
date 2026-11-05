@@ -9,6 +9,15 @@
 // - lineHeight 1: JetBrains Mono's own line is already 1.32em, which is roomy, and box-drawing lines still meet from row to row.
 "use strict";
 window.TermSkin = {
+  // In the Thoughtfield the Coordinator is LOIS (doomtickle/passdesk-ops#216). The classic page keeps its own words.
+  who: "LOIS",
+  reasons: {
+    elsewhere: ["Open elsewhere", "LOIS is open in `factory chat`. Close it there, then power on here."],
+    "no-sandbox": ["LOIS isn't set up yet", "Run `factory start` first, then power on."],
+    error: ["LOIS couldn't start", "Power on to try again."],
+    exited: ["LOIS is off", "The session ended. Power on starts a fresh session; Resume continues the last one."],
+    service: ["Restarting or updating", "The factory is restarting or updating. LOIS comes back when it's done."],
+  },
   faces: ['400 16px "JetBrains Mono"', '700 16px "JetBrains Mono"'],
   // A cell is 0.6em wide. It aims for 10, 9 or 8 pixels (about 113 columns in the widest panel, over 40 on a phone), then lands on a whole
   // number of the screen's real pixels, whatever its scaling or the browser's zoom: a fractional cell softens text and shows seams through block characters.

@@ -3,7 +3,7 @@
 (function () {
   // ---------- the bust: three.js r147 (22 morphs need its morph texture), the Blender model, bloom
   const cfg = { pres: .75 };
-  const W = { ready: false, failed: false, s: { pres: .75, flash: 0, yaw: 0, pitch: 0, gx: 0, gy: 0 }, m: {}, speaking: false, talkKick: 0, mood: "calm",
+  const W = { ready: false, failed: false, s: { pres: .75, flash: 0, yaw: 0, pitch: 0, gx: 0, gy: 0 }, m: {}, speaking: false, thinking: false, talkKick: 0, mood: "calm",
     blinkAt: performance.now() + 2000, blinking: 0, lookAway: 0, nextLook: performance.now() + 6000, lookUntil: 0, lookTo: [0, 0] };
   const VISEMES = ["PP", "FF", "TH", "DD", "kk", "CH", "SS", "nn", "RR", "aa", "E", "ih", "oh", "ou"].map(v => "viseme_" + v);
   const MORPHS = ["blink", "lids_wide", "lids_narrow", "brow_up", "brow_down", "jaw_open", "mouth_round", "smile", ...VISEMES];
@@ -140,6 +140,8 @@
     // now and then, when silent, it looks at something you cannot see
     if (!b.speaking && !fo && now > b.nextLook) { if (Math.random() < .45) { b.lookUntil = now + 1400 + Math.random() * 1800; b.lookTo = [(Math.random() - .5) * 1.4, .2 + Math.random() * .4]; } b.nextLook = now + 5000 + Math.random() * 5000; }
     if (now < b.lookUntil) { gx = b.lookTo[0]; gy = b.lookTo[1]; }
+    // thinking about what you just said: it looks up and away, and its gaze wanders slowly
+    const thinking = b.thinking && !b.speaking; if (thinking) { gx = .42 + Math.sin(now / 2300) * .24; gy = .5 + Math.sin(now / 1700) * .1; }
     // blink, a little slower than a person
     if (now > b.blinkAt) { b.blinking = now; b.blinkAt = now + 3000 + Math.random() * 6000; }
     const bl = b.blinking ? Math.sin(Math.min(Math.PI, (now - b.blinking) / 230 * Math.PI)) : 0; if (b.blinking && now - b.blinking > 230) b.blinking = 0;
@@ -148,7 +150,7 @@
     const live = window.LiveVoice ? LiveVoice.mouth() : { open: 0, round: 0 }; const env = b.speaking ? live.open : 0;
     const vis = b.speaking && window.LiveVoice ? LiveVoice.visemes() : null;   // phoneme-timed lips; without timing data, the jaw follows loudness as before
     const stern = b.mood === "stern", lit = b.mood === "lit";
-    const T = { blink: bl, lids_wide: lit ? .35 : 0, lids_narrow: stern ? .7 : .22, brow_up: lit ? .55 : (b.speaking ? .18 * Math.abs(Math.sin(now / 1100)) : 0), brow_down: stern ? .65 : 0,
+    const T = { blink: bl, lids_wide: lit ? .35 : 0, lids_narrow: stern ? .7 : thinking ? .38 : .22, brow_up: lit ? .55 : thinking ? .24 : (b.speaking ? .18 * Math.abs(Math.sin(now / 1100)) : 0), brow_down: stern ? .65 : 0,
       jaw_open: Math.min(1, env) * (vis ? .22 * (1 - vis.viseme_PP - vis.viseme_FF) : .9), mouth_round: vis ? 0 : Math.min(1, env) * Math.min(1, Math.max(0, (live.round - .55) * 3.2)) * .7, smile: lit ? .35 : .1 };
     VISEMES.forEach(k => { T[k] = vis ? vis[k] : 0; });
     MORPHS.forEach(k => { b.m[k] = ease(b.m[k], T[k], k === "blink" ? .55 : k === "jaw_open" || k === "mouth_round" ? .4 : k.startsWith("viseme") ? .7 : .07); faceMeshes.forEach(f => { f.morphTargetInfluences[f.morphTargetDictionary[k]] = b.m[k]; }); });
@@ -156,7 +158,7 @@
     s.yaw = ease(s.yaw, gx * .32, .035); s.pitch = ease(s.pitch, -gy * .14, .035);
     head.rotation.y = s.yaw; head.rotation.x = s.pitch + Math.sin(now / 2900) * .012; head.rotation.z = Math.sin(now / 4100) * .01;
     [eyeL, eyeR, corneaL, corneaR].forEach(e => { e.rotation.y = (s.gx * .55) - s.yaw * .5; e.rotation.x = -s.gy * .38 - s.pitch * .5; });
-    s.pres = ease(s.pres, b.speaking ? 1 : cfg.pres, .05); s.flash *= .9;
+    s.pres = ease(s.pres, b.speaking ? 1 : thinking ? .9 + Math.sin(now / 900) * .07 : cfg.pres, .05); s.flash *= .9;
     U.uPres.value = s.pres; U.uFlash.value = s.flash; U.uTalk.value = env;
     halo.material.opacity = .14 + .16 * s.pres + s.flash * .5;
     bloom.strength = .42 + .22 * s.pres + s.flash;
