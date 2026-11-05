@@ -1,0 +1,53 @@
+/* Terminal 0 in the Thoughtfield (doomtickle/passdesk-ops#213). The same terminal and the same term.js as /term; this is its whole look,
+   and term.css is not loaded. Readability comes first: an opaque pool, not the sky, sits behind the text. The numbers are in term-field.js. */
+@font-face { font-family: "JetBrains Mono"; font-weight: 400; font-display: block; src: url("/fonts/jetbrains-mono-400.woff2") format("woff2"); }
+@font-face { font-family: "JetBrains Mono"; font-weight: 700; font-display: block; src: url("/fonts/jetbrains-mono-700.woff2") format("woff2"); }
+@font-face { font-family: "Cormorant Garamond"; font-weight: 500 600; font-display: swap; src: url("/fonts/cormorant-garamond-variable.woff2") format("woff2"); }
+@font-face { font-family: "Hanken Grotesk"; font-weight: 400 700; font-display: swap; src: url("/fonts/hanken-grotesk-variable.woff2") format("woff2"); }
+:root { color-scheme: dark; --f-voice: "Cormorant Garamond", Georgia, serif; --f-data: "Hanken Grotesk", system-ui, sans-serif; --f-code: "JetBrains Mono", ui-monospace, Consolas, monospace;
+  --blue: #7cc4ff; --amber: #ffb84d; --pool: #070a12; --i1: #f5f9ff; --i2: #cbdaee; --i3: #a3b7d1; --hair: rgba(203, 218, 238, .4); }
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { height: 100%; margin: 0; background: var(--pool); overflow: hidden; }
+body { color: var(--i2); font: 400 16px/1.55 var(--f-data); }
+button, textarea { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--blue); outline-offset: 3px; border-radius: 4px; }
+
+/* FitAddon subtracts only the padding of .xterm itself: padding on #term would push the last row and column out of the frame. */
+#term { position: absolute; inset: 0; }
+#term .xterm { height: 100%; padding: 8px 6px 14px 20px; }
+/* JetBrains Mono's ligatures redraw code ("=>", "!="), which must read as what it is, and they nudge glyphs off xterm's grid. */
+#term .xterm, #term .xterm * { font-variant-ligatures: none !important; font-feature-settings: "liga" 0, "clig" 0, "calt" 0 !important; font-kerning: none !important; }
+#term .xterm-viewport { scrollbar-width: thin; scrollbar-color: rgba(163, 183, 209, .55) transparent; }
+/* xterm checks dimmed text's contrast at full strength, then draws it at half, so text that passed can end up near 3:1. On the plain
+   background, dim is this one quiet colour instead: clearly quieter than the text, and still easy to read. */
+#term .xterm-rows span.xterm-dim:not([class*="xterm-bg-"]):not([style*="background"]) { color: #a9bad2 !important; }
+/* On a coloured cell (a diff's line number, say), dimmed text that passed that check takes the main text colour: passing means the cell is dark enough.
+   Not when xterm has already picked a colour (an inline color:), on an inverted cell, or for black, which can pass on a light cell. */
+#term .xterm-rows span.xterm-dim:not(.xterm-bg-257):not(.xterm-fg-257):not(.xterm-fg-0):not([style^="color:"]):not([style*=";color:"]):is([class*="xterm-bg-"], [style*="background"]) { color: #e8eef8 !important; }
+
+/* Off, reconnecting, restarting. A plain word for what happened, then what to do. */
+.off { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 24px; background: var(--pool); text-align: center; }
+.off p { margin: 0; }
+.off .banner { font: 500 clamp(26px, 5vw, 36px)/1.2 var(--f-voice); color: var(--i1); }
+.off .note { max-width: 56ch; color: var(--i2); }
+.powers { display: flex; flex-wrap: wrap; justify-content: center; gap: 28px; margin-top: 8px; }
+.power, .copy .key { padding: 4px 0 3px; background: none; border: 0; border-bottom: 1px solid var(--hair); color: var(--i1); font: 500 16px/1.4 var(--f-data); cursor: pointer; }
+.power:hover, .copy .key:hover { border-bottom-color: var(--blue); }
+.power:disabled, .copy .key:disabled { color: var(--i3); border-bottom-color: transparent; cursor: default; }
+.off.service .banner { animation: svc-pulse 2s ease-in-out infinite; }
+@keyframes svc-pulse { 50% { opacity: .68; } }
+@media (prefers-reduced-motion: reduce) { .off.service .banner { animation: none; } }
+
+/* A copy from the Coordinator waits here for a click (term.js): a strip along the bottom, so the screen above stays readable. Text only. */
+.copy { position: absolute; left: 0; right: 0; bottom: 0; z-index: 5; display: flex; flex-direction: column; gap: 8px; padding: 14px 20px 16px; background: #0f1522; border-top: 1px solid var(--hair); }
+.copy p { margin: 0; }
+.copy-title { font-weight: 500; color: var(--i1); }
+.copy-preview { max-height: 4.8em; overflow: hidden; overflow-wrap: anywhere; white-space: pre-wrap; font: 400 14.5px/1.6 var(--f-code); color: var(--i2); }
+.copy-note { color: var(--amber); }
+.copy-manual { width: 100%; height: 5em; resize: none; padding: 8px; font: 400 14px/1.5 var(--f-code); color: var(--i2); background: var(--pool); border: 1px solid var(--hair); border-radius: 6px; }
+.copy-keys { display: flex; gap: 24px; }
+.copy .key.dim { color: var(--i2); }
+.copy.done .copy-preview, .copy.large .copy-preview { display: none; }
+.copy.fail { border-top-color: var(--amber); }
+@media (max-width: 600px) { #term .xterm { padding: 6px 2px 10px 10px; } .copy { padding: 12px 12px 14px; } }

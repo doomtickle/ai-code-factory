@@ -38,7 +38,8 @@ MAX_SHIFT = 16
 SHIFTS = 3
 MAX_COLORS = 32
 CRT_RANGE = (0, 10)
-TOP_KEYS = ("plant", "shifts", "crt", "sound")
+TOP_KEYS = ("plant", "shifts", "crt", "sound", "ui")
+UIS = ("field", "classic")  # what the dashboard opens on; both are always served, at /field and /classic
 COLORS_TABLE = "roles.colors"
 
 _PRINTABLE = re.compile(r"[\x20-\x7e]*")
@@ -56,7 +57,7 @@ class Refused(ValueError):
 
 def defaults() -> dict:
     """What the page shows when the file is absent or refused: nothing set, so its own defaults."""
-    return {"plant": None, "shifts": None, "crt": None, "sound": None, "colors": {}}
+    return {"plant": None, "shifts": None, "crt": None, "sound": None, "ui": "field", "colors": {}}
 
 
 def _text(raw: str, key: str, cap: int) -> str:
@@ -167,6 +168,10 @@ def parse(text: str) -> dict:
                 out["crt"] = _crt(raw)
             elif key == "sound":
                 out["sound"] = _sound(raw)
+            elif key == "ui":
+                if raw not in ('"field"', '"classic"'):
+                    refuse('ui must be "field" or "classic"')
+                out["ui"] = raw.strip('"')
             else:
                 refuse(f'unknown key "{key}" (known: {", ".join(TOP_KEYS)}, and [{COLORS_TABLE}])')
         except Refused as e:

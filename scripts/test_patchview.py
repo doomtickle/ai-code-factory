@@ -369,7 +369,7 @@ class HandWrittenTests(unittest.TestCase):
         self.assertEqual((out["truncated"], out["files_shown"], out["files_missing"], out["files_missing_more"]),
                          (True, 1, ["b.py", "c.py"], 0))
         last = files(out)[-1]["hunks"][-1]["lines"][-1]
-        self.assertEqual(last, ["✂", "CUT HERE · the rest of this push is not shown"])
+        self.assertEqual(last, ["✂", "Cut here: the rest of this push is not shown"])
         self.assertEqual(files(out)[-1]["adds"], 1)  # the marker counts as nothing
         # The card's list capped (file_count 80, 2 names): the rest is counted, not named.
         out = pv.view(t, patch_bytes=1, files_total=80, card_files=["a.py", "b\u202e.py"])

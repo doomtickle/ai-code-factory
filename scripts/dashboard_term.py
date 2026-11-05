@@ -103,11 +103,23 @@ STATIC = {
     "/cu.js": ("cu.js", "text/javascript; charset=utf-8"),
     "/cu.css": ("cu.css", "text/css; charset=utf-8"),
     "/cu-notes.js": ("cu-notes.js", "text/javascript; charset=utf-8"),   # the NOTES editor on SETUP; cu.js loads after it
+    # The Thoughtfield's frames: the control unit in its decision-row skin (/cu/field), Terminal 0 in its skin (/term/field) and the typed line (/term/line).
+    "/term-field.js": ("term-field.js", "text/javascript; charset=utf-8"),
+    "/term-field.css": ("term-field.css", "text/css; charset=utf-8"),
+    "/fonts/jetbrains-mono-400.woff2": ("fonts/jetbrains-mono-400.woff2", "font/woff2"),
+    "/fonts/jetbrains-mono-700.woff2": ("fonts/jetbrains-mono-700.woff2", "font/woff2"),
+    "/cu-field.js": ("cu-field.js", "text/javascript; charset=utf-8"),
+    "/cu-field.css": ("cu-field.css", "text/css; charset=utf-8"),
+    "/field-ask.js": ("field-ask.js", "text/javascript; charset=utf-8"),
+    "/line.js": ("line.js", "text/javascript; charset=utf-8"),
+    "/line.css": ("line.css", "text/css; charset=utf-8"),
     # cu.css imports this (same origin, allowed by style-src 'self').
     "/theme.css": ("theme.css", "text/css; charset=utf-8"),
     "/fonts/barlow-condensed-600.woff2": ("fonts/barlow-condensed-600.woff2", "font/woff2"),
     "/fonts/barlow-condensed-700.woff2": ("fonts/barlow-condensed-700.woff2", "font/woff2"),
     "/fonts/dotgothic16.woff2": ("fonts/dotgothic16.woff2", "font/woff2"),
+    "/fonts/cormorant-garamond-variable.woff2": ("fonts/cormorant-garamond-variable.woff2", "font/woff2"),
+    "/fonts/hanken-grotesk-variable.woff2": ("fonts/hanken-grotesk-variable.woff2", "font/woff2"),
 }
 
 # Opcodes (RFC 6455 5.2)
@@ -138,6 +150,11 @@ def cu_csp(term_port: int, main_port: int) -> str:
             f"connect-src http://127.0.0.1:{term_port} http://localhost:{term_port}; img-src 'self'; "
             f"frame-ancestors http://127.0.0.1:{main_port} http://localhost:{main_port}; "
             "base-uri 'none'; form-action 'none'")
+
+
+def line_csp(term_port: int, main_port: int) -> str:
+    """The typed line's CSP: the terminal's, with no inline style (it has no xterm to style)."""
+    return term_csp(term_port, main_port).replace("style-src 'self' 'unsafe-inline'", "style-src 'self'")
 
 
 def control_refusal(headers, *, hosts, origins, cookie: str, token: str, key: str, limit: int = MAX_BODY) -> tuple:
@@ -827,27 +844,43 @@ def make_handler(term: Term | None, token: str, cookie: str, key: str, port: int
                 return
             if path.startswith(CU_API):
                 self.refuse(405, "POST only")
-            elif path == "/term" and term is not None:
+            elif path in ("/term", "/term/field") and term is not None:
                 # The page carrying the key: only for the main page's iframe,
                 # never a top-level navigation another local page could open.
+                # /term/field is the same terminal in the Thoughtfield's look.
+                if not self.framed():
+                    self.refuse(403, "the terminal opens inside the dashboard: open the link 'factory dashboard' printed")
+                    return
+                page = "term-field.html" if path == "/term/field" else "term.html"
+                try:
+                    html = (UI / page).read_text(encoding="utf-8")
+                except OSError:
+                    self.refuse(500, f"missing {page}")
+                    return
+                self.send(200, html.replace(KEY_SLOT, key).encode("utf-8"), "text/html; charset=utf-8")
+            elif path == "/term/line" and term is not None:
+                # The Thoughtfield's typed line carries the terminal key too: the same rule as /term.
                 if not self.framed():
                     self.refuse(403, "the terminal opens inside the dashboard: open the link 'factory dashboard' printed")
                     return
                 try:
-                    html = (UI / "term.html").read_text(encoding="utf-8")
+                    html = (UI / "line.html").read_text(encoding="utf-8")
                 except OSError:
-                    self.refuse(500, "missing term.html")
+                    self.refuse(500, "missing line.html")
                     return
-                self.send(200, html.replace(KEY_SLOT, key).encode("utf-8"), "text/html; charset=utf-8")
-            elif path == "/cu" and controls is not None:
-                # The control unit carries its own key: the same rule as /term.
+                html = html.replace(KEY_SLOT, key).replace(CU_PORT_SLOT, str(int(main_port)))
+                self.send(200, html.encode("utf-8"), "text/html; charset=utf-8", page_csp=line_csp(port, main_port))
+            elif path in ("/cu", "/cu/field") and controls is not None:
+                # The control unit carries its own key: the same rule as /term. /cu/field is the same unit and
+                # the same cu.js, in the Thoughtfield's decision-row skin.
                 if not self.framed():
                     self.refuse(403, "the controls open inside the dashboard: open the link 'factory dashboard' printed")
                     return
+                page = "cu-field.html" if path == "/cu/field" else "cu.html"
                 try:
-                    html = (UI / "cu.html").read_text(encoding="utf-8")
+                    html = (UI / page).read_text(encoding="utf-8")
                 except OSError:
-                    self.refuse(500, "missing cu.html")
+                    self.refuse(500, f"missing {page}")
                     return
                 html = html.replace(CU_KEY_SLOT, cu_key).replace(CU_PORT_SLOT, str(int(main_port)))
                 self.send(200, html.encode("utf-8"), "text/html; charset=utf-8", page_csp=cucsp)

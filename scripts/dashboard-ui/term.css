@@ -21,7 +21,7 @@ body { color: var(--matrix); font-family: "VT323", ui-monospace, Menlo, Consolas
 .off { position: absolute; inset: 0; padding: 16px 20px; font-size: 1.6rem; line-height: 1.15; display: flex; flex-direction: column; align-items: flex-start; gap: 10px;
   background: rgba(0, 5, 0, .82); text-shadow: 0 0 3px var(--matrix-glow); }
 .off p { margin: 0; white-space: pre-wrap; max-width: 46em; }
-.off .banner { border: 1px solid var(--matrix); padding: 6px 10px; box-shadow: 0 0 8px var(--matrix-glow), inset 0 0 8px var(--matrix-glow); }
+.off .banner { text-transform: uppercase; border: 1px solid var(--matrix); padding: 6px 10px; box-shadow: 0 0 8px var(--matrix-glow), inset 0 0 8px var(--matrix-glow); }
 .off .note { color: var(--matrix-pale); }
 .powers { display: flex; flex-wrap: wrap; gap: 12px; }
 .power { font: 700 1rem/1 "VT323", ui-monospace, monospace; font-size: 1.5rem; text-transform: uppercase; letter-spacing: .12em; cursor: pointer;
@@ -38,6 +38,7 @@ body { color: var(--matrix); font-family: "VT323", ui-monospace, Menlo, Consolas
   font-size: 1.35rem; line-height: 1.1; background: rgba(0, 8, 2, .94); border: 1px solid var(--matrix);
   box-shadow: 0 0 10px var(--matrix-glow), inset 0 0 6px rgba(0, 255, 65, .25); text-shadow: 0 0 3px var(--matrix-glow); }
 .copy p { margin: 0; }
+.copy-title, .copy-note { text-transform: uppercase; }
 .copy-title { letter-spacing: .06em; }
 .copy-preview { color: var(--matrix-pale); white-space: pre-wrap; overflow-wrap: anywhere; max-height: 4.6em; overflow: hidden;
   border-left: 2px solid var(--matrix-dim); padding-left: 8px; }

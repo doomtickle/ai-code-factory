@@ -2,6 +2,72 @@
 
 Dated entries, for the user to review. Newest first.
 
+## 2026-11-05
+
+- **The voice has a second image for Apple silicon, on the CPU** (owner asked for LOIS to speak on a Mac, as long as it doesn't harm the working PC,
+  doomtickle/passdesk-ops#214). Choices to review:
+  - **`voice/Dockerfile` and `requirements.lock` are untouched,** at the cost of a second Dockerfile that repeats the weights' pins. A shared file with a build argument
+    would have changed the x86 build's cache key, forcing a 12 GB rebuild on the PC's next build. A test keeps the two the same apart from the lock.
+  - **CPU only.** Docker on a Mac can't reach the GPU. A native Metal service would be faster but is a new kind of listener outside the container, against the rule that names
+    the container as the exception. `factory voice test` measures whether the CPU keeps up.
+  - **A separate workflow on a real arm64 runner,** only when the voice changes, since it downloads PyTorch and the model. It proves the build and speech on Linux arm64, not
+    on Docker Desktop for Mac or at a Mac's speed.
+
+- **Terminal 0 has a Thoughtfield look, chosen for readability first** (owner asked for it to match the theme and to "try hard to maximize
+  readability", doomtickle/passdesk-ops#213). `/term/field` is the same terminal, key, serving rule, CSP and WebSocket as `/term`; the classic page
+  keeps its tube. Choices to review:
+  - **A vendored JetBrains Mono, not a system font.** What was measured is then what the owner sees, on any machine, and its natural 1.32 line is roomy
+    with box lines that still meet. It adds 187 KB. It is the release build, not Google's Latin subset, which would lack box-drawing characters.
+    It has no `⏺ ⎿ ✻`: those fall back to a system font.
+  - **Solid background, not the sky.** Stars behind text cost readability, and the panel dims the world at the same .8 as the other screens. This trades away
+    some spectacle while the terminal is open, and the panel is larger than it was (up to 1180 by 820).
+  - **A contrast floor of 9:1, with one fix for dimmed text.** The Coordinator picks its own truecolor, so a palette alone can't help: xterm's
+    `minimumContrastRatio` lifts its text, shifting some of its colours paler. xterm checks dimmed text at half that, at full strength, then draws it at half
+    strength, so it fell to about 3:1. `term-field.css` overrides those colours, which loses the hue of dimmed coloured text on the plain background. Box and block
+    characters are exempt by xterm's design (5.6:1 for the sample's grey border).
+  - **Whole-pixel cells.** The type size is set so a cell is a whole number of the screen's real pixels, at any display scaling or zoom. At 16 px a cell was
+    9.6 px, which softened text and showed seams through block art.
+  - **Plain words in `term.js`.** As with the control unit, one set of strings: `term.css` uppercases the classic page's titles, so "TERMINAL 0 · POWERED
+    OFF" there becomes "THE COORDINATOR IS OFF".
+
+- **The control unit's menus are restyled for the Thoughtfield, and Inspect's Approve is now a hold** (owner asked for the old-style menus to be
+  converted, doomtickle/passdesk-ops#208). This replaces "keep their classic inner look" below. Choices to review:
+  - **Inspect's Approve became the gold 2.5 s hold, in the Thoughtfield only.** That is more than a restyle, and stricter: one click there would
+    have been a way round the hold on the decision row. The classic page keeps one press.
+  - **`cu-field.html` no longer loads `cu.css`.** `cu-field.css` is the whole look, so no tube, keycap or scanline can leak through and nothing
+    has to be undone with `!important`. `cu.html` and `cu.css` keep the classic page as it was.
+  - **Plain words in the shared strings.** `cu.js` and `cu-notes.js` now say "Saved. Restart to apply." and "Demo: changes are off", and sources
+    read "repo", "your override" and "fixed". One set of strings, not a table per look: `cu.css` uppercases the classic page's titles, so what
+    changes there is mainly prose. The strings the broker and `factory approvals` use are untouched, except that a cut patch now ends "✂ Cut here".
+  - **The Coordinator's terminal keeps its green tube and its power screen.** It is a terminal rather than a menu, and sharing `term.js` with the
+    classic page makes changing its theme a separate job. (Done the same day: see above.)
+
+- **The Thoughtfield is the dashboard's default view** (owner asked for it, doomtickle/passdesk-ops#207, and left the calls to the
+  session while asleep). Choices to review:
+  - **Both views, Thoughtfield first.** The owner offered replacing or adding. `/` opens the Thoughtfield, `/classic` keeps FC-1984 untouched,
+    `ui = "classic"` in `dashboard.toml` flips the default. Reason: the classic page has features not ported (floor, budget, notifications,
+    radio, full printer, deferred-writes list), and a software-rendered machine can't run a WebGL page well.
+  - **The hold-to-approve lives in the control unit, not the page.** The mockup's approve sat on the main page, which the rules forbid.
+    `cu-field.html` is the same `cu.js` in a new skin, so the frame looks like part of the page and every existing check still decides.
+    Holding the gold light *is* the approval, as in the mockup (one held press, no second click).
+  - **The typed line is a frame on the terminal origin.** The main page must never hold a key or see what is typed, so the line is its own small
+    page. Questions it recognises stay local; anything else reaches the Coordinator as typing, which is what Terminal 0 already is.
+  - **Speech-to-text is out.** The mockup's mic used the browser's recognition service, which sends audio to a cloud provider.
+  - **Stars scale with real spend; their times and kinds come from real actions.** The mockup's "one star is one action" doesn't survive
+    real data: a day is a few thousand actions, too thin for a galaxy. The stars-per-dollar rate is chosen at load (150 to 6,000) and shown in
+    the key, so towers stay to scale; "What have they been doing?" reports real action counts, not stars.
+  - **An order is a branch.** The factory has no orders. Jobs naming one `factory/<topic>` are one order, a reviewer's included; anything else
+    stands alone.
+  - **Only fixed sentences are spoken.** An agent can influence task and branch text, and a voice saying "approve this now" would be a new way to
+    reach the owner. Those labels appear only in the detail line, as text.
+  - **The voice is a plain Docker container, not an sbx sandbox.** It runs no agent and no agent reaches it. Optional: nothing depends on it.
+    It is a second listener with no key: any local program or loopback page can make it speak, and it does nothing else. It answers CORS for
+    loopback origins only and checks `Host` against rebinding. `/tmp` in the container is a tmpfs mounted `exec`, the one loosening: phonemizer
+    copies `libespeak-ng.so` there and loads it, and on a noexec `/tmp` Kokoro silently drops every word outside its lexicon. The server refuses
+    to start if espeak did not load. The alternative was patching vendored code. The image is 12 GB because of CUDA torch; x86_64 Linux only.
+  - **The bust and its textures are committed (about 16 MB with three.js).** A dashboard that must work offline can't fetch them, and the
+    MakeHuman base is CC0 by the project's own licence files (`scripts/dashboard-ui/witness/README.md` has the quotes and URLs).
+
 ## 2026-10-30
 
 - **`factory-demo` for dashboard screenshots; a signal exit is reported as a signal** (owner asked

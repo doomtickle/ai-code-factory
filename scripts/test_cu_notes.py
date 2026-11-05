@@ -62,7 +62,8 @@ class CodeTests(unittest.TestCase):
             '"aria-label", `Notes: ${fileName(tab)}`', '"role", "alert"']))
 
     def test_classes_come_from_fixed_maps(self):
-        self.assertEqual(sorted(re.findall(r"className = ([^;]+);", JS)), ["`ngauge ${GAUGE[lv]}`", "`nstatus ${cls}`"])
+        # The gauge's fill is a whole number this script worked out itself, never the server's text.
+        self.assertEqual(sorted(re.findall(r"className = ([^;]+);", JS)), ["`nbar n${Math.round(filled / BAR * 10)}`", "`ngauge ${GAUGE[lv]}`", "`nstatus ${cls}`"])
         self.assertIn('const GAUGE = { ok: "k-ok", warn: "k-warn", over: "k-err" };', JS)
         self.assertIn('const DIFF = { "+": ["nd nd-add", "+"], "-": ["nd nd-del", "-"], " ": ["nd nd-ctx", " "] };', JS)
         # A diff line's class is picked from the map by an op that matched one of its keys, never by the server's text.
@@ -222,7 +223,7 @@ class EndToEndTests(cwt.Base):
         # The editor goes by the status, never by the host's wording.
         self.assertIn("res.status === 403", JS)
         self.assertNotIn("demo mode", JS)
-        self.assertIn('const DEMO = "DEMO · CHANGES DISABLED";', JS)
+        self.assertIn('const DEMO = "Demo: changes are off";', JS)
 
 
 @unittest.skipIf(shutil.which("node") is None, "no node")

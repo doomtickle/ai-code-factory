@@ -71,8 +71,9 @@ lane's state:
 
 ## Watch each lane
 
-The dashboard shows every lane as its own module. `factory watch` does the
-same in any terminal: it follows every lane of every role at once, with each
+The dashboard's work list shows the active jobs, and each one opens its lane's
+transcript. Its classic view shows every lane as its own module. `factory watch`
+does the same in any terminal: it follows every lane of every role at once, with each
 active lane in its own pane (a job running, or finished in the last ten
 minutes; idle lanes take one status line each), tool calls condensed to one
 line and the job's status, elapsed time, model and cost in the pane's title:
@@ -155,8 +156,8 @@ factory analytics
 
 Edit `LANES` in the role's `role.conf` (1 to 8; empty means 1), then run
 `factory start`. No sandbox is recreated: the dispatch bridge reads `LANES` for
-every task, and `factory start` updates the dashboard's lane view and
-`factory watch` to show the new lanes.
+every task, and `factory start` updates the dashboard and `factory watch` to show the new
+lanes.
 
 ```conf
 # roles/developer/role.conf

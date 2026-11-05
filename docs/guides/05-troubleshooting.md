@@ -49,7 +49,7 @@ The raw files are in the state folder, `~/.local/state/ai-code-factory/`
 | `dispatch/logs/<lane>.log` | Role transcripts, one per lane |
 | `dispatch/audit.jsonl` | Every Coordinator tool call and job end, with cost and context size |
 | `dispatch/packets/<job-id>.md` | The job's review packet (`factory packet <job-id>`) |
-| `dispatch/packets/<job-id>.diff.json` | The full patch of each branch the job brought back, for the dashboard's DIFF tab (only for a job that imported a branch) |
+| `dispatch/packets/<job-id>.diff.json` | The full patch of each branch the job brought back, for the dashboard's Changes tab (only for a job that imported a branch) |
 | `dispatch/jobs.json` | The job list: the last 200 jobs, one short record each (no full task text), reloaded when the bridge starts |
 | `dispatch/dispatch.log` | Dispatch bridge errors |
 | `broker/audit.jsonl` | Every broker call, with the calling role |
@@ -164,9 +164,9 @@ DENIED: the developer sandbox has not been created; ask the user to run 'factory
 
 **Cause:** `sbx` gives a sandbox the stored Claude login only when it creates
 it, so role sandboxes wait until you've signed in.
-**Fix:** type `/login` in the Coordinator's terminal (POWER ON on the
-dashboard, or `factory chat`) and sign in, then run `factory
-start` again (or RESTART on the dashboard's control unit).
+**Fix:** type `/login` in the Coordinator's terminal (Terminal in the
+dashboard's top bar, then POWER ON if it's off, or `factory chat`) and sign in,
+then run `factory start` again (or press Restart on the dashboard).
 
 ### "port 18766 is already in use"
 
@@ -323,7 +323,7 @@ transcript.
 ### A job seems stuck
 
 A job can run for a long time; the Coordinator waits up to 600 seconds per
-call and then waits again. Watch its lane on the dashboard, in
+call and then waits again. Open it on the dashboard, watch it in
 `factory watch`, or with `factory logs <role>`, to see whether it's still making
 progress. If it isn't, ask the Coordinator to stop it:
 

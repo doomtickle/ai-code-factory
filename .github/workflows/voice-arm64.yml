@@ -1,0 +1,55 @@
+# The voice image on a real arm64 machine: built, started and made to speak through `factory voice`,
+# as on an Apple silicon Mac (doomtickle/passdesk-ops#214). Separate from CI because it downloads
+# PyTorch and the model, so it runs only when the voice changes. Pinned as CI is.
+name: Voice on arm64
+
+on:
+  pull_request:
+    paths:
+      - "voice/**"
+      - "factory/voice.py"
+      - "factory/commands/voice.py"
+      - ".github/workflows/voice-arm64.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: voice-arm64-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  voice:
+    name: voice image (arm64)
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14.8"
+      - name: Build
+        run: ./bin/factory voice build
+      - name: The image is arm64
+        run: |
+          docker image inspect --format '{{.Architecture}} {{.Size}}' factory-voice:1
+          test "$(docker image inspect --format '{{.Architecture}}' factory-voice:1)" = arm64
+      - name: Start
+        run: ./bin/factory voice start
+      - name: Speak
+        run: |
+          for _ in $(seq 1 60); do
+            if ./bin/factory voice status | grep -q 'device'; then
+              ./bin/factory voice test
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "the service never answered" >&2
+          exit 1
+      - name: Service log
+        if: always()
+        run: docker logs factory-voice 2>&1 | tail -40 || true

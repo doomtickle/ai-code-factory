@@ -158,13 +158,13 @@ factory start
 ```
 
 `factory start` opens the dashboard in your Windows browser (if nothing opens,
-paste the link it prints into one). Its left-hand screen is the Coordinator's terminal.
+paste the link it prints into one). Press **Terminal** in its top bar for the Coordinator's terminal.
 **The first time:**
 
-1. Press POWER ON on the dashboard's Coordinator screen, type `/login` and
-   sign in with your Claude account. Paste the URL into a Windows browser if
+1. Press Enter on the dashboard's welcome, then **Terminal** in its top bar.
+   Press POWER ON if the screen is off, type `/login` and sign in with your Claude account. Paste the URL into a Windows browser if
    nothing opens.
-2. Run `factory start` again in another Ubuntu terminal (or press RESTART on
+2. Run `factory start` again in another Ubuntu terminal (or press Restart on
    the dashboard). This creates the role sandboxes, which pick up the login.
 
 Then tell the Coordinator what you want done. Ctrl-C in the terminal that runs

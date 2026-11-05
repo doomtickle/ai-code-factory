@@ -17,8 +17,8 @@
   const BAR = 24, DIFF_MAX = 2000;
   const GAUGE = { ok: "k-ok", warn: "k-warn", over: "k-err" };
   const DIFF = { "+": ["nd nd-add", "+"], "-": ["nd nd-del", "-"], " ": ["nd nd-ctx", " "] };
-  const DEMO = "DEMO · CHANGES DISABLED";
-  const SAVED = "SAVED · SERVICE DUE · RESTART TO APPLY";
+  const DEMO = "Demo: changes are off";
+  const SAVED = "Saved. Restart to apply.";
   const APPLIES = { RESTART: "restart" };
   // Control, invisible and bidi characters would hide what a diff really writes: shown as tokens.
   const HIDDEN = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u00ad\u061c\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff]/g;
@@ -68,7 +68,7 @@
     const usable = () => { const p = project(); return !!p && p !== "(no project)" && !p.includes("/") && !p.startsWith("."); };
     const limit = () => { const n = Number(block().limit); return Number.isFinite(n) && n > 0 ? n : DEFAULT_LIMIT; };
     const roles = () => { const c = cfg(); return c ? list(c.roles).filter(r => r && typeof r === "object" && ROLE.test(str(r.name))) : []; };
-    const label = t => (t === "" ? "SHARED" : t.toUpperCase());
+    const label = t => (t === "" ? "Shared" : t);
     const fileName = t => `${project()}${t === "" ? "" : `.${t}`}.md`;
     const dirty = () => tab !== null && draft !== loaded;
 
@@ -93,9 +93,10 @@
       g.row.className = `ngauge ${GAUGE[lv]}`;
       const bar = "█".repeat(filled) + "░".repeat(BAR - filled);
       if (g.bar.textContent !== bar) g.bar.textContent = bar;
+      g.bar.className = `nbar n${Math.round(filled / BAR * 10)}`;   // fixed classes: the Thoughtfield draws this as a line
       const count = `  ${num(total)} / ${num(lim)}  ${Math.round(total / lim * 100)}%`;
       if (g.count.textContent !== count) g.count.textContent = count;
-      const flag = lv === "over" ? `  OVER by ${num(total - lim)}` : lv === "warn" ? "  NEAR THE LIMIT" : "";
+      const flag = lv === "over" ? `  over by ${num(total - lim)}` : lv === "warn" ? "  near the limit" : "";
       if (g.flag.textContent !== flag) g.flag.textContent = flag;
     }
     function gaugeRow(r) {
@@ -202,8 +203,8 @@
         text = `✕ ${over.map(r => str(r.name)).join(", ")} would be over ${num(limit())} characters: cut ${num(worst)} to save`;
         cls = "k-err";
       } else if (!dirty()) { text = "  No changes yet."; cls = "k-dim"; }
-      else if (stillOver().length) { text = `  ${stillOver().map(r => str(r.name)).join(", ")} still over ${num(limit())}, but this change does not add to it: SAVE is allowed.`; cls = "k-warn"; }
-      else { text = "  Unsaved changes. SAVE shows what would be written and asks you to confirm."; cls = "k-dim"; }
+      else if (stillOver().length) { text = `  ${stillOver().map(r => str(r.name)).join(", ")} still over ${num(limit())}, but this change does not add to it, so you can save it.`; cls = "k-warn"; }
+      else { text = "  Unsaved changes. Save shows what would be written and asks you to confirm."; cls = "k-dim"; }
       refs.status.className = `nstatus ${cls}`;
       setText(refs.status, text);
       editKeys();
@@ -259,9 +260,9 @@
       if (!names.length) out.push(P("k-dim", "  No running role reads this file."));
       for (const n of names) {
         const t = Number(totals[n]), lv = level(t, lim);
-        out.push(P(`ind ${GAUGE[lv]}`, `  ${n.padEnd(14)} ${num(t)} of ${num(lim)}${lv === "over" ? " · OVER" : ""}`));
+        out.push(P(`ind ${GAUGE[lv]}`, `  ${n.padEnd(14)} ${num(t)} of ${num(lim)}${lv === "over" ? " · over" : ""}`));
       }
-      out.push(el("div", "gap"), P("k-dim", "Nothing has been written yet. CONFIRM SAVE writes it; CANCEL or Esc backs out."));
+      out.push(el("div", "gap"), P("k-dim", "Nothing has been written yet. Confirm writes it; Cancel or Esc backs out."));
       conBody.replaceChildren(...out);
       setKeys("Cancel", "Confirm save", false);
       tickConfirm();
@@ -291,7 +292,7 @@
       conBody.replaceChildren(
         P("banner", "Changed on disk"),
         P("k-err", `✕ ${fileName(tab)} changed on disk after you loaded it, so nothing was written.`),
-        P("k-dim", "  RELOAD reads the file again and drops your text. KEEP MY TEXT goes back to it; saving again compares it with the file now on disk."));
+        P("k-dim", "  Reload reads the file again and drops your text. Keep my text goes back to it; saving again compares it with the file now on disk."));
       setKeys("Keep my text", "Reload", false);
       holdUntil = Date.now() + d.holdMs;
       clearTimeout(holdTimer);
@@ -304,7 +305,7 @@
       const my = ++seq;
       stopTimers();
       tab = t; phase = "loading"; draft = loaded = ""; prep = null; ask = null; status = null; savedChars = 0; exists = false;
-      renderBusy("▶ Reading the file…", "Reading");
+      renderBusy("Reading the file…", "Reading");
       let res;
       try {
         res = await d.api("config-read", { kind: "notes", role: t });
@@ -342,7 +343,7 @@
       refs.ask.hidden = true;
       ask = null;
       setKeys("Back", "Save", false);
-      status = { text: "▶ Checking what would be written…", kind: "dim" };
+      status = { text: "Checking what would be written…", kind: "dim" };
       setText(refs.status, status.text);
       let res;
       try {
@@ -356,7 +357,7 @@
       if (!res.ok) { backToEdit(d.errText(res)); return; }
       const data = res.data;
       if (typeof data.token !== "string" || !data.token || !Array.isArray(data.diff)) { backToEdit("The dashboard's answer was not understood. Nothing was written."); return; }
-      if (data.changed === false) { backToEdit("NO CHANGE · the file on disk already reads this", "dim"); return; }
+      if (data.changed === false) { backToEdit("No change: the file on disk already reads this", "dim"); return; }
       const secs = Number(data.expires);
       prep = { token: data.token, tab: role, text: sent, data, deadline: Date.now() + (Number.isFinite(secs) && secs > 0 ? secs : 120) * 1000 };
       holdUntil = Date.now() + d.holdMs;
@@ -374,7 +375,7 @@
       head("Saving", "running", "g blink", "");
       setKeys("Cancel", "Confirm save", false);
       cancelKey.disabled = true;   // in flight: a write that went through must show its result
-      conBody.append(P("cursor", "▶ Writing…"));
+      conBody.append(P("cursor", "Writing…"));
       let res;
       try {
         res = await d.api("config-run", { token });
@@ -390,7 +391,7 @@
         savedChars = cp(sent.text);
         exists = true;
         draft = sent.text;
-        backToEdit(res.data.applies === "RESTART" || sent.data.applies === "RESTART" ? SAVED : "SAVED", "ok");
+        backToEdit(res.data.applies === "RESTART" || sent.data.applies === "RESTART" ? SAVED : "Saved", "ok");
         d.refresh();
       } else if (res.status === 409 && res.data.error === "changed") {
         renderChanged();
@@ -421,7 +422,7 @@
       if (phase === "saving") return true;
       if (phase === "preparing") { seq++; backToEdit(null); return true; }
       if (phase === "confirm" || phase === "expired") { backToEdit(null); return true; }
-      if (phase === "changed") { backToEdit("Your text is kept. SAVE again to compare it with the file now on disk.", "dim"); return true; }
+      if (phase === "changed") { backToEdit("Your text is kept. Save again to compare it with the file now on disk.", "dim"); return true; }
       if (ask) { ask = null; showAsk(); return true; }
       if (phase === "edit" && dirty()) { ask = { leave: true }; showAsk(); return true; }
       exit();

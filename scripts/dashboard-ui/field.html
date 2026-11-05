@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>LOIS</title>
+<link rel="stylesheet" href="/field.css">
+<link rel="stylesheet" href="/field-monitor.css">
+<script src="/vendor/three/three.min.js" defer></script>
+<script src="/vendor/three/GLTFLoader.js" defer></script>
+<script src="/vendor/three/CopyShader.js" defer></script>
+<script src="/vendor/three/LuminosityHighPassShader.js" defer></script>
+<script src="/vendor/three/Pass.js" defer></script>
+<script src="/vendor/three/EffectComposer.js" defer></script>
+<script src="/vendor/three/RenderPass.js" defer></script>
+<script src="/vendor/three/ShaderPass.js" defer></script>
+<script src="/vendor/three/UnrealBloomPass.js" defer></script>
+<script src="/field-ask.js" defer></script>
+<script src="/voice.js" defer></script>
+<script src="/field-sky.js" defer></script>
+<script src="/field-face.js" defer></script>
+<script src="/field-monitor.js" defer></script>
+<script src="/field-hud.js" defer></script>
+</head>
+<body>
+<canvas id="being" aria-label="A luminous blue being rising behind the curve of a dark world, face to face with you"></canvas>
+<canvas id="motes" aria-hidden="true"></canvas>
+<svg id="atmos" aria-hidden="true"></svg>
+<svg id="world" role="img" aria-label="Today along the edge of the world"><g id="world-base"></g><g id="beads"></g><g id="world-top"></g></svg>
+<svg id="threads" aria-hidden="true"><path id="t-voice"/><path id="t-hover"/><path id="t-gold"/></svg>
+
+<div class="gate" id="gate" hidden>
+  <h1 id="gate-name">LOIS</h1>
+  <p>Every star is work your agents did today. Spiral arms grow with it, and bright sparks are jobs running now. Anything gold is waiting for you. Ask a question and the sky will answer.</p>
+  <button type="button" id="enter">Enter</button>
+  <small id="gate-small">Sound starts when you enter. Press V to mute. <a href="/voice" target="factory-voice">Tune the voice</a>. <a href="/classic">Classic view</a></small>
+</div>
+
+<div class="hud" id="hud" hidden>
+  <header class="top">
+    <span class="plate"><b id="plate-name">LOIS</b><span id="plate-project"></span></span>
+    <span class="compact" id="sum"></span>
+    <span class="hint-line" id="hint-line" hidden></span>
+    <span class="r">
+      <button class="ic textkey" id="term-key" type="button" aria-expanded="false" aria-keyshortcuts="t" title="Terminal 0, the Coordinator (T)" hidden><i class="lamp" id="term-lamp"></i>Terminal</button>
+      <a class="ic textkey" id="classic-key" href="/classic" title="The classic FC-1984 view">Classic</a>
+      <a class="ic" href="/docs/" target="factory-docs" aria-label="Manual" title="Manual"><svg viewBox="0 0 24 24"><path d="M5 4.5h9a3 3 0 0 1 3 3v12a2.5 2.5 0 0 0-2.5-2.5H5zM17 7.5h2v11"/></svg></a>
+      <button class="ic" id="settings-key" type="button" disabled aria-keyshortcuts="," aria-label="Settings" title="Settings (,)"><svg viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></svg></button>
+      <button class="ic" id="legend-k" type="button" aria-expanded="false" aria-label="What am I looking at?" title="What am I looking at?">?</button>
+      <button class="ic" id="voice-key" type="button" aria-pressed="true" aria-label="Voice" title="Voice (V)"><svg viewBox="0 0 24 24"><path d="M4 9.5v5h3.5L12 18.5v-13L7.5 9.5z"/><path class="wave" d="M15.5 9a4.2 4.2 0 0 1 0 6M18 6.5a7.8 7.8 0 0 1 0 11"/><path class="mute" d="M16 9.5l5 5M21 9.5l-5 5"/></svg></button>
+      <button class="ic" id="full" type="button" aria-pressed="false" aria-label="Fullscreen" title="Fullscreen"><svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+    </span>
+  </header>
+  <aside class="legend lens closed" id="legend" aria-label="What is in the sky">
+    <span><i class="d star"></i>Star: work done. <span id="legend-rate"></span></span>
+    <span><i class="k k0"></i><i class="k k1"></i><i class="k k2"></i><i class="k k3"></i>Reading, editing, commands, requests</span>
+    <span><i class="d cloud"></i>Spiral arm: orders laid end to end. Further out is later, longer is more work</span>
+    <span><i class="d planet"></i>Bright spark: a running job. Brighter is a bigger model</span>
+    <span><i class="d moon"></i>Small spark and cool sweep: a review</span>
+    <span><i class="d gold"></i>Gold: waiting for you. Its arm stands still</span>
+    <span><i class="d fail"></i>Dark void: a failed job</span>
+    <span><i class="d ship"></i>Red at the galaxy's edge: a request the gateway blocked</span>
+    <em>Hover any star to see what it was, click to open its job. Drag along the horizon to rewind the day. Jobs on one branch are one order. <a href="/voice" target="factory-voice">Tune the voice</a> · <a href="/classic">Classic view</a> · <a href="/docs/" target="factory-docs">Manual</a></em>
+  </aside>
+  <div id="tags" aria-hidden="true"></div>
+  <div id="vtags" aria-hidden="true"></div>
+  <section class="work" id="work" aria-label="Jobs"><h2 id="work-h"></h2><div id="jobs-list"></div></section>
+  <section class="today" id="today" aria-label="Today"><div class="clock" id="clock"></div><div class="stat"><span id="sp-d"></span><b id="spend"></b><span>spend today</span></div><div class="stat"><b id="jobs"></b><span>jobs today</span></div><div id="roles"></div><div id="service-note" hidden></div></section>
+  <div class="mid">
+    <div class="said" id="said" aria-live="polite"><div class="txt" id="txt"></div><div class="meta" id="meta"></div></div>
+    <div class="cu-wrap" id="cu-wrap"></div>
+    <div class="you-slot" id="you-slot">
+      <form class="you" id="ask"><input id="ask-in" type="text" aria-label="Ask a question" placeholder="Ask LOIS a question…" autocomplete="off">
+        <button type="submit" class="ic" id="send" aria-label="Send" title="Send"><svg viewBox="0 0 24 24"><path d="M5 12h13M13 6.5l5.5 5.5-5.5 5.5"/></svg></button></form>
+    </div>
+    <div class="chips" id="chips"><button type="button" id="back" hidden>Back to the galaxy</button><button type="button" data-v="spend">What cost the most?</button><button type="button" data-v="stuck">What's stuck?</button><button type="button" data-v="kinds">What have they been doing?</button><button type="button" data-v="time">When was it busiest?</button><span id="chip-hint">Drag the horizon to rewind</span></div>
+    <p class="foot" id="foot" hidden></p>
+  </div>
+</div>
+<div class="term-panel" id="term-panel" inert><div class="term-bar"><span>Terminal 0 · Coordinator</span><button type="button" id="term-close">Close</button></div><div class="term-slot" id="term-slot"></div></div>
+<div id="monitor-root"></div>
+</body>
+</html>

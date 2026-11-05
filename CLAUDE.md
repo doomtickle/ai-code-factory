@@ -106,6 +106,9 @@ socket, or host credentials. Full picture: README.md.
   through one path (`scripts/dashboard_configwrite.py`), behind a prepare/run token, no symlink
   followed, applied on the next restart. Full rules: **`scripts/CLAUDE.md` — read before changing dashboard
   code** (`scripts/dashboard*.py`, `scripts/patchview.py`).
+- The optional local voice (`voice/`, `factory voice`) is not an agent sandbox and carries no agent traffic: a plain pinned Docker
+  container on `127.0.0.1:8873` that turns the dashboard's fixed sentences into speech. It needs no network at run time and makes no calls, but is not firewalled. It is a named exception to the
+  dashboard being the one listener: it has no key because it acts on nothing but speech, and it sends and receives no cookie. Features must keep working without it.
 - Broker policy is baked into its image, never read from the agent-writable
   workspace. Hosts in `broker/policy.toml` `[web].allow_hosts` must also be in
   `kits/broker/spec.yaml`.

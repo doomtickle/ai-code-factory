@@ -1,15 +1,18 @@
 # Use the dashboard
 
-The dashboard is the factory on one screen in your browser: the Coordinator,
-every lane, the writes waiting for you, today's spend and the broker's calls.
-This guide walks through each part, says what every key does, and lists the
-`factory` command each one stands in for. The full reference is
+The dashboard is LOIS on one screen in your browser. You watch the day's work
+as a galaxy, ask it questions, talk to the Coordinator and decide the writes
+waiting for you.
+
+It opens on **The Thoughtfield**. The older control-panel view is one click
+away: see [Classic view](#classic-view). This guide says what every part does
+and which `factory` command it stands in for. The security details are in
 [Dashboard](../../README.md#dashboard) in the README.
 
 ## Open it
 
-`factory start` opens the dashboard. To open
-it again later, while the factory is running:
+`factory start` opens the dashboard. To open it again later, while the factory
+is running:
 
 ```bash
 factory dashboard
@@ -21,7 +24,583 @@ you press Ctrl-C where `factory dashboard` runs. Ctrl-C closes the dashboard,
 not the factory: the agents keep working, and `factory dashboard` brings it
 back. `--no-open` only prints the link; `--port N` picks the port.
 
-## The layout
+The first time in a browser tab you get a short welcome. Press **Enter**. Sound
+starts then, and the day plays back in a few seconds. A reload in the same tab
+skips the welcome.
+
+**What it needs.** WebGL, which means WebGL 2 in any current browser. A real
+GPU is strongly recommended: with software rendering it runs at single-digit
+frames per second. Without WebGL the page says so and points you to Classic.
+
+**Which view opens.** The Thoughtfield is at `/field` and the classic view at
+`/classic`. Both are always served. To make the classic view the one that
+opens, add `ui = "classic"` to `dashboard.toml`
+([Your own look](#your-own-look-dashboardtoml)).
+
+## What you're looking at
+
+LOIS's bust stands in front of a spiral galaxy, above the dark curve of a
+world. The lit edge of that world is today.
+
+- **The galaxy** is today's work. See [Read the galaxy](#read-the-galaxy).
+- **The horizon** is today's clock, with the day's events on it as beads. See
+  [Rewind the day](#rewind-the-day).
+- **The caption**, under the horizon, is what LOIS is saying. A smaller detail
+  line under it carries names and numbers.
+- **The typed line and the question chips** are under the caption. See
+  [Ask the sky](#ask-the-sky) and
+  [Talk to the Coordinator](#talk-to-the-coordinator).
+- **The decision row** sits above the typed line. With a write waiting, it
+  shows that write. With nothing waiting, it shows the service keys. See
+  [Decide a held write](#decide-a-held-write).
+- **The work list**, lower left, shows how many jobs are running and how many
+  writes wait for you. Under that are up to four rows: waiting writes first
+  (two at most), then the active jobs, and one more row if jobs failed today.
+  Hover a row to light its stars. Press a job's row to open it, or a waiting
+  write's row to select it in the decision row.
+- **Today**, lower right, has the clock, today's spend, today's job count and
+  the top three roles by spend. A note appears here if the dispatch
+  bridge is down or a service is due.
+
+The top bar has the name of this dashboard and your project, then these keys:
+
+| Key | Does |
+|---|---|
+| Terminal (or `t`) | Opens Terminal 0, the Coordinator. Its lamp is lit while the Coordinator runs. |
+| Classic | Opens the [classic view](#classic-view). |
+| The book | Opens these docs in a tab of their own. They are the docs from your factory checkout when the dashboard started: restart `factory dashboard` to see edits. |
+| Sliders (or `,`) | Opens [Settings](#settings-the-configuration-in-force). |
+| `?` | Opens the key to the sky: what each mark means, the stars-to-the-dollar rate, and a link to tune the voice. |
+| Speaker (or `v`) | Sound and voice on or off. |
+| Corners | Fullscreen. |
+
+A start-up hint, such as a first login still to do or a missing GitHub token,
+shows as one line in the top bar. While a write waits, the tab's title shows
+the count, such as `(1) LOIS`.
+
+## Read the galaxy
+
+The galaxy is real data, from the dispatch audit, the lanes' transcripts and
+the gateway's audit. An action reaches the page only as a time and a kind, so
+what you see in the sky can't carry a command or a path. A job's short labels
+are the only words, and they are drawn as plain text.
+
+| What you see | What it means |
+|---|---|
+| A star | A share of a job's spend, placed at the time of one of its actions and coloured by that action's kind: reading, editing, running commands, requests or reviewing. |
+| A spiral arm | Orders laid end to end. Further out is later, longer is more work. The oldest work is at the core. |
+| A bright spark at an arm's tip | A running job. Brighter is a bigger model. |
+| A small spark and a cool sweep | A review running. |
+| A gold star | A write waiting for you. Its arm stops turning until you decide. |
+| A dark void | A failed, cancelled or interrupted job. |
+| Red at the galaxy's edge | A request the gateway blocked. |
+
+**An order** is all the jobs on one branch, the review included. A job with no
+branch stands alone.
+
+**How many stars.** A job's star count is its spend times a rate. LOIS picks
+the rate when the page loads, between 150 and 6,000 stars to the dollar, so
+that the day fills the sky. It picks again if the day outgrows the star limit.
+The `?` key shows the rate in use. The rate changes with the day's spend, so
+compare stars within a day, not between days.
+
+**Where the numbers are less exact:**
+
+- A job's cost is recorded when it ends. Until then its stars are an estimate
+  from how many actions it has taken.
+- A star is a share of spend, not one action. A job with many stars repeats
+  its actions' times and kinds, and a job with few skips some.
+- A job whose transcript has rolled away keeps its stars, spread over its run
+  time, in the usual mix for its role.
+- The page draws the newest 60 jobs of the day and at most 62,000 stars.
+
+**Hover** a star, a spark, a void or a gold star to see what it is: the kind
+and time, the job's task, its lane and model. **Click** one to open that job
+([Open a job](#open-a-job)). Clicking a gold star selects that write in the
+decision row instead.
+
+## Ask the sky
+
+Press a chip under the typed line, or type a question and press Enter:
+
+| Ask | The sky |
+|---|---|
+| What cost the most? | The stars pile up into towers, drawn to scale. LOIS names the share of today's spend. |
+| What's stuck? | Healthy work dims. Failed jobs, waiting writes and orders with changes requested stay lit. |
+| What have they been doing? | A crown, sorted by kind. LOIS says which kind was most common. |
+| When was it busiest? | A skyline over the hour marks. Each column is ten minutes. |
+
+To go back to the galaxy, press **Back to the galaxy** or Esc, or leave the
+page alone for 14 seconds. Moving the mouse restarts that count.
+
+This is keyword matching, not comprehension. See
+[what stays in the browser](#what-stays-in-the-browser).
+
+## Rewind the day
+
+Drag along the horizon. The galaxy rewinds to that moment, and the time and the
+nearest event show on the horizon. Let go and it re-forms up to now. Gold stars
+hide while you rewind.
+
+The beads on the horizon are the day's events: finished jobs, staged writes,
+approvals and declines, writes made, failures and blocked requests. Hover a bead
+for its words.
+Click a job's bead to open that job. Click a write's bead to select it in the
+decision row.
+
+## Open a job
+
+Clicking a star, a spark, a void, a job row or a job's bead opens the monitor
+for that lane. It has three tabs:
+
+- **Transcript:** the lane's full transcript, live while a job runs.
+- **Packet:** the job's review packet: the task, each branch's commits and
+  diffstat, the tests it ran, the broker calls it made, its cost and the role's
+  report. A running job has no packet yet, so this tab shows its task, model,
+  time so far and cost so far.
+- **Changes:** what the job changed, file by file. The patch is the one the
+  dispatch bridge made when it imported the branch, so it doesn't change if the
+  branch later moves. Characters that can hide what code does show as
+  `⟨U+XXXX⟩`.
+
+Opened on a job, the monitor starts on **Packet**. **Older** and **Newer** (or
+`[` and `]`) step through the lane's past jobs. Esc or **Close** closes it.
+
+Stands in for: `factory watch`, `factory logs <role>` and `factory packet
+<lane>`.
+
+## Talk to the Coordinator
+
+Type in the line and press Enter. Nothing is sent until you do.
+
+- A question the sky can answer stays in the browser.
+- Anything else goes to the Coordinator, exactly as if you had typed it in
+  Terminal 0. LOIS says "Sent to the Coordinator." The reply appears in
+  Terminal 0, not in the caption: press **Terminal** to read it.
+- If the Coordinator is off, your text stays in the line, nothing is sent, and
+  LOIS says so. Open **Terminal** at the top to power it on.
+
+There is no speech-to-text. Browser speech recognition sends audio to a cloud
+service, so it was dropped. You type.
+
+### What stays in the browser
+
+Only a short, plain question about the whole day stays in the browser: one
+sentence of at most seven words, starting with what, which, where, how, when or
+show, with no "in", "on", "for", "about", "with", "from" or "to", and containing
+one of these words:
+
+| Words | Answer |
+|---|---|
+| cost, spend, spent, expensive, money, budget | What cost the most |
+| stuck, wrong, failed, failing, broken, problem, trouble, attention | What's stuck |
+| busy, busiest, quiet, timeline | When it was busiest |
+| doing, actions, blocked, reading, kind of | What they've been doing |
+
+"Back", "home" or "back to the galaxy" alone also return to the galaxy.
+
+So "What failed?" draws the stuck view, while "Why did the auth job fail?", "What
+failed on the auth job?" and "Back out the auth change" all go to the Coordinator.
+
+Enter goes to whatever Terminal 0 is showing. If the Coordinator is waiting on a
+prompt of its own, your line answers that prompt, so open Terminal 0 when it may be.
+
+### Terminal 0
+
+Press **Terminal** in the top bar, or `t`, to open Terminal 0 as a panel. It is
+the Coordinator's live terminal, with the same POWER ON and RESUME keys, COPY
+prompt and messages as the classic view. See
+[Terminal 0: the Coordinator](#terminal-0-the-coordinator).
+
+It is built to read easily. The text is JetBrains Mono on a solid dark
+background, not the sky, and the world behind the panel dims. The Coordinator
+chooses many of its own colours, so the terminal lifts any text that would be
+hard to read against its background, including dimmed text. Box and block
+drawings keep their colours. To make the text larger, use your browser's zoom
+(Ctrl and +, or ⌘ and + on a Mac).
+
+The panel takes the keyboard when it opens, so `t` and Esc then go to the
+Coordinator. Press **Close** to close it, or click outside it first and press
+`t` or Esc.
+
+Opening the dashboard brings the Coordinator up once per page load, continuing
+its last session, if it is off and not open in `factory chat`.
+
+**The first time**, before there is a Claude login, the top bar says so. Open
+Terminal 0, press POWER ON if the screen is off, and type `/login`. Then press
+**Restart** in the decision row (its light blinks) and **Confirm**.
+
+Stands in for: `factory chat`.
+
+## Decide a held write
+
+With approvals on, every push and pull request a role makes waits for you
+([Enabling approvals](../../README.md#enabling-approvals)). When one arrives, a
+chime sounds, a gold star appears and LOIS says so. The decision row shows the
+write: its title, repo and branch, and when it expires. Hover the gold star for
+its commits and files. **◀ ▶** step through several.
+
+**To approve,** press and hold the gold light for 2.5 seconds. The ring fills,
+then Approve is pressed for you. Letting go early sends nothing. To use the
+keyboard, Tab to the light and hold Space or Enter.
+
+- The light is dark for 2.5 seconds after a new card arrives, so a card that
+  appears just before you press can't be approved unseen.
+- If the push is too big for the gateway to have stored all of it, the first
+  hold asks "Approve without seeing N files?". Hold the light again to approve
+  anyway, or press **Cancel**.
+
+**To decline,** press **Decline**. A box opens for your reason, which is
+required, and the agent reads it. Press Enter to decline. Esc backs out and
+clears the box.
+
+**A decision is final** for that card. The gateway makes an approved write (or
+files a declined one) within seconds. Pressing again here or with
+`factory approvals` never changes the first decision, and if two people decide
+at once only one decision is written. If a newer write replaced the card while
+you were reading, or it was decided elsewhere, the row says so and decides
+nothing.
+
+**You don't have to be quick.** Every held write is staged: the agent's call
+returned when the write was staged, and the agent has moved on. Nothing is sent
+until you approve. An undecided card expires after a day by default, and LOIS
+says so. Nothing is written then, and the agent's next call of that write stages
+a fresh card.
+
+**If an approved write fails**, LOIS says so and the event appears in red on the
+horizon. The Thoughtfield doesn't list the reason in full: open the
+[classic view](#write-gate-and-the-control-unit) or run `factory approvals`. A
+failed write is not retried: ask the agent to make the request again.
+
+Stands in for: `factory approvals`, `factory approvals approve <id>` and
+`factory approvals decline <id> --reason "..."`.
+
+### Inspect a push before approving it
+
+**Inspect** appears on a held push whose patch the broker stored. (The classic
+view's key reads INSPECT THE PUSH.) It fills the window with the push's commits:
+the commits and files on the left, the changes on the right.
+
+| Key | Does |
+|---|---|
+| `j` / `k` or ↓ / ↑ | Next / previous file |
+| `n` / `p` | Next / previous hunk |
+| Esc | Close the viewer |
+
+Characters that can hide what code does (bidi controls, invisible and control
+characters) appear as visible tokens such as `⟨U+202E⟩`, and the file gets a
+badge: BIDI, INVIS or CTRL. LONG marks lines over 2000 characters, which are
+cut; CRLF marks Windows line endings; BAD marks a part that couldn't be read.
+
+A big push may be truncated (the broker stores 256 KiB by default). The
+viewer then says "Cut short", lists the files it doesn't show, and ends with
+"✂ Cut here". Approve on a truncated push asks once more, "Approve without
+seeing N files?". The light goes dark for a second, then says **Hold again to
+approve anyway**, and only that second hold decides. (In the classic view the
+second press is **Confirm approve**.)
+
+You can decide inside the viewer too, and it works as it does on the decision
+row: hold the gold light for 2.5 seconds to approve, or type a reason and press
+**Decline**. Letting go early, moving off the light or the card changing sends
+nothing. If a newer write replaces the one on screen, the viewer loads its patch
+and keeps the light dark for a moment so you don't approve something you haven't
+seen. (In the classic view Approve and Decline are ordinary keys here: one press
+decides.)
+
+## Diagnose, restart or update the factory
+
+In the Thoughtfield these keys are in the decision row. With nothing held they
+are already showing. With a write held, press **Service**, and **Back to the
+decision** returns. In the classic view they are the control unit's SERVICE row.
+None runs on the first press.
+
+- **Diagnose** (DIAG in the classic view) runs `factory doctor`: it checks this
+  machine, its tools, Docker, the sandboxes and the gateway, and prints the fix
+  for each problem. It changes nothing, so it cancels no jobs, drops no held
+  writes and leaves Terminal 0 attached. Its report ends with "no problems
+  found" or "problems found"; fix what it lists, then press it again.
+- **Restart** runs `factory restart`. First the unit shows what it will cancel:
+  the running jobs and the held writes it drops. Staged writes are files the
+  gateway keeps, so they are listed as kept, not dropped.
+- **Update** runs `factory update --yes`. First the unit shows the incoming
+  commits, the sandboxes it will recreate and what each loses (from `factory
+  update --plan`), plus the jobs and held writes it drops.
+
+Only **Confirm** on that screen starts the command. Its output scrolls on the
+same screen, and **Log** shows the last run again later. One runs at a time.
+While Restart or Update runs, Terminal 0 hangs up, and it reattaches afterwards
+if it was attached and the command succeeded. If an update changed the dashboard
+itself, the unit asks you to reload the page (or to restart `factory dashboard`,
+if its server code changed).
+
+The command keeps running if you close the dashboard. It runs without a
+terminal, so anything that asks for a password fails instead of waiting. If an
+update needs `sudo` (to install tools, say), run `factory update` in a terminal.
+
+When a sandbox is out of date or a setting read at start-up has changed, the
+light on the key that applies it comes on, and a note appears under Today.
+
+Stands in for: `factory doctor`, `factory restart`, `factory update` and
+`factory update --plan`.
+
+## Settings: the configuration in force
+
+Press the sliders key in the top bar, or `,` (comma), or **Settings** among the
+service keys. In the classic view it is the big **SETTINGS** key under the
+nameplate, and the plate on the control unit's deck. (It was called SETUP in
+earlier versions.) Esc closes it.
+
+It shows the configuration the factory will use, read on this machine with the
+same code `factory start` uses. A line under the title says what you can do
+here: most of it is read-only (edit the files as [Make it
+yours](04-customize.md) describes), and two things can be changed, a role's
+tuning ([below](#tuning-a-role-from-settings)) and the [project
+notes](#the-notes-editor). Every change is read at `factory start`, so it
+applies after **RESTART**, not live. The screen has four tabs, one section at a
+time, and refreshes every few seconds while open, except while you are in the
+middle of turning a knob or editing the notes. Switching tabs keeps your
+unsent knob changes.
+
+- **Roles** tab. One block per role: whether it is on (an optional role is on only
+  if it is listed in `enabled-roles`), and `MODEL`, `MODELS`, `EFFORT`,
+  `LANES`, `MAX_SESSION_TOKENS`, `MAX_TURNS` and `MAX_JOB_SECONDS`, each
+  marked **REPO** (from the role's own `role.conf`) or **LOCAL** (your
+  override in `roles/<role>.conf`). A LOCAL line also shows the value it
+  replaced. `WORKSPACE`, `TEMPLATE` and `BROKER_TOOLS` are marked **FIXED**:
+  an override can't change them, and a block says so if your override file
+  tries.
+  Also on this tab: the **optional roles** and the names in `enabled-roles` (a name that matches no
+  role is flagged).
+- **Gateway** tab. The held tools and their expiry (`[approvals]`), the allowed
+  repos (`[git].repos`), the GitLab address if one is set (without any user
+  name, password or query), each marked REPO or LOCAL by the file it came
+  from, and the Coordinator's broker tools.
+- **Project notes** tab. The notes files for the project the dashboard is bound to,
+  and for each running role its instructions plus the notes against the
+  20,000-character limit. A role over it is flagged: the dispatch
+  bridge refuses that role's tasks. **Edit notes** opens the
+  [notes editor](#the-notes-editor).
+- **Dashboard look** tab. Whether `dashboard.toml` was read at start-up, or the
+  reason it was ignored. It does not show the values; the page itself does.
+
+Each line ends with the command that applies a change to it, **START** or
+**UPDATE**, as in the table in [Make it yours](04-customize.md#which-command-applies-a-change).
+Tokens, passwords and other credentials are never shown, and it never runs a
+command. If the files can't be read the screen says it is unavailable.
+
+### Tuning a role from Settings
+
+On the Roles tab, each role block has a small rack of controls for the keys people change most.
+They write the role's local override (`roles/<role>.conf` in the config
+folder), never the repo's `role.conf`:
+
+- **Lanes**: a dial with eight detents (1 to 8). Click it to turn it on, or use
+  the arrow keys on it, or the ◀ ▶ keys beside it.
+- **Model**: a selector over the role's `MODELS` list (plus the model set now).
+- **Effort**: a switch for `low`, `medium`, `high` or `xhigh`.
+- **Session tokens**, **Turns**, **Job seconds**: numbers (digits only; `0` is
+  no cap or no limit, as in [Tune a role](04-customize.md#tune-a-role)).
+
+A control that has a **LOCAL** value starts there; one that follows the repo
+shows the repo's value (a number field is empty, with the repo's value as its
+hint). Choosing **Role default**, or emptying a number field, or pressing **↺**
+removes your override for that key, so the repo's value applies again. A row you
+changed is marked `→ will be x` or `→ back to the repo value`.
+
+Nothing is written when you turn a knob. **PREPARE** (one per role, lit when
+something changed) sends only the changed keys and shows the result: the
+override file's path, and the file's change as `+` and `-`
+lines, as the host computed it. **CONFIRM APPLY** stays dark for 2.5 seconds
+after the diff appears, so a diff is never confirmed unread, and the check
+expires after two minutes. **CANCEL** (or Esc) goes back to the knobs with your
+changes kept; nothing was written. If the file changed on disk after the
+check, the host refuses to write over it: the screen says so, and you prepare
+again.
+
+When it is written, the screen says when it takes effect. **Saved. Restart to
+apply.** means press RESTART: these keys are read at `factory start`
+(see the table in [Make it yours](04-customize.md#which-command-applies-a-change)),
+and RESTART runs `factory restart`, which cancels running jobs, so its usual
+check shows first. Every change here waits for a restart: the dispatch bridge
+reads only the copy `factory start` took, so nothing applies live. While the
+write is in flight CANCEL and Esc are dark, so the note always shows; the knobs
+then show the values just written. In demo mode PREPARE answers
+**Demo: changes are off** and writes nothing. Broker policy, hosts, kits and
+credentials have no knobs here: they stay read-only.
+
+### The notes editor
+
+**Edit notes** (on the Project notes tab of Settings) opens an editor for the project's
+notes files, the ones [Make it yours](04-customize.md#per-project-notes)
+describes. Like the tuning knobs, it is a write from Settings, after a diff and a confirm.
+It appears once the factory is bound to a project.
+
+- **Tabs.** **SHARED** is `projects/<folder>.md`, which every role gets; each
+  other tab is one role's own file, `projects/<folder>.<role>.md`. Opening a
+  tab reads the file as it is on disk (a file that doesn't exist yet is an
+  empty box, and saving creates it). Switching tabs with unsaved changes asks
+  first: keep editing, or discard.
+- **Gauges.** One line per role: that role's instructions plus the shared notes
+  plus its own notes, against the 20,000-character limit, counted as the
+  dispatch bridge counts it (headings included). It turns amber from 90% and
+  red over the limit, and updates as you type. **SAVE** stays dark while any
+  role the file reaches would be over the limit and higher than it is now,
+  because the bridge would refuse that role's tasks. A change that shortens a
+  role that is already over is allowed, since that is the way back under. The
+  box takes at most 20,000 characters, counted as the host counts them (an
+  emoji is one character).
+- **Saving takes two steps.** **SAVE** shows what would change: the file's
+  path, the lines added and removed as a diff, and each role's new total.
+  Nothing is written yet. **CONFIRM** stays dark for 2.5 seconds, so a press
+  can't land on a screen you haven't read, and then writes the file.
+  **CANCEL** drops the pending save (while the write itself is in flight CANCEL
+  and Esc are dark). A confirmation not used within two
+  minutes expires.
+- **After a save** the editor says "Saved. Restart to apply.":
+  the new notes reach the roles when the factory next starts, so the Restart
+  key's light comes on. Press it (or run `factory start`).
+- **A file that changed meanwhile.** If the file changed on disk between SAVE
+  and CONFIRM (you edited it in a terminal, say), nothing is written and the
+  editor says so. **RELOAD** reads the file again; **KEEP MY TEXT** goes back
+  to your edit.
+- **Demo mode** shows the editor but writes nothing: SAVE answers
+  "Demo: changes are off".
+
+The text is drawn with `textContent` and the diff's lines get their colour from
+a fixed list, so nothing in a notes file can act on the page. The page holds no
+key of its own: the control unit sends every request, and the file is written
+by the host only after the token SAVE returned.
+
+## Voice
+
+Voice is optional. Without it LOIS shows captions, and nothing else changes. To
+turn it on:
+
+```bash
+factory voice build     # first time only: several GB, takes a while
+factory voice start     # or: factory voice start --build
+factory voice status    # running or not, and the device
+factory voice test      # speaks a test passage, silently: does it work, and keep up here?
+factory voice stop      # stops and removes the container, keeps the image
+```
+
+It is a local Kokoro speech service in one Docker container, on
+`127.0.0.1:8873`. It needs no network at run time, and no text or audio leaves
+this machine. The model takes a few seconds to load after `start`, and `status`
+says when it answers. The page checks for it every 30 seconds, or when you
+reload.
+
+- It doesn't start with `factory start`, and it doesn't come back after a
+  reboot: run `factory voice start` again.
+- On Linux x86_64 the image is large, about 12 GB on disk, even on a machine with
+  no GPU. It uses the GPU when `nvidia-smi` works there.
+- On an Apple silicon Mac, `factory voice build` makes a much smaller image that
+  runs on the CPU, since Docker on a Mac can't reach the GPU. Run
+  `factory voice test` to see whether it keeps up on your Mac. If it doesn't, LOIS
+  still speaks, with pauses between sentences.
+- English only.
+
+**What LOIS says.** Fixed sentences only, with numbers, times and lane names
+filled in: "A push is waiting for you. Its arm has stopped until you decide."
+Nothing an agent wrote is ever spoken. Names such as a branch or a repo go in
+the small detail line, as text.
+
+**Other sound.** There is also a quiet low tone, and the chime when a write
+starts waiting. These play without the voice service.
+
+**To mute,** press `v` or the speaker key. The browser remembers it.
+
+**To tune the voice,** open **Tune the voice** in the `?` key, or `/voice`. It
+has sliders for speed, pitch, reverb and the rest, and a box to try words. The
+settings are kept in this browser.
+
+More: `voice/README.md` in the factory checkout.
+
+## Your own look: dashboard.toml
+
+`dashboard.toml` in your config folder (`~/.config/ai-code-factory/`; `factory
+config init` writes a commented example) sets what the dashboard opens on and
+how it looks. The dashboard reads it once when it starts, so restart `factory
+dashboard` to see a change. Every key is optional:
+
+```toml
+ui = "field"                            # the view that opens: "field" (the Thoughtfield) or "classic"
+plant = "LOIS WORKS"                    # the nameplate, up to 24 characters
+shifts = ["day", "swing", "night"]      # the floor's three shift names, up to 16 characters each
+crt = 3                                 # the CRT knob's starting level, 0 to 10
+sound = false                           # whether the SOUND key starts on
+[roles.colors]
+designer = "#d08cff"                    # a role's colour on the floor, its lane module and the spend rows
+```
+
+- In the Thoughtfield only `ui` and `plant` do anything. The others set up the
+  classic view.
+- `crt` and `sound` are only the starting values. Once you turn the knob or press
+  SOUND, this browser remembers your choice and the file no longer changes it
+  (the knob's reset goes to the file's level).
+- A role without a colour keeps its own: a built-in role its fixed one, any
+  other role a colour chosen from its name. Role names are the usual
+  lowercase letters, digits and dashes.
+- The nameplate, the floor plate and the shift names are plain text, one line
+  of printable ASCII, in `"double"` or `'single'` quotes without escapes. A
+  colour must be `#rrggbb`. `ui` takes double quotes only. Values are one per
+  line, the `shifts` list too.
+- Nothing in it is run, and it cannot touch the broker, a role or a permission.
+- It is strict. An unknown key or table, a bad colour, a number out of range,
+  a key set twice, a file over 16 KiB, a symlink or text that is not UTF-8
+  makes the dashboard ignore the whole file, show the defaults, print a
+  warning naming the file, line and key, and show the same reason on the
+  Settings screen. The dashboard still starts. With no file you get the defaults.
+  `--demo` never reads your file.
+
+## Keys
+
+These work when the focus is on the page. Inside the typed line, the decision
+row or Terminal 0, keys go there instead: click the sky first.
+
+| Where | Key | Does |
+|---|---|---|
+| The page | `t` | Terminal 0 open or closed |
+| The page | `v` | Sound and voice on or off |
+| The page | `,` | Open Settings |
+| The page | Esc | Close Terminal 0, else back to the galaxy, else close the `?` key |
+| The monitor | `[` / `]` | Older / newer job |
+| The monitor | Esc | Close |
+| The gold light | Space, Enter (hold) | Hold to approve |
+| The reason box | Enter / Esc | Decline / back out |
+| The write's details | ← → | Previous / next held write |
+| Inspect | `j` `k` ↓ ↑ | Next / previous file |
+| Inspect | `n` / `p` | Next / previous hunk |
+| Inspect, Settings | Esc | Close |
+| Settings tabs | ← → | Previous / next tab |
+
+## What only the classic view has
+
+The Thoughtfield doesn't have these. Open **Classic** in the top bar for them:
+
+- the [factory floor](#the-factory-floor);
+- the [shift budget](#spend-and-the-event-printer);
+- browser notifications and sound cues ([Attention](#attention), [Sound](#sound));
+- the factory radio;
+- the full [event printer](#spend-and-the-event-printer), and spend per hour;
+- the [list of the gateway's deferred writes](#staged-writes-and-their-outcomes),
+  with a failed write's reason;
+- lane modules with live transcript tails, digit keys for lanes, and the shift
+  briefing ([Lanes](#lanes));
+- the header lamps and the knobs under Terminal 0.
+
+## Classic view
+
+The classic view is the FC-1984 control panel, unchanged. Press **Classic** in
+the top bar, or open `/classic`. Its **Thoughtfield** key goes back. To open on
+it every time, set `ui = "classic"` in
+[`dashboard.toml`](#your-own-look-dashboardtoml).
+
+Terminal 0, the control unit, Settings and the lane data are the same in both
+views. The sections below are written for the classic layout, and Terminal 0's
+applies to the Thoughtfield's panel too, except that the panel has no knobs.
+
+### The layout
 
 ```text
 ┌───────────────────── header: lamps · spend today · jobs · clock · MANUAL ───────────────────────┐
@@ -38,7 +617,7 @@ On a window narrower than about 1280 pixels the panel unfolds into a column
 you scroll: the Coordinator and the lanes side by side, and the bottom row
 underneath them.
 
-## The header
+### The header
 
 - **Lamps:** LINK is green while the page can reach the dashboard (red and
   blinking when it can't). BRIDGE is green while the dispatch bridge runs,
@@ -54,6 +633,7 @@ underneath them.
   factory recorded fingerprints isn't named; `factory start` still warns.
 - **Readouts:** today's spend in dollars, today's job count, the jobs running
   now, and the clock.
+- **Thoughtfield** goes back to the default view.
 - **MANUAL** opens these docs in a tab of their own. The **?** on each module
   opens its part of this guide, in the same tab. The docs are the ones in your
   factory checkout when the dashboard started; restart `factory dashboard` to
@@ -61,9 +641,10 @@ underneath them.
   its theme button, top right of the page, is the same three-way
   system/light/dark toggle.
 
-## Terminal 0: the Coordinator
+### Terminal 0: the Coordinator
 
-The big screen on the left is the Coordinator itself, live. Opening the page
+The big screen on the left of the classic view, and the panel `t` opens in the
+Thoughtfield, is the Coordinator itself, live. Opening the page
 brings the Coordinator up once per load, continuing its last session (if it is
 off and not open in `factory chat`); then type to it as you would in any
 terminal. Later, when the screen is off, **RESUME** continues the last session
@@ -97,18 +678,18 @@ and **POWER ON** starts a fresh one.
 
 - **The COPY prompt.** When the Coordinator copies something to your
   clipboard (Claude Code sends its copies through the terminal), a strip at the bottom
-  of the screen says "COORDINATOR COPIED N CHARACTERS · PRESS TO COPY" and
+  of the screen says "Coordinator copied N characters. Press to copy." and
   shows the start of the text. Press **COPY** to put it on your clipboard, or
   **DISMISS**. This copies the exact text, without the screen's line breaks or
   padding, so prefer it for commands. Nothing reaches your clipboard until you
   press COPY, because the text comes from an agent; check the preview first.
   COPY stays dark for 2.5 seconds after the text appears or changes, so a
   newer copy can't slip in just before your click. A
-  newer copy replaces the one waiting, and "⚠ CONTAINS HIDDEN CHARACTERS" means
+  newer copy replaces the one waiting, and "⚠ Contains hidden characters" means
   the preview shows invisible or right-to-left characters as `⟨U+XXXX⟩`. If
   the browser blocks the copy, the prompt selects the text in a box and asks
   you to press Ctrl+C (⌘C on a Mac). A copy over 64 KiB can't be taken: the
-  strip says "COORDINATOR COPIED ABOUT N KiB · TOO LARGE TO COPY (LIMIT 64 KiB)",
+  strip says "Coordinator copied about N KiB. Too large to copy (limit 64 KiB).",
   with DISMISS only.
 - **Select it on the screen.** The Coordinator takes the mouse, so a plain
   drag selects nothing. Hold **Shift** while you drag on Windows (WSL) and
@@ -123,7 +704,7 @@ and **POWER ON** starts a fresh one.
 The dashboard never reads your clipboard. Pasting into Terminal 0 works as in
 any terminal.
 
-**FIRST SHIFT.** A line above the screen tells you what `factory start` would
+**FIRST SHIFT.** A line above the screen (in the Thoughtfield, the top bar) tells you what `factory start` would
 print in the terminal you started it from, since you're looking at the browser:
 
 - No Claude login stored yet: "FIRST SHIFT · 1. POWER ON and type /login · 2.
@@ -147,13 +728,13 @@ The screen tells you when it can't attach:
 
 | The screen says | What to do |
 |---|---|
-| OPEN ELSEWHERE | The Coordinator is open in `factory chat`. Close it there, then POWER ON or RESUME. |
-| NO COORDINATOR | Its sandbox doesn't exist yet: run `factory start`. |
-| NO SBX | `sbx` couldn't run: run `factory doctor`. |
-| SERVICE | A RESTART or UPDATE is running. The Coordinator comes back when it's done. |
-| NO SIGNAL | The page lost the dashboard. If `factory dashboard` stopped, run it again and open the new link it prints. |
+| Open elsewhere | The Coordinator is open in `factory chat`. Close it there, then POWER ON or RESUME. |
+| No Coordinator yet | Its sandbox doesn't exist yet: run `factory start`. |
+| sbx can't run | `sbx` couldn't run: run `factory doctor`. |
+| Restarting or updating | A RESTART or UPDATE is running. The Coordinator comes back when it's done. |
+| Lost the dashboard | The page lost the dashboard. If `factory dashboard` stopped, run it again and open the new link it prints. |
 
-**The knobs** under the screen change only how it looks, in this browser:
+**The knobs** under the screen, in the classic view only, change only how it looks, in this browser:
 BRIGHT and CONTRAST; V-HOLD, which makes the picture roll when you turn it off
 centre; and CRT, from 0 (a flat screen) to 10 (a full tube with scanlines and
 glow; it starts at 3). Drag a knob, scroll on it or use the arrow keys;
@@ -164,7 +745,7 @@ double-click or Home resets it.
 
 Stands in for: `factory chat`.
 
-## Lanes
+### Lanes
 
 Every role has one lane per job it can run at once: a developer with three
 lanes has `developer`, `developer-lane2` and `developer-lane3`. As in `factory
@@ -197,7 +778,7 @@ this machine, changes nothing, and refreshes every few seconds:
   picked from a short fixed list (the first is the slugify task from the
   [first session](01-first-session.md#6-give-the-coordinator-a-small-first-task)).
   It changes once a day, and nothing sends it for you.
-- **Keys.** The keys of the [Keys](#keys) table.
+- **Keys.** The keys of the [Classic keys](#classic-keys) table.
 
 If the configuration can't be read, only the first line of STANDBY shows.
 
@@ -266,7 +847,7 @@ the transcript.
 Stands in for: `factory watch`, `factory logs <role>` and `factory packet
 <lane>`.
 
-## The factory floor
+### The factory floor
 
 **FLOOR** in the Lanes header (or **F**) swaps the lane modules for the
 factory floor: the same lanes drawn as one more module of the rack, a brushed
@@ -360,7 +941,7 @@ tooltip has the whole line): the stations still show their state, branch
 crates still sit on their consoles and confiscated crates appear in the field
 without travelling there. At most 14 crates are in flight at once.
 
-### Floor events
+#### Floor events
 
 For add-ons that react to the floor (the sound layer below, a shift ticket), the
 page announces what the floor sees as three events on `document`. The floor ships
@@ -398,7 +979,7 @@ document.addEventListener("factory-floor:confiscated", e => {
 });
 ```
 
-### Sound
+#### Sound
 
 Off by default (`sound = true` in [your `dashboard.toml`](#your-own-look-dashboardtoml) starts it on for a browser that has made no choice). The **SOUND** key next to FLOOR in the Lanes header (or `s`)
 turns on a short cue for each floor event, so you can hear the factory from
@@ -431,7 +1012,7 @@ key appears next to SOUND while it plays: press it to turn the radio off. The
 choice is remembered in this browser, and, as with sound, a page that reloads
 with the radio on stays silent until your first click or key press.
 
-### Attention
+#### Attention
 
 Jobs run for minutes, so the dashboard tab is often behind another window. Three
 signals say when something needs you, all worked out in the page from the state
@@ -458,7 +1039,7 @@ it already polls (no request, nothing sent anywhere):
 `factory dashboard --demo` shows a held write at once, so the title badge is
 there to see.
 
-## Write gate and the control unit
+### Write gate and the control unit
 
 Bottom right. With approvals on, every push and pull request a role makes
 waits here for you ([Enabling approvals](../../README.md#enabling-approvals)).
@@ -475,7 +1056,7 @@ commits and files, and the time left. **◀ ▶** step through several staged
 writes. (With the control unit hidden, the display shows the first staged
 write instead, and the list of the gateway's writes appears under it.)
 
-### Staged writes and their outcomes
+#### Staged writes and their outcomes
 
 Every held write is **staged**: the agent is told it is waiting for approval
 and moves on at once, so the lane doesn't show HELD for it. The card stays on
@@ -496,7 +1077,7 @@ event printer shows STAGED, WRITTEN and FAILED lines for the same steps. This
 list only displays; it has no keys. The text in it comes from the gateway's
 state files and is shown as plain text.
 
-### Decide a held write
+#### Decide on the control unit
 
 - **APPROVE** lets it through. One press decides.
 - **DECLINE** refuses it. Type a reason first: it's required, and the
@@ -518,234 +1099,9 @@ nothing. Check the new card and press again.
 > **Note:** A card names the role, not the lane, and no card marks a lane
 > HELD: the agent's call returned when the write was staged.
 
-### Inspect a push before approving it
+To read a push's patch first, see [Inspect a push before approving it](#inspect-a-push-before-approving-it). For the SERVICE keys, see [Diagnose, restart or update the factory](#diagnose-restart-or-update-the-factory).
 
-**INSPECT THE PUSH** appears on a held push whose patch the broker stored. It
-fills the window with the push's commits: the commits and files on the left,
-the changes on the right.
-
-| Key | Does |
-|---|---|
-| `j` / `k` or ↓ / ↑ | Next / previous file |
-| `n` / `p` | Next / previous hunk |
-| Esc | Close the viewer |
-
-Characters that can hide what code does (bidi controls, invisible and control
-characters) appear as visible tokens such as `⟨U+202E⟩`, and the file gets a
-badge: BIDI, INVIS or CTRL. LONG marks lines over 2000 characters, which are
-cut; CRLF marks Windows line endings; BAD marks a part that couldn't be read.
-
-A big push may be truncated (the broker stores 256 KiB by default). The
-viewer then says TRUNCATED, lists the files it doesn't show, and ends with
-"✂ CUT HERE". APPROVE on a truncated push asks once more, "Approve without
-seeing N files?", and decides only on **CONFIRM APPROVE**, which lights after
-a second.
-
-APPROVE and DECLINE work inside the viewer too. If a newer write replaces the
-one on screen, the viewer loads its patch and holds the keys for a moment so
-you don't approve something you haven't seen.
-
-Stands in for: `factory approvals`, `factory approvals approve <id>` and
-`factory approvals decline <id> --reason "..."`.
-
-### Diagnose, restart or update the factory
-
-The **SERVICE** row has three keys. None runs on the first press.
-
-- **DIAG** runs `factory doctor`: it checks this machine, its tools, Docker,
-  the sandboxes and the gateway, and prints the fix for each problem. It
-  changes nothing, so it cancels no jobs, drops no held writes and leaves
-  Terminal 0 attached. Its report ends with NO PROBLEMS FOUND or PROBLEMS
-  FOUND; fix what it lists, then press DIAG again.
-
-- **RESTART** runs `factory restart`. First the unit shows what it will
-  cancel: the running jobs and the held writes it drops. Staged writes are
-  files the gateway keeps, so they are listed as kept, not dropped.
-- **UPDATE** runs `factory update --yes`. First the unit shows the incoming
-  commits, the sandboxes it will recreate and what each loses (from `factory
-  update --plan`), plus the jobs and held writes it drops.
-
-Only **CONFIRM** on that screen starts the command. Its output scrolls on the
-same screen, and **LOG** shows the last run again later. One runs at a time.
-While RESTART or UPDATE runs, Terminal 0 hangs up, and it reattaches afterwards if it was attached and the
-command succeeded. If an update changed the dashboard itself, the unit asks
-you to reload the page (or to restart `factory dashboard`, if its server code
-changed).
-
-The command keeps running if you close the dashboard. It runs without a
-terminal, so anything that asks for a password fails instead of waiting. If
-an update needs `sudo` (to install tools, say), run `factory update` in a
-terminal.
-
-Stands in for: `factory doctor`, `factory restart`, `factory update` and
-`factory update --plan`.
-
-### Your own look: dashboard.toml
-
-`dashboard.toml` in your config folder (`~/.config/ai-code-factory/`; `factory
-config init` writes a commented example) sets how the page looks. The
-dashboard reads it once when it starts, so restart `factory dashboard` to see a
-change. Every key is optional:
-
-```toml
-plant = "LOIS WORKS"                    # the header's nameplate and the floor's plate, up to 24 characters
-shifts = ["day", "swing", "night"]      # the floor's three shift names, up to 16 characters each
-crt = 3                                 # the CRT knob's starting level, 0 to 10
-sound = false                           # whether the SOUND key starts on
-[roles.colors]
-designer = "#d08cff"                    # a role's colour on the floor, its lane module and the spend rows
-```
-
-- `crt` and `sound` are only the starting values. Once you turn the knob or press
-  SOUND, this browser remembers your choice and the file no longer changes it
-  (the knob's reset goes to the file's level).
-- A role without a colour keeps its own: a built-in role its fixed one, any
-  other role a colour chosen from its name. Role names are the usual
-  lowercase letters, digits and dashes.
-- The nameplate, the floor plate and the shift names are plain text, one line
-  of printable ASCII, in `"double"` or `'single'` quotes without escapes. A
-  colour must be `#rrggbb`. Values are one per line, the `shifts` list too.
-- Nothing in it is run, and it cannot touch the broker, a role or a permission.
-- It is strict. An unknown key or table, a bad colour, a number out of range,
-  a key set twice, a file over 16 KiB, a symlink or text that is not UTF-8
-  makes the dashboard ignore the whole file, show the defaults, print a
-  warning naming the file, line and key, and show the same reason on the
-  Settings screen. The dashboard still starts. With no file you get the defaults.
-  `--demo` never reads your file.
-
-### Settings: the configuration in force
-
-**SETTINGS** was called SETUP in earlier versions of the dashboard. It is the
-big key at the left of the header, under the nameplate (on a phone it fills the
-top row), and the keyboard shortcut `,` (comma) opens it from anywhere on the
-page, as it does from the control unit's deck. Esc closes it. The first time
-you open the dashboard in a browser the key's lamp pulses; it stops for good
-once you have opened Settings once (the browser remembers that in
-`localStorage`, nothing else). The small **Settings** plate on the control
-unit's deck opens the same screen.
-
-It shows the configuration the factory will use, read on this machine with the
-same code `factory start` uses. A line under the title says what you can do
-here: most of it is read-only (edit the files as [Make it
-yours](04-customize.md) describes), and two things can be changed, a role's
-tuning ([below](#tuning-a-role-from-settings)) and the [project
-notes](#the-notes-editor). Every change is read at `factory start`, so it
-applies after **RESTART**, not live. The screen has four tabs, one section at a
-time, and refreshes every few seconds while open, except while you are in the
-middle of turning a knob or editing the notes. Switching tabs keeps your
-unsent knob changes.
-
-- **Roles** tab. One block per role: whether it is on (an optional role is on only
-  if it is listed in `enabled-roles`), and `MODEL`, `MODELS`, `EFFORT`,
-  `LANES`, `MAX_SESSION_TOKENS`, `MAX_TURNS` and `MAX_JOB_SECONDS`, each
-  marked **REPO** (from the role's own `role.conf`) or **LOCAL** (your
-  override in `roles/<role>.conf`). A LOCAL line also shows the value it
-  replaced. `WORKSPACE`, `TEMPLATE` and `BROKER_TOOLS` are marked **FIXED**:
-  an override can't change them, and a block says so if your override file
-  tries.
-  Also on this tab: the **optional roles** and the names in `enabled-roles` (a name that matches no
-  role is flagged).
-- **Gateway** tab. The held tools and their expiry (`[approvals]`), the allowed
-  repos (`[git].repos`), the GitLab address if one is set (without any user
-  name, password or query), each marked REPO or LOCAL by the file it came
-  from, and the Coordinator's broker tools.
-- **Project notes** tab. The notes files for the project the dashboard is bound to,
-  and for each running role its instructions plus the notes against the
-  20,000-character limit. A role over it is flagged: the dispatch
-  bridge refuses that role's tasks. **Edit notes** opens the
-  [notes editor](#the-notes-editor).
-- **Dashboard look** tab. Whether `dashboard.toml` was read at start-up, or the
-  reason it was ignored. It does not show the values; the page itself does.
-
-Each line ends with the command that applies a change to it, **START** or
-**UPDATE**, as in the table in [Make it yours](04-customize.md#which-command-applies-a-change).
-Tokens, passwords and other credentials are never shown, and it never runs a
-command. If the files can't be read the screen says it is unavailable.
-
-#### Tuning a role from Settings
-
-On the Roles tab, each role block has a small rack of controls for the keys people change most.
-They write the role's local override (`roles/<role>.conf` in the config
-folder), never the repo's `role.conf`:
-
-- **Lanes**: a dial with eight detents (1 to 8). Click it to turn it on, or use
-  the arrow keys on it, or the ◀ ▶ keys beside it.
-- **Model**: a selector over the role's `MODELS` list (plus the model set now).
-- **Effort**: a switch for `low`, `medium`, `high` or `xhigh`.
-- **Session tokens**, **Turns**, **Job seconds**: numbers (digits only; `0` is
-  no cap or no limit, as in [Tune a role](04-customize.md#tune-a-role)).
-
-A control that has a **LOCAL** value starts there; one that follows the repo
-shows the repo's value (a number field is empty, with the repo's value as its
-hint). Choosing **Role default**, or emptying a number field, or pressing **↺**
-removes your override for that key, so the repo's value applies again. A row you
-changed is marked `→ SET x` or `→ UNSET`.
-
-Nothing is written when you turn a knob. **PREPARE** (one per role, lit when
-something changed) sends only the changed keys and shows the result on the
-amber tube: the override file's path, and the file's change as `+` and `-`
-lines, as the host computed it. **CONFIRM APPLY** stays dark for 2.5 seconds
-after the diff appears, so a diff is never confirmed unread, and the check
-expires after two minutes. **CANCEL** (or Esc) goes back to the knobs with your
-changes kept; nothing was written. If the file changed on disk after the
-check, the host refuses to write over it: the screen says so, and you prepare
-again.
-
-When it is written, the screen says when it takes effect. **SERVICE DUE ·
-RESTART TO APPLY** means press RESTART: these keys are read at `factory start`
-(see the table in [Make it yours](04-customize.md#which-command-applies-a-change)),
-and RESTART runs `factory restart`, which cancels running jobs, so its usual
-check shows first. Every change here waits for a restart: the dispatch bridge
-reads only the copy `factory start` took, so nothing applies live. While the
-write is in flight CANCEL and Esc are dark, so the note always shows; the knobs
-then show the values just written. In demo mode PREPARE answers
-**DEMO · CHANGES DISABLED** and writes nothing. Broker policy, hosts, kits and
-credentials have no knobs here: they stay read-only.
-
-### The notes editor
-
-**Edit notes** (on the Project notes tab of Settings) opens an editor for the project's
-notes files, the ones [Make it yours](04-customize.md#per-project-notes)
-describes. Like the tuning knobs, it is a write from Settings, after a diff and a confirm.
-It appears once the factory is bound to a project.
-
-- **Tabs.** **SHARED** is `projects/<folder>.md`, which every role gets; each
-  other tab is one role's own file, `projects/<folder>.<role>.md`. Opening a
-  tab reads the file as it is on disk (a file that doesn't exist yet is an
-  empty box, and saving creates it). Switching tabs with unsaved changes asks
-  first: keep editing, or discard.
-- **Gauges.** One line per role: that role's instructions plus the shared notes
-  plus its own notes, against the 20,000-character limit, counted as the
-  dispatch bridge counts it (headings included). It turns amber from 90% and
-  red over the limit, and updates as you type. **SAVE** stays dark while any
-  role the file reaches would be over the limit and higher than it is now,
-  because the bridge would refuse that role's tasks. A change that shortens a
-  role that is already over is allowed, since that is the way back under. The
-  box takes at most 20,000 characters, counted as the host counts them (an
-  emoji is one character).
-- **Saving takes two steps.** **SAVE** shows what would change: the file's
-  path, the lines added and removed as a diff, and each role's new total.
-  Nothing is written yet. **CONFIRM** stays dark for 2.5 seconds, so a press
-  can't land on a screen you haven't read, and then writes the file.
-  **CANCEL** drops the pending save (while the write itself is in flight CANCEL
-  and Esc are dark). A confirmation not used within two
-  minutes expires.
-- **After a save** the editor says "SAVED · SERVICE DUE · RESTART TO APPLY":
-  the new notes reach the roles when the factory next starts, so the SERVICE
-  lamp shows RESTART due. Press **RESTART** (or run `factory start`).
-- **A file that changed meanwhile.** If the file changed on disk between SAVE
-  and CONFIRM (you edited it in a terminal, say), nothing is written and the
-  editor says so. **RELOAD** reads the file again; **KEEP MY TEXT** goes back
-  to your edit.
-- **Demo mode** shows the editor but writes nothing: SAVE answers
-  "DEMO · CHANGES DISABLED".
-
-The text is drawn with `textContent` and the diff's lines get their colour from
-a fixed list, so nothing in a notes file can act on the page. The page holds no
-key of its own: the control unit sends every request, and the file is written
-by the host only after the token SAVE returned.
-
-## Spend and the event printer
+### Spend and the event printer
 
 - **Spend / hour:** today's cost as a bar per hour since midnight, then per
   role, with today's job count.
@@ -787,7 +1143,7 @@ For the full report, run `factory analytics` (or `factory analytics --html`).
 Stands in for: part of `factory analytics` and of `factory logs broker` /
 `factory logs dispatch`.
 
-## Keys
+### Classic keys
 
 | Where | Key | Does |
 |---|---|---|
@@ -817,11 +1173,12 @@ diagnosing, restarting or updating. Run these in a terminal:
 | Command | Why it isn't on the dashboard |
 |---|---|
 | `factory start`, `factory stop` | Starting the factory on a project, and stopping it. |
-| `factory status` | The full status (the lamps give only the summary; DIAG runs the health check). |
+| `factory status` | The full status. Diagnose runs the health check. |
 | `factory secret ...` | Credentials never go through the browser. |
 | `factory role new`, `factory roles` | Roles and their kits are part of the security boundary. |
 | `factory reset`, `factory setup` | They remove sandboxes or install tools, and may ask for a password. |
 | `factory analytics`, `factory packet --list` | The full cost report and older review packets. |
+| `factory voice ...` | The voice service is a Docker container of its own. |
 
 ## Demo mode
 
@@ -832,12 +1189,13 @@ without running agents:
 factory dashboard --demo
 ```
 
-It needs no `sbx`, broker, Coordinator or `factory setup`. It shows made-up
-data (`example/app`, a few lanes, one held push, a denied broker call and a
-branch) taken from `scripts/dashboard-demo/`, with times counted from the
-moment you start it, and adds a broker call 8 seconds after the start and then
-every 20 seconds, so the factory floor has crates to move. Open the link it prints, press the floor key and
-you can see a held crate waiting at the gate and a denied one landing in the derez field.
+Nothing here acts. It needs no `sbx`, broker, Coordinator or `factory setup`. It
+shows made-up data (`example/app`, a few lanes, one held push, a denied broker
+call and a branch) taken from `scripts/dashboard-demo/`, with times counted from
+the moment you start it, and adds a broker call 8 seconds after the start and
+then every 20 seconds. Open the link it prints: the Thoughtfield says it is the
+demo, and `/classic` works as usual, where the floor shows a held crate waiting
+at the gate and a denied one in the derez field.
 
 Roles that need a picture of the dashboard (a developer or reviewer checking a
 change to it) use `factory-demo start`, `factory-shot "$(factory-demo url)" out.png`
@@ -846,24 +1204,33 @@ and stop only the process they started.
 
 Demo mode is display only. It never reads your real state folder: it copies
 the fixture into a fresh temporary folder and deletes it when you press
-Ctrl-C. Terminal 0 is off, APPROVE, DECLINE, RESTART, UPDATE, DIAG and the notes editor's SAVE answer
-that nothing here acts, INSPECT shows the fixture's patch, and Settings shows
-the fixture's configuration (`scripts/dashboard-demo/setup/`), not yours, and its
-PREPARE says DEMO · CHANGES DISABLED. It also ignores your `dashboard.toml` and shows the defaults. The same
-token, cookie and content rules apply as for a real run. `--demo` can't be
-combined with `--coordinator`, `--state`, `--project` or `--factory`;
-`--no-open` and `--port N` work as usual.
+Ctrl-C. There is no Terminal 0, so the typed line answers sky questions and sends
+nothing. Approve, Decline, Restart, Update, Diagnose and the notes editor's SAVE
+answer that nothing here acts, Inspect shows the fixture's patch, and Settings
+shows the fixture's configuration (`scripts/dashboard-demo/setup/`), not yours,
+and its PREPARE says "Demo: changes are off". It also ignores your
+`dashboard.toml` and shows the defaults. The same token, cookie and content rules
+apply as for a real run. `--demo` can't be combined with `--coordinator`,
+`--state`, `--project` or `--factory`; `--no-open` and `--port N` work as usual.
 
 ## Is it safe to leave open?
 
-It is local: it listens only on `127.0.0.1`, refuses any request without
-this run's token, and makes no network connection of its own. Apart from
-Terminal 0 and the control unit it only reads the factory's state folder.
-The control unit can write only a decision file (APPROVE, DECLINE), its
-action logs and, from Settings, a role's local tuning override or the project's notes (each after a diff and a
-confirm), and run only `factory doctor`, `factory restart`, `factory
-update --yes` and `factory update --plan`, each after a confirm screen. The README's
-[Dashboard](../../README.md#dashboard) section has the details.
+It is local: it listens only on `127.0.0.1`, refuses any request without this
+run's token, and makes no network connection of its own. Apart from Terminal 0,
+the typed line and the control unit it only reads the factory's state folder.
+
+- The typed line sends text to the Coordinator only when you press Enter, with
+  control characters removed.
+- The control unit can write only a decision file (Approve, Decline), its action
+  logs and, from Settings, a role's local tuning override or the project's notes
+  (each after a diff and a confirm). It can run only `factory doctor`, `factory
+  restart`, `factory update --yes` and `factory update --plan`, each after a
+  confirm screen.
+- If the voice service is running, the page sends it fixed sentences on
+  `127.0.0.1:8873`, without the dashboard's cookie. That service has no key:
+  any program on this machine can make it speak, and it can only speak.
+
+The README's [Dashboard](../../README.md#dashboard) section has the details.
 
 ## Next steps
 

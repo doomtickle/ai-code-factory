@@ -199,9 +199,9 @@ source ~/.zshrc</pre><button class="copy" type="button">Copy</button></div>
           <div class="cmd"><pre>cd ~/code/my-project
 factory start</pre><button class="copy" type="button">Copy</button></div>
           <div class="panes" aria-label="What the dashboard shows">
-            <div class="pane"><b>Coordinator</b><span>Claude, talking to you, in the terminal on the left</span></div>
-            <div class="pane"><b>Lanes</b><span>Live, read-only view of every role's lanes: developer, reviewer</span></div>
-            <div class="pane"><b>Control unit</b><span>Approve held writes, restart and update the factory, each after a confirm step</span></div>
+            <div class="pane"><b>Coordinator</b><span>Claude, talking to you: type in the line under LOIS, or press Terminal in the top bar</span></div>
+            <div class="pane"><b>The galaxy</b><span>Live, read-only view of today's work: every star is work done, every bright spark a job running</span></div>
+            <div class="pane"><b>Decision row</b><span>Hold the gold light to approve a held write. Restart and update the factory, each after a confirm step</span></div>
           </div>
           <p class="note"><strong>No dashboard?</strong> <code>factory start --no-ui</code> starts everything but the dashboard: talk to the Coordinator with <code>factory chat</code> and watch every lane with <code>factory watch</code>.</p>
         </div>
@@ -210,10 +210,10 @@ factory start</pre><button class="copy" type="button">Copy</button></div>
       <li class="step">
         <h3>Sign in to Claude, then start again</h3>
         <div class="step-body">
-          <p>The first time, press POWER ON under the dashboard's Coordinator screen, type <code>/login</code> and sign in with your Claude subscription. Then press RESTART on the control unit (and CONFIRM), or run <code>factory start</code> again in another terminal. sbx hands a sandbox the login only when it creates it, so the second start is what creates the role sandboxes.</p>
-          <div class="cmd"><pre><span class="c"># on the dashboard's Coordinator screen</span>
+          <p>The first time, press Enter on the dashboard's welcome, then Terminal in its top bar. Press POWER ON if the screen is off, type <code>/login</code> and sign in with your Claude subscription. Then press Restart under LOIS's caption (and Confirm), or run <code>factory start</code> again in another terminal. sbx hands a sandbox the login only when it creates it, so the second start is what creates the role sandboxes.</p>
+          <div class="cmd"><pre><span class="c"># in the dashboard's Terminal panel</span>
 /login
-<span class="c"># then, in a terminal (or press RESTART on the dashboard)</span>
+<span class="c"># then, in a terminal (or press Restart on the dashboard)</span>
 factory start</pre><button class="copy" type="button">Copy</button></div>
         </div>
       </li>

@@ -165,18 +165,18 @@ factory start
 ```
 
 `factory start` runs the whole factory for that folder and opens the
-dashboard in your browser (see "Dashboard"): the Coordinator's terminal,
-every lane, and the controls (see "Layouts" below for the old `--layout`
-flag).
+dashboard in your browser (see "Dashboard"): LOIS in front of a galaxy of
+today's work, the Coordinator's terminal, and the controls (see "Layouts" below
+for the old `--layout` flag).
 
 The folder must be a git repository, or a folder whose subfolders are git
 repositories: the developer works in clones of them, from what is committed
 (see "Getting the developer's work").
 
-**The first time**, press POWER ON on the dashboard's Coordinator screen,
-type `/login` and sign in with your
-Claude subscription, then run `factory start` again (or press RESTART on the
-dashboard). `sbx` stores the login, but it gives a sandbox the
+**The first time**, press Enter on the dashboard's welcome, then Terminal in
+its top bar. Press POWER ON if the screen is off, type `/login` and sign in with
+your Claude subscription, then run `factory start` again (or press Restart on
+the dashboard). `sbx` stores the login, but it gives a sandbox the
 login only when it creates it, so the first start creates just the Coordinator
 and the second creates the role sandboxes. To switch Claude accounts, run
 `factory reset` and `sbx secret rm anthropic`, then do the same.
@@ -194,8 +194,8 @@ every lane with `factory watch` in another.
 ### Layouts
 
 The dashboard is the only layout. `factory start` starts everything, then runs
-`factory dashboard` in the foreground: the browser page shows every lane, its
-left-hand screen is the Coordinator's terminal, and its control unit approves
+`factory dashboard` in the foreground: the browser page shows the day's work,
+opens the Coordinator's terminal as a panel, and its control unit approves
 held writes and restarts or updates the factory (see "Dashboard"). Ctrl-C
 closes the dashboard and the Coordinator's terminal; the factory keeps
 running, and `factory dashboard` reopens it. `factory update` and `factory
@@ -220,17 +220,18 @@ another.
 
 | Command | What it does |
 |---|---|
-| `factory doctor` | Check the machine is ready; prints the fix for each problem (setup runs it first; the dashboard's DIAG key runs it too). Once the broker exists, it also runs the gateway's own doctor inside it: policy, tokens and grants, audit log, credentials, a live probe, GitHub or GitLab access per repo, the policy's hosts against the broker kit, whether holds are on, and a warning for any approval that expired with no decision. It also warns about any host besides `api.anthropic.com` that the host's global `sbx` network policy allows, since that bypasses the broker for every sandbox (the warning gives the `sbx policy rm network --id` fix) |
+| `factory doctor` | Check the machine is ready; prints the fix for each problem (setup runs it first; the dashboard's Diagnose key runs it too). Once the broker exists, it also runs the gateway's own doctor inside it: policy, tokens and grants, audit log, credentials, a live probe, GitHub or GitLab access per repo, the policy's hosts against the broker kit, whether holds are on, and a warning for any approval that expired with no decision. It also warns about any host besides `api.anthropic.com` that the host's global `sbx` network policy allows, since that bypasses the broker for every sandbox (the warning gives the `sbx policy rm network --id` fix) |
 | `factory setup` | One-time setup (safe to re-run) |
-| `factory update [--yes]` | After pulling changes or editing kits, images or policy: pulls the latest factory, rebuilds, recreates only the sandboxes the changes affect (it lists them and what each loses, then asks), and restarts. It doesn't open the dashboard (so `factory update --yes` returns): run `factory dashboard` afterwards. The dashboard's UPDATE key runs `factory update --yes` after showing the plan |
+| `factory update [--yes]` | After pulling changes or editing kits, images or policy: pulls the latest factory, rebuilds, recreates only the sandboxes the changes affect (it lists them and what each loses, then asks), and restarts. It doesn't open the dashboard (so `factory update --yes` returns): run `factory dashboard` afterwards. The dashboard's Update key runs `factory update --yes` after showing the plan |
 | `factory update --plan` | What `factory update` would do, changing nothing but a (hook-free) `git fetch`: the incoming commits, the sandboxes it would recreate and what each loses, the ones the incoming changes may make out of date (a guess from the changed files), and notes: what every update drops and keeps (running jobs, held writes, the job list), and anything such as uncommitted changes that would skip the pull. Tab-separated lines (`commit`, `recreate`, `maybe`, `note`), for the dashboard |
 | `factory start [dir] [--no-ui]` | Start the factory for a project (default: current folder) and open the dashboard. `--no-ui` (or `FACTORY_NO_UI=1`) opens no dashboard: talk to the Coordinator with `factory chat` in any terminal and follow roles with `factory watch` or `factory logs <role>`. The old `--layout` flag is accepted only as `web` (see "Layouts") |
-| `factory restart` | Stop the factory and start it again for the project it is bound to, (it doesn't open a second dashboard; one already open keeps running). The dashboard's RESTART key runs it |
+| `factory restart` | Stop the factory and start it again for the project it is bound to, (it doesn't open a second dashboard; one already open keeps running). The dashboard's Restart key runs it |
 | `factory chat [--resume]` | Talk to the Coordinator in this terminal (wraps `sbx run --name factory-coordinator`); `factory start` creates the sandbox first. `--resume` continues the last session instead of starting a fresh one (`sbx run --name factory-coordinator -- --continue`). Refuses while the Coordinator is open elsewhere (the dashboard) |
 | `factory status` | Project, broker, dispatch bridge, login, roles (with their lanes), sandbox status, and pending approvals and the oldest one's age |
 | `factory logs <role>` | Follow a role's transcripts, all its lanes (`factory logs developer-lane2` for one lane); `factory logs broker` / `dispatch` for audit logs |
 | `factory watch` | Live terminal view of the lanes: one pane per active lane (a job running, or finished in the last ten minutes) with the job's status, elapsed time, model and cost in its title and the transcript rendered for reading (tool calls condensed, results dimmed, text wrapped); idle lanes take one status line each. A digit focuses one lane, `a` shows every lane, `p` shows a lane's latest review packet, `q` quits. `--once` prints one plain-text frame |
-| `factory dashboard [--no-open] [--port N] [--demo]` | The whole factory on one screen in your browser (see "Dashboard"): the Coordinator's live terminal; every lane's live transcript, status, model, cost and timer; today's spend by hour and role; an event printer of broker calls and finished jobs; the writes held for approval; and the control unit, which approves and declines them and diagnoses, restarts or updates the factory (each after a confirm screen). Local. `--demo` shows made-up data with no factory running, for a screenshot or a first look (display only; see the dashboard guide). `factory gui` is the same command |
+| `factory dashboard [--no-open] [--port N] [--demo]` | The whole factory on one screen in your browser (see "Dashboard"). It opens on the Thoughtfield: today's jobs as a galaxy you can question and rewind, the Coordinator's live terminal, each job's transcript, packet and changes, and the control unit, which approves and declines held writes and diagnoses, restarts or updates the factory (each after a confirm screen). `/classic` is the FC-1984 view, with lane modules, the factory floor, the event printer and the shift budget. Local. `--demo` shows made-up data with no factory running, for a screenshot or a first look (display only; see the dashboard guide). `factory gui` is the same command |
+| `factory voice <start [--build] \| stop \| status \| build \| test>` | LOIS's optional local voice: one Docker container on `127.0.0.1:8873`, needing no network at run time. `build` once (several GB), then `start`. Without it the dashboard shows captions. See `voice/README.md` |
 | `factory packet [<job-id> \| latest \| <lane> \| --list]` | A job's review packet: the task, each branch's commits and diffstat against your checked-out branch, the `factory-test` modes it reported, the broker calls its role made, cost, and the role's report with its APPROVED / REVISE verdict. Written after every job; `--list` shows recent ones |
 | `factory roles` | List roles, their project access, lanes and network tools |
 | `factory role new <name> [like]` | Add a role (copied from `reviewer`, or the role you name) |
@@ -312,7 +313,8 @@ factory update
 - `enabled-roles` names the optional roles (today: the researcher) to switch on
   on this machine, one per line (Roles, "Optional roles"). It only turns a role
   on or off; it can't grant tools. Applied on `factory start`. No rebuild.
-- `dashboard.toml` sets how `factory dashboard` looks: the nameplate and floor
+- `dashboard.toml` sets how `factory dashboard` looks: the view it opens on
+  (`ui`, `"field"` or `"classic"`), the nameplate and floor
   plate (`plant`), the three shift names (`shifts`), the CRT knob's and the
   SOUND key's starting values (`crt`, `sound`) and a colour per role
   (`[roles.colors]`, `designer = "#d08cff"`). The dashboard reads it once when it
@@ -659,8 +661,8 @@ tools to hold.
    approvals-webhook` and paste the URL (see *Storing credentials once*
    above; it works on WSL2 too). Every broker start delivers it. Revoke with
    `factory secret forget approvals-webhook`.
-4. Decide on the dashboard's control unit (APPROVE, or DECLINE with a
-   reason), or with `factory approvals` (list), `factory approvals show <id>`
+4. Decide on the dashboard's decision row (hold the gold light to approve, or
+   Decline with a reason), or with `factory approvals` (list), `factory approvals show <id>`
    (one card in full; an id prefix works), `factory approvals approve <id>`
    or `factory approvals decline <id> --reason "..."`; `factory approvals
    watch` prints cards as they arrive (and deferred writes as they change),
@@ -713,7 +715,7 @@ all lanes share the role's one sandbox. The Coordinator gives independent
 chunks to separate lanes, each on its own branch, and sends a follow-up (a
 REVISE, say) back to the lane that did the work. `LANES` is read per task (1
 to 8; empty means 1), so changing it needs no new sandbox; `factory start`
-updates the lane view in the dashboard and in `factory watch`. Several lanes share the sandbox's CPU and memory and
+updates the dashboard and `factory watch`. Several lanes share the sandbox's CPU and memory and
 your Claude subscription's usage limits, so more lanes isn't always faster.
 
 Models, set per role in `role.conf` `MODEL` (aliases resolve to the newest
@@ -981,7 +983,7 @@ again (a role that already has broker tools gets a changed `BROKER_TOOLS`, say a
 `factory start` copies the instructions into the state folder and the bridge
 reads that copy, so a role editing this repo can't change prompts on its own. Kit, image, project access and
 whether the role has broker access at all are fixed when the sandbox is created,
-so for those run `factory update`, which recreates that role's sandbox. The dashboard's lane view
+so for those run `factory update`, which recreates that role's sandbox. The dashboard's monitor
 and `factory watch` show the job session's main model once the job reports it
 (subagents it spawns may use others).
 
@@ -1008,7 +1010,7 @@ load in a factory sandbox; sandboxes created before that change keep loading
 them until `factory update` recreates them.
 
 **Remove a role:** delete `roles/<role>/` and run `factory start`. It drops the role from
-the dashboard's lane view and `factory watch`, removes
+the dashboard and `factory watch`, removes
 its broker access, and it prints the `sbx rm` command for the role's
 sandbox (sandboxes are never deleted automatically).
 
@@ -1122,9 +1124,44 @@ the troubleshooting guide, *"DENIED by broker policy"*.
 
 ## Dashboard
 
-`factory dashboard` (or `factory gui`) serves a one-screen view of the
-factory, styled as a 1984 rack-mounted control unit, and tries to open it in
-your browser. It shows:
+`factory dashboard` (or `factory gui`) serves the factory on one screen and
+tries to open it in your browser. It opens on **The Thoughtfield**, at `/` and
+`/field`. The FC-1984 view is always at `/classic`, one click away. `ui =
+"classic"` in `dashboard.toml` makes it the one that opens. The
+[dashboard guide](docs/guides/06-dashboard.md) goes through every part and key.
+
+The Thoughtfield needs WebGL, and a real GPU is strongly recommended. Without
+WebGL it says so and points to Classic. It shows LOIS's bust in front of a
+spiral galaxy, above the dark curve of a world whose lit edge is the day:
+
+- **The galaxy** is today's jobs, from `GET /api/field`
+  (`scripts/dashboard_field.py`). A job's star count is its spend times a rate
+  chosen at load (150 to 6,000 stars to the dollar, shown in the `?` key). Each
+  star takes the time and kind of an action from that job's transcript. Jobs on
+  one branch are one order, and arms grow by work done, oldest at the core. A
+  running job is a spark at its arm's tip, a held write a gold star whose arm
+  stops turning, a failed job a dark void, and a blocked request red at the
+  galaxy's edge. Hover a star to see what it was, and click it to open the job.
+- **Questions:** chips or the typed line. "What cost the most?", "What's stuck?",
+  "What have they been doing?" and "When was it busiest?" reshape the stars to
+  answer. This is keyword matching in the browser, not comprehension.
+- **The horizon:** drag it to rewind the galaxy. Its beads are the day's events.
+- **The typed line:** a sky question stays in the browser. Anything else goes
+  to the Coordinator on Enter, as if typed in Terminal 0. There is no
+  speech-to-text. `t` or the Terminal key opens Terminal 0 as a panel.
+- **The monitor:** a job's Transcript, Packet and Changes.
+- **The decision row:** the control unit in another skin, with the same keys and
+  rules. Holding the gold light for 2.5 seconds presses Approve, and letting go
+  early sends nothing. Decline opens a reason box. Inspect shows the patch.
+  Service reaches Diagnose, Restart, Update, Log and Settings.
+- **Voice** is optional (`factory voice`). LOIS speaks fixed sentences only, with
+  numbers, times and lane names filled in, never anything an agent wrote. Without
+  the service the page shows captions.
+
+The classic view keeps features the Thoughtfield doesn't have: the factory floor,
+the shift budget, notifications, the radio, the full event printer and the
+deferred-writes list. It is styled as a 1984 rack-mounted control unit, and it
+shows:
 
 - **Terminal 0:** the Coordinator itself, live, on the left-hand screen. Type
   to it as you would in any terminal; every tab you open shows the same session (the
@@ -1227,25 +1264,25 @@ your browser. It shows:
   bridge is running, and whether anything is held.
 - **MANUAL** (on the header plate) opens these docs in a tab of their own,
   and the **?** on each module opens its part of the
-  [dashboard guide](docs/guides/06-dashboard.md). The dashboard renders them
+  dashboard guide. The dashboard renders them
   from the factory checkout once, when it starts: restart `factory dashboard`
   to see edits.
 
-It is local. Apart from the terminal and the control unit, it only reads the
+Both views are local. Apart from the terminal, the typed line and the control unit, they only read the
 state folder (lane transcripts, both audit logs, review packets, approval
 cards, and for INSPECT the stored patch), and at start-up the factory's docs,
 and makes no network connection. The
 control unit writes only a decision file (approve, decline), its action logs and, from SETTINGS (formerly SETUP), a role's
 local tuning override (`roles/<role>.conf`, named keys only) or the bound project's notes files, each after a diff and a confirm, and runs only
 `factory restart`, `factory update --yes`, `factory update --plan` and `factory doctor` (a fixed
-command line, never a shell; `--factory PATH` runs another `factory`); its fonts and xterm.js are
-vendored (`scripts/dashboard-ui/fonts/`, `scripts/dashboard-ui/vendor/`). It
+command line, never a shell; `--factory PATH` runs another `factory`); its fonts, xterm.js, three.js and
+LOIS's model are vendored (`scripts/dashboard-ui/fonts/`, `scripts/dashboard-ui/vendor/`, `scripts/dashboard-ui/witness/`). It
 binds `127.0.0.1` on a free port (`--port` to choose one) and prints a link
 carrying a token for this run: the browser trades it for a cookie, and every
 request without it is refused. The link stops working when you press Ctrl-C.
 
-The terminal runs exactly one command, `sbx run --name factory-coordinator`,
-in a pseudo-terminal (never a shell, and never a shell when it exits); before
+The terminal runs one of two fixed commands, `sbx run --name
+factory-coordinator` or the same with `-- --continue`, in a pseudo-terminal (never a shell, and never a shell when it exits); before
 starting it, it checks `sbx ls -q` and the process list (`ps`) to make sure
 the sandbox exists and no one else has it open. It is served from a second
 port on `127.0.0.1`, a separate browser origin the main page frames. The
@@ -1287,6 +1324,16 @@ folder (`approvals/patches/<sha256>.patch`, named by the card's
 card; it is parsed and sanitised by the dashboard, and the page only draws the
 result as text. The main page never receives it, and cards, webhooks and audit
 records never carry it.
+
+The Thoughtfield's main page follows the same rules: it only displays, holds no
+key and frames the pages that can act. The decision row is the control unit
+(`/cu/field`, the same script behind the same key). The typed line (`/term/line`)
+is on the terminal's key and origin: it sends text to the Coordinator only on
+Enter, with control characters removed, never powers anything on and ignores
+what the terminal prints. The main page learns only one word from a fixed list,
+never what was typed. `/api/field` gives an action as a time and a kind, never its
+text. The page's one other connection is to the optional voice service on
+`127.0.0.1:8873`, sent fixed sentences without the dashboard's cookie.
 
 ## Analytics
 
@@ -1333,8 +1380,8 @@ hasn't dispatched any jobs yet just shows an empty report.
     once imported)
   - `dispatch/packets/<job-id>.md`: the job's review packet (`factory packet`)
   - `dispatch/packets/<job-id>.diff.json`: the full patch of each branch the job
-    brought back, cut at about 1 MB and 20,000 lines, for the dashboard's lane
-    monitor (DIFF tab)
+    brought back, cut at about 1 MB and 20,000 lines, for the dashboard's
+    monitor (the Changes tab, DIFF in the classic view)
   - `dispatch/jobs.json`: the job list (last 200 jobs, short records), written
     at every status change and reloaded when the bridge starts, so
     `job_status`, `wait_for_job` and `factory packet` still know old ids after
@@ -1496,6 +1543,7 @@ scripts/approvals.py         Approval cards (factory approvals)
 scripts/docs.py              Builds the docs site (factory docs)
 scripts/lint.sh              Pinned shellcheck over every shell script (CI)
 scripts/gen-sbx-reference.sh Saves the installed sbx's help to docs/reference/sbx-cli.md (host; see Upgrading a pin)
+voice/                       LOIS's optional voice service: Dockerfile, server, pinned requirements (factory voice)
 docs/reference/sbx-cli.md    Saved sbx CLI reference agents check before using an sbx flag
 .github/workflows/            CI (ci.yml) and the docs site on GitHub Pages (docs.yml)
 ```

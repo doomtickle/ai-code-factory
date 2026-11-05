@@ -65,10 +65,10 @@ into a host shell). No xterm.js clipboard addon is loaded; term.js's own OSC 52 
 only one, and it is write-only: a query (`?`) or an empty payload is refused and never answered,
 the selection target is ignored, the payload is at most 64 KiB of strict base64 and strict UTF-8
 (a well-formed one over that, sized from its base64 length and never decoded, only shows
-"COORDINATOR COPIED ABOUT N KiB · TOO LARGE TO COPY (LIMIT 64 KiB)" with DISMISS and no COPY key),
+"Coordinator copied about N KiB. Too large to copy (limit 64 KiB)." with DISMISS and no COPY key),
 and one carrying a C0 or C1 control (other than tab and newline; CR is made a newline) is dropped,
 as is any OSC 52 parsed during the muted replay. A valid one only raises a prompt in the terminal
-frame ("COORDINATOR COPIED N CHARACTERS · PRESS TO COPY") with a preview drawn by `textContent`
+frame ("Coordinator copied N characters. Press to copy.") with a preview drawn by `textContent`
 (cut at 240 characters, invisible and bidi characters shown as `⟨U+XXXX⟩` and flagged); a newer
 copy replaces the pending one, DISMISS or a new session drops it, and only a click on its COPY key
 writes it. Each new text disables COPY and sets a `holdUntil` 2.5 s on (the control unit's
@@ -211,7 +211,7 @@ calls only `config-read`, `config-prepare` and `config-run {"token"}`. The text 
 lines, the path, errors) are drawn with `textContent`, a diff line's class comes from a fixed `+`/`-`/space map and
 a gauge's from a fixed ok/warn/over map, and its few attributes are fixed. SAVE is a prepare, CONFIRM (dark for the
 2.5 s `HOLD_MS`) is the run, CANCEL drops the token; a 409 `changed` offers RELOAD; a 403 on prepare in demo mode
-shows a fixed "DEMO · CHANGES DISABLED". The box takes at most the host's 20,000 characters, and its per-role
+shows a fixed "Demo: changes are off". The box takes at most the host's 20,000 characters, and its per-role
 gauge mirrors `dashboard_setup._notes` (SAVE is dark when a role would be over and higher than now, as the host
 refuses it); the host decides regardless. `test_cu_notes.py` drives the real endpoints with the bodies the editor
 sends.
@@ -295,6 +295,49 @@ the `[approvals].tools` names, the notes path to create, and one example prompt 
 `[git].repos`, no GitLab URL, no expiry. It adds no endpoint and runs no command; it is built outside the board's lock, cached
 5 s (`BRIEFING_TTL`), every string cleaned to one printable line and drawn with `textContent`, no class or attribute from it. Demo
 mode reads the fixture's `setup/` folder and the empty `.git` folders `dashboard_demo.build` makes under `setup/project/`.
+
+THE THOUGHTFIELD (doomtickle/passdesk-ops#207, owner decision 5 Nov 2026) is the default view: `field.html` at `/` and `/field`, unless
+`ui = "classic"` in `dashboard.toml`; the FC-1984 page is always at `/classic`. Both are in `STATIC` and meet every rule above. The page is
+the same main page: GET-only, display only, no key, no inline script or style, agent-written strings by `textContent` only (SVG labels too:
+the world's geometry is built with `createElementNS`, never `innerHTML`). Its CSP is the main page's plus one thing, `connect-src` to
+`http://127.0.0.1:<factory.voice.PORT>` (below); `img-src` gets no `blob:`, which is why `witness/witness.glb` has its embedded images stripped
+(`witness/strip_glb.py`). Everything third-party is vendored with a `SHA256SUMS` and a test: `vendor/three/`, `fonts/`, `witness/`.
+
+Its data adds one route, `GET /api/field` (`scripts/dashboard_field.py`, cached 2 s): today's jobs from the same dispatch audit and parsed
+transcripts `/api/state` reads, and the broker audit's denials. An action leaves as a time and a kind from a fixed list, never its text; a
+denial as a time and a role, never its target. A job's words are one-line cut labels (`one_line`). No git, no command, no write.
+
+The page's actions stay on the second origin, in frames it can't script, under the rules above:
+- `/cu/field` is the control unit in the Thoughtfield's look: `cu-field.html` has the same ids as `cu.html` and runs the same `cu.js` behind the
+  same key, serving rule and CSP. `cu-field.css` is its whole look and `cu.css` is not loaded: the deck is the decision row, every other screen
+  (Settings, notes, Diagnose, Restart, Update, a log, Inspect) a soft dark pool like the lane monitor's, with the frame transparent over the
+  world. `cu-field.js` adds no request and never sees the key: a full 2.5 s hold of a gold light calls `btn-approve.click()` on the decision row
+  and `pv-approve.click()` in INSPECT, only while that key is enabled, so `cu.js` still decides everything (the hold after a new card, closed
+  cards, the truncated-push question). A hold is one real press on one card: the primary button or Space/Enter on the light itself, ended by the
+  card changing (`data-sel` on the row; in INSPECT, APPROVE going dark, which `cu.js` does before it draws a new card or patch, and it puts
+  nothing about either in an attribute), the pointer leaving, the key being released, focus going or the page hiding. The row's light is also
+  dark while the reason box or a flash is up. The skin must keep what a hold approves in view: one row per line, the repo and branch never
+  hidden at any width. The rule that APPROVE is one press becomes one held press in both places here, and stays one press on the classic page.
+  `cu.js` changes only to set `data-cards` and `data-sel`, to mark the deferred-writes lines (`wr`), which the skin hides (Classic and `factory
+  approvals` show them), and to take the light into INSPECT's Tab order. The screens' words are plain sentence case in `cu.js` and `cu-notes.js`;
+  `cu.css` uppercases the classic page's titles, keys and big lines, so only its prose reads differently there.
+- `/term/line` (`line.html`, `line.js`) is the typed line, on the terminal's key, serving rule and WebSocket, under `line_csp` (the terminal's
+  minus inline style). It is the user typing: text goes to the PTY only on Enter, with C0 and C1 controls removed and a carriage return after it,
+  which is not the "host script typing into a terminal" `CLAUDE.md` forbids. It never sends `power` or `resize`, ignores everything the terminal
+  prints and never answers a query. A sky question (`field-ask.js`) stays in the frame: the main page receives only `ln:<word>` from the fixed
+  list `spend|stuck|kinds|time|home|sent|off|noconn`, from that frame's window and origin, never anything typed. Only a short plain question about
+  the whole day counts as a sky question (`field-ask.js`); everything else goes to the Coordinator, and Enter goes to whatever Terminal 0 is showing.
+- The Terminal 0 frame is loaded at start as before, inside a panel kept `inert` and hidden while closed, so `term.focus()` can't take the page's
+  keys to the Coordinator. It is `/term/field` (doomtickle/passdesk-ops#213): `term-field.html` has the same ids as `term.html` and runs the same
+  `term.js` behind the same key, serving rule, CSP and WebSocket. `term-field.css` is its whole look and `term.css` is not loaded. `term-field.js`,
+  loaded first, is data only (`window.TermSkin`: type, colours, a contrast floor), with no request and no reach for the key. The classic page sets
+  no skin and keeps its tube. The words are plain sentence case in `term.js`; `term.css` uppercases the classic page's titles.
+
+VOICE (`voice/`, `factory/commands/voice.py`, `dashboard-ui/voice.js`) is the optional local speech service, the one server other than the
+dashboard the main page talks to: a Docker container on `127.0.0.1:8873` built from pinned, hash-checked inputs, read-only, non-root, no
+capabilities. It needs no network at run time and makes no calls, but sits on Docker's default bridge, not firewalled. It acts on nothing. `voice.js` POSTs with `credentials: "omit"`, so the dashboard cookie never reaches it. LOIS speaks only
+the fixed templates in `field-hud.js` and `field-sky.js`, with lane names that passed the lane pattern and numbers; a label an agent could
+influence goes only in the detail line, as text, and is never spoken. If the service is off the page shows captions and nothing else changes.
 
 Anything new that lets a page act must meet the same bar: one fixed argv with no
 shell, a key in a request header (not just the cookie) on a POST or WebSocket with its

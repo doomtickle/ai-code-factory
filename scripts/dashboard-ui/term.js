@@ -101,15 +101,15 @@
 
   const CHUNK = 16 * 1024;  // the server refuses messages over 64 KiB: split big pastes
   const REASONS = {
-    elsewhere: ["TERMINAL 0 · OPEN ELSEWHERE",
+    elsewhere: ["Open elsewhere",
       "The Coordinator is open elsewhere (`factory chat`). Close it there, then power on here."],
-    "no-sandbox": ["TERMINAL 0 · NO COORDINATOR", "The Coordinator sandbox doesn't exist yet: run `factory start` first, then power on."],
-    "no-sbx": ["TERMINAL 0 · NO SBX", "`sbx` could not run on this machine. Run `factory doctor`, then power on."],
-    error: ["TERMINAL 0 · FAULT", "The Coordinator could not be started. Power on to try again."],
-    exited: ["TERMINAL 0 · POWERED OFF", "The Coordinator session ended. Power on starts a fresh session; Resume continues the last one."],
-    lost: ["TERMINAL 0 · NO SIGNAL", "Lost the dashboard. Reconnecting…"],
-    framed: ["TERMINAL 0 · NOT IN THE DASHBOARD", "Open the LOIS dashboard; this page only works inside it."],
-    service: ["TERMINAL 0 · SERVICE", "The factory is restarting or updating. The Coordinator comes back when it's done."],
+    "no-sandbox": ["No Coordinator yet", "The Coordinator sandbox doesn't exist yet: run `factory start` first, then power on."],
+    "no-sbx": ["sbx can't run", "`sbx` could not run on this machine. Run `factory doctor`, then power on."],
+    error: ["The Coordinator couldn't start", "The Coordinator could not be started. Power on to try again."],
+    exited: ["The Coordinator is off", "The Coordinator session ended. Power on starts a fresh session; Resume continues the last one."],
+    lost: ["Lost the dashboard", "Reconnecting…"],
+    framed: ["Not in the dashboard", "Open the LOIS dashboard; this page only works inside it."],
+    service: ["Restarting or updating", "The factory is restarting or updating. The Coordinator comes back when it's done."],
   };
 
   // Opened on its own (not framed by the dashboard): never connect.
@@ -125,10 +125,12 @@
     return;
   }
 
+  // The Thoughtfield's page loads term-field.js first, which sets its type and colours here. Nothing else differs.
+  const skin = window.TermSkin || {};
   // VT323's cell is about 0.4em wide: this keeps 65 or more columns on the
   // narrow Coordinator screen and grows the type on a wide one, up to 22px.
-  const fontSize = () => Math.max(15, Math.min(22, Math.floor(window.innerWidth / 30)));
-  const term = new Terminal({
+  const fontSize = skin.fontSize || (() => Math.max(15, Math.min(22, Math.floor(window.innerWidth / 30))));
+  const term = new Terminal(Object.assign({
     scrollback: 5000,
     fontFamily: '"VT323", ui-monospace, Menlo, Consolas, monospace',
     fontSize: fontSize(),
@@ -148,7 +150,7 @@
       background: "rgba(0, 0, 0, 0)", foreground: "#00ff41", cursor: "#b8ffca", cursorAccent: "#000500",
       selectionBackground: "rgba(0, 255, 65, 0.28)", selectionInactiveBackground: "rgba(0, 255, 65, 0.16)",
     },
-  });
+  }, skin.options));
   const fit = new FitAddon.FitAddon();
   term.loadAddon(fit);
 
@@ -190,20 +192,20 @@
       clearTimeout(holdTimer);
       holdTimer = setTimeout(() => { $("copy-go").disabled = holding(); }, HOLD_MS + 20);
       const n = text.length;
-      $("copy-title").textContent = `COORDINATOR COPIED ${n} CHARACTER${n === 1 ? "" : "S"} · PRESS TO COPY`;
+      $("copy-title").textContent = `Coordinator copied ${n} character${n === 1 ? "" : "s"}. Press to copy.`;
       $("copy-preview").textContent = copyPreview(text);
-      $("copy-note").textContent = hasHidden(text) ? "⚠ CONTAINS HIDDEN CHARACTERS (SHOWN AS ⟨U+…⟩)" : "";
+      $("copy-note").textContent = hasHidden(text) ? "⚠ Contains hidden characters (shown as ⟨U+…⟩)" : "";
       $("copy-note").hidden = !hasHidden(text);
     } else if (state === "done") {
       pending = null;
-      $("copy-title").textContent = "COPIED TO THE CLIPBOARD";
+      $("copy-title").textContent = "Copied to the clipboard";
       $("copy-note").hidden = true;
       copyTimer = setTimeout(() => copyShow("none"), 1500);
     } else if (state === "large") {
       // text: the bytes it would decode to. Nothing to copy, so no COPY key.
       pending = null;
       $("copy-preview").textContent = "";
-      $("copy-title").textContent = `COORDINATOR COPIED ABOUT ${Math.ceil(text / 1024)} KiB · TOO LARGE TO COPY (LIMIT ${COPY_MAX / 1024} KiB)`;
+      $("copy-title").textContent = `Coordinator copied about ${Math.ceil(text / 1024)} KiB. Too large to copy (limit ${COPY_MAX / 1024} KiB).`;
       $("copy-note").hidden = true;
     }
     box.hidden = false;
@@ -219,7 +221,7 @@
     let ok = false;
     try { ok = document.execCommand("copy"); } catch (e) { ok = false; }
     if (ok) { copyShow("done"); term.focus(); return; }
-    $("copy-title").textContent = `THE BROWSER BLOCKED THE COPY · PRESS ${mac ? "⌘C" : "CTRL+C"} NOW`;
+    $("copy-title").textContent = `The browser blocked the copy. Press ${mac ? "⌘C" : "Ctrl+C"} now.`;
     $("copy-note").hidden = true;
     $("copy").classList.add("fail");
   }
@@ -378,7 +380,8 @@
     new ResizeObserver(refit).observe($("term"));
     connect();
   }
-  // Measure the cell only once VT323 has loaded, or the grid is sized for the fallback font.
-  const ready = document.fonts && document.fonts.load ? document.fonts.load(`${fontSize()}px "VT323"`) : Promise.resolve();
+  // Measure the cell only once the type has loaded, or the grid is sized for the fallback font.
+  const faces = skin.faces || [`${fontSize()}px "VT323"`];
+  const ready = document.fonts && document.fonts.load ? Promise.all(faces.map(f => document.fonts.load(f))) : Promise.resolve();
   ready.then(start, start);
 })();
