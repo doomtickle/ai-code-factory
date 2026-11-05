@@ -9,7 +9,7 @@ holding for approval.
 
 The state view is read-only. To build it, it reads files under the
 factory state folder and makes no network connection:
-  dispatch/logs/<lane>.log, dispatch/audit.jsonl, dispatch/packets/, dispatch/pid
+  dispatch/logs/<lane>.log, dispatch/audit.jsonl, dispatch/packets/, dispatch/pid, dispatch/said.json
   broker/audit.jsonl, broker/approvals/pending/, broker/project
 and, for the SERVICE DUE lamp (dashboard_service.py), sandboxes/ and sandbox-parts/ (the
 fingerprints each sandbox was made from), the snapshots `factory start` keeps in dispatch/, and the
@@ -180,8 +180,7 @@ STATIC = {
     "/fonts/barlow-condensed-600.woff2": ("fonts/barlow-condensed-600.woff2", "font/woff2"),
     "/fonts/barlow-condensed-700.woff2": ("fonts/barlow-condensed-700.woff2", "font/woff2"),
     "/fonts/dotgothic16.woff2": ("fonts/dotgothic16.woff2", "font/woff2"),
-    "/fonts/cormorant-garamond-variable.woff2": ("fonts/cormorant-garamond-variable.woff2", "font/woff2"),
-    "/fonts/hanken-grotesk-variable.woff2": ("fonts/hanken-grotesk-variable.woff2", "font/woff2"),
+    "/fonts/nunito-variable.woff2": ("fonts/nunito-variable.woff2", "font/woff2"),
 }
 CSP = ("default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; connect-src 'self'; "
        "img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
@@ -220,6 +219,9 @@ def load_docs(root: Path = DOCS_ROOT):
 
 COOKIE = "factory_dashboard"  # prefix: the cookie is COOKIE_<port> (see cookie_name)
 TAIL = 40          # transcript lines per lane in /api/state (taller lane screens)
+SAID_MAX_BYTES = 32 * 1024   # dispatch/said.json: eight lines the bridge capped, with room to spare
+SAID_MAX_TEXT = 240          # dispatch/server.py MAX_SAY_CHARS
+SAID_ID = re.compile(r"[0-9a-f]{12}")
 FULL = 1500        # transcript lines per lane in /api/lane
 EVENTS = 80        # event printer lines
 FIELD_TTL = 2      # seconds between rebuilds of the Thoughtfield's day
@@ -376,6 +378,20 @@ class Dashboard:
             if lane.job and lane.job["status"] == "running":
                 out[lane.role].append(lane.name)
         return out
+
+    def said(self) -> list:
+        """The Coordinator's spoken lines (dispatch/server.py tool_say), for the main page to show with
+        textContent and send to the local voice. The file is checked here like any other in the state folder."""
+        raw = jobs_mod.read_regular(self.state / "dispatch" / "said.json", SAID_MAX_BYTES)
+        try:
+            lines = json.loads(raw)["said"] if raw else []
+        except (ValueError, TypeError, KeyError):
+            return []
+        if not isinstance(lines, list):
+            return []
+        return [{"id": rec["id"], "text": rec["text"]} for rec in lines[-8:]
+                if isinstance(rec, dict) and isinstance(rec.get("id"), str) and SAID_ID.fullmatch(rec["id"])
+                and isinstance(rec.get("text"), str) and 0 < len(rec["text"]) <= SAID_MAX_TEXT]
 
     def writes(self, now: float) -> list:
         """Recent deferred writes (approvals.read_writes: made, failed and running,
@@ -561,6 +577,7 @@ class Dashboard:
                       "roles": [{"role": r, "cost": round(c, 4)} for r, c in sorted(roles.items(), key=lambda x: -x[1])]},
             "events": events,
             "gate": cards,
+            "said": self.said(),
             "writes": writes,
             "service": self.service(now),
             "hints": self.hints(now),

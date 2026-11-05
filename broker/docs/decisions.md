@@ -4,6 +4,27 @@ Dated entries, for the user to review. Newest first.
 
 ## 2026-11-05
 
+- **The Coordinator speaks in its own words, as LOIS** (owner decision, doomtickle/passdesk-ops#216). The Thoughtfield felt like talking to the Coordinator's messenger.
+  This reverses "Only fixed sentences are spoken", below. Choices to review:
+  - **What the owner accepted.** The Coordinator reads tickets, files and role reports, so a poisoned ticket could make LOIS say "approve this now", in the same voice as the
+    factory's own lines. Terminal 0 could already show such text, but a voice persuades more. Speech still acts on nothing, the main page still holds no key, no agent reaches the
+    voice service, and approving still takes the held light. The brief tells the Coordinator not to press for approvals; that is not counted as a defence, since injected text is what could override it.
+  - **A `say` tool, not the terminal read aloud.** The Coordinator writes for the ear, so code and tables stay on screen, which also solves text that speaks badly. Rejected: reading the
+    PTY aloud (tool calls and escape codes) and a second model summarising replies (slower, costs more, and really would be a messenger).
+  - **The cost is about one more model turn per reply,** mostly cached. Delegating puts `say` in the same turn as `delegate`, which avoids it there.
+  - **`say` refuses backticks and links.** A refused line teaches the Coordinator at once, and a link read aloud helps nobody. It does not try to judge what the words mean.
+  - **The brief is in the bridge's server instructions, at the front, not the kit.** Changing `kits/coordinator` marks the sandbox as due for recreation, and that ends its session. So the kit's
+    managed `CLAUDE.md` still says "Coordinator" and the instructions add who it is to the owner. A client can cut long instructions short, so the part after this may be lost; the kit repeats that part.
+  - **No spoken "one moment".** Between your line and its answer only the face reacts. A fixed filler would be the messenger again. A job start is not announced within 30 seconds of its speaking, since it has just said so.
+    Other fixed lines stay, and wait for it to finish.
+  - **Not measured:** how reliably the real Coordinator calls `say`. This host had no signed-in `sbx` or `claude` to try it with.
+- **A softer Thoughtfield** (owner asked for a softer font, larger small text, more room, and a tiny top-to-bottom opacity gradient in the dark background). Choices to review:
+  - **Nunito replaces both Cormorant Garamond and Hanken Grotesk.** A sharp display serif beside a grotesk was what felt off, and one rounded family does both jobs. Terminal 0 keeps JetBrains Mono, since its grid needs a monospaced face. The classic view is unchanged.
+  - **The horizon moved up a little (59% to 56.5% of the height),** to pay for the extra room. Nothing under the world goes below 13.5 px.
+  - **The world is 95% opaque at its edge, reaching solid by the bottom.** 82% was tried and showed the bust's hard lower edge behind the caption.
+  - **`say` is capped at 240 characters, not 400.** 400 can't fit above the decision row, and takes too long to hear. Lines over 110 characters get a smaller caption, and on short or narrow windows hide the question chips while they show.
+- **No clock in the Thoughtfield** (owner decision). LOIS isn't a clock: the lower-right clock is gone, the greeting no longer gives the time and the Coordinator is told not to mention it.
+  The horizon's hour marks and "busiest at" stay, since they are the day's timeline. The classic view keeps its clock.
 - **The voice has a second image for Apple silicon, on the CPU** (owner asked for LOIS to speak on a Mac, as long as it doesn't harm the working PC,
   doomtickle/passdesk-ops#214). Choices to review:
   - **`voice/Dockerfile` and `requirements.lock` are untouched,** at the cost of a second Dockerfile that repeats the weights' pins. A shared file with a build argument

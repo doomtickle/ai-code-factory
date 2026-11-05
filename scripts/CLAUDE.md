@@ -335,8 +335,11 @@ The page's actions stay on the second origin, in frames it can't script, under t
 
 VOICE (`voice/`, `factory/commands/voice.py`, `dashboard-ui/voice.js`) is the optional local speech service, the one server other than the
 dashboard the main page talks to: a Docker container on `127.0.0.1:8873` built from pinned, hash-checked inputs, read-only, non-root, no
-capabilities. It needs no network at run time and makes no calls, but sits on Docker's default bridge, not firewalled. It acts on nothing. `voice.js` POSTs with `credentials: "omit"`, so the dashboard cookie never reaches it. LOIS speaks only
-the fixed templates in `field-hud.js` and `field-sky.js`, with lane names that passed the lane pattern and numbers; a label an agent could
+capabilities. It needs no network at run time and makes no calls, but sits on Docker's default bridge, not firewalled. It acts on nothing. `voice.js` POSTs with `credentials: "omit"`, so the dashboard cookie never reaches it. LOIS speaks two things: the fixed
+templates in `field-hud.js` and `field-sky.js`, with lane names that passed the lane pattern and numbers, and the lines the Coordinator gives its `say` tool
+(owner decision 5 Nov 2026, doomtickle/passdesk-ops#216). `say` keeps them in `dispatch/said.json`; `Dashboard.said` checks that file and puts each line's
+id and text in `/api/state`; the page shows new ones by `textContent` and sends them to the voice. They can be influenced by what the Coordinator reads, so speech
+must never gain any power: nothing keys off a line's words but the caption, no agent reaches the voice service, and approving still takes the held light. Any other label an agent could
 influence goes only in the detail line, as text, and is never spoken. If the service is off the page shows captions and nothing else changes.
 
 Anything new that lets a page act must meet the same bar: one fixed argv with no

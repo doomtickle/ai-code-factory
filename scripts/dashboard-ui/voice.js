@@ -1,6 +1,6 @@
 // LOIS's live voice (doomtickle/passdesk-ops#207): streams Kokoro audio from the optional local service (factory voice),
 // plays it through a long synthetic hall, and drives the lips from Kokoro's phoneme timing. No cookie is ever sent, and the
-// page sends it only fixed-template sentences. If the service isn't running, available() is false and LOIS stays silent.
+// page sends it only fixed sentences and the Coordinator's say lines. If the service isn't running, available() is false and LOIS stays silent.
 window.LiveVoice = (() => {
   const PORT = 8873, BASE = `http://127.0.0.1:${PORT}`; let up = false;
   async function check() { try { const c = new AbortController(), t = setTimeout(() => c.abort(), 1500), r = await fetch(BASE + "/health", { credentials: "omit", signal: c.signal }); clearTimeout(t); up = r.ok; } catch (e) { up = false; } }

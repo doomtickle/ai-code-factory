@@ -43,13 +43,13 @@ LOIS's bust stands in front of a spiral galaxy, above the dark curve of a
 world. The lit edge of that world is today.
 
 - **The galaxy** is today's work. See [Read the galaxy](#read-the-galaxy).
-- **The horizon** is today's clock, with the day's events on it as beads. See
+- **The horizon** is today's timeline, with the day's events on it as beads. See
   [Rewind the day](#rewind-the-day).
 - **The caption**, under the horizon, is what LOIS is saying. A smaller detail
   line under it carries names and numbers.
 - **The typed line and the question chips** are under the caption. See
   [Ask the sky](#ask-the-sky) and
-  [Talk to the Coordinator](#talk-to-the-coordinator).
+  [Talk to LOIS](#talk-to-lois).
 - **The decision row** sits above the typed line. With a write waiting, it
   shows that write. With nothing waiting, it shows the service keys. See
   [Decide a held write](#decide-a-held-write).
@@ -58,7 +58,7 @@ world. The lit edge of that world is today.
   (two at most), then the active jobs, and one more row if jobs failed today.
   Hover a row to light its stars. Press a job's row to open it, or a waiting
   write's row to select it in the decision row.
-- **Today**, lower right, has the clock, today's spend, today's job count and
+- **Today**, lower right, has today's spend, today's job count and
   the top three roles by spend. A note appears here if the dispatch
   bridge is down or a service is due.
 
@@ -169,16 +169,28 @@ Opened on a job, the monitor starts on **Packet**. **Older** and **Newer** (or
 Stands in for: `factory watch`, `factory logs <role>` and `factory packet
 <lane>`.
 
-## Talk to the Coordinator
+## Talk to LOIS
 
-Type in the line and press Enter. Nothing is sent until you do.
+LOIS is the Coordinator: the face and voice are its own. Type in the line and
+press Enter. Nothing is sent until you do.
 
 - A question the sky can answer stays in the browser.
 - Anything else goes to the Coordinator, exactly as if you had typed it in
-  Terminal 0. LOIS says "Sent to the Coordinator." The reply appears in
-  Terminal 0, not in the caption: press **Terminal** to read it.
-- If the Coordinator is off, your text stays in the line, nothing is sent, and
-  LOIS says so. Open **Terminal** at the top to power it on.
+  Terminal 0. The face thinks until it answers.
+- It answers aloud with its `say` tool, in its own words, and the caption shows
+  them. Code, paths and lists stay in the reply in **Terminal**.
+- Send another line while it's speaking and it stops and listens.
+- A line from the factory itself, such as a write going out, waits until it has
+  finished.
+- If it is off, your text stays in the line, nothing is sent, and LOIS says so.
+  Open **Terminal** at the top to power it on.
+
+The Coordinator reads tickets, files and role reports, and text in them could
+influence what it says. Speech acts on nothing. To approve a write, look at the
+write and hold the light yourself.
+
+If it goes quiet without speaking, its answer is still in **Terminal**. The
+bridge's audit log records every line it says.
 
 There is no speech-to-text. Browser speech recognition sends audio to a cloud
 service, so it was dropped. You type.
@@ -500,10 +512,11 @@ reload.
   still speaks, with pauses between sentences.
 - English only.
 
-**What LOIS says.** Fixed sentences only, with numbers, times and lane names
-filled in: "A push is waiting for you. Its arm has stopped until you decide."
-Nothing an agent wrote is ever spoken. Names such as a branch or a repo go in
-the small detail line, as text.
+**What LOIS says.** Two things. The Coordinator's own lines, from its `say` tool
+(see [Talk to LOIS](#talk-to-lois)), and fixed sentences from the factory, with
+numbers and lane names filled in: "A push is waiting for you. Its arm has stopped
+until you decide." Nothing else an agent wrote is spoken. Names such as a branch
+or a repo go in the small detail line, as text.
 
 **Other sound.** There is also a quiet low tone, and the chime when a write
 starts waiting. These play without the voice service.
@@ -1226,8 +1239,9 @@ the typed line and the control unit it only reads the factory's state folder.
   (each after a diff and a confirm). It can run only `factory doctor`, `factory
   restart`, `factory update --yes` and `factory update --plan`, each after a
   confirm screen.
-- If the voice service is running, the page sends it fixed sentences on
-  `127.0.0.1:8873`, without the dashboard's cookie. That service has no key:
+- If the voice service is running, the page sends it fixed sentences and the
+  Coordinator's `say` lines on `127.0.0.1:8873`, without the dashboard's cookie.
+  Text the Coordinator read could influence those lines. That service has no key:
   any program on this machine can make it speak, and it can only speak.
 
 The README's [Dashboard](../../README.md#dashboard) section has the details.

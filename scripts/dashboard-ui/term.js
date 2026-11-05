@@ -99,6 +99,7 @@
   const key = meta ? meta.getAttribute("content") : "";
   if (meta) meta.remove();
 
+  const skin = window.TermSkin || {};
   const CHUNK = 16 * 1024;  // the server refuses messages over 64 KiB: split big pastes
   const REASONS = {
     elsewhere: ["Open elsewhere",
@@ -111,6 +112,8 @@
     framed: ["Not in the dashboard", "Open the LOIS dashboard; this page only works inside it."],
     service: ["Restarting or updating", "The factory is restarting or updating. The Coordinator comes back when it's done."],
   };
+  Object.assign(REASONS, skin.reasons);
+  const who = skin.who || "Coordinator";
 
   // Opened on its own (not framed by the dashboard): never connect.
   if (window.top === window) {
@@ -126,7 +129,6 @@
   }
 
   // The Thoughtfield's page loads term-field.js first, which sets its type and colours here. Nothing else differs.
-  const skin = window.TermSkin || {};
   // VT323's cell is about 0.4em wide: this keeps 65 or more columns on the
   // narrow Coordinator screen and grows the type on a wide one, up to 22px.
   const fontSize = skin.fontSize || (() => Math.max(15, Math.min(22, Math.floor(window.innerWidth / 30))));
@@ -192,7 +194,7 @@
       clearTimeout(holdTimer);
       holdTimer = setTimeout(() => { $("copy-go").disabled = holding(); }, HOLD_MS + 20);
       const n = text.length;
-      $("copy-title").textContent = `Coordinator copied ${n} character${n === 1 ? "" : "s"}. Press to copy.`;
+      $("copy-title").textContent = `${who} copied ${n} character${n === 1 ? "" : "s"}. Press to copy.`;
       $("copy-preview").textContent = copyPreview(text);
       $("copy-note").textContent = hasHidden(text) ? "⚠ Contains hidden characters (shown as ⟨U+…⟩)" : "";
       $("copy-note").hidden = !hasHidden(text);
@@ -205,7 +207,7 @@
       // text: the bytes it would decode to. Nothing to copy, so no COPY key.
       pending = null;
       $("copy-preview").textContent = "";
-      $("copy-title").textContent = `Coordinator copied about ${Math.ceil(text / 1024)} KiB. Too large to copy (limit ${COPY_MAX / 1024} KiB).`;
+      $("copy-title").textContent = `${who} copied about ${Math.ceil(text / 1024)} KiB. Too large to copy (limit ${COPY_MAX / 1024} KiB).`;
       $("copy-note").hidden = true;
     }
     box.hidden = false;

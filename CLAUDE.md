@@ -15,9 +15,11 @@ socket, or host credentials. Full picture: README.md.
   (`templates/agent/factory-lane`) in an rw role's sandbox (`sbx exec`, fixed argv);
   one fixed, hook-free `git fetch` (`core.hooksPath=/dev/null`,
   `core.fsmonitor=false`, no shell, never `--prune`) of a bundle's `factory/*`
-  branches into `refs/remotes/factory-<lane>/`; and a read-only `factory_docs` tool
+  branches into `refs/remotes/factory-<lane>/`; a read-only `factory_docs` tool
   serving the factory's own markdown from a `FACTORY_STATE` snapshot `factory start`
-  makes, never the repo.
+  makes, never the repo; and a `say` tool that keeps the Coordinator's short spoken
+  lines in `FACTORY_STATE/dispatch/said.json` for the dashboard's caption and voice,
+  and does nothing else.
 - **Roles are data:** `roles/<name>/role.conf` + `instructions.md` + `kit/`. No role
   mounts the project writable — each gets a scratch dir
   (`FACTORY_STATE/roles/<name>`) plus the project `:ro`. rw roles (`WORKSPACE="rw"`,
@@ -107,7 +109,7 @@ socket, or host credentials. Full picture: README.md.
   followed, applied on the next restart. Full rules: **`scripts/CLAUDE.md` — read before changing dashboard
   code** (`scripts/dashboard*.py`, `scripts/patchview.py`).
 - The optional local voice (`voice/`, `factory voice`) is not an agent sandbox and carries no agent traffic: a plain pinned Docker
-  container on `127.0.0.1:8873` that turns the dashboard's fixed sentences into speech. It needs no network at run time and makes no calls, but is not firewalled. It is a named exception to the
+  container on `127.0.0.1:8873` that turns the dashboard's fixed sentences and the Coordinator's `say` lines, which the page sends it, into speech. It needs no network at run time and makes no calls, but is not firewalled. It is a named exception to the
   dashboard being the one listener: it has no key because it acts on nothing but speech, and it sends and receives no cookie. Features must keep working without it.
 - Broker policy is baked into its image, never read from the agent-writable
   workspace. Hosts in `broker/policy.toml` `[web].allow_hosts` must also be in
