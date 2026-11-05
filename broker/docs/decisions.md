@@ -4,6 +4,18 @@ Dated entries, for the user to review. Newest first.
 
 ## 2026-11-05
 
+- **The control unit's menus are restyled for the Thoughtfield, and Inspect's Approve is now a hold** (owner asked for the old-style menus to be
+  converted, doomtickle/passdesk-ops#208). This replaces "keep their classic inner look" below. Choices to review:
+  - **Inspect's Approve became the gold 2.5 s hold, in the Thoughtfield only.** That is more than a restyle, and stricter: one click there would
+    have been a way round the hold on the decision row. The classic page keeps one press.
+  - **`cu-field.html` no longer loads `cu.css`.** `cu-field.css` is the whole look, so no tube, keycap or scanline can leak through and nothing
+    has to be undone with `!important`. `cu.html` and `cu.css` keep the classic page as it was.
+  - **Plain words in the shared strings.** `cu.js` and `cu-notes.js` now say "Saved. Restart to apply." and "Demo: changes are off", and sources
+    read "repo", "your override" and "fixed". One set of strings, not a table per look: `cu.css` uppercases the classic page's titles, so what
+    changes there is mainly prose. The strings the broker and `factory approvals` use are untouched, except that a cut patch now ends "✂ Cut here".
+  - **The Coordinator's terminal keeps its green tube and its power screen.** It is a terminal rather than a menu, and sharing `term.js` with the
+    classic page makes changing its theme a separate job.
+
 - **The Thoughtfield is the dashboard's default view** (owner asked for it, doomtickle/passdesk-ops#207, and left the calls to the
   session while asleep). Choices to review:
   - **Both views, Thoughtfield first.** The owner offered replacing or adding. `/` opens the Thoughtfield, `/classic` keeps FC-1984 untouched,
@@ -29,7 +41,6 @@ Dated entries, for the user to review. Newest first.
     to start if espeak did not load. The alternative was patching vendored code. The image is 12 GB because of CUDA torch; x86_64 Linux only.
   - **The bust and its textures are committed (about 16 MB with three.js).** A dashboard that must work offline can't fetch them, and the
     MakeHuman base is CC0 by the project's own licence files (`scripts/dashboard-ui/witness/README.md` has the quotes and URLs).
-  - **Settings, Inspect and the service screens keep their classic inner look**, on the new dark background. Restyling them is a follow-up.
 
 ## 2026-10-30
 

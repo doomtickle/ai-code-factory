@@ -14,7 +14,7 @@
   position: fixed; inset: 0; z-index: 60;
   display: flex; align-items: center; justify-content: center;
   padding: 6vh 6vw;
-  background: rgba(3, 5, 10, .66);
+  background: rgba(3, 5, 10, .8);
   animation: fm-rise .22s ease-out;
 }
 .fm-scrim[hidden] { display: none; }
@@ -55,11 +55,11 @@
 }
 .fm-tab { border-bottom: 2px solid transparent; }
 .fm-tab:hover, .fm-key:hover:not(:disabled) { color: var(--fm-ink); }
-.fm-tab[aria-pressed="true"] { color: var(--fm-ink); border-bottom-color: var(--fm-gold); }
+.fm-tab[aria-pressed="true"] { color: var(--fm-ink); border-bottom-color: var(--fm-blue); }   /* gold is for decisions */
 .fm-key { color: var(--fm-ink-2); }
 .fm-key:disabled { color: var(--fm-ink-3); cursor: default; }
 .fm-tab:focus-visible, .fm-key:focus-visible, .fm-file-h:focus-visible {
-  outline: 2px solid var(--fm-gold); outline-offset: 2px; border-radius: 6px;
+  outline: 2px solid var(--fm-blue); outline-offset: 2px; border-radius: 6px;
 }
 .fm-nav { display: inline-flex; align-items: center; gap: 10px; margin-left: 10px; }
 .fm-nav[hidden] { display: none; }

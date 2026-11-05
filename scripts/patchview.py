@@ -399,7 +399,7 @@ def _size(obj) -> int:
     return len(json.dumps(obj, ensure_ascii=False).encode("utf-8"))
 
 
-CUT = ["✂", "CUT HERE · the rest of this push is not shown"]  # the last line shown of a truncated patch
+CUT = ["✂", "Cut here: the rest of this push is not shown"]  # the last line shown of a truncated patch
 CARD_FILES = 50   # names from the card's files list compared with what is shown
 
 

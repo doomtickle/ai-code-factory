@@ -211,7 +211,7 @@ calls only `config-read`, `config-prepare` and `config-run {"token"}`. The text 
 lines, the path, errors) are drawn with `textContent`, a diff line's class comes from a fixed `+`/`-`/space map and
 a gauge's from a fixed ok/warn/over map, and its few attributes are fixed. SAVE is a prepare, CONFIRM (dark for the
 2.5 s `HOLD_MS`) is the run, CANCEL drops the token; a 409 `changed` offers RELOAD; a 403 on prepare in demo mode
-shows a fixed "DEMO · CHANGES DISABLED". The box takes at most the host's 20,000 characters, and its per-role
+shows a fixed "Demo: changes are off". The box takes at most the host's 20,000 characters, and its per-role
 gauge mirrors `dashboard_setup._notes` (SAVE is dark when a role would be over and higher than now, as the host
 refuses it); the host decides regardless. `test_cu_notes.py` drives the real endpoints with the bodies the editor
 sends.
@@ -308,14 +308,19 @@ transcripts `/api/state` reads, and the broker audit's denials. An action leaves
 denial as a time and a role, never its target. A job's words are one-line cut labels (`one_line`). No git, no command, no write.
 
 The page's actions stay on the second origin, in frames it can't script, under the rules above:
-- `/cu/field` is the control unit in a decision-row skin: `cu-field.html` has the same ids as `cu.html` and runs the same `cu.js` behind the
-  same key, serving rule and CSP. `cu-field.js` adds no request and never sees the key: a full 2.5 s hold of the gold light calls
-  `btn-approve.click()` and only while that key is enabled, so `cu.js` still decides everything (the hold after a new card, closed cards, the
-  truncated-push question). A hold is one real press on one card: the primary button or Space/Enter on the light itself, ended by the card
-  changing (`data-sel`), the pointer leaving, the key being released, focus going or the page hiding, and the light is dark while the reason box
-  or a flash is up. The skin must keep what a hold approves in view: one row per line, the repo and branch never hidden at any width. The rule
-  that APPROVE is one press becomes one held press here; inside INSPECT it stays one press. `cu.js` changes only to set `data-cards` and
-  `data-sel` and to mark the deferred-writes lines (`wr`), which the skin hides (Classic and `factory approvals` show them).
+- `/cu/field` is the control unit in the Thoughtfield's look: `cu-field.html` has the same ids as `cu.html` and runs the same `cu.js` behind the
+  same key, serving rule and CSP. `cu-field.css` is its whole look and `cu.css` is not loaded: the deck is the decision row, every other screen
+  (Settings, notes, Diagnose, Restart, Update, a log, Inspect) a soft dark pool like the lane monitor's, with the frame transparent over the
+  world. `cu-field.js` adds no request and never sees the key: a full 2.5 s hold of a gold light calls `btn-approve.click()` on the decision row
+  and `pv-approve.click()` in INSPECT, only while that key is enabled, so `cu.js` still decides everything (the hold after a new card, closed
+  cards, the truncated-push question). A hold is one real press on one card: the primary button or Space/Enter on the light itself, ended by the
+  card changing (`data-sel` on the row; in INSPECT, APPROVE going dark, which `cu.js` does before it draws a new card or patch, and it puts
+  nothing about either in an attribute), the pointer leaving, the key being released, focus going or the page hiding. The row's light is also
+  dark while the reason box or a flash is up. The skin must keep what a hold approves in view: one row per line, the repo and branch never
+  hidden at any width. The rule that APPROVE is one press becomes one held press in both places here, and stays one press on the classic page.
+  `cu.js` changes only to set `data-cards` and `data-sel`, to mark the deferred-writes lines (`wr`), which the skin hides (Classic and `factory
+  approvals` show them), and to take the light into INSPECT's Tab order. The screens' words are plain sentence case in `cu.js` and `cu-notes.js`;
+  `cu.css` uppercases the classic page's titles, keys and big lines, so only its prose reads differently there.
 - `/term/line` (`line.html`, `line.js`) is the typed line, on the terminal's key, serving rule and WebSocket, under `line_csp` (the terminal's
   minus inline style). It is the user typing: text goes to the PTY only on Enter, with C0 and C1 controls removed and a carriage return after it,
   which is not the "host script typing into a terminal" `CLAUDE.md` forbids. It never sends `power` or `resize`, ignores everything the terminal

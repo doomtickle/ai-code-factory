@@ -41,6 +41,7 @@
   const list = v => (Array.isArray(v) ? v : []);
   const setText = (n, t) => { t = str(t); if (n.textContent !== t) n.textContent = t; };
   const setClass = (n, c) => { if (n.className !== c) n.className = c; };
+  const cap = s => s.charAt(0).toUpperCase() + s.slice(1);
 
   const keyMeta = document.querySelector('meta[name="cu-key"]');
   const portMeta = document.querySelector('meta[name="cu-main-port"]');
@@ -159,11 +160,11 @@
           st = res.data; polledAt = Date.now(); fault = null;
         } else {
           fault = res.status === 403
-            ? ["REFUSED", "The dashboard refused this control unit (it may have restarted). Reload the dashboard page."]
-            : ["FAULT", errText(res)];
+            ? ["Refused", "The dashboard refused this control unit (it may have restarted). Reload the dashboard page."]
+            : ["Fault", errText(res)];
         }
       } catch (e) {
-        fault = ["NO LINK", "Lost the dashboard. Retrying…"];
+        fault = ["No link", "Lost the dashboard. Retrying…"];
       } finally {
         polling = false;
       }
@@ -213,10 +214,10 @@
     const out = [];
     const v = decidedOf(c);
     if (v) {
-      out.push(line(`ln big ${v === "approve" ? "st-ok" : "st-no"}`, v === "approve" ? (c.queued ? "APPROVED, the gateway writes it within seconds" : "APPROVED, but not staged: nothing to write") : "DECLINED"));
+      out.push(line(`ln big ${v === "approve" ? "st-ok" : "st-no"}`, v === "approve" ? (c.queued ? "Approved, the gateway writes it within seconds" : "Approved, but not staged: nothing to write") : "Declined"));
       out.push(line("ln dim", `by ${str(c.decided_by) || "?"} at ${clock(c.decided_at)}`));
     } else if (expired(c)) {
-      out.push(line("ln big st-no", "EXPIRED"), line("ln dim", "nothing is written; the agent's next call stages a fresh card"));
+      out.push(line("ln big st-no", "Expired"), line("ln dim", "nothing is written; the agent's next call stages a fresh card"));
     }
     out.push(line("ln big", `${str(c.tool) || "write"} · ${str(c.role) || "?"}`));
     if (c.queued && !v && !expired(c)) out.push(line("ln warn", "STAGED: the agent has moved on; the gateway writes it when approved"));
@@ -306,7 +307,7 @@
     moreCue();
     if (running() && !offeredLog && screen === "deck") {
       offeredLog = true;
-      flash(`${str(act().name).toUpperCase() || "AN ACTION"} IS RUNNING · press LOG to watch it`, "ok");
+      flash(`${cap(str(act().name)) || "An action"} is running. Press Log to watch it.`, "ok");
     }
     tick();
   }
@@ -437,7 +438,7 @@
     changed: "Changed: a new write replaced that card. Check it, then decide again.",
     expired: "Expired: the hold ran out. The agent can push again.",
     ambiguous: "Ambiguous: two held writes claim this id. Nothing was decided; use factory approvals in a terminal.",
-    reason: "DECLINE needs a reason for the agent: type one, then press DECLINE.",
+    reason: "Decline needs a reason for the agent: type one, then press Decline.",
   };
   // Every refusal as text: the server's reasons by name, anything else as it says.
   function refusalText(res) {
@@ -467,7 +468,7 @@
   function showAsk() {
     for (const [where, node] of [["deck", $("ask")], ["viewer", $("pv-ask")]]) {
       node.hidden = !asking(where);
-      node.textContent = asking(where) ? `${askText(where === "viewer")} The patch was cut: CONFIRM APPROVE approves what you haven't seen too.` : "";
+      node.textContent = asking(where) ? `${askText(where === "viewer")} The patch was cut: approving now also approves what you haven't seen.` : "";
     }
   }
   function askApprove(fromViewer, c) {
@@ -520,7 +521,7 @@
         expectGone = c.id;
         reasonEl.value = "";
         if (fromViewer) closeInspect();
-        flash(`${verdict === "approve" ? "APPROVED" : "DECLINED"} · ${str(res.data.text)} · ${verdict === "approve" ? "the gateway makes the write within seconds" : "nothing is written"}`, "ok");
+        flash(`${verdict === "approve" ? "Approved" : "Declined"} · ${str(res.data.text)} · ${verdict === "approve" ? "the gateway makes the write within seconds" : "nothing is written"}`, "ok");
       } else {
         say(refusalText(res), "err");
       }
@@ -555,11 +556,11 @@
   const H = (text, tag) => { const h = el("h5", null, text); if (tag) h.append(el("span", "tag", tag)); return h; };
   const RUNS = { restart: "factory restart", update: "factory update --yes", doctor: "factory doctor" };
   const TITLES = { restart: "Restart the factory", update: "Update the factory", doctor: "Diagnose the factory" };
-  const NAMES = { restart: "restart", update: "update", doctor: "diag" };  // what the keys say
+  const NAMES = { restart: "restart", update: "update", doctor: "diagnose" };  // what the keys say
   const keyName = action => NAMES[action] || str(action);
 
   function head(action, tag, tagCls, led, note) {
-    setText($("con-title"), `SERVICE · ${keyName(action).toUpperCase()}`);
+    setText($("con-title"), TITLES[action] || cap(keyName(action)));
     const t = $("con-state");
     setClass(t, `state-tag st-${tagCls}`);
     setText(t, tag);
@@ -586,8 +587,8 @@
     conBody.replaceChildren(
       P("banner", TITLES[action]),
       P("cursor", action === "update"
-        ? "▶ Fetching the factory's upstream and comparing the sandboxes with it (this can take up to a minute and a half)…"
-        : action === "doctor" ? "▶ Getting ready…" : "▶ Checking what a restart would stop…"));
+        ? "Fetching the factory's upstream and comparing the sandboxes with it (this can take up to a minute and a half)…"
+        : action === "doctor" ? "Getting ready…" : "Checking what a restart would stop…"));
     conBody.scrollTop = 0;
     moreCue();
     cancelKey.focus();
@@ -637,11 +638,11 @@
   // ---------- the setup screen: the effective configuration (st.config), plus the notes editor
   // Built on the host from the factory's own parsers (dashboard_setup.py); nothing here
   // can change a setting. Every string goes in with textContent.
-  const APPLIES = { START: "factory start", UPDATE: "factory update" };
-  const SOURCES = { REPO: "REPO", LOCAL: "LOCAL" };
+  const APPLIES = { START: "on start", UPDATE: "on update" };
+  const SOURCES = { REPO: "repo", LOCAL: "your override" };
   const num = n => (Number.isFinite(Number(n)) ? Number(n).toLocaleString("en-US") : "?");
   const span = (cls, text) => el("span", cls, text);
-  const applyTag = a => span("k-cmd", `  → ${APPLIES[a] ? a : "?"}`);
+  const applyTag = a => span("k-cmd", `  → ${APPLIES[a] || "?"}`);
   let setupKey = null;
 
   function row(label, value, ...tail) {
@@ -652,7 +653,7 @@
 
   function roleBlock(r) {
     const out = [];
-    const tags = [r.on ? "on" : "off", r.optional ? "optional" : null, r.override ? "local override" : null].filter(Boolean).join(" · ");
+    const tags = [r.on ? "on" : "off", r.optional ? "optional" : null, r.override ? "your override" : null].filter(Boolean).join(" · ");
     out.push(H(str(r.name), tags));
     if (!r.on) out.push(P("k-dim", "  Switched off in enabled-roles: no sandbox, so none of this is applied."));
     out.push(tuneRack(r));
@@ -664,23 +665,23 @@
       out.push(row(k.key, k.value, ...tail));
     }
     for (const k of list(r.fixed).filter(x => x && typeof x === "object")) {
-      const tail = [span("k-dim", "  FIXED"), applyTag(k.applies)];
+      const tail = [span("k-dim", "  fixed"), applyTag(k.applies)];
       if (k.note) tail.push(span("k-dim", ` (${str(k.note)})`));
       out.push(row(k.key, k.value, ...tail));
     }
     for (const name of list(r.ignored)) out.push(P("ind k-err", `  ✕ ${str(name)} in the override isn't allowed: factory start refuses it`));
     if (r.instructions_chars != null) {
-      out.push(P(`ind ${r.over ? "k-err" : "k-dim"}`, `  instructions + notes  ${num(r.instructions_chars)} of ${num(c().notes && c().notes.limit)} characters${r.over ? " · OVER: the bridge refuses this role's tasks" : ""}`));
+      out.push(P(`ind ${r.over ? "k-err" : "k-dim"}`, `  instructions + notes  ${num(r.instructions_chars)} of ${num(c().notes && c().notes.limit)} characters${r.over ? " · over: the bridge refuses this role's tasks" : ""}`));
     }
     return out;
   }
   const c = () => (st && st.config && typeof st.config === "object" ? st.config : null);
 
   // The four sections of the SETTINGS screen (shown one at a time under a tab strip).
-  const SETTINGS_HINT = "Editable here: each role's knobs and the project notes. Everything else is read-only. Nothing is written until you PREPARE and CONFIRM, and changes apply on RESTART.";
+  const SETTINGS_HINT = "Change a role's knobs or the project notes here; everything else is read-only. Nothing is written until you prepare and confirm it, and changes apply after a restart.";
 
   function rolesSection(cfg) {
-    const out = [P("k-dim", "REPO is the committed roles/<name>/role.conf, LOCAL a value your override in the config folder puts on top of it, FIXED a value no override can change. Each role's knobs write that override (PREPARE shows the change first); everything else is read-only. → START is factory start, → UPDATE is factory update.")];
+    const out = [P("k-dim", "Each knob writes your override in the config folder, on top of the committed role.conf. Fixed values can't be overridden. → on start and → on update say which factory command applies a value.")];
     for (const r of list(cfg.roles).filter(x => x && typeof x === "object")) out.push(...roleBlock(r));
     const en = cfg.enabled || {};
     out.push(H("Optional roles", "enabled-roles"));
@@ -698,7 +699,7 @@
     const files = list(nt.files).filter(x => x && typeof x === "object");
     if (!files.length) out.push(P("k-dim", `  No notes file for ${str(nt.project) || "this project"} in the config folder's projects/.`));
     for (const f of files) {
-      const tail = [span(f.over ? "k-err" : "k-dim", `  ${num(f.chars)} of ${num(nt.limit)} characters${f.over ? " · OVER" : ""}`)];
+      const tail = [span(f.over ? "k-err" : "k-dim", `  ${num(f.chars)} of ${num(nt.limit)} characters${f.over ? " · over" : ""}`)];
       if (f.read === false) tail.push(span("k-dim", " · role off, not read"));
       tail.push(applyTag(nt.applies));
       out.push(row(f.name, "", ...tail));
@@ -711,7 +712,7 @@
     const ap = cfg.approvals || {}, rp = cfg.repos || {}, gl = cfg.gitlab || {}, co = cfg.coordinator || {};
     const out = [P("k-dim", "Read-only. These move the security boundary, so they are never edited from a browser: change the files in the config folder, then restart.")];
     out.push(H("Broker policy", cfg.local_policy ? "local policy.toml" : "repo policy.toml only"));
-    const src = o => span(o.source === "LOCAL" ? "k-warn" : "k-dim", `  ${SOURCES[o.source] || "NOT SET"}`);
+    const src = o => span(o.source === "LOCAL" ? "k-warn" : "k-dim", `  ${SOURCES[o.source] || "not set"}`);
     const tools = list(ap.tools);
     out.push(row("held tools", tools.join(", "), src(ap), applyTag(ap.applies)));
     if (!tools.length) out.push(P("ind k-dim", "                      (nothing is held: the gateway makes every write at once)"));
@@ -760,13 +761,13 @@
   }
 
   function setupHead() {
-    setText($("con-title"), "SETTINGS · CONFIGURATION");
+    setText($("con-title"), "Settings");
     const t = $("con-state");
     setClass(t, "state-tag st-check");
     setText(t, "Tuning");
     setClass($("con-led"), "led g");
     setText($("con-project"), st ? str(st.project) : "");
-    setText($("con-note"), "Nothing is written until you confirm.");
+    setText($("con-note"), "");
   }
 
   function openSetup() {
@@ -794,22 +795,22 @@
     svc.onGo = runAction;
     const out = [P("banner", TITLES[action])];
     if (action === "doctor") {
-      out.push(P(null, "▶ Diag runs the factory's doctor: it checks this machine, its tools, Docker, the sandboxes and the gateway, and prints the fix for each problem. It changes nothing."));
+      out.push(P(null, "Diagnose runs the factory's doctor: it checks this machine, its tools, Docker, the sandboxes and the gateway, and prints the fix for each problem. It changes nothing."));
       if (d.project) out.push(P("ind k-dim", `  project: ${str(d.project)}`));
       out.push(P("ind k-cmd", `  runs exactly: ${RUNS[action]}`));
       out.push(P("ind k-dim", "  Terminal 0 stays attached. Running jobs and held writes carry on."));
-      out.push(el("div", "gap"), P("k-dim", "Nothing has run yet. CONFIRM DIAG starts it; CANCEL or Esc backs out."));
+      out.push(el("div", "gap"), P("k-dim", "Nothing has run yet. Confirm starts it; Cancel or Esc backs out."));
       conBody.replaceChildren(...out);
       conBody.scrollTop = 0;
       moreCue();
-      keys("Cancel", "Confirm diag", true);
+      keys("Cancel", "Confirm diagnose", true);
       tickConfirm();
       return;
     }
     if (action === "update") {
-      out.push(P(null, "▶ Update pulls the factory's code, rebuilds what changed, recreates the sandboxes listed below, then starts the factory again."));
+      out.push(P(null, "Update pulls the factory's code, rebuilds what changed, recreates the sandboxes listed below, then starts the factory again."));
     } else {
-      out.push(P(null, "▶ Restart stops the agents, the broker and the dispatch bridge, then starts them again."));
+      out.push(P(null, "Restart stops the agents, the broker and the dispatch bridge, then starts them again."));
     }
     if (d.project) out.push(P("ind k-dim", `  project: ${str(d.project)}`));
     out.push(P("ind k-cmd", `  runs exactly: ${RUNS[action]}`));
@@ -859,7 +860,7 @@
         for (const n of notes) out.push(P("ind k-warn", `• ${str(n)}`));
       }
     }
-    out.push(el("div", "gap"), P("k-dim", `Nothing has run yet. CONFIRM ${action.toUpperCase()} starts it; CANCEL or Esc backs out.`));
+    out.push(el("div", "gap"), P("k-dim", "Nothing has run yet. Confirm starts it; Cancel or Esc backs out."));
     conBody.replaceChildren(...out);
     conBody.scrollTop = 0;
     moreCue();
@@ -930,7 +931,7 @@
   const TUNE_NUMBERS = ["MAX_SESSION_TOKENS", "MAX_TURNS", "MAX_JOB_SECONDS"];
   const TUNE_HINTS = { MAX_SESSION_TOKENS: "0 = no cap", MAX_TURNS: "0 = no cap", MAX_JOB_SECONDS: "0 = no limit" };
   const EFFORTS = ["low", "medium", "high", "xhigh"];
-  const DEMO_LINE = "DEMO · CHANGES DISABLED";
+  const DEMO_LINE = "Demo: changes are off";
   const diffCls = op => (op === "+" ? "k-ok" : op === "-" ? "k-err" : "k-dim");
   const diffOp = op => (op === "+" || op === "-" ? op : " ");
   const DIFF_CAP = 400;
@@ -1006,7 +1007,7 @@
         if (bad) { setClass(state, "tstate k-err"); setText(state, bad); return; }
         if (ch) {
           setClass(state, "tstate k-warn");
-          setText(state, ch.unset ? `→ UNSET · repo: ${repoVal(row) || "empty"}` : `→ SET ${ch.set}`);
+          setText(state, ch.unset ? `→ back to the repo value: ${repoVal(row) || "empty"}` : `→ will be ${ch.set}`);
           return;
         }
         const local = row.source === "LOCAL";
@@ -1133,7 +1134,7 @@
       prep.title = bad ? "Fix the marked value first" : n ? "" : "Nothing has changed";
       setClass(lamp, `led${ready ? " a" : ""}${tuneChecking === name ? " blink" : ""}`);
       setClass(msg, `tmsg ${m ? m.cls : "k-dim"}`);
-      setText(msg, m ? m.text : tuneChecking === name ? "▶ Checking what would change…" : n ? `${n} change${n > 1 ? "s" : ""} ready to prepare` : "No changes");
+      setText(msg, m ? m.text : tuneChecking === name ? "Checking what would change…" : n ? `${n} change${n > 1 ? "s" : ""} ready to prepare` : "No changes");
     });
     box.append(foot);
     redraw();
@@ -1165,7 +1166,7 @@
   }
 
   function tuneHead(tag, tagCls, led, note) {
-    setText($("con-title"), `SETTINGS · TUNE ${str(tune.role).toUpperCase()}`);
+    setText($("con-title"), `Tune ${str(tune.role)}`);
     const t = $("con-state");
     setClass(t, `state-tag st-${tagCls}`);
     setText(t, tag);
@@ -1179,13 +1180,13 @@
     // The bridge reads only the snapshot `factory start` takes, so the host always answers RESTART.
     const restart = d.applies === "RESTART";
     const out = [P("banner", `Tune ${role}`), P("ind k-dim", `  writes: ${str(d.path) || "(unknown path)"}`),
-      P("ind k-warn", restart ? "  applies: after RESTART (SERVICE DUE · RESTART TO APPLY)" : "  applies: unknown")];
+      P("ind k-warn", restart ? "  applies: after a restart" : "  applies: unknown")];
     out.push(H("Change"));
     const lines = list(d.diff).filter(l => l && typeof l === "object");
     if (!d.changed || !lines.length) out.push(P("k-dim", "  Nothing would change: the file already says this."));
     for (const l of lines.slice(0, DIFF_CAP)) out.push(P(`diff ${diffCls(l.op)}`, `${diffOp(l.op)} ${str(l.text)}`));
     if (lines.length > DIFF_CAP) out.push(P("k-dim", `  … ${lines.length - DIFF_CAP} more lines`));
-    out.push(el("div", "gap"), P("k-dim", `Nothing has been written yet. CONFIRM writes it; CANCEL or Esc backs out.${tune.changed ? " CONFIRM lights in a moment." : ""}`));
+    out.push(el("div", "gap"), P("k-dim", `Nothing has been written yet. Confirm writes it; Cancel or Esc backs out.${tune.changed ? " Confirm lights up in a moment." : ""}`));
     conBody.replaceChildren(...out);
     conBody.scrollTop = 0;
     moreCue();
@@ -1257,7 +1258,7 @@
     if (!tune || tune.seq !== seq) return;
     if (res.ok) {
       // Every change waits for a restart; an answer that doesn't say so is still shown as a write.
-      tuneNote = res.data.applies === "RESTART" ? { text: "SERVICE DUE · RESTART TO APPLY", cls: "k-warn" } : { text: "APPLIED", cls: "k-ok" };
+      tuneNote = res.data.applies === "RESTART" ? { text: "Saved. Restart to apply.", cls: "k-warn" } : { text: "Applied", cls: "k-ok" };
       await pollFresh();  // the host dropped its SETUP cache: the knobs show what was written
       if (!tune || tune.seq !== seq) return;
       drafts.delete(role);
@@ -1310,13 +1311,13 @@
       const ok = phase === "done";
       // The doctor exits 1 when it finds problems: that's its answer, not a failure.
       const found = name === "doctor" && exit === 1;
-      const word = ok ? (name === "doctor" ? "NO PROBLEMS FOUND" : "FINISHED") : found ? "PROBLEMS FOUND" : "FAILED";
+      const word = ok ? (name === "doctor" ? "no problems found" : "finished") : found ? "problems found" : "failed";
       head(name, ok ? "Done" : found ? "Problems" : "Failed", ok ? "done" : "failed", ok ? "g" : "r");
       logStatus.replaceChildren(P(ok ? "k-ok" : "k-err",
-        `${ok ? "✓" : "✕"} ${keyName(name).toUpperCase()} ${word} · exit ${exit == null ? "unknown" : str(exit)}`));
-      if (found) logStatus.append(P("k-dim", "Each problem has its fix indented under it. Fix them, then press DIAG again."));
+        `${ok ? "✓" : "✕"} ${cap(keyName(name))}: ${word} (exit ${exit == null ? "unknown" : str(exit)})`));
+      if (found) logStatus.append(P("k-dim", "Each problem has its fix indented under it. Fix them, then run Diagnose again."));
       if (reload === "page") {
-        logStatus.append(P("k-warn", "The dashboard's page changed. Press RELOAD to load the new one."));
+        logStatus.append(P("k-warn", "The dashboard's page changed. Press Reload to load the new one."));
         svc.onGo = () => tell("cu:reload");
         keys("Close", "Reload", true);
       } else {
@@ -1325,7 +1326,7 @@
       }
       return;
     }
-    head(name, "Running", "running", "g blink", "Closing this doesn't stop it: the LOG key brings it back.");
+    head(name, "Running", "running", "g blink", "Closing this doesn't stop it: the Log key brings it back.");
     logStatus.replaceChildren(P("k-dim cursor", ""));
     keys("Close", null, false);
   }
@@ -1464,7 +1465,7 @@
     $("pv-trunc").hidden = true;
     $("pv-missing").hidden = true;
     pvList.replaceChildren();
-    pvMain.replaceChildren(el("p", "pv-msg cursor", "▶ Reading the patch the gateway stored for this push…"));
+    pvMain.replaceChildren(el("p", "pv-msg cursor", "Reading the patch the gateway stored for this push…"));
     updateInspKeys();
     api("patch", { id: insp.id, fp }).then(res => {
       if (!insp || insp.seq !== seq) return;
@@ -1500,15 +1501,15 @@
     const shown = Number.isInteger(d.files_shown) ? d.files_shown : 0;
     const tr = $("pv-trunc");
     tr.hidden = d.truncated !== true;
-    tr.textContent = `TRUNCATED · showing ${shown} of ${total == null ? "?" : total} files`;
+    tr.textContent = `Cut short: showing ${shown} of ${total == null ? "?" : total} files`;
     // What the cut hides, by name (the card's own file list), so it can't be missed.
     const missing = list(d.files_missing).map(str);
     const more = Math.max(0, Number(d.files_missing_more) || 0);
     const ms = $("pv-missing");
     ms.hidden = d.truncated !== true;
     ms.textContent = d.truncated !== true ? "" : missing.length || more
-      ? `NOT SHOWN: ${missing.join(", ")}${missing.length && more ? " … " : ""}${more ? `and ${more} more file${more === 1 ? "" : "s"}` : ""}`
-      : "NOT SHOWN: the rest of the push (the cut fell inside a file shown here)";
+      ? `Not shown: ${missing.join(", ")}${missing.length && more ? " … " : ""}${more ? `and ${more} more file${more === 1 ? "" : "s"}` : ""}`
+      : "Not shown: the rest of the push (the cut fell inside a file shown here)";
     inspHead(d.truncated === true ? "Truncated" : "Held", d.truncated === true ? "confirm" : "running", "a blink");
     insp.files = [];
     insp.rows = [];
@@ -1536,7 +1537,7 @@
       }
     });
     if (!insp.files.length) out.push(el("p", "pv-msg k-dim", "No files in this patch."));
-    if (d.truncated === true) out.push(el("div", "pv-cut", "✂ CUT HERE · the rest of this push is not shown"));
+    if (d.truncated === true) out.push(el("div", "pv-cut", "✂ Cut here: the rest of this push is not shown"));
     pvList.replaceChildren(...out);
     pvList.scrollTop = 0;
     if (insp.files.length) selectFile(0, 0);
@@ -1561,7 +1562,7 @@
     insp.rows[k].scrollIntoView({ block: "nearest" });
     const out = commitBlock(c);
     const st = STATUS[str(f.status)] || "changed";
-    const title = el("p", "pv-title", `${st.toUpperCase()} ${str(f.path)}`);
+    const title = el("p", "pv-title", `${cap(st)} ${str(f.path)}`);
     out.push(title);
     if (f.old_path != null) out.push(el("p", "pv-meta", `from ${str(f.old_path)}`));
     if (c.merge === true) out.push(el("p", "pv-warn", "merge: only changes against every parent are shown"));
@@ -1703,7 +1704,7 @@
     if (screen === "inspect") {
       if (e.key === "Escape") { e.preventDefault(); closeInspect(); return; }
       if (e.key === "Tab") {
-        const items = [pvList, pvMain, pvReason, $("pv-close"), $("pv-decline"), $("pv-approve")].filter(n => !n.hidden && !n.disabled);
+        const items = [pvList, pvMain, pvReason, $("pv-close"), $("pv-decline"), $("pv-approve"), $("pv-sun")].filter(n => n && !n.hidden && !n.disabled && n.offsetParent !== null);   // pv-sun: the Thoughtfield's gold light, which replaces a hidden APPROVE
         const first = items[0], last = items[items.length - 1];
         const inside = $("scr-inspect").contains(document.activeElement);
         if (e.shiftKey && (document.activeElement === first || !inside)) { e.preventDefault(); last.focus(); }
@@ -1736,7 +1737,7 @@
       // The editor takes the screen: a knob check still waiting for its answer is dropped (the drafts stay).
       opened: () => { tuneStop(); tuneChecking = null; },
       head: (tag, cls, led, note) => {
-        setText($("con-title"), "SETTINGS · NOTES");
+        setText($("con-title"), "Project notes");
         setClass($("con-state"), `state-tag st-${cls}`);
         setText($("con-state"), tag);
         setClass($("con-led"), `led ${led}`);

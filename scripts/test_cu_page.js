@@ -185,13 +185,13 @@ const card = (over) => Object.assign({ id: "c1", tool: "git_push", role: "develo
   patch = { truncated: true, patch_bytes: 10, files_total: 3, files_shown: 1, files_missing: ["b.py"], files_missing_more: 1,
     commits: [{ sha: "a".repeat(40), author: "A", date: "d", message: "m", merge: false, flags: [], files: [
       { path: "a.py", old_path: null, status: "M", adds: 1, dels: 0, flags: [], hunks: [
-        { header: "@@ -1 +1 @@", lines: [["+", "x"], ["✂", "CUT HERE · the rest of this push is not shown"]] }] }] }] };
+        { header: "@@ -1 +1 @@", lines: [["+", "x"], ["✂", "Cut here: the rest of this push is not shown"]] }] }] }] };
   await advance(2000); await advance(3000);
   $("btn-inspect").click(); await flush();
   assert.strictEqual($("scr-inspect").hidden, false);
-  assert.strictEqual($("pv-trunc").textContent, "TRUNCATED · showing 1 of 3 files");
-  assert.strictEqual($("pv-missing").textContent, "NOT SHOWN: b.py … and 1 more file");
-  assert.match($("pv-main").textContent, /✂ CUT HERE · the rest of this push is not shown/);
+  assert.strictEqual($("pv-trunc").textContent, "Cut short: showing 1 of 3 files");
+  assert.strictEqual($("pv-missing").textContent, "Not shown: b.py … and 1 more file");
+  assert.match($("pv-main").textContent, /✂ Cut here: the rest of this push is not shown/);
   $("pv-approve").click(); await flush();
   assert.strictEqual(decisions().length, 0);
   assert.match($("pv-ask").textContent, /^Approve without seeing 2 files\?/);
@@ -222,7 +222,7 @@ const card = (over) => Object.assign({ id: "c1", tool: "git_push", role: "develo
   const at = new Date(2026, 9, 21, 14, 2).getTime() / 1000;
   cards = [card({ id: "c6", fp: "fp6", queued: true, decided: "approve", decided_by: "sam", decided_at: at })];
   await advance(2000); await advance(3000);
-  assert.match($("deck-body").textContent, /^APPROVED, the gateway writes it within secondsby sam at 14:02/);
+  assert.match($("deck-body").textContent, /^Approved, the gateway writes it within secondsby sam at 14:02/);
   assert.strictEqual($("btn-approve").disabled, true, "approve dark on a decided card");
   assert.strictEqual($("btn-decline").disabled, true, "decline dark on a decided card");
   assert.strictEqual($("reason").disabled, true);
@@ -235,11 +235,11 @@ const card = (over) => Object.assign({ id: "c1", tool: "git_push", role: "develo
   assert.match($("flash").textContent, /^Already decided: Approved by sam/);
   cards = [card({ id: "c6", fp: "fp6", queued: true, decided: "decline", decided_by: "sam", decided_at: at })];
   await advance(2000);
-  assert.match($("deck-body").textContent, /^DECLINEDby sam at 14:02/);
+  assert.match($("deck-body").textContent, /^Declinedby sam at 14:02/);
   assert.match($("btn-approve").title, /^Declined by sam at 14:02; the gateway files it; nothing is written$/);
   cards = [card({ id: "c6", fp: "fp6", queued: false, decided: "approve", decided_by: "sam", decided_at: at })];
   await advance(2000);
-  assert.match($("deck-body").textContent, /^APPROVED, but not staged: nothing to write/);
+  assert.match($("deck-body").textContent, /^Approved, but not staged: nothing to write/);
   cards = [card({ id: "c6", fp: "fp6", queued: true, decided: "decline", decided_by: "sam", decided_at: at })];
   await advance(2000);
   assert.strictEqual($("keys-hold").textContent, "Declined");
@@ -250,18 +250,18 @@ const card = (over) => Object.assign({ id: "c1", tool: "git_push", role: "develo
   calls.length = 0;
   cards = [card({ id: "c7", fp: "fp7", seconds_left: 0 })];
   await advance(2000); await advance(3000);
-  assert.match($("deck-body").textContent, /^EXPIRED/);
+  assert.match($("deck-body").textContent, /^Expired/);
   assert.strictEqual($("btn-approve").disabled, true);
   assert.strictEqual($("btn-decline").disabled, true);
   assert.strictEqual($("keys-hold").textContent, "Expired");
   cards = [card({ id: "c8", fp: "fp8", seconds_left: 9 })];
   await advance(2000); await advance(3000);
-  assert.doesNotMatch($("deck-body").textContent, /EXPIRED/);
+  assert.doesNotMatch($("deck-body").textContent, /Expired/);
   assert.strictEqual($("btn-approve").disabled, false);
   doc.hidden = true;     // no polls (they would bring the same 9 s back): the clock runs out
   await advance(10000);
   doc.hidden = false;
-  assert.match($("deck-body").textContent, /^EXPIRED/);
+  assert.match($("deck-body").textContent, /^Expired/);
   assert.strictEqual($("btn-approve").disabled, true);
   assert.strictEqual($("btn-decline").disabled, true);
   assert.strictEqual(decisions().length, 0);
@@ -296,7 +296,7 @@ const card = (over) => Object.assign({ id: "c1", tool: "git_push", role: "develo
   assert.strictEqual($("led-decline").className, "led", "but its lamp is dark");
   $("btn-decline").click(); await flush();
   assert.strictEqual(decisions().length, 0);
-  assert.match($("flash").textContent, /^DECLINE needs a reason/);
+  assert.match($("flash").textContent, /^Decline needs a reason/);
   assert.ok($("reason").classList.contains("need"));
   $("reason").value = "too big"; $("reason").fire("input");
   assert.strictEqual($("led-decline").className, "led r");
@@ -441,7 +441,7 @@ const card = (over) => Object.assign({ id: "c1", tool: "git_push", role: "develo
   };
   await advance(2000);
   $("svc-setup").click(); await flush();
-  assert.strictEqual($("con-title").textContent, "SETTINGS · CONFIGURATION");
+  assert.strictEqual($("con-title").textContent, "Settings");
   const turnsNow = role => byLabel(role, "Turns");
   assert.strictEqual(turnsNow("developer").value, "80", "a LOCAL value shows in its field");
   assert.strictEqual(turnsNow("reviewer").value, "", "a REPO value leaves the field empty: it follows the repo");
@@ -468,14 +468,14 @@ const card = (over) => Object.assign({ id: "c1", tool: "git_push", role: "develo
   results.push("tuning sends changed keys only");
 
   // The diff is drawn as text, in classes from a fixed map.
-  assert.strictEqual($("con-title").textContent, "SETTINGS · TUNE DEVELOPER");
+  assert.strictEqual($("con-title").textContent, "Tune developer");
   const lines = kids().filter(n => n.tagName === "p" && n.className.startsWith("diff "));
   assert.deepStrictEqual(lines.map(n => n.className), ["diff k-dim", "diff k-err", "diff k-ok", "diff k-dim"]);
   assert.strictEqual(lines[2].textContent, `+ ${AGENTISH}`, "agent-looking markup stays text");
   assert.strictEqual(lines[3].textContent, "  odd op", "an unknown op is drawn as a plain line, never as a class");
   assert.ok(!kids().some(n => n.tagName === "img" || n.tagName === "script"), "no element came of it");
   assert.match($("con-body").textContent, /writes: ~\/\.config\/ai-code-factory\/roles\/developer\.conf/);
-  assert.match($("con-body").textContent, /after RESTART/);
+  assert.match($("con-body").textContent, /after a restart/);
   results.push("tuning diff is text");
 
   // CONFIRM is dark for HOLD_MS; a click past the disabled key does nothing; one press sends the token once.
@@ -508,13 +508,13 @@ const card = (over) => Object.assign({ id: "c1", tool: "git_push", role: "develo
   $("con-cancel").fire("click"); await flush();
   const esc = { key: "Escape", preventDefault() {} };
   (doc.listeners.keydown || []).forEach(f => f(esc)); await flush();
-  assert.strictEqual($("con-title").textContent, "SETTINGS · TUNE DEVELOPER", "Esc and CANCEL did not leave the diff");
+  assert.strictEqual($("con-title").textContent, "Tune developer", "Esc and CANCEL did not leave the diff");
   release(); await flush();
   assert.deepStrictEqual(wrote.slice(1), [["config-run", { token: "tok1" }]], "the token goes once");
-  assert.match($("con-body").textContent, /SERVICE DUE · RESTART TO APPLY/);
+  assert.match($("con-body").textContent, /Saved\. Restart to apply\./);
   assert.strictEqual($("con-cancel").disabled, false, "CANCEL is back");
   assert.ok(calls.filter(c => c[0] === "state").length >= 1, "state is refreshed");
-  assert.strictEqual($("con-title").textContent, "SETTINGS · CONFIGURATION");
+  assert.strictEqual($("con-title").textContent, "Settings");
   assert.strictEqual(turnsNow("developer").value, "", "the drafts are gone and the knobs show the written file: MAX_TURNS back on the repo's");
   assert.strictEqual(byLabel("developer", "Lanes").attrs["aria-valuenow"], "5", "LANES shows the new value");
   assert.strictEqual(byText("developer", "button", "high").className.split(" ").includes("on"), true, "EFFORT shows the new value");
@@ -527,13 +527,13 @@ const card = (over) => Object.assign({ id: "c1", tool: "git_push", role: "develo
   byLabel("reviewer", "More lanes").click();
   prepKey("reviewer").click(); await flush();
   assert.deepStrictEqual(wrote[0][1], { kind: "role", role: "reviewer", set: { LANES: "2" }, unset: [] });
-  assert.match($("con-body").textContent, /applies: after RESTART/);
+  assert.match($("con-body").textContent, /applies: after a restart/);
   await advance(2600);
   $("con-go").click(); await flush();
   assert.match($("con-body").textContent, /file changed on disk after it was checked, so nothing was written\. Go back and prepare again/);
   assert.strictEqual($("con-go").hidden, true);
   $("con-cancel").click(); await flush();
-  assert.strictEqual($("con-title").textContent, "SETTINGS · CONFIGURATION", "back on the knobs, not out of SETTINGS");
+  assert.strictEqual($("con-title").textContent, "Settings", "back on the knobs, not out of SETTINGS");
   assert.strictEqual(byLabel("reviewer", "Lanes").attrs["aria-valuenow"], "2", "the draft is kept, to prepare again");
   results.push("tuning 409 changed");
 
@@ -550,8 +550,8 @@ const card = (over) => Object.assign({ id: "c1", tool: "git_push", role: "develo
   // Demo mode: prepare is refused with 403 and the rack says so, in a fixed line.
   cfgReply = (name, body) => [403, { error: "demo mode: this dashboard shows made-up data and nothing here acts" }];
   prepKey("reviewer").click(); await flush();
-  assert.strictEqual($("con-title").textContent, "SETTINGS · CONFIGURATION");
-  assert.ok(walk(rack("reviewer")).some(n => n.textContent === "DEMO · CHANGES DISABLED"));
+  assert.strictEqual($("con-title").textContent, "Settings");
+  assert.ok(walk(rack("reviewer")).some(n => n.textContent === "Demo: changes are off"));
   assert.ok(!$("con-body").textContent.includes("made-up data"), "the fixed line, not the server's text");
   // Another refusal shows its reason, as text.
   cfgReply = () => [400, { error: "LANES must be 1 to 8 <b>" }];
@@ -565,7 +565,7 @@ const card = (over) => Object.assign({ id: "c1", tool: "git_push", role: "develo
   const sent = [];
   parent.postMessage = m => sent.push(m);
   const keyOn = (k, target, mods) => (doc.listeners.keydown || []).forEach(f => f(Object.assign({ key: k, preventDefault() {}, target: target || doc }, mods)));
-  const isOpen = () => $("con-title").textContent === "SETTINGS · CONFIGURATION" && $("scr-console").hidden === false;
+  const isOpen = () => $("con-title").textContent === "Settings" && $("scr-console").hidden === false;
   keyOn(",", { tagName: "INPUT" }); await flush();
   assert.strictEqual(isOpen(), false, "a comma typed in the reason tape is a comma");
   keyOn(",", doc, { ctrlKey: true }); keyOn(",", doc, { metaKey: true }); keyOn(",", doc, { altKey: true }); await flush();
@@ -577,7 +577,7 @@ const card = (over) => Object.assign({ id: "c1", tool: "git_push", role: "develo
   assert.ok(sent.includes("cu:settings"), "and tells the page, so its key stops pulsing");
   assert.ok(sent.includes("cu:expand"));
   const hint = kids().find(n => n.className === "shint");
-  assert.ok(hint && /Editable here/.test(hint.textContent) && /read-only/.test(hint.textContent) && /RESTART/.test(hint.textContent), "a one-line hint says what is editable and when it applies");
+  assert.ok(hint && /Change a role/.test(hint.textContent) && /read-only/.test(hint.textContent) && /restart/.test(hint.textContent), "a one-line hint says what is editable and when it applies");
   const tabs = () => kids().filter(n => n.attrs.role === "tab");
   assert.deepStrictEqual(tabs().map(n => n.textContent), ["Roles", "Project notes", "Gateway", "Dashboard look"]);
   assert.deepStrictEqual(tabs().map(n => n.attrs["aria-selected"]), ["true", "false", "false", "false"], "it opens on Roles");
@@ -647,12 +647,12 @@ const card = (over) => Object.assign({ id: "c1", tool: "git_push", role: "develo
   assert.ok(kids().some(n => n.tagName === "textarea"), "the editor is open");
   answer(); await flush(); await advance(3000);
   assert.ok(kids().some(n => n.tagName === "textarea"), "the late answer left the editor on the glass");
-  assert.strictEqual($("con-title").textContent, "SETTINGS · NOTES");
+  assert.strictEqual($("con-title").textContent, "Project notes");
   assert.ok(!$("con-body").textContent.includes('LANES="2"'), "no tune diff over the editor");
   assert.strictEqual($("con-go").hidden === false && $("con-go").disabled === false, false, "no key armed for a write that was dropped");
   assert.strictEqual(writes(), before, "nothing was sent");
   $("con-cancel").click(); await flush();                               // the editor's Close: back to SETTINGS, on the notes tab
-  assert.strictEqual($("con-title").textContent, "SETTINGS · CONFIGURATION");
+  assert.strictEqual($("con-title").textContent, "Settings");
   tabBtn("Roles").click(); await flush();
   assert.strictEqual(byLabel("reviewer", "Lanes").attrs["aria-valuenow"], "2", "the knob draft is kept");
   assert.strictEqual(prepKey("reviewer").disabled, false, "and can be prepared again");

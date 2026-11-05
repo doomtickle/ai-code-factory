@@ -286,15 +286,19 @@ badge: BIDI, INVIS or CTRL. LONG marks lines over 2000 characters, which are
 cut; CRLF marks Windows line endings; BAD marks a part that couldn't be read.
 
 A big push may be truncated (the broker stores 256 KiB by default). The
-viewer then says TRUNCATED, lists the files it doesn't show, and ends with
-"✂ CUT HERE". Approve on a truncated push asks once more, "Approve without
-seeing N files?", and decides only on **Confirm approve**, which lights after
-a second.
+viewer then says "Cut short", lists the files it doesn't show, and ends with
+"✂ Cut here". Approve on a truncated push asks once more, "Approve without
+seeing N files?". The light goes dark for a second, then says **Hold again to
+approve anyway**, and only that second hold decides. (In the classic view the
+second press is **Confirm approve**.)
 
-Approve and Decline work inside the viewer too. They are ordinary keys there:
-one press decides, with no gold light. If a newer write replaces the one on
-screen, the viewer loads its patch and holds the keys for a moment so you don't
-approve something you haven't seen.
+You can decide inside the viewer too, and it works as it does on the decision
+row: hold the gold light for 2.5 seconds to approve, or type a reason and press
+**Decline**. Letting go early, moving off the light or the card changing sends
+nothing. If a newer write replaces the one on screen, the viewer loads its patch
+and keeps the light dark for a moment so you don't approve something you haven't
+seen. (In the classic view Approve and Decline are ordinary keys here: one press
+decides.)
 
 ## Diagnose, restart or update the factory
 
@@ -306,8 +310,8 @@ None runs on the first press.
 - **Diagnose** (DIAG in the classic view) runs `factory doctor`: it checks this
   machine, its tools, Docker, the sandboxes and the gateway, and prints the fix
   for each problem. It changes nothing, so it cancels no jobs, drops no held
-  writes and leaves Terminal 0 attached. Its report ends with NO PROBLEMS FOUND
-  or PROBLEMS FOUND; fix what it lists, then press it again.
+  writes and leaves Terminal 0 attached. Its report ends with "no problems
+  found" or "problems found"; fix what it lists, then press it again.
 - **Restart** runs `factory restart`. First the unit shows what it will cancel:
   the running jobs and the held writes it drops. Staged writes are files the
   gateway keeps, so they are listed as kept, not dropped.
@@ -394,11 +398,11 @@ A control that has a **LOCAL** value starts there; one that follows the repo
 shows the repo's value (a number field is empty, with the repo's value as its
 hint). Choosing **Role default**, or emptying a number field, or pressing **↺**
 removes your override for that key, so the repo's value applies again. A row you
-changed is marked `→ SET x` or `→ UNSET`.
+changed is marked `→ will be x` or `→ back to the repo value`.
 
 Nothing is written when you turn a knob. **PREPARE** (one per role, lit when
-something changed) sends only the changed keys and shows the result on the
-amber tube: the override file's path, and the file's change as `+` and `-`
+something changed) sends only the changed keys and shows the result: the
+override file's path, and the file's change as `+` and `-`
 lines, as the host computed it. **CONFIRM APPLY** stays dark for 2.5 seconds
 after the diff appears, so a diff is never confirmed unread, and the check
 expires after two minutes. **CANCEL** (or Esc) goes back to the knobs with your
@@ -406,15 +410,15 @@ changes kept; nothing was written. If the file changed on disk after the
 check, the host refuses to write over it: the screen says so, and you prepare
 again.
 
-When it is written, the screen says when it takes effect. **SERVICE DUE ·
-RESTART TO APPLY** means press RESTART: these keys are read at `factory start`
+When it is written, the screen says when it takes effect. **Saved. Restart to
+apply.** means press RESTART: these keys are read at `factory start`
 (see the table in [Make it yours](04-customize.md#which-command-applies-a-change)),
 and RESTART runs `factory restart`, which cancels running jobs, so its usual
 check shows first. Every change here waits for a restart: the dispatch bridge
 reads only the copy `factory start` took, so nothing applies live. While the
 write is in flight CANCEL and Esc are dark, so the note always shows; the knobs
 then show the values just written. In demo mode PREPARE answers
-**DEMO · CHANGES DISABLED** and writes nothing. Broker policy, hosts, kits and
+**Demo: changes are off** and writes nothing. Broker policy, hosts, kits and
 credentials have no knobs here: they stay read-only.
 
 ### The notes editor
@@ -445,7 +449,7 @@ It appears once the factory is bound to a project.
   **CANCEL** drops the pending save (while the write itself is in flight CANCEL
   and Esc are dark). A confirmation not used within two
   minutes expires.
-- **After a save** the editor says "SAVED · SERVICE DUE · RESTART TO APPLY":
+- **After a save** the editor says "Saved. Restart to apply.":
   the new notes reach the roles when the factory next starts, so the Restart
   key's light comes on. Press it (or run `factory start`).
 - **A file that changed meanwhile.** If the file changed on disk between SAVE
@@ -453,7 +457,7 @@ It appears once the factory is bound to a project.
   editor says so. **RELOAD** reads the file again; **KEEP MY TEXT** goes back
   to your edit.
 - **Demo mode** shows the editor but writes nothing: SAVE answers
-  "DEMO · CHANGES DISABLED".
+  "Demo: changes are off".
 
 The text is drawn with `textContent` and the diff's lines get their colour from
 a fixed list, so nothing in a notes file can act on the page. The page holds no
@@ -1194,7 +1198,7 @@ Ctrl-C. There is no Terminal 0, so the typed line answers sky questions and send
 nothing. Approve, Decline, Restart, Update, Diagnose and the notes editor's SAVE
 answer that nothing here acts, Inspect shows the fixture's patch, and Settings
 shows the fixture's configuration (`scripts/dashboard-demo/setup/`), not yours,
-and its PREPARE says DEMO · CHANGES DISABLED. It also ignores your
+and its PREPARE says "Demo: changes are off". It also ignores your
 `dashboard.toml` and shows the defaults. The same token, cookie and content rules
 apply as for a real run. `--demo` can't be combined with `--coordinator`,
 `--state`, `--project` or `--factory`; `--no-open` and `--port N` work as usual.

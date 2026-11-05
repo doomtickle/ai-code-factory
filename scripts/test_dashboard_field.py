@@ -155,6 +155,31 @@ class RulesTests(unittest.TestCase):
         js = (UI / "field-hud.js").read_text()
         self.assertNotRegex(js, r"method:\s*[\"']POST")
 
+    def test_the_control_unit_here_has_every_node_the_classic_one_has(self):
+        ids = lambda name: set(re.findall(r'\bid="([^"]+)"', (UI / name).read_text()))
+        self.assertEqual(ids("cu.html") - ids("cu-field.html"), set())
+
+    def test_the_old_look_never_reaches_the_thoughtfields_menus(self):
+        html = (UI / "cu-field.html").read_text()
+        self.assertNotIn("/cu.css", html)
+        self.assertNotIn("/theme.css", html)
+        css = (UI / "cu-field.css").read_text()
+        self.assertNotIn("@import", css)
+        self.assertEqual(sorted(set(re.findall(r'url\("([^"]+)"\)', css))), ["/fonts/cormorant-garamond-variable.woff2", "/fonts/hanken-grotesk-variable.woff2"])
+        for old in ("VT323", "scanline", "--lcd-", "--amber-glow"):
+            self.assertNotIn(old, css)
+
+    def test_inspect_approves_by_the_same_hold_as_the_decision_row(self):
+        html = (UI / "cu-field.html").read_text()
+        self.assertIn('id="pv-sun"', html)
+        self.assertRegex((UI / "cu-field.css").read_text(), r"#pv-approve, #pv-hold \{ display: none; \}")
+        js = (UI / "cu-field.js").read_text()
+        self.assertEqual(len(re.findall(r"= light\(\{", js)), 2)
+        self.assertIn('approve: $("pv-approve")', js)
+        # APPROVE going dark ends a hold: that is how the light learns of a new card or patch here.
+        self.assertIn('if ($("pv-approve").disabled) viewer.cardChanged();', js)
+        self.assertIn('$("pv-sun")].filter(', (UI / "cu.js").read_text())
+
     def test_the_only_fetch_the_main_page_makes_elsewhere_sends_no_cookie(self):
         js = (UI / "voice.js").read_text()
         self.assertEqual(len(re.findall(r"fetch\(", js)), len(re.findall(r'credentials: "omit"', js)))

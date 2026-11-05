@@ -94,7 +94,7 @@ module.exports = async function run(h) {
     assert.ok(gauge("reviewer").textContent.includes(`${(5000 + SHARED_HDR + 10).toLocaleString("en-US")} / 20,000`), gauge("reviewer").textContent);
     // The developer's own tab: only the developer's gauge follows its text.
     await type("😀");   // dirty, so it asks first
-    button("DEVELOPER").click(); await flush();
+    button("developer").click(); await flush();
     button("Discard").click(); await flush();
     assert.strictEqual(readOf.role, "developer");
     await type("z".repeat(80));
@@ -114,7 +114,7 @@ module.exports = async function run(h) {
     // One over for the developer; the reviewer, with no notes of its own, is still within it.
     await type("a".repeat(14886));
     assert.strictEqual(gauge("developer").className, "ngauge k-err");
-    assert.ok(gauge("developer").textContent.includes("OVER by 1"));
+    assert.ok(gauge("developer").textContent.includes("over by 1"));
     assert.strictEqual(gauge("reviewer").className, "ngauge k-warn");
     assert.strictEqual(goKey.disabled, true, "SAVE is dark while a role is over");
     assert.ok(text().includes("developer would be over 20,000 characters: cut 1 to save"));
@@ -168,7 +168,7 @@ module.exports = async function run(h) {
     assert.deepStrictEqual(calls.filter(c => c[0] === "config-run").map(c => c[1]), [{ token: "tok1" }]);
     goKey.click(); await flush();
     assert.strictEqual(countCalls("config-run"), 1, "the token is used once");
-    assert.ok(text().includes("SAVED · SERVICE DUE · RESTART TO APPLY"), text());
+    assert.ok(text().includes("Saved. Restart to apply."), text());
     assert.ok(countCalls("state") > 0, "the state is fetched again");
     assert.strictEqual(area().value, "hello");
     assert.strictEqual(goKey.disabled, true, "saved, so nothing to save");
@@ -217,7 +217,7 @@ module.exports = async function run(h) {
     await type("hello");
     onPrepare = async () => [403, { error: "this is a demo" }];
     goKey.click(); await flush();
-    assert.ok(text().includes("DEMO · CHANGES DISABLED"));
+    assert.ok(text().includes("Demo: changes are off"));
     assert.ok(!text().includes("this is a demo"), "the fixed text, not the server's");
     assert.strictEqual(countCalls("config-run"), 0);
     assert.strictEqual(area().value, "hello");
@@ -234,14 +234,14 @@ module.exports = async function run(h) {
     assert.ok(text().includes("<b>bad</b>"));
     onPrepare = async () => [200, prepared({ changed: false })];
     goKey.click(); await flush();
-    assert.ok(text().includes("NO CHANGE"));
+    assert.ok(text().includes("No change"));
     onPrepare = async () => [200, { nonsense: true }];
     goKey.click(); await flush();
     assert.ok(text().includes("not understood"));
     assert.strictEqual(countCalls("config-run"), 0);
     // A failed read.
     server.handlers["config-read"] = async () => [403, { error: "refused" }];
-    button("DEVELOPER").click(); await flush();
+    button("developer").click(); await flush();
     button("Discard").click(); await flush();
     assert.ok(text().includes("refused"));
     assert.ok(!area(), "no box to type in when the file could not be read");
@@ -249,24 +249,24 @@ module.exports = async function run(h) {
 
   await test("unsaved edits are asked about before they are lost", async () => {
     await openEditor();
-    button("DEVELOPER").click(); await flush();     // nothing typed: switches at once
+    button("developer").click(); await flush();     // nothing typed: switches at once
     assert.strictEqual(readOf.role, "developer");
     assert.strictEqual(area().value, "d".repeat(50));
     await type("dirty");
-    assert.ok(button("DEVELOPER *"), "the tab says it has unsaved text");
+    assert.ok(button("developer *"), "the tab says it has unsaved text");
     const reads = countCalls("config-read");
-    button("SHARED").click(); await flush();
+    button("Shared").click(); await flush();
     assert.strictEqual(countCalls("config-read"), reads, "nothing was read yet");
-    assert.ok(text().includes("Unsaved changes in DEVELOPER"));
+    assert.ok(text().includes("Unsaved changes in developer"));
     button("Keep editing").click(); await flush();
     assert.strictEqual(area().value, "dirty");
-    assert.ok(!text().includes("Unsaved changes in DEVELOPER"));
+    assert.ok(!text().includes("Unsaved changes in developer"));
     // Back asks too; Esc a second time puts the question away.
     cancelKey.click(); await flush();
-    assert.ok(text().includes("Unsaved changes in DEVELOPER"));
+    assert.ok(text().includes("Unsaved changes in developer"));
     key("Escape"); await flush();
     assert.strictEqual(area().value, "dirty");
-    assert.ok(!text().includes("Unsaved changes in DEVELOPER"));
+    assert.ok(!text().includes("Unsaved changes in developer"));
     cancelKey.click(); await flush();
     button("Discard").click(); await flush();
     assert.ok(text().includes("Settings · effective configuration"), "back on SETTINGS");

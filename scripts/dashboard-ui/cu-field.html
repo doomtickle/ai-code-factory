@@ -6,7 +6,6 @@
 <meta name="cu-key" content="__CU_KEY__">
 <meta name="cu-main-port" content="__CU_MAIN_PORT__">
 <title>Control unit</title>
-<link rel="stylesheet" href="/cu.css">
 <link rel="stylesheet" href="/cu-field.css">
 <script src="/cu-notes.js" defer></script>
 <script src="/cu.js" defer></script>
@@ -36,9 +35,9 @@
         <input class="reason" id="reason" type="text" maxlength="500" autocomplete="off" spellcheck="false" placeholder="Say why. The agent reads this.">
       </div>
     </div>
-    <div class="sun" id="sun" role="button" tabindex="0" aria-label="Press and hold for 2.5 seconds to approve"><svg viewBox="0 0 78 78" aria-hidden="true"><circle class="track" cx="39" cy="39" r="37"/><circle id="ring" cx="39" cy="39" r="37" pathLength="1"/></svg><i class="core"></i></div>
+    <div class="sun" id="sun" role="button" tabindex="0" aria-label="Press and hold for 2.5 seconds to approve"><svg viewBox="0 0 78 78" aria-hidden="true"><circle class="track" cx="39" cy="39" r="37"/><circle class="ring" id="ring" cx="39" cy="39" r="37" pathLength="1"/></svg><i class="core"></i></div>
     <div class="dec-r">
-      <span id="hint">Hold to approve</span>
+      <span class="hint" id="hint">Hold to approve</span>
       <div class="deck-h">
         <span class="led" id="cu-led"></span>
         <span class="silk deck-title">Control unit</span>
@@ -72,7 +71,7 @@
   </div>
 </section>
 
-<!-- Screens "confirm", "log" and "setup" (SETTINGS): the expanded service monitor. -->
+<!-- Screens "confirm", "log" and "setup" (SETTINGS): a soft dark pool over the world, as the lane monitor. -->
 <section class="screen console" id="scr-console" hidden role="dialog" aria-modal="true" aria-labelledby="con-title">
   <div class="monitor">
     <div class="mon-h">
@@ -89,7 +88,6 @@
       </div>
     </div>
     <div class="mon-foot">
-      <span class="badge-plate">LOIS · Service</span>
       <div class="mon-actions">
         <button class="bigkey" type="button" id="con-cancel">Cancel</button>
         <button class="bigkey go" type="button" id="con-go"></button>
@@ -98,13 +96,13 @@
   </div>
 </section>
 
-<!-- Screen "inspect": the held push's patch on a green screen, with the gate's keys.
+<!-- Screen "inspect": the held push's patch, with the decision under it: the gold light presses the hidden APPROVE, as on the decision row.
      The server parsed and sanitised it; this page only draws it, with textContent. -->
 <section class="screen console" id="scr-inspect" hidden role="dialog" aria-modal="true" aria-labelledby="pv-title">
   <div class="monitor">
     <div class="mon-h">
       <span class="led" id="pv-led"></span>
-      <span class="title" id="pv-title">INSPECT · PUSH</span>
+      <span class="title" id="pv-title">Inspect this push</span>
       <span class="state-tag" id="pv-state"></span>
       <span class="dymo" id="pv-where"></span>
       <span class="silk pv-trunc" id="pv-trunc" hidden></span>
@@ -119,15 +117,16 @@
     </div>
     <div class="pv-ask" id="pv-ask" role="alert" hidden></div>
     <div class="mon-foot pv-foot">
-      <span class="badge-plate">LOIS · Write gate</span>
+      <button class="bigkey" type="button" id="pv-close">Close</button>
       <span class="silk pv-help" aria-hidden="true">j k files · n p hunks · Esc closes</span>
       <label class="sr-only" for="pv-reason">Reason (needed to decline)</label>
-      <input class="reason pv-reason" id="pv-reason" type="text" maxlength="500" autocomplete="off" spellcheck="false" placeholder="Reason (needed to decline)">
-      <div class="mon-actions pv-keys" role="group" aria-label="Decide the held write">
+      <input class="reason pv-reason" id="pv-reason" type="text" maxlength="500" autocomplete="off" spellcheck="false" placeholder="Say why you'd decline. The agent reads this.">
+      <div class="pv-keys" role="group" aria-label="Decide the held write">
         <span class="keys-hold" id="pv-hold" role="status" hidden>Check the new card</span>
-        <button class="bigkey" type="button" id="pv-close">Close</button>
         <button class="bigkey" type="button" id="pv-decline"><span class="led" id="pv-led-decline"></span><span id="pv-lbl-decline">Decline</span></button>
-        <button class="bigkey go" type="button" id="pv-approve"><span class="led" id="pv-led-approve"></span><span id="pv-lbl-approve">Approve</span></button>
+        <button class="bigkey go" type="button" id="pv-approve" tabindex="-1"><span class="led" id="pv-led-approve"></span><span id="pv-lbl-approve">Approve</span></button>
+        <div class="sun" id="pv-sun" role="button" tabindex="0" aria-label="Press and hold for 2.5 seconds to approve"><svg viewBox="0 0 78 78" aria-hidden="true"><circle class="track" cx="39" cy="39" r="37"/><circle class="ring" id="pv-ring" cx="39" cy="39" r="37" pathLength="1"/></svg><i class="core"></i></div>
+        <span class="hint" id="pv-hint">Hold to approve</span>
       </div>
     </div>
   </div>
