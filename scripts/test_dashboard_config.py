@@ -43,13 +43,13 @@ class ParseTests(unittest.TestCase):
 
     def test_a_full_file(self):
         self.assertEqual(dc.parse(FULL), {
-            "plant": "NORTH WORKS", "shifts": ["early", "late", "graveyard"], "crt": 7, "sound": True,
+            "plant": "NORTH WORKS", "shifts": ["early", "late", "graveyard"], "crt": 7, "sound": True, "ui": "field",
             "colors": {"designer": "#d08cff", "build-bot": "#00ff7f"}})
 
     def test_empty_and_comment_only_text_is_the_defaults(self):
         self.assertEqual(dc.parse(""), dc.defaults())
         self.assertEqual(dc.parse("# plant = \"X\"\n\n   # sound = true\n"), dc.defaults())
-        self.assertEqual(dc.defaults(), {"plant": None, "shifts": None, "crt": None, "sound": None, "colors": {}})
+        self.assertEqual(dc.defaults(), {"plant": None, "shifts": None, "crt": None, "sound": None, "ui": "field", "colors": {}})
 
     def test_windows_line_endings(self):
         self.assertEqual(dc.parse('crt = 4\r\nsound = false\r\n')["crt"], 4)
@@ -218,9 +218,9 @@ class ExampleTests(unittest.TestCase):
     def test_the_example_lines_are_valid_once_uncommented(self):
         lines = (REPO / "config.example" / "dashboard.toml").read_text().splitlines()
         live = [l[2:] for l in lines if l.startswith("# ") and (" = " in l or l.startswith("# [roles"))]
-        self.assertEqual(len(live), 6)
+        self.assertEqual(len(live), 7)
         self.assertEqual(dc.parse("\n".join(live)), {
-            "plant": "LOIS WORKS", "shifts": ["day", "swing", "night"], "crt": 3, "sound": False,
+            "plant": "LOIS WORKS", "shifts": ["day", "swing", "night"], "crt": 3, "sound": False, "ui": "field",
             "colors": {"designer": "#d08cff"}})
 
 

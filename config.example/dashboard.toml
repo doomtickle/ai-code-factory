@@ -29,6 +29,9 @@
 # a choice of its own (press the key once). Default: false.
 # sound = false
 
+# Which view the dashboard opens on: "field" (the Thoughtfield) or "classic" (FC-1984). Both are always served.
+# ui = "field"
+
 # A colour for a role on the floor and in the lane and spend modules, as
 # "#rrggbb". The name is a role name (lowercase letters, digits and dashes). A
 # role without one keeps its own hue: the built-in roles their fixed one, any

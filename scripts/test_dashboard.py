@@ -1407,10 +1407,11 @@ class PageTests(unittest.TestCase):
         for name, digest in pinned.items():
             self.assertEqual(hashlib.sha256((UI / "fonts" / name).read_bytes()).hexdigest(), digest, name)
         licenses = {p.name for p in (UI / "fonts").glob("OFL-*.txt")}
-        self.assertEqual(licenses, {"OFL-VT323.txt", "OFL-BarlowCondensed.txt", "OFL-DotGothic16.txt"})
+        self.assertEqual(licenses, {"OFL-VT323.txt", "OFL-BarlowCondensed.txt", "OFL-DotGothic16.txt", "OFL-CormorantGaramond.txt", "OFL-HankenGrotesk.txt"})
 
     def test_no_html_sinks(self):
-        for name in ("app.js", "floor.js", "sound.js", "radio.js", "lanelabel.js", "look.js"):
+        for name in ("app.js", "floor.js", "sound.js", "radio.js", "lanelabel.js", "look.js", "field-hud.js", "field-sky.js", "field-face.js",
+                     "field-monitor.js", "field-ask.js", "voice.js", "voice-lab.js", "line.js", "cu-field.js"):
             js = (UI / name).read_text()
             for sink in ("innerHTML", "outerHTML", "insertAdjacentHTML", "document.write", "eval(", "new Function"):
                 self.assertNotIn(sink, js, f"{name} uses {sink}")

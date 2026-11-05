@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LOIS · Voice</title>
+<link rel="stylesheet" href="/field.css">
+<script src="/voice.js" defer></script>
+<script src="/voice-lab.js" defer></script>
+</head>
+<body class="voice-lab">
+<main>
+  <h1>Voice</h1>
+  <p id="vl-status">Checking the local voice…</p>
+  <textarea id="vl-text" rows="3" aria-label="Words to try">Hi. It's 14:37. Two jobs are running and one is waiting for you.</textarea>
+  <div class="vl-keys"><button type="button" id="vl-say">Say it</button><button type="button" id="vl-stop">Stop</button><button type="button" id="vl-reset">Back to the default voice</button></div>
+  <div id="vl-sliders"></div>
+  <p class="vl-note">Your settings stay in this browser. Start the voice with <code>factory voice start</code>.</p>
+</main>
+</body>
+</html>

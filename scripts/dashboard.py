@@ -118,6 +118,7 @@ import approvals
 import dashboard_config as dcfg
 import dashboard_controls as dc
 import dashboard_demo as demo
+import dashboard_field as field_mod
 import dashboard_hints as dh
 import dashboard_jobs as jobs_mod
 import dashboard_labels as labels
@@ -128,6 +129,7 @@ import docs
 import watch as w
 from factory.context import Paths, bound_project
 from factory.repos import project_repos
+from factory.voice import PORT as VOICE_PORT
 
 UI = Path(__file__).resolve().parent / "dashboard-ui"
 DOCS_ROOT = Path(__file__).resolve().parent.parent  # the factory checkout
@@ -144,10 +146,42 @@ STATIC = {
     "/floor.js": ("floor.js", "text/javascript; charset=utf-8"),
     "/sound.js": ("sound.js", "text/javascript; charset=utf-8"),
     "/radio.js": ("radio.js", "text/javascript; charset=utf-8"),
+    # The Thoughtfield (the default UI, doomtickle/passdesk-ops#207). "/" is whichever `ui` chose; see ui_pages().
+    "/field": ("field.html", "text/html; charset=utf-8"),
+    "/classic": ("index.html", "text/html; charset=utf-8"),
+    "/voice": ("voice.html", "text/html; charset=utf-8"),
+    "/voice-lab.js": ("voice-lab.js", "text/javascript; charset=utf-8"),
+    "/field.css": ("field.css", "text/css; charset=utf-8"),
+    "/field-monitor.css": ("field-monitor.css", "text/css; charset=utf-8"),
+    "/field-ask.js": ("field-ask.js", "text/javascript; charset=utf-8"),
+    "/field-sky.js": ("field-sky.js", "text/javascript; charset=utf-8"),
+    "/field-face.js": ("field-face.js", "text/javascript; charset=utf-8"),
+    "/field-hud.js": ("field-hud.js", "text/javascript; charset=utf-8"),
+    "/field-monitor.js": ("field-monitor.js", "text/javascript; charset=utf-8"),
+    "/voice.js": ("voice.js", "text/javascript; charset=utf-8"),
+    "/vendor/three/three.min.js": ("vendor/three/three.min.js", "text/javascript; charset=utf-8"),
+    "/vendor/three/GLTFLoader.js": ("vendor/three/GLTFLoader.js", "text/javascript; charset=utf-8"),
+    "/vendor/three/CopyShader.js": ("vendor/three/CopyShader.js", "text/javascript; charset=utf-8"),
+    "/vendor/three/LuminosityHighPassShader.js": ("vendor/three/LuminosityHighPassShader.js", "text/javascript; charset=utf-8"),
+    "/vendor/three/Pass.js": ("vendor/three/Pass.js", "text/javascript; charset=utf-8"),
+    "/vendor/three/EffectComposer.js": ("vendor/three/EffectComposer.js", "text/javascript; charset=utf-8"),
+    "/vendor/three/RenderPass.js": ("vendor/three/RenderPass.js", "text/javascript; charset=utf-8"),
+    "/vendor/three/ShaderPass.js": ("vendor/three/ShaderPass.js", "text/javascript; charset=utf-8"),
+    "/vendor/three/UnrealBloomPass.js": ("vendor/three/UnrealBloomPass.js", "text/javascript; charset=utf-8"),
+    "/witness/witness.glb": ("witness/witness.glb", "model/gltf-binary"),
+    "/witness/normal_detail.png": ("witness/normal_detail.png", "image/png"),
+    "/witness/roughness.png": ("witness/roughness.png", "image/png"),
+    "/witness/thickness.png": ("witness/thickness.png", "image/png"),
+    "/witness/curvature.png": ("witness/curvature.png", "image/png"),
+    "/witness/ao.png": ("witness/ao.png", "image/png"),
+    "/witness/veins_mask.png": ("witness/veins_mask.png", "image/png"),
+    "/witness/seam_mask.png": ("witness/seam_mask.png", "image/png"),
     "/fonts/vt323.woff2": ("fonts/vt323.woff2", "font/woff2"),
     "/fonts/barlow-condensed-600.woff2": ("fonts/barlow-condensed-600.woff2", "font/woff2"),
     "/fonts/barlow-condensed-700.woff2": ("fonts/barlow-condensed-700.woff2", "font/woff2"),
     "/fonts/dotgothic16.woff2": ("fonts/dotgothic16.woff2", "font/woff2"),
+    "/fonts/cormorant-garamond-variable.woff2": ("fonts/cormorant-garamond-variable.woff2", "font/woff2"),
+    "/fonts/hanken-grotesk-variable.woff2": ("fonts/hanken-grotesk-variable.woff2", "font/woff2"),
 }
 CSP = ("default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; connect-src 'self'; "
        "img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
@@ -158,6 +192,13 @@ def page_csp(term_port: int | None = None) -> str:
     if term_port is None:
         return CSP
     return CSP + f"; frame-src http://127.0.0.1:{term_port} http://localhost:{term_port}"
+
+
+def field_csp(term_port: int | None = None) -> str:
+    """The Thoughtfield's: the main page's, plus fetch() to the one loopback port of the optional local voice
+    (factory voice), the only other server it talks to. It sends that server a fixed-template sentence, no cookie."""
+    voice = f"http://127.0.0.1:{VOICE_PORT}"
+    return page_csp(term_port).replace("connect-src 'self'", f"connect-src 'self' {voice}")
 # The docs (MANUAL): path -> (file name in the build_served() snapshot, content type).
 DOCS = {
     "/docs/": ("index.html", "text/html; charset=utf-8"),
@@ -181,6 +222,7 @@ COOKIE = "factory_dashboard"  # prefix: the cookie is COOKIE_<port> (see cookie_
 TAIL = 40          # transcript lines per lane in /api/state (taller lane screens)
 FULL = 1500        # transcript lines per lane in /api/lane
 EVENTS = 80        # event printer lines
+FIELD_TTL = 2      # seconds between rebuilds of the Thoughtfield's day
 BRIEFING_TTL = 5   # seconds between rebuilds of the STANDBY plate's shift briefing
 SERVICE_TTL = 5    # seconds between checks of the SERVICE DUE lamp
 PACKET_MAX = 2_000_000  # bytes of a job's packet /api/lane?job= serves
@@ -573,6 +615,19 @@ class Dashboard:
                 "model": info["model"].replace("claude-", ""), "cost": num(info["cost"]),
                 "elapsed": None if elapsed is None else int(elapsed), "when": jobs_mod.when(started, now)}
 
+    def field(self, now: float | None = None) -> dict:
+        """Today's jobs and what each did, for the galaxy (dashboard_field). Cached a moment: the page polls it."""
+        now = time.time() if now is None else now
+        cached = getattr(self, "_field_cache", None)
+        if cached and now - cached[0] < FIELD_TTL:
+            return cached[1]
+        with self.lock:
+            self.refresh()
+            out = field_mod.build(self.watch.lanes, self.watch.audit.jobs, list(self.broker.calls), local_midnight(now), now,
+                                  self.verdict, utc_ts)
+        self._field_cache = (now, out)
+        return out
+
     def job_packet_exists(self, job: str) -> bool:
         return jobs_mod.read_regular(self.state / "dispatch" / "packets" / f"{job}.md", 1) is not None
 
@@ -602,6 +657,7 @@ def make_handler(board: Dashboard, token: str, port: int, term: dt.Term | None =
     hosts = {f"127.0.0.1:{port}", f"localhost:{port}"}
     cookie = cookie_name(port)
     csp = page_csp(term_port)
+    fieldcsp = field_csp(term_port)
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "factory-dashboard"
@@ -663,6 +719,8 @@ def make_handler(board: Dashboard, token: str, port: int, term: dt.Term | None =
                 # Where the control unit is (the same second origin). Never its key.
                 snap["cu"] = None if term_port is None else {"port": term_port}
                 self.json(snap)
+            elif url.path == "/api/field":
+                self.json(board.field())
             elif url.path == "/api/lane":
                 query = parse_qs(url.query)
                 job = query.get("job", [""])[0]
@@ -692,12 +750,15 @@ def make_handler(board: Dashboard, token: str, port: int, term: dt.Term | None =
                 self.manual(url.path)
             elif url.path in STATIC:
                 name, ctype = STATIC[url.path]
+                if url.path == "/" and board.look.get("ui") != "classic":
+                    name = "field.html"
                 try:
                     body = (UI / name).read_bytes()
                 except OSError:
                     self.refuse(500, f"missing {name}")
                     return
-                self.send(200, body, ctype)
+                # The WebGL page's one addition to the CSP is the voice port; the classic page has neither.
+                self.send(200, body, ctype, page_policy=fieldcsp if name == "field.html" or name == "voice.html" else None)
             else:
                 self.refuse(404, "not found")
 

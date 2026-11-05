@@ -841,7 +841,7 @@ class CspTests(unittest.TestCase):
         srv = Server()
         try:
             resp, _ = srv.get("/", port=srv.port)
-            self.assertEqual(resp.getheader("Content-Security-Policy"), d.page_csp(srv.tport))
+            self.assertEqual(resp.getheader("Content-Security-Policy"), d.field_csp(srv.tport))
         finally:
             srv.close()
 

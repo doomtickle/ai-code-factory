@@ -1498,7 +1498,7 @@ class PageTests(unittest.TestCase):
         self.assertNotIn("fp", json.dumps(state["gate"]))
         # Main page's CSP may frame the second origin.
         resp, _ = e.get("/", port=e.port)
-        self.assertEqual(resp.getheader("Content-Security-Policy"), d.page_csp(e.tport))
+        self.assertEqual(resp.getheader("Content-Security-Policy"), d.field_csp(e.tport))
 
     def test_without_a_coordinator(self):
         e = self.env  # started without a Term
