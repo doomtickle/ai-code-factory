@@ -26,7 +26,7 @@ ROOT="$(dirname "$SCRIPTS")"
 # run there; factory/cli.py's COMMANDS lists the same names (a test keeps them equal).
 # Everything else falls through to the bash below until it is ported. Only when run
 # directly: a test that sources this file still gets the bash functions.
-PORTED_COMMANDS="analytics approvals approve chat config coordinator dashboard docs doctor down gui log logs packet packets reset restart role roles secret start status stop up watch"
+PORTED_COMMANDS="analytics approvals approve chat config coordinator dashboard docs doctor down gui log logs packet packets reset restart role roles secret start status stop up voice watch"
 if [ "${BASH_SOURCE[0]}" = "$0" ] && [ -n "${1:-}" ]; then
   case " $PORTED_COMMANDS " in
     *" $1 "*)
@@ -124,6 +124,9 @@ ${B}Usage${N}
   factory secret ls          List credentials managed by 'factory secret set'
   factory docs [--print]     Open these docs, with guides, in your browser (offline);
                              --print writes the HTML to stdout instead
+  factory voice <start [--build]|stop|status|build>
+                             LOIS's local voice (Kokoro in Docker, loopback only);
+                             the first build is several GB
   factory analytics          Cost, token and performance report from the audit logs
   factory approvals          Pushes and PRs the gateway is holding for you:
                              list, show <id>, approve <id>, decline <id> --reason ..., watch

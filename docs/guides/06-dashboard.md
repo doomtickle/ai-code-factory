@@ -179,7 +179,6 @@ Type in the line and press Enter. Nothing is sent until you do.
   Terminal 0, not in the caption: press **Terminal** to read it.
 - If the Coordinator is off, your text stays in the line, nothing is sent, and
   Terminal 0 opens so you can power it on.
-  LOIS tells you to open the terminal and power it on.
 
 There is no speech-to-text. Browser speech recognition sends audio to a cloud
 service, so it was dropped. You type.

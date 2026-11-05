@@ -4,7 +4,7 @@ import os
 import sys
 
 from factory import broker_start, build_templates, dispatch_start, launch, prereqs, security_init
-from factory.commands import config, docs, doctor, logs, packet, role, roles, runstate, secret, start, status, wrappers
+from factory.commands import config, docs, doctor, logs, packet, role, roles, runstate, secret, start, status, voice, wrappers
 from factory.context import Context, FactoryError, Paths
 
 # Command name -> run(ctx, args). bin/factory's PORTED_COMMANDS lists these
@@ -34,6 +34,7 @@ COMMANDS = {
     "status": status.run,
     "stop": runstate.stop,
     "up": start.run,
+    "voice": voice.run,
     "watch": wrappers.watch,
 }
 
