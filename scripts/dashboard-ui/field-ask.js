@@ -2,7 +2,8 @@
 // terminal origin's line. Plain text in, a fixed word out; nothing typed goes further than this function.
 "use strict";
 window.FieldAsk = {
-  isQuestion: q => /\?\s*$/.test(q) || /^(what|when|which|where|why|how|who|show|back)\b/i.test(q),
+  // A short question about the day, nothing more: "why" and longer questions are for the Coordinator, so "Why did the auth job fail?" reaches it.
+  isQuestion: q => !/^\s*why\b/i.test(q) && String(q).trim().split(/\s+/).length <= 7 && (/\?\s*$/.test(q) || /^(what|when|which|where|how|who|show|back)\b/i.test(q)),
   view(q) { const t = String(q).toLowerCase();
     if (/\b(back|galaxy|home|reset)\b/.test(t)) return "home"; if (/cost|spen[dt]|expens|money|budget|price/.test(t)) return "spend"; if (/stuck|wrong|fail|problem|broken|trouble|attention/.test(t)) return "stuck";
     if (/\bwhen\b|busiest|busy|quiet|timeline|\bhours?\b/.test(t)) return "time"; if (/doing|kind of|actions|blocked|reading|\bwork(ing|ed)?\b/.test(t)) return "kinds"; return null; },

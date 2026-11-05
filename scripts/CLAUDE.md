@@ -296,6 +296,37 @@ the `[approvals].tools` names, the notes path to create, and one example prompt 
 5 s (`BRIEFING_TTL`), every string cleaned to one printable line and drawn with `textContent`, no class or attribute from it. Demo
 mode reads the fixture's `setup/` folder and the empty `.git` folders `dashboard_demo.build` makes under `setup/project/`.
 
+THE THOUGHTFIELD (doomtickle/passdesk-ops#207, owner decision 5 Nov 2026) is the default view: `field.html` at `/` and `/field`, unless
+`ui = "classic"` in `dashboard.toml`; the FC-1984 page is always at `/classic`. Both are in `STATIC` and meet every rule above. The page is
+the same main page: GET-only, display only, no key, no inline script or style, agent-written strings by `textContent` only (SVG labels too:
+the world's geometry is built with `createElementNS`, never `innerHTML`). Its CSP is the main page's plus one thing, `connect-src` to
+`http://127.0.0.1:<factory.voice.PORT>` (below); `img-src` gets no `blob:`, which is why `witness/witness.glb` has its embedded images stripped
+(`witness/strip_glb.py`). Everything third-party is vendored with a `SHA256SUMS` and a test: `vendor/three/`, `fonts/`, `witness/`.
+
+Its data adds one route, `GET /api/field` (`scripts/dashboard_field.py`, cached 2 s): today's jobs from the same dispatch audit and parsed
+transcripts `/api/state` reads, and the broker audit's denials. An action leaves as a time and a kind from a fixed list, never its text; a
+denial as a time and a role, never its target. A job's words are one-line cut labels (`one_line`). No git, no command, no write.
+
+The page's actions stay on the second origin, in frames it can't script, under the rules above:
+- `/cu/field` is the control unit in a decision-row skin: `cu-field.html` has the same ids as `cu.html` and runs the same `cu.js` behind the
+  same key, serving rule and CSP. `cu-field.js` adds no request and never sees the key: a full 2.5 s hold of the gold light calls
+  `btn-approve.click()` and only while that key is enabled, so `cu.js` still decides everything (the hold after a new card, closed cards, the
+  truncated-push question). The rule that APPROVE is one press becomes one held press here. The one change in `cu.js` is the `data-cards`
+  attribute the skin reads.
+- `/term/line` (`line.html`, `line.js`) is the typed line, on the terminal's key, serving rule and WebSocket, under `line_csp` (the terminal's
+  minus inline style). It is the user typing: text goes to the PTY only on Enter, with C0 and C1 controls removed and a carriage return after it,
+  which is not the "host script typing into a terminal" `CLAUDE.md` forbids. It never sends `power` or `resize`, ignores everything the terminal
+  prints and never answers a query. A sky question (`field-ask.js`) stays in the frame: the main page receives only `ln:<word>` from the fixed
+  list `spend|stuck|kinds|time|home|unknown|sent|off|on|terminal`, from that frame's window and origin, never anything typed.
+- The Terminal 0 frame is loaded at start as before, inside a panel kept `inert` and hidden while closed, so `term.focus()` can't take the page's
+  keys to the Coordinator.
+
+VOICE (`voice/`, `factory/commands/voice.py`, `dashboard-ui/voice.js`) is the optional local speech service, the one server other than the
+dashboard the main page talks to: a Docker container on `127.0.0.1:8873` built from pinned, hash-checked inputs, offline at run time, read-only,
+non-root, no capabilities. It acts on nothing. `voice.js` POSTs with `credentials: "omit"`, so the dashboard cookie never reaches it. LOIS speaks only
+the fixed templates in `field-hud.js` and `field-sky.js`, with lane names that passed the lane pattern and numbers; a label an agent could
+influence goes only in the detail line, as text, and is never spoken. If the service is off the page shows captions and nothing else changes.
+
 Anything new that lets a page act must meet the same bar: one fixed argv with no
 shell, a key in a request header (not just the cookie) on a POST or WebSocket with its
 `Origin` checked, kept out of reach of the page that shows agent-written content, and a

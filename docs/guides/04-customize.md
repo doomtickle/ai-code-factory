@@ -26,7 +26,7 @@ affected, after listing what each one loses and asking you.
 | The Coordinator's default model or briefing (`kits/coordinator/spec.yaml`) | `factory update` |
 | `dashboard.toml` (the dashboard's look) | restart `factory dashboard` |
 
-The dashboard's **SETTINGS** key (formerly SETUP; or `,`) shows the effective value of each line above and
+The dashboard's **Settings** key (the sliders in the top bar, or `,`; formerly SETUP) shows the effective value of each line above and
 which of the two commands applies it: see
 [Settings](06-dashboard.md#settings-the-configuration-in-force). For a role's
 `MODEL`, `EFFORT`, `LANES`, `MAX_SESSION_TOKENS`, `MAX_TURNS` and
@@ -34,10 +34,10 @@ which of the two commands applies it: see
 
 > **Tip:** Not sure? `factory start` warns when a sandbox is out of date:
 > `out of date (made from an older image or kit): factory-broker; run 'factory update' to recreate them`.
-> The dashboard shows the same on its **SERVICE** lamp: amber, "UPDATE due",
-> with the sandboxes and why on hover, and the UPDATE key lit. It reads
-> "RESTART due" (RESTART lit) when a role override, `enabled-roles` or the
-> project notes changed since the last `factory start`.
+> The dashboard shows the same: the Update key's light comes on, and a note
+> appears under Today. The Restart key's light comes on when a role override,
+> `enabled-roles` or the project notes changed since the last `factory start`.
+> The classic view's **SERVICE** lamp names the sandboxes and why, on hover.
 
 ## Per-project notes
 
@@ -91,11 +91,11 @@ start` appends each one after the shared notes, to that role alone, under a
 `# This project (my-api), for the developer` heading, so the other roles don't
 carry it in every prompt.
 
-You can also edit these files from the dashboard: **SETTINGS**, the **Project notes** tab, then **Edit notes**
+You can also edit these files from the dashboard: **Settings**, the **Project notes** tab, then **Edit notes**
 has a tab for the shared file and one per role, a gauge of each role's
 characters against the limit below, and a two-step save that shows the diff
 first. The change applies on restart, like an edit in a terminal: press
-**RESTART** (the SERVICE lamp shows "RESTART due") or run `factory start`. See
+**Restart** (its light comes on) or run `factory start`. See
 [The notes editor](06-dashboard.md#the-notes-editor).
 
 > **Note:** A role's instructions plus your notes must stay under 20,000
@@ -147,7 +147,7 @@ MODELS="claude-haiku-5-5 opus claude-fable-5-1"
 ```
 
 You can also set these six from the dashboard instead of editing the file:
-open **SETTINGS**, turn the role's knobs and press **PREPARE** (see [Tuning a role
+open **Settings**, turn the role's knobs and press **PREPARE** (see [Tuning a role
 from Settings](06-dashboard.md#tuning-a-role-from-settings)). It shows the exact change
 to `roles/<role>.conf` first and writes it only when you confirm. The dashboard
 then says when it applies: **SERVICE DUE · RESTART TO APPLY** means press
@@ -243,7 +243,7 @@ comments. You don't change program behavior.
 ```
 
 Then run `factory start`. It creates the `factory-docs-writer` sandbox (the role's
-lanes show up in the dashboard's lane view and `factory watch` with the
+lanes show up on the dashboard and in `factory watch` with the
 others), and the Coordinator sees the role the next time it calls
 `list_roles`. If it's in the middle of a conversation, mention the new role,
 or ask it to check `list_roles`, so it plans with it.
@@ -262,7 +262,7 @@ exemption.
 > role that may search (see [Roles](../../README.md#roles)).
 
 To remove a role, delete `roles/<name>/` and run `factory start`. It drops the
-role from the dashboard's lane view and `factory watch`,
+role from the dashboard and `factory watch`,
 removes its broker access, and prints the `sbx rm` command for its sandbox;
 sandboxes are never deleted automatically.
 
@@ -299,8 +299,9 @@ It only turns a role on or off; tools and workspace stay in the committed
 `projects/<project-folder-name>.md` there holds notes for one project (its test
 command, say), added to every role's instructions on `factory start`.
 
-`dashboard.toml` there sets the dashboard's nameplate, shift names, CRT and sound
-defaults and role colours; the example is all comments. The dashboard reads it
+`dashboard.toml` there sets the view the dashboard opens on (`ui`), its
+nameplate and, for the classic view, its shift names, CRT and sound defaults and
+role colours; the example is all comments. The dashboard reads it
 once when it starts, and a mistake makes it ignore the file and say why. See
 [Use the dashboard](06-dashboard.md#your-own-look-dashboardtoml). It changes how
 the page looks and nothing else, so it needs neither `factory update` nor a

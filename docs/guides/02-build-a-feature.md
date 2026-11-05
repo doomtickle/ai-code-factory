@@ -81,7 +81,7 @@ For a prompt like the one above, the typical flow is:
    suite once, reviews correctness, tests, security and docs, and ends with
    **APPROVED** or **REVISE** and a list of required changes.
 
-The dashboard shows every lane's transcript live while it works (the lane view; `factory watch` shows the same in a terminal). See [Roles](../../README.md#roles) for what
+The dashboard shows every lane's transcript live while it works (open a job's monitor; `factory watch` shows the same in a terminal). See [Roles](../../README.md#roles) for what
 each role may do.
 
 ## Read a job result
@@ -138,7 +138,7 @@ report (with its APPROVED or REVISE verdict for a review). The job result
 carries its path as `packet`. For a job that brought a branch back, the bridge
 also saves the branch's full patch next to the packet
 (`<job-id>.diff.json`, cut at about 1 MB), which the
-[dashboard](06-dashboard.md#lanes)'s lane monitor shows on its DIFF tab. Read
+[dashboard](06-dashboard.md#open-a-job)'s monitor shows on its Changes tab. Read
 the packet with:
 
 ```bash
@@ -239,16 +239,16 @@ The Coordinator asks you before anything irreversible like a push or a PR. The
 developer bundles the branch, and the broker checks the branch name, refuses
 protected branches and force-pushes, secret-scans every commit, then pushes.
 With approvals on, each push and PR also waits for your approval:
-press APPROVE (or DECLINE, with a reason) on the dashboard's control unit, or
-use `factory approvals`
+hold the gold light on the dashboard's decision row to approve (or press
+Decline, with a reason), or use `factory approvals`
 ([Enabling approvals](../../README.md#enabling-approvals)).
 
 You don't have to be quick. A held push or PR is **staged**: the agent is told
 "Staged for approval (id X); nothing has been sent yet" and moves on, and the
 gateway makes the write itself, within seconds, when you approve it.
-`factory approvals` and the dashboard's write gate mark a staged write, and
-then show what became of it: made (with the PR's address), failed (with why,
-in red) or still running.
+`factory approvals` and the classic dashboard's write gate mark a staged write,
+and then show what became of it: made (with the PR's address), failed (with
+why, in red) or still running.
 
 ## Keep the Coordinator's context small
 

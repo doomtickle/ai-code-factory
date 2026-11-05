@@ -96,17 +96,18 @@ note: no Claude login is stored yet, so these role sandboxes were not created: d
   Type /login in the Coordinator (POWER ON on the dashboard), then run 'factory start' again (or press RESTART on the dashboard).
 ```
 
-Do exactly that. The dashboard says it too: until you have, Terminal 0 carries
-a **FIRST SHIFT** banner above the screen, "FIRST SHIFT · 1. POWER ON and type
-/login · 2. press RESTART", and the control unit's RESTART key blinks. After
-the login, while the role sandboxes aren't created yet, the banner says so
-and RESTART keeps blinking. Both go away once the roles exist.
+Do exactly that. The dashboard says it too: until you have, its top bar carries
+a **FIRST SHIFT** line, "FIRST SHIFT · 1. POWER ON and type /login · 2. press
+RESTART", and the Restart key's light blinks. After the login, while the role
+sandboxes aren't created yet, the line says so and Restart keeps blinking. Both
+go away once the roles exist.
 
-1. On the dashboard, press **POWER ON** under the Coordinator's screen (Terminal
-   0, on the left), type `/login` there and sign in with your Claude
-   subscription.
-2. Press **RESTART** on the control unit (bottom right, under the Write gate
-   display) and then **CONFIRM**, or run `factory start` again in a terminal.
+1. On the dashboard, press **Enter** on the welcome, then press **Terminal** in
+   the top bar to open the Coordinator's screen (Terminal 0). Press **POWER ON**
+   if the screen is off, type `/login` there and sign in with your Claude
+   subscription. Press **Close** when you're done.
+2. Press **Restart** under LOIS's caption and then **Confirm**, or run
+   `factory start` again in a terminal.
 
 ```bash
 factory start
@@ -127,20 +128,25 @@ creates afterwards.
 
 ## 5. Find your way around the dashboard
 
-The dashboard is one screen, styled as a 1984 control unit:
+The dashboard opens on **The Thoughtfield**: LOIS in front of a galaxy made of
+today's work, above a dark world whose lit edge is the day.
 
-- **Terminal 0** (left, full height): the Coordinator. Press POWER ON, then
-  talk to it here. Every browser tab you open shows the same session.
-- **Lanes** (right): a module for every lane with a job, with its live
-  transcript; idle lanes wait as chips in a strip under them. Press a lane's
-  number (or click it) for the full transcript and its latest review packet.
-- **Write gate** (bottom right): the pushes and pull requests waiting for you (with
-  approvals on), and under it the **control unit**: APPROVE and DECLINE for
-  the selected one, and RESTART and UPDATE for the factory, which show what
-  they'd do and wait for CONFIRM before running anything.
-- **Spend** and the **event printer** (under the lanes): today's cost, and
-  broker calls and finished jobs as they happen.
+- **The typed line** (under LOIS's caption): tell the Coordinator what you want
+  and press Enter. A question the sky can answer stays in the browser.
+- **Terminal** (top bar, or `t`): Terminal 0, the Coordinator's own terminal,
+  as a panel. Its replies appear here. Every browser tab you open shows the same
+  session.
+- **The galaxy:** every star is work done today, and a bright spark is a job
+  running now. Hover a star to see what it was, and click it to open that job.
+- **The decision row:** a held push or pull request (with approvals on) shows
+  here, with a gold light. Hold the light for 2.5 seconds to approve, or press
+  Decline and give a reason. With nothing held it shows Diagnose, Restart and
+  Update, which show what they'd do and wait for Confirm before running
+  anything.
+- **The work list and Today** (lower left and right): what's running, what's
+  waiting for you, and today's spend.
 
+**Classic** in the top bar opens the older FC-1984 control panel.
 [Use the dashboard](06-dashboard.md) goes through every part and key, and
 which `factory` command each one stands in for.
 
@@ -165,7 +171,7 @@ model and effort it picked for each job, so you can overrule it.
 
 ## 7. Watch the roles work
 
-Look at the developer's lane on the dashboard to follow the job live. Every transcript line
+Click the job in the dashboard's work list, then its Transcript tab, to follow it live. Every transcript line
 starts with the time. Between the start and the end you'll see the role's
 messages, each tool call and a one-line summary of its result (left out here):
 
@@ -202,7 +208,7 @@ git merge factory-developer/factory/slug-tests
   closes, the agents keep working.
 - **Reopen it:** `factory dashboard`, or run `factory start` again in the
   same project.
-- **Restart it:** RESTART on the control unit, or `factory restart`.
+- **Restart it:** Restart on the dashboard, or `factory restart`.
 - **Stop everything:** `factory stop` stops the agents, the broker and the
   dispatch bridge. Sandboxes and their state are kept.
 - **After a reboot:** `factory start`.

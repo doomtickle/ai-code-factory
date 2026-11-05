@@ -2,6 +2,31 @@
 
 Dated entries, for the user to review. Newest first.
 
+## 2026-11-05
+
+- **The Thoughtfield is the dashboard's default view** (owner asked for it, doomtickle/passdesk-ops#207, and left the calls to the
+  session while asleep). Choices to review:
+  - **Both views, Thoughtfield first.** The owner offered replacing or adding. `/` opens the Thoughtfield, `/classic` keeps FC-1984 untouched,
+    `ui = "classic"` in `dashboard.toml` flips the default. Reason: the classic page has features not ported (floor, budget, notifications,
+    radio, full printer, deferred-writes list), and a software-rendered machine can't run a WebGL page well.
+  - **The hold-to-approve lives in the control unit, not the page.** The mockup's approve sat on the main page, which the rules forbid.
+    `cu-field.html` is the same `cu.js` in a new skin, so the frame looks like part of the page and every existing check still decides.
+    Holding the gold light *is* the approval, as in the mockup (one held press, no second click).
+  - **The typed line is a frame on the terminal origin.** The main page must never hold a key or see what is typed, so the line is its own small
+    page. Questions it recognises stay local; anything else reaches the Coordinator as typing, which is what Terminal 0 already is.
+  - **Speech-to-text is out.** The mockup's mic used the browser's recognition service, which sends audio to a cloud provider.
+  - **Stars scale with real spend; their times and kinds come from real actions.** The mockup's "one star is one action" doesn't survive
+    real data: a day is a few thousand actions, too thin for a galaxy. The stars-per-dollar rate is chosen at load (150 to 6,000) and shown in
+    the key, so towers stay to scale; "What have they been doing?" reports real action counts, not stars.
+  - **An order is a branch.** The factory has no orders. Jobs naming one `factory/<topic>` are one order, a reviewer's included; anything else
+    stands alone.
+  - **Only fixed sentences are spoken.** An agent can influence task and branch text, and a voice saying "approve this now" would be a new way to
+    reach the owner. Those labels appear only in the detail line, as text.
+  - **The voice is a plain Docker container, not an sbx sandbox.** It runs no agent and no agent reaches it. Optional: nothing depends on it.
+  - **The bust and its textures are committed (about 16 MB with three.js).** A dashboard that must work offline can't fetch them, and the
+    MakeHuman base is CC0 by the project's own licence files (`scripts/dashboard-ui/witness/README.md` has the quotes and URLs).
+  - **Settings, Inspect and the service screens keep their classic inner look**, on the new dark background. Restyling them is a follow-up.
+
 ## 2026-10-30
 
 - **`factory-demo` for dashboard screenshots; a signal exit is reported as a signal** (owner asked
