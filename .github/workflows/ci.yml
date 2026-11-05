@@ -86,7 +86,7 @@ jobs:
     # What a Mac user runs: the system bash (3.2) and the system Python
     # (/usr/bin/python3, from the Command Line Tools), not Homebrew's.
     name: tests (macOS, system bash and Python)
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
