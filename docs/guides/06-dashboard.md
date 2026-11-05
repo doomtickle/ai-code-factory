@@ -39,10 +39,10 @@ opens, add `ui = "classic"` to `dashboard.toml`
 
 ## What you're looking at
 
-LOIS's bust stands in front of a spiral galaxy, above the dark curve of a
-world. The lit edge of that world is today.
+LOIS's bust stands among today's jobs, one crystal each, above the dark curve
+of a world. The lit edge of that world is today.
 
-- **The galaxy** is today's work. See [Read the galaxy](#read-the-galaxy).
+- **The galaxy**, the crystals round LOIS, is today's work. See [Read the galaxy](#read-the-galaxy).
 - **The horizon** is today's timeline, with the day's events on it as beads. See
   [Rewind the day](#rewind-the-day).
 - **The caption**, under the horizon, is what LOIS is saying. A smaller detail
@@ -87,13 +87,17 @@ are the only words, and they are drawn as plain text.
 
 | What you see | What it means |
 |---|---|
-| A star | A share of a job's spend, placed at the time of one of its actions and coloured by that action's kind: reading, editing, running commands, requests or reviewing. |
-| A spiral arm | Orders laid end to end. Further out is later, longer is more work. The oldest work is at the core. |
-| A bright spark at an arm's tip | A running job. Brighter is a bigger model. |
+| A crystal | One job. Bigger is more spend. Hover it to see the job; click it to open the job's monitor. |
+| A star inside a crystal | A share of the job's spend, placed at the time of one of its actions and coloured by that action's kind: reading, editing, running commands, requests or reviewing. The oldest work is at the core of the crystal's spiral. |
+| The band round a crystal's middle | The job's mix of action kinds, in the same colours. |
+| Crystals of one colour joined by a thread | One order. |
+| Where a crystal sits | The crystals ring LOIS's head, never behind it. Along a ring, time runs from the left horizon, up round the head, down to the right: left is earlier. With many jobs there are several rings, the newest innermost. |
+| A bright spark inside, and a crystal that turns | A running job. Brighter is a bigger model. |
 | A small spark and a cool sweep | A review running. |
-| A gold star | A write waiting for you. Its arm stops turning until you decide. |
-| A dark void | A failed, cancelled or interrupted job. |
-| Red at the galaxy's edge | A request the gateway blocked. |
+| A gold crystal | A write waiting for you, beside its order. Its order stands still until you decide. |
+| A dark crystal round a void | A failed, cancelled or interrupted job. |
+| Red sparks on a crystal's shell | A request the gateway blocked. |
+| A ring round a crystal | The job whose monitor is open. A faint ring stays on the last one you opened. |
 
 **An order** is all the jobs on one branch, the review included. A job with no
 branch stands alone.
@@ -514,7 +518,7 @@ reload.
 
 **What LOIS says.** Two things. The Coordinator's own lines, from its `say` tool
 (see [Talk to LOIS](#talk-to-lois)), and fixed sentences from the factory, with
-numbers and lane names filled in: "A push is waiting for you. Its arm has stopped
+numbers and lane names filled in: "A push is waiting for you. Its crystal is gold
 until you decide." Nothing else an agent wrote is spoken. Names such as a branch
 or a repo go in the small detail line, as text.
 

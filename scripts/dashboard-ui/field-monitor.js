@@ -1,5 +1,5 @@
 // The Thoughtfield's lane monitor: one lane's transcript, its jobs' review packets and what each job
-// changed. window.FieldMonitor = { open(laneName, jobId?), close(), isOpen() }.
+// changed. window.FieldMonitor = { open(laneName, jobId?), close(), isOpen(), current() } (current: the lane and job on screen, or null).
 //
 // Only GET /api/lane?name=&job= and GET /api/diff?job= on this origin. Every string from the server is
 // agent-written and goes in with textContent. Classes come only from the fixed maps below, and a lane
@@ -471,5 +471,5 @@
     if (to && to.isConnected && typeof to.focus === "function") to.focus();
   }
 
-  window.FieldMonitor = Object.freeze({ open, close, isOpen: () => lane !== null });
+  window.FieldMonitor = Object.freeze({ open, close, isOpen: () => lane !== null, current: () => lane === null ? null : { lane, job: shownJob() || job } });
 })();

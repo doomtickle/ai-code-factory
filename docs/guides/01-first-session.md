@@ -128,16 +128,17 @@ creates afterwards.
 
 ## 5. Find your way around the dashboard
 
-The dashboard opens on **The Thoughtfield**: LOIS in front of a galaxy made of
-today's work, above a dark world whose lit edge is the day.
+The dashboard opens on **The Thoughtfield**: LOIS among today's work, one crystal
+per job, above a dark world whose lit edge is the day.
 
 - **The typed line** (under LOIS's caption): tell the Coordinator what you want
   and press Enter. A question the sky can answer stays in the browser.
 - **Terminal** (top bar, or `t`): Terminal 0, the Coordinator's own terminal,
   as a panel. Its replies appear here. Every browser tab you open shows the same
   session.
-- **The galaxy:** every star is work done today, and a bright spark is a job
-  running now. Hover a star to see what it was, and click it to open that job.
+- **The galaxy:** every crystal round LOIS's head is a job run today, full of
+  the stars of its work, and a bright spark inside is a job running now. Hover
+  a crystal to see the job, and click it to open that job.
 - **The decision row:** a held push or pull request (with approvals on) shows
   here, with a gold light. Hold the light for 2.5 seconds to approve, or press
   Decline and give a reason. With nothing held it shows Diagnose, Restart and
