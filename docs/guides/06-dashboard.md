@@ -42,6 +42,12 @@ opens, add `ui = "classic"` to `dashboard.toml`
 LOIS's bust stands among today's jobs, one crystal each, above the dark curve
 of a world. The lit edge of that world is today.
 
+When nothing has happened for about 20 seconds (no job running, no write waiting,
+nothing said, and you haven't typed or clicked), LOIS closes her eyes and her head
+sinks a little; moving the pointer doesn't wake her, but a key, a click, a new line,
+a job or a waiting write does. While a job runs, or while she is thinking about your
+line, a ring of light circles her head; with reduced motion on, the ring stands still.
+
 - **The galaxy**, the crystals round LOIS, is today's work. See [Read the galaxy](#read-the-galaxy).
 - **The horizon** is today's timeline, with the day's events on it as beads. See
   [Rewind the day](#rewind-the-day).

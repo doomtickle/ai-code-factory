@@ -342,6 +342,8 @@ id and text in `/api/state`; the page shows new ones by `textContent` and sends 
 must never gain any power: nothing keys off a line's words but the caption, no agent reaches the voice service, and approving still takes the held light. Any other label an agent could
 influence goes only in the detail line, as text, and is never spoken. If the service is off the page shows captions and nothing else changes.
 
+IDLE AND WORKING (`field-face.js`, display only, no request): from the booleans and counts the page already has (`W.speaking`, `W.thinking`, `/api/state` `totals.running` and `gate` length, copied by `field-hud.js` into `W.running` and `W.waiting`) and a key, click or focus in a frame, the bust shuts her eyes after `LF.cfg.idleMs` (20 s) of none of them. Pointer movement never wakes her. Blink is held at 1.0 or eased through the 0.25 to 0.75 range, never rested there (the lid margin clips the cornea). While `W.thinking` or a job runs, a ring of light orbits the bust (`LF.ring`, steady and still under `prefers-reduced-motion`). `test_field_browser.js` (`witness`) drives it by steering `/api/state` from the page.
+
 WHAT DO YOU NEED FROM ME (owner decision 6 Nov 2026) is the Thoughtfield's other Coordinator-written text: the bridge's `show` tool keeps one plain-text block
 (at most 16 lines and 1,200 characters, only the latest) in `dispatch/shown.json`; `Dashboard.shown` checks that file like `said.json` (id pattern, string, length, lines;
 `read_regular`), removes control characters, makes bidi and invisible ones `⟨U+XXXX⟩` with `patchview.char_flag`, and puts `{id, t, text}` in `/api/state`. No endpoint or request
