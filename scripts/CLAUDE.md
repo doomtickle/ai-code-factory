@@ -342,6 +342,17 @@ id and text in `/api/state`; the page shows new ones by `textContent` and sends 
 must never gain any power: nothing keys off a line's words but the caption, no agent reaches the voice service, and approving still takes the held light. Any other label an agent could
 influence goes only in the detail line, as text, and is never spoken. If the service is off the page shows captions and nothing else changes.
 
+WHAT DO YOU NEED FROM ME (owner decision 6 Nov 2026) is the Thoughtfield's other Coordinator-written text: the bridge's `show` tool keeps one plain-text block
+(at most 16 lines and 1,200 characters, only the latest) in `dispatch/shown.json`; `Dashboard.shown` checks that file like `said.json` (id pattern, string, length, lines;
+`read_regular`), removes control characters, makes bidi and invisible ones `⟨U+XXXX⟩` with `patchview.char_flag`, and puts `{id, t, text}` in `/api/state`. No endpoint or request
+is added. `field-shown.js` (the chip `#shown-key` and the panel `#shown`) draws it with `textContent` and `white-space: pre-wrap`, opens by itself for a new id (not for a block there
+at load, as `prev.said` primes) and from the chip, and never closes by itself. The chip is display only: it sends nothing to the Coordinator or the terminal (typing the question
+does that, through the line). Because the text can influence what the owner pastes into a host shell, COPY follows the COPY rule above: it writes only on a click, only the text on screen,
+with `navigator.clipboard.writeText`, else `execCommand("copy")` from a selected textarea, is dark for `HOLD_MS` (2.5 s) after the text changes, and a flagged text shows a warning;
+the page never reads the clipboard. It needs no `allow` and no CSP or header change (the main page already is a top-level secure context; `test_field_shown_browser.js` checks the real
+API under the page's CSP). The Coordinator is told never to copy a command out of a ticket, file or role report into the block, and never to press the owner to approve. The block is as
+old as the Coordinator's last post and can't refresh itself; the panel shows its age.
+
 Anything new that lets a page act must meet the same bar: one fixed argv with no
 shell, a key in a request header (not just the cookie) on a POST or WebSocket with its
 `Origin` checked, kept out of reach of the page that shows agent-written content, and a

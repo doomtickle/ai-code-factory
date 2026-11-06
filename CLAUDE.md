@@ -17,9 +17,11 @@ socket, or host credentials. Full picture: README.md.
   `core.fsmonitor=false`, no shell, never `--prune`) of a bundle's `factory/*`
   branches into `refs/remotes/factory-<lane>/`; a read-only `factory_docs` tool
   serving the factory's own markdown from a `FACTORY_STATE` snapshot `factory start`
-  makes, never the repo; and a `say` tool that keeps the Coordinator's short spoken
-  lines in `FACTORY_STATE/dispatch/said.json` for the dashboard's caption and voice,
-  and does nothing else.
+  makes, never the repo; a `say` tool that keeps the Coordinator's short spoken
+  lines in `FACTORY_STATE/dispatch/said.json` for the dashboard's caption and voice;
+  and a `show` tool that keeps its latest list of what waits on the owner (one capped
+  plain-text block) in `FACTORY_STATE/dispatch/shown.json` for the dashboard's copyable
+  pop-up. Neither does anything else.
 - **Roles are data:** `roles/<name>/role.conf` + `instructions.md` + `kit/`. No role
   mounts the project writable — each gets a scratch dir
   (`FACTORY_STATE/roles/<name>`) plus the project `:ro`. rw roles (`WORKSPACE="rw"`,

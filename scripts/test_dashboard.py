@@ -436,6 +436,85 @@ class SaidTests(unittest.TestCase):
         self.assertEqual(self.board.said(), [])
 
 
+class ShownTests(unittest.TestCase):
+    """The Coordinator's posted block (dispatch/server.py tool_show), checked on the way to the main page."""
+
+    GOOD = {"id": "ab12cd34ef56", "t": 1.5, "text": "1. Merge x\n   git merge x"}
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.state = Path(tmp.name) / "state"
+        (self.state / "dispatch").mkdir(parents=True)
+        self.path = self.state / "dispatch" / "shown.json"
+        self.board = d.Dashboard(self.state, Path(tmp.name) / "roles", "proj")
+
+    def write(self, rec):
+        self.path.write_text(json.dumps(rec, ensure_ascii=False))
+
+    def test_absent_is_none_and_the_state_carries_it(self):
+        self.assertIsNone(self.board.shown())
+        self.assertIsNone(self.board.snapshot()["shown"])
+
+    def test_a_good_block_reaches_the_state_with_only_id_time_and_text(self):
+        self.write({**self.GOOD, "extra": "no"})
+        self.assertEqual(self.board.snapshot()["shown"], self.GOOD)
+
+    def test_a_missing_or_odd_time_becomes_none_and_the_block_is_kept(self):
+        for t in (None, "soon", True, float("inf")):
+            self.write({"id": "ab12cd34ef56", "t": t, "text": "x"})
+            self.assertEqual(self.board.shown(), {"id": "ab12cd34ef56", "t": None, "text": "x"}, repr(t))
+
+    def test_bad_files_are_ignored(self):
+        bad = [{"id": "../x", "text": "bad id"}, {"id": "AB12CD34EF56", "text": "upper"}, {"id": 5, "text": "n"},
+               {"id": "ab12cd34ef56", "text": 7}, {"id": "ab12cd34ef56", "text": ""}, {"id": "ab12cd34ef56", "text": " \n "},
+               {"id": "ab12cd34ef56", "text": "x" * (d.SHOWN_MAX_TEXT + 1)},
+               {"id": "ab12cd34ef56", "text": "\n".join(["a"] * (d.SHOWN_MAX_LINES + 1))}, {"shown": self.GOOD}, [self.GOOD], "nope", None, 3]
+        for rec in bad:
+            self.write(rec)
+            self.assertIsNone(self.board.shown(), repr(rec))
+        # JSON escapes decode to lone surrogates, which cannot be encoded as UTF-8 for /api/state.
+        for esc in ("ok \\ud800 high", "\\udfff", "\\ud83d\\ude00 \\ud83d", "\\ude00\\ud83d"):
+            self.path.write_text('{"id": "ab12cd34ef56", "text": "%s"}' % esc)
+            self.assertIsNone(self.board.shown(), esc)
+        self.path.write_text('{"id": "ab12cd34ef56", "text": "\\ud83d\\ude00 pair"}')
+        self.assertEqual(self.board.shown()["text"], "\U0001f600 pair")
+        for raw in ("{not json", "", "\x00"):
+            self.path.write_text(raw)
+            self.assertIsNone(self.board.shown(), repr(raw))
+
+    def test_blocks_at_the_limits_are_kept(self):
+        self.write({"id": "ab12cd34ef56", "text": "x" * d.SHOWN_MAX_TEXT})
+        self.assertIsNotNone(self.board.shown())
+        self.write({"id": "ab12cd34ef56", "text": "\n".join(["a"] * d.SHOWN_MAX_LINES)})
+        self.assertIsNotNone(self.board.shown())
+
+    def test_hostile_text_is_neutralised_control_removed_and_hidden_characters_shown(self):
+        hostile = "ls\x1b[2J\x07 \u202e-rf\x00 ~\u200b\ufeff\u2028\x85 ok\r\nnext\ttab\rend\u2066"
+        self.write({"id": "ab12cd34ef56", "text": hostile})
+        text = self.board.shown()["text"]
+        self.assertEqual(text, "ls[2J ⟨U+202E⟩-rf ~⟨U+200B⟩⟨U+FEFF⟩ ok\nnext  tab\nend⟨U+2066⟩")
+        self.assertNotRegex(text, "[\x00-\x09\x0b-\x1f\x7f-\x9f\u2028\u2029\u202a-\u202e\u2066-\u2069\u200b-\u200f\ufeff]")
+
+    def test_newlines_are_kept_and_blank_edges_trimmed(self):
+        self.write({"id": "ab12cd34ef56", "text": "\n\na\n\nb\n"})
+        self.assertEqual(self.board.shown()["text"], "a\n\nb")
+
+    def test_a_block_that_is_only_removed_characters_is_none(self):
+        self.write({"id": "ab12cd34ef56", "text": "\x00\x07\n\x1b"})
+        self.assertIsNone(self.board.shown())
+
+    def test_a_symlink_is_not_followed(self):
+        outside = self.state / "outside.json"
+        outside.write_text(json.dumps(self.GOOD))
+        self.path.symlink_to(outside)
+        self.assertIsNone(self.board.shown())
+
+    def test_a_file_cut_at_the_size_limit_is_none(self):
+        self.path.write_text('{"id": "ab12cd34ef56", "text": "' + " " * d.SHOWN_MAX_BYTES + '"}')
+        self.assertIsNone(self.board.shown())
+
+
 class BrokerEventTests(unittest.TestCase):
     def test_kinds(self):
         self.assertIsNone(d.broker_event({"tool": "git_push", "event": "intent"}))
@@ -1464,7 +1543,7 @@ class PageTests(unittest.TestCase):
 
     def test_no_html_sinks(self):
         for name in ("app.js", "floor.js", "sound.js", "radio.js", "lanelabel.js", "look.js", "field-hud.js", "field-sky.js", "field-face.js",
-                     "field-monitor.js", "field-ask.js", "voice.js", "voice-lab.js", "line.js", "cu-field.js"):
+                     "field-monitor.js", "field-shown.js", "field-ask.js", "voice.js", "voice-lab.js", "line.js", "cu-field.js"):
             js = (UI / name).read_text()
             for sink in ("innerHTML", "outerHTML", "insertAdjacentHTML", "document.write", "eval(", "new Function"):
                 self.assertNotIn(sink, js, f"{name} uses {sink}")

@@ -148,6 +148,12 @@ class SnapshotTests(unittest.TestCase):
         self.assertEqual(self.snap["project"], "DEMO")
         self.assertIsNone(self.snap.get("term"))
 
+    def test_a_posted_list_is_there_for_the_chip_and_its_age_follows_now(self):
+        shown = self.snap["shown"]
+        self.assertRegex(shown["id"], r"^[0-9a-f]{12}$")
+        self.assertIn("git merge factory-developer/factory/greet-readme", shown["text"])
+        self.assertEqual(round(self.snap["now"] - shown["t"]), 130)
+
     def test_desk_placards(self):
         lanes = {lane["name"]: lane for lane in self.snap["lanes"]}
         self.assertEqual({n: (lane["desk"], lane["reviews"]) for n, lane in lanes.items()}, {

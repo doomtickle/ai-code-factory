@@ -109,12 +109,14 @@ import sys
 import tempfile
 import threading
 import time
+import unicodedata
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 import approvals
+import patchview
 import dashboard_config as dcfg
 import dashboard_controls as dc
 import dashboard_demo as demo
@@ -153,11 +155,13 @@ STATIC = {
     "/voice-lab.js": ("voice-lab.js", "text/javascript; charset=utf-8"),
     "/field.css": ("field.css", "text/css; charset=utf-8"),
     "/field-monitor.css": ("field-monitor.css", "text/css; charset=utf-8"),
+    "/field-shown.css": ("field-shown.css", "text/css; charset=utf-8"),
     "/field-ask.js": ("field-ask.js", "text/javascript; charset=utf-8"),
     "/field-sky.js": ("field-sky.js", "text/javascript; charset=utf-8"),
     "/field-face.js": ("field-face.js", "text/javascript; charset=utf-8"),
     "/field-hud.js": ("field-hud.js", "text/javascript; charset=utf-8"),
     "/field-monitor.js": ("field-monitor.js", "text/javascript; charset=utf-8"),
+    "/field-shown.js": ("field-shown.js", "text/javascript; charset=utf-8"),
     "/voice.js": ("voice.js", "text/javascript; charset=utf-8"),
     "/vendor/three/three.min.js": ("vendor/three/three.min.js", "text/javascript; charset=utf-8"),
     "/vendor/three/GLTFLoader.js": ("vendor/three/GLTFLoader.js", "text/javascript; charset=utf-8"),
@@ -222,6 +226,9 @@ TAIL = 40          # transcript lines per lane in /api/state (taller lane screen
 SAID_MAX_BYTES = 32 * 1024   # dispatch/said.json: eight lines the bridge capped, with room to spare
 SAID_MAX_TEXT = 240          # dispatch/server.py MAX_SAY_CHARS
 SAID_ID = re.compile(r"[0-9a-f]{12}")
+SHOWN_MAX_BYTES = 16 * 1024  # dispatch/shown.json: one block of at most 1,200 characters, with room to spare
+SHOWN_MAX_TEXT = 1200        # dispatch/server.py MAX_SHOW_CHARS
+SHOWN_MAX_LINES = 16         # dispatch/server.py MAX_SHOW_LINES
 FULL = 1500        # transcript lines per lane in /api/lane
 EVENTS = 80        # event printer lines
 FIELD_TTL = 2      # seconds between rebuilds of the Thoughtfield's day
@@ -392,6 +399,34 @@ class Dashboard:
         return [{"id": rec["id"], "text": rec["text"]} for rec in lines[-8:]
                 if isinstance(rec, dict) and isinstance(rec.get("id"), str) and SAID_ID.fullmatch(rec["id"])
                 and isinstance(rec.get("text"), str) and 0 < len(rec["text"]) <= SAID_MAX_TEXT]
+
+    def shown(self) -> dict | None:
+        """The block the Coordinator last posted for the owner (dispatch/server.py tool_show) as
+        {"id", "t", "text"}, or None. The file is untrusted like said.json; the text is drawn with
+        textContent and may be copied by a click, so control characters are removed and bidi and
+        invisible ones are made visible as ⟨U+XXXX⟩ (patchview.char_flag), newlines kept."""
+        raw = jobs_mod.read_regular(self.state / "dispatch" / "shown.json", SHOWN_MAX_BYTES)
+        try:
+            rec = json.loads(raw) if raw else None
+        except (ValueError, TypeError):
+            return None
+        if not (isinstance(rec, dict) and isinstance(rec.get("id"), str) and SAID_ID.fullmatch(rec["id"])
+                and isinstance(rec.get("text"), str) and 0 < len(rec["text"]) <= SHOWN_MAX_TEXT
+                and rec["text"].count("\n") < SHOWN_MAX_LINES):
+            return None
+        t = rec.get("t")
+        t = round(float(t), 3) if isinstance(t, (int, float)) and not isinstance(t, bool) and math.isfinite(t) else None
+        if any(unicodedata.category(ch) == "Cs" for ch in rec["text"]):
+            return None  # a lone surrogate (JSON "\ud800") cannot be encoded as UTF-8: /api/state would fail
+        text = []
+        for ch in rec["text"].replace("\r\n", "\n").replace("\r", "\n").replace("\t", "  "):
+            flag = None if ch == "\n" else patchview.char_flag(ch)
+            if flag is None:
+                text.append(ch)
+            elif flag != "control":
+                text.append("⟨U+{:04X}⟩".format(ord(ch)))
+        text = "".join(text).strip("\n")
+        return {"id": rec["id"], "t": t, "text": text} if text.strip() else None
 
     def writes(self, now: float) -> list:
         """Recent deferred writes (approvals.read_writes: made, failed and running,
@@ -578,6 +613,7 @@ class Dashboard:
             "events": events,
             "gate": cards,
             "said": self.said(),
+            "shown": self.shown(),
             "writes": writes,
             "service": self.service(now),
             "hints": self.hints(now),
