@@ -473,6 +473,12 @@ class ShownTests(unittest.TestCase):
         for rec in bad:
             self.write(rec)
             self.assertIsNone(self.board.shown(), repr(rec))
+        # JSON escapes decode to lone surrogates, which cannot be encoded as UTF-8 for /api/state.
+        for esc in ("ok \\ud800 high", "\\udfff", "\\ud83d\\ude00 \\ud83d", "\\ude00\\ud83d"):
+            self.path.write_text('{"id": "ab12cd34ef56", "text": "%s"}' % esc)
+            self.assertIsNone(self.board.shown(), esc)
+        self.path.write_text('{"id": "ab12cd34ef56", "text": "\\ud83d\\ude00 pair"}')
+        self.assertEqual(self.board.shown()["text"], "\U0001f600 pair")
         for raw in ("{not json", "", "\x00"):
             self.path.write_text(raw)
             self.assertIsNone(self.board.shown(), repr(raw))

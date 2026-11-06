@@ -109,6 +109,7 @@ import sys
 import tempfile
 import threading
 import time
+import unicodedata
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -415,6 +416,8 @@ class Dashboard:
             return None
         t = rec.get("t")
         t = round(float(t), 3) if isinstance(t, (int, float)) and not isinstance(t, bool) and math.isfinite(t) else None
+        if any(unicodedata.category(ch) == "Cs" for ch in rec["text"]):
+            return None  # a lone surrogate (JSON "\ud800") cannot be encoded as UTF-8: /api/state would fail
         text = []
         for ch in rec["text"].replace("\r\n", "\n").replace("\r", "\n").replace("\t", "  "):
             flag = None if ch == "\n" else patchview.char_flag(ch)
