@@ -2,6 +2,21 @@
 
 Dated entries, for the user to review. Newest first.
 
+## 2026-11-06
+
+- **The Coordinator may post a copyable list to the main page, display only** (owner decision: "What do you need from me?" replaces "When was it busiest?" among the helper
+  questions, and shows what is waiting on them in text they can copy, popping up while LOIS talks about it). Choices to review:
+  - **A `show` tool beside `say`, not a longer `say`.** `say` is one spoken line with no code or links. `show` takes the whole current list, plain text with newlines, capped at 16 lines and
+    1,200 characters (over that is `Denied`, with a note to shorten it) and keeps only the latest block in `dispatch/shown.json`. It runs nothing and reaches no agent.
+  - **The chip only shows the last block.** The main page stays display only, so the chip sends nothing to the Coordinator or terminal; typing the question does. The block can be as old
+    as the Coordinator's last post and can't refresh itself (the Coordinator doesn't see merges the owner makes alone), so the panel shows its age.
+  - **COPY is the same trade as Terminal 0's.** The text is agent-influenced and may be pasted into a host shell, so it copies only on a click, only what is on screen, and not for 2.5 s after
+    it changes; control characters are removed and bidi and invisible ones shown as `⟨U+XXXX⟩` with a warning. It is not a defence against a poisoned ticket: the brief tells the Coordinator never
+    to copy a command out of a ticket, file or report and to compose commands only from facts it checked, but injected text is what could override that, so the owner reads before pasting.
+  - **No CSP, header or `allow` change.** The main page is a top-level page on loopback, where `clipboard.writeText` works from a click with none.
+  - **"When was it busiest?" has no chip now but still works typed.** The `time` view and its keyword stay.
+  - **Not measured:** how reliably the real Coordinator calls `show` when the list changes. This host had no signed-in `sbx` or `claude` to try it with.
+
 ## 2026-11-05
 
 - **The Coordinator speaks in its own words, as LOIS** (owner decision, doomtickle/passdesk-ops#216). The Thoughtfield felt like talking to the Coordinator's messenger.

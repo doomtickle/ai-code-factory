@@ -167,7 +167,7 @@
   // ---------- polling. Only GETs to its own origin.
   async function getJSON(url) { const r = await fetch(url, { cache: "no-store" }); if (!r.ok) throw new Error(url + " " + r.status); return r.json(); }
   let lost = 0;
-  async function pollState() { try { state = await getJSON("/api/state"); lost = 0; ensureFrames(); renderWork(); if (Sky && field) Sky.ingest(field, state); if (entered) narrate(); else prev.primed || narratePrime(); if (!entered && !gateShown) showGate(); } catch (e) { lost++; if (lost >= 3) { $("hint-line").hidden = false; $("hint-line").textContent = "Lost touch with the dashboard. What's here may be out of date."; } } setTimeout(pollState, 2000); }
+  async function pollState() { try { state = await getJSON("/api/state"); lost = 0; ensureFrames(); if (window.FieldShown) FieldShown.update(state); renderWork(); if (Sky && field) Sky.ingest(field, state); if (entered) narrate(); else prev.primed || narratePrime(); if (!entered && !gateShown) showGate(); } catch (e) { lost++; if (lost >= 3) { $("hint-line").hidden = false; $("hint-line").textContent = "Lost touch with the dashboard. What's here may be out of date."; } } setTimeout(pollState, 2000); }
   const narratePrime = () => { if (state) { prev.primed = false; narrate(); } };
   async function pollField() { try { field = await getJSON("/api/field"); if (Sky && state) Sky.ingest(field, state); } catch (e) {} setTimeout(pollField, 3000); }
   let gateShown = false; function showGate() { gateShown = true; let seen = false; try { seen = sessionStorage.getItem("lois-entered") === "1"; } catch (e) {} if (seen) enter(false); else $("gate").hidden = false; }

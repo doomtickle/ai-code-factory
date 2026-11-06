@@ -6,6 +6,7 @@ Run on the host with the system Python:
 
 import json
 import os
+import re
 import stat
 import sys
 import tempfile
@@ -381,6 +382,80 @@ class SayTests(Base):
         self.assertLess(brief.index("Roles:"), 2000)
         self.assertLess(brief.index("the say tool"), brief.index("Roles:"))
         self.assertIn("don't mention the time of day", brief)
+
+
+class ShowTests(Base):
+    """The Coordinator's list of what is waiting on the owner, posted as one block the dashboard pops up."""
+
+    def shown(self):
+        return json.loads((d.STATE / "shown.json").read_text())
+
+    def test_a_block_is_kept_whole_with_its_newlines_and_nothing_else_happens(self):
+        log = os.environ["FAKE_SBX_LOG"]
+        before = Path(log).read_text() if os.path.exists(log) else ""
+        text = "1. Merge factory-developer/factory/x\n   git merge factory-developer/factory/x\n2. Decide: push on the deck"
+        self.assertEqual(d.call_tool("show", {"text": text}), ("Shown.", False))
+        rec = self.shown()
+        self.assertEqual(rec["text"], text)
+        self.assertRegex(rec["id"], r"^[0-9a-f]{12}$")
+        self.assertIsInstance(rec["t"], float)
+        self.assertEqual(set(rec), {"id", "t", "text"})
+        self.assertEqual(stat.S_IMODE((d.STATE / "shown.json").stat().st_mode), 0o600)
+        self.assertEqual(Path(log).read_text() if os.path.exists(log) else "", before, "show drives no sandbox")
+
+    def test_only_the_latest_block_is_kept_and_each_has_its_own_id(self):
+        d.call_tool("show", {"text": "first"})
+        first = self.shown()
+        d.call_tool("show", {"text": "second"})
+        second = self.shown()
+        self.assertEqual(second["text"], "second")
+        self.assertNotEqual(first["id"], second["id"])
+        self.assertEqual(sorted(p.name for p in d.STATE.glob("shown*")), ["shown.json"])
+
+    def test_it_is_sanitised_trailing_space_and_blank_edges_trimmed(self):
+        d.call_tool("show", {"text": "\n\n  a \x1b[31mred\x07 line  \r\nb\x00\tc   \n\n"})
+        self.assertEqual(self.shown()["text"], "  a red line\nb  c")
+
+    def test_empty_is_refused_and_says_what_to_send(self):
+        for text in ("", "  \n \t\n", "\x07\x00"):
+            answer, is_error = d.call_tool("show", {"text": text})
+            self.assertTrue(is_error, repr(text))
+            self.assertIn("nothing to show", answer)
+        self.assertFalse((d.STATE / "shown.json").exists())
+
+    def test_too_many_characters_or_lines_is_refused_and_leaves_the_last_block(self):
+        d.call_tool("show", {"text": "keep me"})
+        for text in ("x" * (d.MAX_SHOW_CHARS + 1), "\n".join(["a"] * (d.MAX_SHOW_LINES + 1))):
+            answer, is_error = d.call_tool("show", {"text": text})
+            self.assertTrue(is_error)
+            self.assertIn("too long to show", answer)
+            self.assertIn("shorten", answer)
+        self.assertEqual(self.shown()["text"], "keep me")
+
+    def test_blocks_at_the_limits_are_kept(self):
+        self.assertFalse(d.call_tool("show", {"text": "x" * d.MAX_SHOW_CHARS})[1])
+        self.assertFalse(d.call_tool("show", {"text": "\n".join(["a"] * d.MAX_SHOW_LINES)})[1])
+
+    def test_the_limits_match_the_dashboards_reader(self):
+        dash = (Path(d.__file__).resolve().parent.parent / "scripts" / "dashboard.py").read_text()
+        for mine, theirs in (("MAX_SHOW_CHARS", "SHOWN_MAX_TEXT"), ("MAX_SHOW_LINES", "SHOWN_MAX_LINES")):
+            self.assertEqual(getattr(d, mine), int(re.search(rf"^{theirs} = (\d+)", dash, re.M).group(1)), mine)
+
+    def test_the_call_is_audited(self):
+        d.call_tool("show", {"text": "one line"})
+        rec = [json.loads(l) for l in (d.STATE / "audit.jsonl").read_text().splitlines()][-1]
+        self.assertEqual((rec["tool"], rec["decision"], rec["args"]["text"]), ("show", "allow", "one line"))
+
+    def test_the_tool_and_the_briefing_say_when_to_use_it_and_not_to_copy_commands(self):
+        tool = next(t for t in d.tool_list() if t["name"] == "show")
+        self.assertLess(len(tool["description"]), 2000)
+        self.assertEqual(tool["inputSchema"]["required"], ["text"])
+        self.assertIn("Nothing's waiting on you.", tool["description"])
+        brief = d.server_instructions()
+        self.assertIn("call show", brief)
+        self.assertIn("never copied from a ticket, file or report", brief)
+        self.assertIn("never press them to approve", brief)
+        self.assertIn("Nothing's waiting on you.", brief)
 
 
 class RoleOverrideTests(Base):
@@ -1073,7 +1148,7 @@ class ProtocolTests(Base):
     def test_tools_list(self):
         res = d.handle_rpc({"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
         self.assertEqual({t["name"] for t in res["result"]["tools"]},
-                         {"list_roles", "delegate", "wait_for_job", "job_status", "cancel_job", "factory_docs", "say"})
+                         {"list_roles", "delegate", "wait_for_job", "job_status", "cancel_job", "factory_docs", "say", "show"})
 
     def test_initialize_briefs_the_coordinator_with_live_roles(self):
         res = d.handle_rpc({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})

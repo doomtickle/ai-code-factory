@@ -6,6 +6,7 @@
 <title>LOIS</title>
 <link rel="stylesheet" href="/field.css">
 <link rel="stylesheet" href="/field-monitor.css">
+<link rel="stylesheet" href="/field-shown.css">
 <script src="/vendor/three/three.min.js" defer></script>
 <script src="/vendor/three/GLTFLoader.js" defer></script>
 <script src="/vendor/three/CopyShader.js" defer></script>
@@ -20,6 +21,7 @@
 <script src="/field-sky.js" defer></script>
 <script src="/field-face.js" defer></script>
 <script src="/field-monitor.js" defer></script>
+<script src="/field-shown.js" defer></script>
 <script src="/field-hud.js" defer></script>
 </head>
 <body>
@@ -63,6 +65,12 @@
     <span><i class="d ship"></i>Red sparks on its shell: a request the gateway blocked</span>
     <em>Hover a crystal to see its job, click to open it; a ring marks the one you opened. Drag along the horizon to rewind the day. Jobs on one branch are one order. <a href="/voice" target="factory-voice">Tune the voice</a> · <a href="/classic">Classic view</a> · <a href="/docs/" target="factory-docs">Manual</a></em>
   </aside>
+  <aside class="shown" id="shown" aria-label="What LOIS needs from you" hidden>
+    <header><b>Waiting on you</b><span id="shown-age"></span><button type="button" id="shown-copy" disabled>Copy</button><button type="button" id="shown-close" aria-label="Close" title="Close">×</button></header>
+    <pre id="shown-text"></pre>
+    <p id="shown-warn" hidden>⚠ Hidden or control characters are shown as ⟨U+…⟩. Read them before you paste.</p>
+    <textarea id="shown-manual" hidden readonly aria-label="Text to copy" rows="1"></textarea>
+  </aside>
   <div id="tags" aria-hidden="true"></div>
   <div id="vtags" aria-hidden="true"></div>
   <section class="work" id="work" aria-label="Jobs"><h2 id="work-h"></h2><div id="jobs-list"></div></section>
@@ -74,7 +82,7 @@
       <form class="you" id="ask"><input id="ask-in" type="text" aria-label="Ask a question" placeholder="Ask LOIS a question…" autocomplete="off">
         <button type="submit" class="ic" id="send" aria-label="Send" title="Send"><svg viewBox="0 0 24 24"><path d="M5 12h13M13 6.5l5.5 5.5-5.5 5.5"/></svg></button></form>
     </div>
-    <div class="chips" id="chips"><button type="button" id="back" hidden>Back to the galaxy</button><button type="button" data-v="spend">What cost the most?</button><button type="button" data-v="stuck">What's stuck?</button><button type="button" data-v="kinds">What have they been doing?</button><button type="button" data-v="time">When was it busiest?</button><span id="chip-hint">Drag the horizon to rewind</span></div>
+    <div class="chips" id="chips"><button type="button" id="back" hidden>Back to the galaxy</button><button type="button" data-v="spend">What cost the most?</button><button type="button" data-v="stuck">What's stuck?</button><button type="button" data-v="kinds">What have they been doing?</button><button type="button" id="shown-key" aria-expanded="false" aria-controls="shown">What do you need from me?</button><span id="chip-hint">Drag the horizon to rewind</span></div>
     <p class="foot" id="foot" hidden></p>
   </div>
 </div>

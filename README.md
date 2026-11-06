@@ -1143,8 +1143,12 @@ spiral galaxy, above the dark curve of a world whose lit edge is the day:
   stops turning, a failed job a dark void, and a blocked request red at the
   galaxy's edge. Hover a star to see what it was, and click it to open the job.
 - **Questions:** chips or the typed line. "What cost the most?", "What's stuck?",
-  "What have they been doing?" and "When was it busiest?" reshape the stars to
-  answer. This is keyword matching in the browser, not comprehension.
+  "What have they been doing?" and "When was it busiest?" (typed) reshape the
+  stars to answer. This is keyword matching in the browser, not comprehension.
+- **What do you need from me?** A chip that opens a small copyable panel with the
+  last list the Coordinator posted with its `show` tool: decisions, merges, held
+  writes. It pops up when a new list arrives, Copy writes only on your click, and
+  it sends nothing. It can't refresh itself, so it shows the list's age.
 - **The horizon:** drag it to rewind the galaxy. Its beads are the day's events.
 - **The typed line:** a sky question stays in the browser. Anything else goes
   to the Coordinator on Enter, as if typed in Terminal 0. There is no

@@ -1,0 +1,25 @@
+/* The "What do you need from me?" pop-up (field-shown.js): a small dark pool in the top-left sky, clear of the face, the horizon's
+   crystals and the decision row. Sized for 16 lines at desktop width; it dims and shrinks when old, and is closed only by the owner. */
+.shown { position: fixed; z-index: 30; left: var(--edge); top: 76px; width: min(430px, calc(100vw - 2 * var(--edge))); max-height: calc(var(--rim) - 88px); min-height: 0;
+  display: flex; flex-direction: column; gap: 8px; padding: 12px 16px 14px; background: #070a12; border-radius: 22px; color: var(--ink-2);
+  box-shadow: 0 0 22px 12px #070a12, 0 0 60px 28px rgba(7, 10, 18, .6); animation: shown-in .28s ease-out; transition: opacity .6s, font-size .6s; }
+@keyframes shown-in { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
+.shown header { display: flex; align-items: baseline; gap: 12px; flex: none; }
+.shown header b { font: 700 15px var(--f-data); color: #fff; }
+.shown header #shown-age { font: 500 13.5px var(--f-data); color: var(--ink-3); margin-right: auto; }
+.shown header button { font: 600 13.5px var(--f-data); color: var(--blue); border-bottom: 1px solid rgba(127, 224, 255, .5); padding: 0 1px; }
+.shown header button:hover:not(:disabled) { color: #fff; }
+.shown header button:disabled { color: var(--ink-3); border-bottom-color: transparent; cursor: default; opacity: .7; }
+.shown header #shown-close { font-size: 20px; line-height: 1; color: var(--ink-2); border-bottom: 0; }
+.shown pre { margin: 0; min-height: 0; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: 400 14px/1.45 ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace; color: var(--ink); user-select: text; }
+.shown pre.none { font-family: var(--f-data); font-size: 14.5px; color: var(--ink-2); }
+.shown p { margin: 0; font: 600 13.5px/1.4 var(--f-data); color: var(--amber); }
+.shown textarea { position: fixed; left: -9999px; top: 0; width: 1px; height: 1px; opacity: 0; }
+.shown.old { opacity: .7; }
+.shown.old pre { font-size: 13.5px; }
+.shown button:focus-visible { outline: 2px solid var(--blue); outline-offset: 3px; border-radius: 4px; }
+@media (prefers-reduced-motion: reduce) { .shown { animation: none; transition: none; } }
+@media (max-width: 760px) { .shown { top: 64px; max-height: 46vh; } }
+
+/* The new chip is longer than the one it replaced: below 1400px the row wraps instead of clipping it at the end. */
+@media (max-width: 1400px) { .chips { flex-wrap: wrap; row-gap: 4px; } }

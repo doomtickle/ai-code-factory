@@ -132,13 +132,39 @@ Press a chip under the typed line, or type a question and press Enter:
 | What cost the most? | The stars pile up into towers, drawn to scale. LOIS names the share of today's spend. |
 | What's stuck? | Healthy work dims. Failed jobs, waiting writes and orders with changes requested stay lit. |
 | What have they been doing? | A crown, sorted by kind. LOIS says which kind was most common. |
-| When was it busiest? | A skyline over the hour marks. Each column is ten minutes. |
+| When was it busiest? | A skyline over the hour marks. Each column is ten minutes. Type it: it has no chip now. |
 
 To go back to the galaxy, press **Back to the galaxy** or Esc, or leave the
 page alone for 14 seconds. Moving the mouse restarts that count.
 
 This is keyword matching, not comprehension. See
 [what stays in the browser](#what-stays-in-the-browser).
+
+## What do you need from me?
+
+The last chip, **What do you need from me?**, opens a small panel in the upper
+left of the sky with what is waiting on you: decisions, branches to merge, held
+writes, one short line each, with commands written out so you can copy them. It
+pops up by itself when the Coordinator posts a new list, and the chip opens it
+again. The panel shows its age ("2 min ago"), **Copy** and a close key, and you
+can select the text by hand. It shrinks and dims after 10 minutes but never
+closes by itself. Closing it is your choice.
+
+- **Copy** writes the text on screen to the clipboard only when you click it, and
+  stays dark for 2.5 seconds after the text changes, so a list swapped in just
+  before your click is never the one copied unread. The page never reads your
+  clipboard.
+- The list comes from the Coordinator's `show` tool, and the Coordinator can be
+  influenced by what it reads, so read a command before you paste it into a
+  terminal. Control characters are removed, and invisible and direction
+  characters appear as `⟨U+XXXX⟩` with a warning above the text.
+- The chip sends nothing to the Coordinator or the terminal. To ask, type
+  "What do you need from me?" on the line, and it goes to the Coordinator like
+  any other question.
+- **A known limit:** the panel shows the last list the Coordinator posted, with
+  its age. It can't refresh itself, and the Coordinator doesn't see merges you
+  make on your own, so an old list may name something already done. Ask again to
+  get a new one.
 
 ## Rewind the day
 
@@ -182,7 +208,9 @@ press Enter. Nothing is sent until you do.
 - Anything else goes to the Coordinator, exactly as if you had typed it in
   Terminal 0. The face thinks until it answers.
 - It answers aloud with its `say` tool, in its own words, and the caption shows
-  them. Code, paths and lists stay in the reply in **Terminal**.
+  them. Code, paths and lists stay in the reply in **Terminal**. What is waiting
+  on you goes in the pop-up from its `show` tool (see
+  [What do you need from me?](#what-do-you-need-from-me)).
 - Send another line while it's speaking and it stops and listens.
 - A line from the factory itself, such as a write going out, waits until it has
   finished.

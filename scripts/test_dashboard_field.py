@@ -44,7 +44,7 @@ class AskTests(unittest.TestCase):
 
     def test_everything_else_reaches_the_coordinator(self):
         for q in ("Back out the auth change", "When you finish, start the review", "What failed? Fix it now", "Fix the failing auth test?",
-                  "Why did the auth job fail?", "What failed on the auth job?", "Add a budget flag", "How much would it cost to rewrite the broker in rust today?",
+                  "Why did the auth job fail?", "What do you need from me", "What do you need from me?", "What failed on the auth job?", "Add a budget flag", "How much would it cost to rewrite the broker in rust today?",
                   "What is blocking the release?", "Show me the spend flag on the page"):
             self.assertIsNone(self.view(q), q)
 
@@ -148,7 +148,7 @@ class RulesTests(unittest.TestCase):
                 self.assertIn(path, served, f"{page}: {path}")
 
     def test_keys_stay_off_the_main_origin(self):
-        for name in ("field.html", "field-hud.js", "field-sky.js", "field-face.js", "voice.js", "field-monitor.js"):
+        for name in ("field.html", "field-hud.js", "field-sky.js", "field-face.js", "voice.js", "field-monitor.js", "field-shown.js"):
             text = (UI / name).read_text()
             for word in ("__TERM_KEY__", "__CU_KEY__", "X-Factory-Control", "/cu/api", "factory-term."):
                 self.assertNotIn(word, text, name)
@@ -253,6 +253,36 @@ class RulesTests(unittest.TestCase):
         self.assertNotIn("resize", js)
         self.assertRegex(js, r'typeof ev\.data !== "string"\) return')
 
+    def test_the_whats_waiting_chip_only_shows_the_last_block_and_the_busiest_view_stays_typeable(self):
+        html = (UI / "field.html").read_text()
+        chips = html[html.index('id="chips"'):html.index('id="foot"')]
+        self.assertIn(">What do you need from me?<", chips)
+        self.assertNotIn("data-v=", re.search(r'<button[^>]*id="shown-key"[^>]*>', chips).group(0), "the chip is no sky view and sends nothing")
+        self.assertNotIn("When was it busiest", html)
+        self.assertEqual(AskTests().view("When was it busiest?"), "time")
+        self.assertIn("time", re.search(r"ln:\(([^)]*)\)", (UI / "field-hud.js").read_text()).group(1).split("|"))
+
+    def test_the_pop_up_displays_and_copies_by_click_only(self):
+        js = (UI / "field-shown.js").read_text()
+        code = "\n".join(l for l in js.splitlines() if not l.lstrip().startswith("//"))
+        for word in ("fetch(", "XMLHttpRequest", "WebSocket", "sendBeacon", "postMessage", "EventSource", "innerHTML", "outerHTML",
+                     "insertAdjacentHTML", "readText", "clipboard.read", "paste", "setInterval", "location", "localStorage"):
+            self.assertNotIn(word, code, word)
+        self.assertEqual(code.count("writeText("), 1)
+        self.assertEqual(code.count('execCommand("copy")'), 1)
+        self.assertIn("HOLD_MS = 2500", js)
+        self.assertIn('textContent = text', js)
+        self.assertIn("if (!block || holding()) return;", js)
+        self.assertEqual(code.count("copy()"), 1, "copy() is called nowhere but its own definition")
+        self.assertIn('$("shown-copy").addEventListener("click", copy)', js)
+        self.assertIn("if (!primed)", js)
+        self.assertIn("a block already there at load is not news", js)
+
+    def test_the_pop_up_asks_for_no_permission_the_page_does_not_already_have(self):
+        self.assertNotIn("Permissions-Policy", (UI.parent / "dashboard.py").read_text())
+        self.assertNotIn("clipboard", (UI / "field.html").read_text().lower(), "no allow attribute on the main page")
+        self.assertNotIn("clipboard", d.field_csp(9))
+
     def test_main_page_takes_only_fixed_words_from_the_line(self):
         self.assertIn(r"/^ln:(spend|stuck|kinds|time|home|sent|off|noconn)$/", (UI / "field-hud.js").read_text())
 
@@ -282,7 +312,7 @@ class RulesTests(unittest.TestCase):
         self.assertEqual(alphas[-1], 1)
 
     def test_no_small_type_in_the_thoughtfield(self):
-        for name in ("field.css", "cu-field.css", "field-monitor.css", "line.css"):
+        for name in ("field.css", "cu-field.css", "field-monitor.css", "field-shown.css", "line.css"):
             css = re.sub(r"/\*.*?\*/", "", (UI / name).read_text(), flags=re.S)
             for px in re.findall(r"(?:font-size: |font: \d+ )(?:clamp\()?(\d+(?:\.\d+)?)px", css):
                 self.assertGreaterEqual(float(px), 13.5, name)
