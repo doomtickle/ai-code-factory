@@ -273,9 +273,12 @@ class EnvironmentTest(ProgramsTest):
     def test_the_child_environment_is_exactly_ctx_environ(self):
         self.environ["A"] = "1"
         got = self.child_env()
-        # The interpreter may add LC_CTYPE when it coerces a C locale (PEP 538).
-        if "LC_CTYPE" not in self.environ:
-            got.pop("LC_CTYPE", None)
+        # The child's Python adds these to its own environment at startup: LC_CTYPE when it coerces a
+        # C locale (PEP 538), __CF_USER_TEXT_ENCODING on macOS. Drop only them, and only when
+        # ctx.environ did not set them; any other variable must still match exactly.
+        for name in ("LC_CTYPE", "__CF_USER_TEXT_ENCODING"):
+            if name not in self.environ:
+                got.pop(name, None)
         self.assertEqual(got, dict(self.environ))
 
     def test_the_path_searched_for_a_bare_name_is_ctx_environ_path(self):
