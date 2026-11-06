@@ -168,10 +168,10 @@
   LF.drawBeing = drawBeing; let px = innerWidth / 2, py = innerHeight * .4; addEventListener("pointermove", e => { px = e.clientX; py = e.clientY; }); LF.pointer = () => [px, py];
   // motes: light drifting off the skin
   const mc = document.getElementById("motes"), mx = mc.getContext("2d"); const motes = Array.from({ length: 140 }, () => ({ x: Math.random(), y: Math.random(), s: .3 + Math.random() * 1.4, v: .0002 + Math.random() * .0006, p: Math.random() * 7 }));
-  // ---------- voice and tone
-  let on = true, ac = null, tone = null;
-  function audio() { if (ac) return; ac = new (window.AudioContext || window.webkitAudioContext)(); const g = ac.createGain(); g.gain.value = .035; g.connect(ac.destination); [48.99, 73.42, 97.99, 146.83].forEach((f, i) => { const o = ac.createOscillator(); o.type = i % 2 ? "sine" : "triangle"; o.frequency.value = f; const d = ac.createOscillator(); d.frequency.value = .05 + i * .02; const dg = ac.createGain(); dg.gain.value = 2.5; d.connect(dg); dg.connect(o.detune); d.start(); const og = ac.createGain(); og.gain.value = i < 2 ? .6 : .3; const lp = ac.createBiquadFilter(); lp.type = "lowpass"; lp.frequency.value = 420; o.connect(lp); lp.connect(og); og.connect(g); o.start(); }); tone = g; }
+  // ---------- voice and chime
+  let on = true, ac = null;
+  function audio() { if (ac) return; ac = new (window.AudioContext || window.webkitAudioContext)(); }
   function chime() { if (!ac || !on) return; const t = ac.currentTime; [523.25, 783.99, 1046.5].forEach((f, i) => { const o = ac.createOscillator(); o.type = "sine"; o.frequency.value = f; const g = ac.createGain(); g.gain.setValueAtTime(.12 / (i + 1), t + i * .05); g.gain.exponentialRampToValueAtTime(.0001, t + 4); o.connect(g); g.connect(ac.destination); o.start(t + i * .05); o.stop(t + 4); }); }
-  LF.audio = () => { audio(); LF.toneOn = true; }; LF.chime = chime; LF.muted = () => !on; LF.setOn = v => { on = v; if (tone) tone.gain.value = on ? .035 : 0; };
+  LF.audio = audio; LF.chime = chime; LF.muted = () => !on; LF.setOn = v => { on = v; };
   LF.drawMotes = (now) => { const w = innerWidth, h = innerHeight; if (mc.width !== w || mc.height !== h) { mc.width = w; mc.height = h; } mx.clearRect(0, 0, w, h); motes.forEach(m => { m.y -= m.v; if (m.y < -.02) { m.y = 1.02; m.x = .3 + Math.random() * .4; } const X = (m.x + Math.sin(now / 3000 + m.p) * .015) * w, Y = m.y * h; const a = .25 + .5 * Math.sin(now / 700 + m.p) ** 2; mx.fillStyle = `rgba(140,220,255,${a * (W.s ? W.s.pres : 1)})`; mx.beginPath(); mx.arc(X, Y, m.s, 0, 7); mx.fill(); }); };
 })();
