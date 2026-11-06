@@ -2,14 +2,17 @@
 "use strict";
 (function () {
   // ---------- the bust: three.js r147 (22 morphs need its morph texture), the Blender model, bloom
-  const cfg = { pres: .75 };
-  const W = { ready: false, failed: false, s: { pres: .75, flash: 0, yaw: 0, pitch: 0, gx: 0, gy: 0 }, m: {}, speaking: false, thinking: false, talkKick: 0, mood: "calm",
+  // idleMs: how long nothing has happened before she closes her eyes
+  const cfg = { pres: .75, idleMs: 20000 };
+  // running, waiting: counts the HUD copies from /api/state. idle, working: this file's verdict each frame (idle = asleep or falling asleep; working = thinking or a job running)
+  const W = { ready: false, failed: false, s: { pres: .75, flash: 0, yaw: 0, pitch: 0, gx: 0, gy: 0, sleep: 0, work: 0 }, m: {}, speaking: false, thinking: false, talkKick: 0, mood: "calm",
+    running: 0, waiting: 0, idle: false, working: false, busyAt: performance.now(), wakeAt: -1e9, lastAt: 0,
     blinkAt: performance.now() + 2000, blinking: 0, lookAway: 0, nextLook: performance.now() + 6000, lookUntil: 0, lookTo: [0, 0] };
   const VISEMES = ["PP", "FF", "TH", "DD", "kk", "CH", "SS", "nn", "RR", "aa", "E", "ih", "oh", "ou"].map(v => "viseme_" + v);
   const MORPHS = ["blink", "lids_wide", "lids_narrow", "brow_up", "brow_down", "jaw_open", "mouth_round", "smile", ...VISEMES];
   MORPHS.forEach(k => W.m[k] = 0);
   const canvas = document.getElementById("being");
-  let renderer, scene, camera, composer, bloom, head, eyeL, eyeR, corneaL, corneaR, faceMeshes = [], skinMats = [], eyeMats = [], halo, stars;
+  let renderer, scene, camera, composer, bloom, head, eyeL, eyeR, corneaL, corneaR, faceMeshes = [], skinMats = [], eyeMats = [], halo, stars, ring;
   const U = { uTime: { value: 0 }, uPres: { value: .75 }, uFlash: { value: 0 }, uTalk: { value: 0 } };
   const LF = window.LF = { cfg, W, U };
   try {
@@ -34,6 +37,16 @@
     g.addColorStop(0, "rgba(95,214,255,.55)"); g.addColorStop(.4, "rgba(40,120,255,.18)"); g.addColorStop(1, "rgba(0,0,0,0)"); x.fillStyle = g; x.fillRect(0, 0, 256, 256);
     halo = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(c), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: .5 }));
     halo.scale.set(.9, .9, 1); scene.add(halo);
+    // the working ring: a comet of light on a tilted orbit round the head, passing behind it and in front of the chest. Hidden unless she is working.
+    const RN = 240, rp = new Float32Array(RN * 3), ra = new Float32Array(RN), rs = new Float32Array(RN), RR = .24;
+    for (let i = 0; i < RN; i++) { const a = i / RN * Math.PI * 2, tail = Math.pow((i / RN * 2) % 1, 2.5); rp[i * 3] = Math.cos(a) * RR; rp[i * 3 + 1] = Math.sin(a) * RR; ra[i] = .3 + .7 * tail; rs[i] = .006 + .01 * tail * tail; }
+    const rg = new THREE.BufferGeometry(); rg.setAttribute("position", new THREE.BufferAttribute(rp, 3)); rg.setAttribute("aA", new THREE.BufferAttribute(ra, 1)); rg.setAttribute("aS", new THREE.BufferAttribute(rs, 1));
+    U.uWork = { value: 0 }; U.uStill = { value: 0 }; U.uPx = { value: 800 };
+    ring = new THREE.Group(); ring.rotation.order = "YXZ"; ring.rotation.set(.32, -.95, 0); ring.visible = false;
+    ring.spin = new THREE.Points(rg, new THREE.ShaderMaterial({ uniforms: { uWork: U.uWork, uStill: U.uStill, uPx: U.uPx }, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+      vertexShader: "attribute float aA; attribute float aS; uniform float uWork; uniform float uStill; uniform float uPx; varying float vA; void main(){ vec4 mv = modelViewMatrix * vec4(position, 1.0); gl_Position = projectionMatrix * mv; gl_PointSize = max(1.5, aS * uPx / -mv.z); vA = mix(aA, .5, uStill) * uWork; }",
+      fragmentShader: "varying float vA; void main(){ float d = length(gl_PointCoord - .5) * 2.0; float a = clamp(1.0 - d, 0.0, 1.0); a *= a; gl_FragColor = vec4(vec3(.5, .9, 1.0) * 1.4, a * vA); }" }));
+    ring.spin.frustumCulled = false; ring.add(ring.spin); scene.add(ring); LF.ring = ring;
     // post: bloom, then gamma (the composer's targets are linear)
     const bufType = renderer.capabilities.isWebGL2 && renderer.extensions.has("EXT_color_buffer_float") ? THREE.HalfFloatType : THREE.UnsignedByteType; composer = new THREE.EffectComposer(renderer, new THREE.WebGLRenderTarget(innerWidth, innerHeight, { samples: 4, type: bufType })); composer.setPixelRatio(Math.min(1.5, devicePixelRatio || 1)); composer.setSize(innerWidth, innerHeight);
     composer.addPass(new THREE.RenderPass(scene, camera));
@@ -115,7 +128,7 @@
       const cy = crown + .05 * span - span / 2; const dist = (span / 2) / Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
       const eyeW = new THREE.Vector3(); eyeL.getWorldPosition(eyeW);
       camera.position.set(0, cy + .02, eyeW.z + dist); camera.lookAt(0, cy, eyeW.z);
-      halo.position.set(0, eyeW.y + .02, box.min.z - .05);
+      halo.position.set(0, eyeW.y + .02, box.min.z - .05); ring.position.set(0, eyeW.y + .03, eyeW.z - .03);
       W.ready = true; W.eyeY = eyeW.y; W.eyeZ = eyeW.z;
       LF.sky = window.makeSky(scene, camera, new THREE.Vector3(0, eyeW.y, eyeW.z - .08), U, W); LF.camera = camera; LF.onReady && LF.onReady();
     };
@@ -124,6 +137,7 @@
     loader.load("/witness/witness.glb", g => { try { onModel(g); } catch (e) { onFail(e); } }, undefined, onFail);
   } catch (e) { W.failed = true; console.error(e); LF.failMsg = "This view needs WebGL."; LF.fail && LF.fail(LF.failMsg); }
 
+  const reduced = window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)");
   const tmpF = typeof THREE !== "undefined" ? new THREE.Vector3() : null;
   const ease = (a, b, k) => a + (b - a) * k;
   const tmp = typeof THREE !== "undefined" ? new THREE.Vector3() : null;
@@ -133,15 +147,24 @@
     if (!b.ready) { composer.render(); return; }
     if (LF.sky) LF.sky.update(now, px, py);
     const fo = b.hoverFocus || b.focus; if (fo) { fo.getWorldPosition(tmpF); tmpF.project(camera); px = (tmpF.x * .5 + .5) * innerWidth; py = (-tmpF.y * .5 + .5) * innerHeight; }
-    const s = b.s;
+    const s = b.s, dt = Math.min(.25, Math.max(0, (now - (b.lastAt || now)) / 1000)); b.lastAt = now;
+    // idle: nothing said, thought, running or waiting for cfg.idleMs. The pointer alone never counts; a key, a click or the owner's focus in a frame does (touch below).
+    b.working = !!b.thinking || b.running > 0;
+    if (b.working || b.speaking || b.waiting > 0 || (document.activeElement && document.activeElement.tagName === "IFRAME")) b.busyAt = now;
+    const idle = now - b.busyAt > cfg.idleMs; if (b.idle && !idle) b.wakeAt = now; b.idle = idle;
+    const waking = now - b.wakeAt < 700;
+    s.sleep += ((idle ? 1 : 0) - s.sleep) * (1 - Math.exp(-dt / (idle ? .6 : .15)));
+    s.work += ((b.working ? 1 : 0) - s.work) * (1 - Math.exp(-dt / (b.working ? .5 : .9)));
     // where is the face on screen? gaze is measured from there
     tmp.set(0, b.eyeY, b.eyeZ).project(camera); const fx = (tmp.x * .5 + .5) * innerWidth, fy = (-tmp.y * .5 + .5) * innerHeight;
     let gx = (px - fx) / innerHeight * 1.6, gy = -(py - fy) / innerHeight * 1.6; const L = Math.hypot(gx, gy); if (L > 1) { gx /= L; gy /= L; }
     // now and then, when silent, it looks at something you cannot see
+    if (idle || waking) { b.lookUntil = 0; b.nextLook = now + 6000; b.blinkAt = now + 2500; b.blinking = 0; }
     if (!b.speaking && !fo && now > b.nextLook) { if (Math.random() < .45) { b.lookUntil = now + 1400 + Math.random() * 1800; b.lookTo = [(Math.random() - .5) * 1.4, .2 + Math.random() * .4]; } b.nextLook = now + 5000 + Math.random() * 5000; }
     if (now < b.lookUntil) { gx = b.lookTo[0]; gy = b.lookTo[1]; }
     // thinking about what you just said: it looks up and away, and its gaze wanders slowly
     const thinking = b.thinking && !b.speaking; if (thinking) { gx = .42 + Math.sin(now / 2300) * .24; gy = .5 + Math.sin(now / 1700) * .1; }
+    gx *= 1 - s.sleep; gy = gy * (1 - s.sleep) - .12 * s.sleep;   // asleep she ignores the pointer
     // blink, a little slower than a person
     if (now > b.blinkAt) { b.blinking = now; b.blinkAt = now + 3000 + Math.random() * 6000; }
     const bl = b.blinking ? Math.sin(Math.min(Math.PI, (now - b.blinking) / 230 * Math.PI)) : 0; if (b.blinking && now - b.blinking > 230) b.blinking = 0;
@@ -150,22 +173,30 @@
     const live = window.LiveVoice ? LiveVoice.mouth() : { open: 0, round: 0 }; const env = b.speaking ? live.open : 0;
     const vis = b.speaking && window.LiveVoice ? LiveVoice.visemes() : null;   // phoneme-timed lips; without timing data, the jaw follows loudness as before
     const stern = b.mood === "stern", lit = b.mood === "lit";
-    const T = { blink: bl, lids_wide: lit ? .35 : 0, lids_narrow: stern ? .7 : thinking ? .38 : .22, brow_up: lit ? .55 : thinking ? .24 : (b.speaking ? .18 * Math.abs(Math.sin(now / 1100)) : 0), brow_down: stern ? .65 : 0,
+    const T = { blink: idle ? 1 : waking ? 0 : bl, lids_wide: lit ? .35 : 0, lids_narrow: stern ? .7 : thinking ? .38 : .22, brow_up: (lit ? .55 : thinking ? .24 : (b.speaking ? .18 * Math.abs(Math.sin(now / 1100)) : 0)) + .3 * Math.max(0, 1 - (now - b.wakeAt) / 900), brow_down: stern ? .65 : 0,
       jaw_open: Math.min(1, env) * (vis ? .22 * (1 - vis.viseme_PP - vis.viseme_FF) : .9), mouth_round: vis ? 0 : Math.min(1, env) * Math.min(1, Math.max(0, (live.round - .55) * 3.2)) * .7, smile: lit ? .35 : .1 };
     VISEMES.forEach(k => { T[k] = vis ? vis[k] : 0; });
-    MORPHS.forEach(k => { b.m[k] = ease(b.m[k], T[k], k === "blink" ? .55 : k === "jaw_open" || k === "mouth_round" ? .4 : k.startsWith("viseme") ? .7 : .07); faceMeshes.forEach(f => { f.morphTargetInfluences[f.morphTargetDictionary[k]] = b.m[k]; }); });
+    const kBlink = idle ? 1 - Math.exp(-dt / .5) : waking ? 1 - Math.exp(-dt / .13) : .55;   // ~1.5 s to shut, ~0.4 s to open; a held lid never rests between .25 and .75 (the lid margin clips the cornea there)
+    MORPHS.forEach(k => { b.m[k] = ease(b.m[k], T[k], k === "blink" ? kBlink : k === "jaw_open" || k === "mouth_round" ? .4 : k.startsWith("viseme") ? .7 : .07); faceMeshes.forEach(f => { f.morphTargetInfluences[f.morphTargetDictionary[k]] = b.m[k]; }); });
+    if (idle && b.m.blink > .995) { b.m.blink = 1; faceMeshes.forEach(f => { f.morphTargetInfluences[f.morphTargetDictionary.blink] = 1; }); }
     s.gx = ease(s.gx, gx, .12); s.gy = ease(s.gy, gy, .12);
     s.yaw = ease(s.yaw, gx * .32, .035); s.pitch = ease(s.pitch, -gy * .14, .035);
-    head.rotation.y = s.yaw; head.rotation.x = s.pitch + Math.sin(now / 2900) * .012; head.rotation.z = Math.sin(now / 4100) * .01;
+    head.rotation.y = s.yaw; head.rotation.x = s.pitch + Math.sin(now / 2900) * .012 + .09 * s.sleep; head.rotation.z = Math.sin(now / 4100) * .01 + .03 * s.sleep;
     [eyeL, eyeR, corneaL, corneaR].forEach(e => { e.rotation.y = (s.gx * .55) - s.yaw * .5; e.rotation.x = -s.gy * .38 - s.pitch * .5; });
-    s.pres = ease(s.pres, b.speaking ? 1 : thinking ? .9 + Math.sin(now / 900) * .07 : cfg.pres, .05); s.flash *= .9;
+    const still = reduced && reduced.matches;
+    s.pres = ease(s.pres, b.speaking ? 1 : thinking ? .9 + Math.sin(now / 900) * .07 : b.working ? .82 + (still ? 0 : Math.sin(now / 1100) * .04) : cfg.pres - (cfg.pres - .42) * s.sleep, idle ? .02 : .05); s.flash *= .9;
     U.uPres.value = s.pres; U.uFlash.value = s.flash; U.uTalk.value = env;
-    halo.material.opacity = .14 + .16 * s.pres + s.flash * .5;
-    bloom.strength = .42 + .22 * s.pres + s.flash;
+    U.uWork.value = s.work; U.uStill.value = still ? 1 : 0; U.uPx.value = innerHeight * Math.min(1.5, devicePixelRatio || 1) / (2 * Math.tan(camera.fov * Math.PI / 360));
+    ring.visible = s.work > .004; if (!still) ring.spin.rotation.z = -now / 1000 * .6;
+    halo.material.opacity = .14 + .16 * s.pres + s.flash * .5 + s.work * (.06 + (still ? 0 : .03 * Math.sin(now / 1000)));
+    bloom.strength = .42 + .22 * s.pres + s.flash + .1 * s.work;
     stars.rotation.y = now / 400000;
     composer.render();
   }
   LF.drawBeing = drawBeing; let px = innerWidth / 2, py = innerHeight * .4; addEventListener("pointermove", e => { px = e.clientX; py = e.clientY; }); LF.pointer = () => [px, py];
+  // the owner at the keys or clicking wakes her; moving the pointer does not
+  LF.touch = () => { W.busyAt = performance.now(); };
+  ["keydown", "pointerdown"].forEach(t => addEventListener(t, LF.touch, true));
   // motes: light drifting off the skin
   const mc = document.getElementById("motes"), mx = mc.getContext("2d"); const motes = Array.from({ length: 140 }, () => ({ x: Math.random(), y: Math.random(), s: .3 + Math.random() * 1.4, v: .0002 + Math.random() * .0006, p: Math.random() * 7 }));
   // ---------- voice and chime

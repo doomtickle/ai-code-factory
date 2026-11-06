@@ -207,5 +207,68 @@ async function picking(url) {
   } finally { await b.close(); }
 }
 
+// The witness shuts her eyes when nothing has happened for a while, wakes for anything (a job, a held write, the keys; not the pointer),
+// and shows a ring of light while she is working. /api/state is steered from the page so the demo's jobs and cards come and go on cue.
+const STEER = `(() => { const real = window.fetch.bind(window); window.__st = { running: 0, gate: [] };
+  window.fetch = async (u, o) => { const r = await real(u, o); if (!String(u).startsWith("/api/state")) return r;
+    const j = await r.json(); j.totals = Object.assign({}, j.totals, { running: window.__st.running }); j.gate = window.__st.gate; j.said = []; j.lanes = [];
+    return new Response(JSON.stringify(j), { status: 200, headers: { "Content-Type": "application/json" } }); }; })()`;
+async function witness(url, reduced) {
+  const b = await launch(url, reduced ? [{ name: "prefers-reduced-motion", value: "reduce" }] : null, ENTERED + STEER);
+  const until = async (expr, what, ms = 40000) => { for (let t = 0; t < ms; t += 100) { if (await b.ev(expr)) return; await b.sleep(100); } throw new Error("never: " + what + " (" + await b.ev(`JSON.stringify({ idle: LF.W.idle, working: LF.W.working, run: LF.W.running, wait: LF.W.waiting, speaking: LF.W.speaking, blink: LF.W.m.blink, work: LF.W.s.work })`) + ")"); };
+  try {
+    await until(`!!(window.LF && LF.W.ready && !document.getElementById("hud").hidden)`, "the page is up");
+    await b.ev(`LF.cfg.idleMs = 800`);
+    await until(`LF.W.running === 0 && LF.W.waiting === 0 && !LF.W.speaking && !LF.W.thinking`, "it is quiet");
+    await until(`LF.W.idle`, "idle after the quiet");
+    assert.strictEqual(await b.ev(`LF.W.working`), false, "idle is not working");
+    // the lid shuts and rests shut, never between .25 and .75
+    await until(`LF.W.m.blink === 1`, "the eyes shut");
+    const rest = [];
+    for (let i = 0; i < 12; i++) { rest.push(await b.ev(`LF.W.m.blink`)); await b.sleep(150); }
+    assert.deepStrictEqual([...new Set(rest)], [1], "asleep, the lid rests at 1 and no random blink opens it");
+    assert.ok(await b.ev(`LF.W.s.sleep`) > .9, "the head has drooped and presence dropped");
+    assert.strictEqual(await b.ev(`LF.ring.visible`), false, "no ring while asleep");
+    // the pointer alone does not wake her
+    for (const x of [100, 600, 1100]) { await b.s("Input.dispatchMouseEvent", { type: "mouseMoved", x, y: 300 }); await b.sleep(150); }
+    await b.sleep(500);
+    assert.strictEqual(await b.ev(`LF.W.idle && LF.W.m.blink === 1`), true, "moving the pointer leaves her asleep");
+    // a running job wakes her and the ring comes up
+    await b.ev(`window.__st.running = 2`);
+    await until(`LF.W.working && !LF.W.idle`, "a running job wakes her");
+    await until(`LF.W.m.blink < .02`, "eyes open");
+    await until(`LF.W.s.work > .95 && LF.ring.visible && LF.U.uWork.value > .95`, "the ring is up");
+    if (reduced) {
+      assert.strictEqual(await b.ev(`LF.U.uStill.value`), 1, "reduced motion: a still ring");
+      const z0 = await b.ev(`LF.ring.spin.rotation.z`); await b.sleep(600);
+      assert.strictEqual(await b.ev(`LF.ring.spin.rotation.z`), z0, "reduced motion: the ring does not orbit");
+    } else {
+      const z0 = await b.ev(`LF.ring.spin.rotation.z`); await b.sleep(600);
+      assert.notStrictEqual(await b.ev(`LF.ring.spin.rotation.z`), z0, "the ring orbits");
+    }
+    // work ends: the ring fades; later she falls asleep again
+    await b.ev(`window.__st.running = 0`);
+    await until(`!LF.W.working && LF.W.s.work < .02 && !LF.ring.visible`, "the ring fades out");
+    await until(`LF.W.idle && LF.W.m.blink === 1`, "asleep again");
+    // a held write wakes her too (and keeps her up), a key wakes her, thinking shows the ring
+    await b.ev(`window.__st.gate = [{ id: "steer1", repo: "r", branch: "b", kind: "push" }]`);
+    await until(`LF.W.waiting === 1 && !LF.W.idle && LF.W.m.blink < .02`, "a held write wakes her");
+    await b.sleep(1500);
+    assert.strictEqual(await b.ev(`LF.W.idle`), false, "she stays awake while a write waits for the owner");
+    await b.ev(`window.__st.gate = []`);
+    await until(`LF.W.idle && LF.W.m.blink === 1`, "asleep once the write is gone");
+    await b.key("a", "KeyA");
+    await until(`!LF.W.idle && LF.W.m.blink < .02`, "a key wakes her");
+    await until(`LF.W.idle && LF.W.m.blink === 1`, "asleep after the key");
+    await b.ev(`LF.W.thinking = true`);
+    await until(`LF.W.working && !LF.W.idle && LF.W.s.work > .95`, "thinking wakes her and shows the ring");
+    await b.ev(`LF.W.thinking = false`);
+    await until(`!LF.W.working && LF.W.s.work < .02`, "the ring fades when she stops thinking");
+    assert.deepStrictEqual(b.errors, [], "no page errors");
+  } finally { await b.close(); }
+}
+
 const url = process.argv[2];
-(process.env.FIELD_ONLY === "picking" ? picking(url) : layouts(url, 0).then(() => layouts(url, 65)).then(() => picking(url))).then(() => console.log("field browser checks passed"), e => { console.error(e.stack || e); process.exit(1); });
+const only = process.env.FIELD_ONLY;
+(only === "picking" ? picking(url) : only === "witness" ? witness(url, 0).then(() => witness(url, 1)) : layouts(url, 0).then(() => layouts(url, 65)).then(() => picking(url)).then(() => witness(url, 0)).then(() => witness(url, 1)))
+  .then(() => console.log("field browser checks passed"), e => { console.error(e.stack || e); process.exit(1); });
