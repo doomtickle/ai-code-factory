@@ -4,6 +4,13 @@ Dated entries, for the user to review. Newest first.
 
 ## 2026-11-06
 
+- **Thoughtfield crystals read at a glance, display only** (owner: the sky didn't say what was happening, so they went back to the classic floor). Choices to review:
+  - **No new data.** Step numbers, the order's state word and the history all come from the jobs `/api/field` already has and the held writes in `/api/state`; `field-order.js` is pure functions. The state word is the newest job's; a held write overrides it.
+  - **What left the crystal:** the kinds band, the kind-colour mix in a star's colour at home (18%, from 60%; the question views keep 60%, and `What have they been doing?` still pours kinds), and the glow on finished jobs. The stars stay, since spend, kinds and time use them.
+  - **Order colours are spread by a golden angle**, not hashed. Hashed hues put four of eight orders in one pink, and the label's colour dot can't tell crystals apart then. Hue now follows the order's first-seen index, so it is stable through a day.
+  - **A phone has no room, so waiting and running labels may cover the sky near the bust.** Last resort only, after clear sky and the far-with-a-dashed-line spot; covering the bust costs less than covering a crystal, whose mark is the thing being read. Other labels are dropped, lowest rank first.
+  - **Labels go away while rewinding and in the question views**, where the crystals are gone or stand for another day; the pips (number and mark) stay in `home` and `stuck`.
+
 - **The Coordinator may post a copyable list to the main page, display only** (owner decision: "What do you need from me?" replaces "When was it busiest?" among the helper
   questions, and shows what is waiting on them in text they can copy, popping up while LOIS talks about it). Choices to review:
   - **A `show` tool beside `say`, not a longer `say`.** `say` is one spoken line with no code or links. `show` takes the whole current list, plain text with newlines, capped at 16 lines and

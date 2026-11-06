@@ -148,7 +148,7 @@ class RulesTests(unittest.TestCase):
                 self.assertIn(path, served, f"{page}: {path}")
 
     def test_keys_stay_off_the_main_origin(self):
-        for name in ("field.html", "field-hud.js", "field-sky.js", "field-face.js", "voice.js", "field-monitor.js", "field-shown.js"):
+        for name in ("field.html", "field-hud.js", "field-order.js", "field-sky.js", "field-face.js", "voice.js", "field-monitor.js", "field-shown.js"):
             text = (UI / name).read_text()
             for word in ("__TERM_KEY__", "__CU_KEY__", "X-Factory-Control", "/cu/api", "factory-term."):
                 self.assertNotIn(word, text, name)

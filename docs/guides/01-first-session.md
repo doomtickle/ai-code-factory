@@ -137,8 +137,11 @@ per job, above a dark world whose lit edge is the day.
   as a panel. Its replies appear here. Every browser tab you open shows the same
   session.
 - **The galaxy:** every crystal round LOIS's head is a job run today, full of
-  the stars of its work, and a bright spark inside is a job running now. Hover
-  a crystal to see the job, and click it to open that job.
+  the stars of its work. A label beside each order's crystals says where it
+  stands (`rate-limit · Reviewing`), a number on a crystal is its step in the
+  order, and a mark on its corner says running, done, approved, changes
+  requested, failed or waiting for you. Hover a crystal to see the order's
+  history, and click it to open that job.
 - **The decision row:** a held push or pull request (with approvals on) shows
   here, with a gold light. Hold the light for 2.5 seconds to approve, or press
   Decline and give a reason. With nothing held it shows Diagnose, Restart and
