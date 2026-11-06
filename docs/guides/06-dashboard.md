@@ -93,9 +93,11 @@ are the only words, and they are drawn as plain text.
 
 | What you see | What it means |
 |---|---|
-| A crystal | One job. Bigger is more spend. Hover it to see the job; click it to open the job's monitor. |
-| A star inside a crystal | A share of the job's spend, placed at the time of one of its actions and coloured by that action's kind: reading, editing, running commands, requests or reviewing. The oldest work is at the core of the crystal's spiral. |
-| The band round a crystal's middle | The job's mix of action kinds, in the same colours. |
+| A crystal | One job. Bigger is more spend. Hover it to see the job and its order's history; click it to open the job's monitor. |
+| A label beside the crystals | One order, always showing: its name (the branch, or a lone job's own words) and where it stands, in words: `Working`, `Reviewing`, `Fixing`, `Changes requested`, `Approved`, `Failed`, `Done` or `Waiting for you`. The words come from the order's newest job. A small diamond in the label has the colour of the order's crystals. |
+| A number on a crystal | The job's step in its order, by start time: 1 first. A write waiting on you is the step after the last job. A crystal too small to hold a number shows none. |
+| A mark on a crystal's corner | The job's state: a spinning ring is running, a tick is finished, a green tick is approved, `!` is changes requested, a cross is failed, a pulsing gold dot is waiting for you. Gold means only that. |
+| A star inside a crystal | A share of the job's spend, placed at the time of one of its actions. The oldest work is at the core of the crystal's spiral. Stars take the order's colour; the pour of kinds is in the question views (`What have they been doing?`). |
 | Crystals of one colour joined by a thread | One order. |
 | Where a crystal sits | The crystals ring LOIS's head, never behind it. Along a ring, time runs from the left horizon, up round the head, down to the right: left is earlier. With many jobs there are several rings, the newest innermost. |
 | A bright spark inside, and a crystal that turns | A running job. Brighter is a bigger model. |
@@ -107,6 +109,14 @@ are the only words, and they are drawn as plain text.
 
 **An order** is all the jobs on one branch, the review included. A job with no
 branch stands alone.
+
+**When there isn't room for every label** (a small window, many orders), the ones
+that wait on you, are running or have failed keep theirs, then the newest; the
+rest are left out, and their crystals keep their numbers and marks. A label never
+covers a crystal or LOIS, except on a phone-sized window where a waiting or
+running order's label has to sit over the sky it can find. A label far from its
+crystals is joined to the newest one by a dashed line. Labels go away in the
+question views and while you rewind the day.
 
 **How many stars.** A job's star count is its spend times a rate. LOIS picks
 the rate when the page loads, between 150 and 6,000 stars to the dollar, so
@@ -124,8 +134,11 @@ compare stars within a day, not between days.
   time, in the usual mix for its role.
 - The page draws the newest 60 jobs of the day and at most 62,000 stars.
 
-**Hover** a star, a spark, a void or a gold star to see what it is: the kind
-and time, the job's task, its lane and model. **Click** one to open that job
+**Hover** a crystal to see its order's history: its steps, oldest first, each
+with the time, the lane and what happened (`10:15 reviewer-lane2 review started`,
+`10:21 asked for changes`), and the step you are on marked. A long order shows its
+latest eight steps and counts the rest. Hover a star, a spark or a void to see
+what it is: the kind and time, the job's task, its lane and model. **Click** one to open that job
 ([Open a job](#open-a-job)). Clicking a gold star selects that write in the
 decision row instead.
 

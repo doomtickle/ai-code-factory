@@ -207,6 +207,100 @@ async function picking(url) {
   } finally { await b.close(); }
 }
 
+// Several orders in different states: "without hovering, can you say what each order is, what state it is in and what order its steps ran in?"
+// /api/field is replaced with named orders (a running review, an approved one, changes requested then a fix, a failure, a lone job...) and /api/state
+// with one held write on fix-login, so the labels, step numbers and state marks can be checked against what the data says.
+const RICH = `(() => { const real = window.fetch.bind(window);
+  let k = 0; const J = (code, lane, role, order, task, st, verdict, start, end, cost) => { const id = "20261106-" + String(100000 + k) + "-00000" + (k++).toString(16); return { id, lane, role, order: order === "=" ? id : order, label: task, task, model: "sonnet-5-5", status: st, verdict, start, end, cost,
+    actions: Array.from({ length: 6 }, (_, a) => [start + a * .5, role === "reviewer" ? 4 : a % 4]) }; };
+  window.fetch = async (u, o) => { const r = await real(u, o), s = String(u);
+    if (s.startsWith("/api/field")) { k = 0; const j = await r.json(), t = (j.now || 700) - 180;
+      j.jobs = [J("a01", "developer", "developer", "rate-limit", "Add rate limit", "done", "", t, t + 9, .8), J("a02", "reviewer-lane2", "reviewer", "rate-limit", "Review rate limit", "running", "", t + 12, null, null),
+        J("b01", "developer", "developer", "fix-login", "Fix login redirect", "done", "", t + 3, t + 14, 1.1), J("b02", "reviewer-lane2", "reviewer", "fix-login", "Review login", "done", "approved", t + 16, t + 22, .4),
+        J("c01", "developer-lane3", "developer", "docs-pass", "Docs pass", "done", "", t + 20, t + 40, .9), J("c02", "reviewer-lane2", "reviewer", "docs-pass", "Review docs", "done", "revise", t + 42, t + 50, .3),
+        J("c03", "developer-lane3", "developer", "docs-pass", "Docs fixes", "done", "", t + 52, t + 60, .5), J("d01", "developer", "developer", "migrate-db", "Migrate db", "failed", "", t + 30, t + 38, 1.4),
+        J("e01", "developer-lane2", "developer", "cache-warm", "Warm caches", "running", "", (j.now || 700) - 6, null, null), J("f01", "developer-lane3", "developer", "=", "Tidy packaging metadata", "done", "", t + 70, t + 80, .2),
+        J("g01", "developer", "developer", "search-index", "Search index", "done", "", t + 85, t + 100, .7), J("g02", "reviewer-lane2", "reviewer", "search-index", "Review search", "done", "approved", t + 102, t + 110, .3),
+        J("h01", "developer-lane2", "developer", "dark-mode", "Dark mode", "done", "", t + 115, t + 130, .6), J("h02", "reviewer", "reviewer", "dark-mode", "Review dark", "done", "revise", t + 132, t + 140, .3)];
+      return new Response(JSON.stringify(j), { status: 200, headers: { "Content-Type": "application/json" } }); }
+    if (s.startsWith("/api/state")) { const j = await r.json(); j.gate = [{ id: "g1", repo: "r", branch: "factory/fix-login", title: "push", kind: "push", decided: "" }];
+      return new Response(JSON.stringify(j), { status: 200, headers: { "Content-Type": "application/json" } }); }
+    return r; }; })()`;
+const RICH_ORDERS = { "rate-limit": ["Reviewing", "run"], "fix-login": ["Waiting for you", "wait"], "docs-pass": ["Done", "done"], "migrate-db": ["Failed", "bad"], "cache-warm": ["Working", "run"], "Tidy packaging metadata": ["Done", "done"], "search-index": ["Approved", "ok"], "dark-mode": ["Changes requested", "rev"] };
+const LABELS = `(() => { const Sky = LF.sky, list = Sky.packets(), pk = list.map(p => [p.x - p.r, p.y - p.r, p.x + p.r, p.y + p.r]);
+  const labels = [...document.querySelectorAll("#tags .tag.ord.on")].map(e => { const r = e.getBoundingClientRect(); return { text: e.textContent, cls: e.className, r: [r.left, r.top, r.right, r.bottom] }; });
+  const over = (a, b) => a[0] < b[2] && b[0] < a[2] && a[1] < b[3] && b[1] < a[3];
+  const bust = r => [0, .25, .5, .75, 1].some(k => Sky.overWitness(r[0] + (r[2] - r[0]) * k, r[1], 0) || Sky.overWitness(r[0] + (r[2] - r[0]) * k, r[3], 0) || Sky.overWitness(r[0] + (r[2] - r[0]) * k, (r[1] + r[3]) / 2, 0));
+  return { labels: labels.map(l => l.text), tones: labels.map(l => l.cls), onCrystal: labels.filter(l => pk.some(b => over(l.r, b))).map(l => l.text), onBust: labels.filter(l => bust(l.r)).map(l => l.text),
+    onEach: labels.filter((l, i) => labels.some((m, k) => k !== i && over(l.r, m.r))).map(l => l.text), off: labels.filter(l => l.r[0] < 0 || l.r[2] > innerWidth || l.r[1] < document.querySelector(".top").getBoundingClientRect().bottom - 1 || l.r[3] > LF.W.rimAt((l.r[0] + l.r[2]) / 2)).map(l => l.text),
+    orders: Sky.orderList().map(o => ({ name: o.name, word: o.word, tone: o.tone })),
+    pips: [...document.querySelectorAll("#pips .pip")].map(e => ({ cls: e.className, n: e.querySelector(".pn") ? e.querySelector(".pn").textContent : "", mark: !!e.querySelector(".pm") })),
+    packets: list.map(p => ({ key: p.key, order: p.order, n: p.n, tone: p.tone, r: p.r })) }; })()`;
+async function crystals(url) {
+  const b = await launch(url, undefined, ENTERED + RICH);
+  try {
+    await b.resize(1440, 900); await ready(b, 15); await settle(b); await b.sleep(1200);
+    for (const [w, h] of [[1920, 1080], [1440, 900], [1024, 768], [768, 1024], [390, 844]]) {
+      await b.resize(w, h); await settle(b); await b.sleep(900);
+      const L = await b.ev(LABELS), at = `${w}x${h}`;
+      // every packet wears one state mark and, unless tiny, its step number; the mark is the packet's own state
+      assert.strictEqual(L.pips.length, L.packets.length, `${at}: one number and mark per crystal`);
+      assert.ok(L.pips.every(p => p.mark), `${at}: every crystal has a mark`);
+      assert.deepStrictEqual(L.pips.map(p => (/\bp-(\w+)/.exec(p.cls) || [])[1]).sort(), L.packets.map(p => p.tone).sort(), `${at}: marks say each crystal's state`);
+      assert.ok(L.pips.every(p => /\bp-(run|done|ok|rev|bad|wait)\b/.test(p.cls)), `${at}: classes come from the fixed tones`);
+      L.pips.forEach(p => { if (p.n) assert.ok(/^[1-9]\d?$/.test(p.n), `${at}: step number ${p.n}`); });
+      assert.ok(L.pips.filter(p => p.n).length >= L.pips.length * .6, `${at}: most crystals show a number`);
+      // steps run 1, 2, 3 within an order, by start time
+      const by = {}; L.packets.forEach(p => { (by[p.order] = by[p.order] || []).push(p.n); });
+      Object.entries(by).forEach(([o, ns]) => assert.deepStrictEqual(ns.slice().sort(), ns.map((_, k) => k + 1), `${at}: ${o}'s steps are numbered 1..n`));
+      assert.deepStrictEqual(by["docs-pass"].slice().sort(), [1, 2, 3], `${at}: docs-pass ran in three steps`);
+      assert.strictEqual(by["fix-login"].length, 3, `${at}: the held write is fix-login's third step`);
+      // each order says what it is and its state, in words, from its newest job
+      assert.deepStrictEqual(L.orders.map(o => [o.name, o.word, o.tone]).sort(), Object.entries(RICH_ORDERS).map(([n, [w, t]]) => [n, w, t]).sort(), `${at}: the order's state in words`);
+      // a label for every waiting and running order, always; none on a crystal or the witness (a phone, with no room left, may) or on another label
+      for (const [n, [wd, tone]] of Object.entries(RICH_ORDERS)) if (tone === "run" || tone === "wait") assert.ok(L.labels.includes(`${n} · ${wd}`), `${at}: ${n} keeps its label (${JSON.stringify(L.labels)})`);
+      L.labels.forEach(t => assert.ok(Object.entries(RICH_ORDERS).some(([n, [wd]]) => t === `${n} · ${wd}`), `${at}: label text ${t}`));
+      assert.deepStrictEqual(L.off, [], `${at}: labels stay on the sky`);
+      if (w >= 768) { assert.deepStrictEqual(L.onCrystal, [], `${at}: no label covers a crystal`); assert.deepStrictEqual(L.onBust, [], `${at}: no label covers the witness`); }
+      assert.deepStrictEqual(L.onEach, [], `${at}: no two labels overlap`);
+      if (w >= 1440) assert.strictEqual(L.labels.length, 8, `${at}: with room, every order has a label`);
+      // when some are left out, a waiting, running or failed one is never the one
+      if (L.labels.length < 8) ["Waiting for you", "Reviewing", "Working"].forEach(wd => assert.ok(L.labels.some(t => t.endsWith(wd)), `${at}: ${wd} kept`));
+    }
+    // hover: the card lists the order's steps oldest first, the hovered one marked; a click still opens that job
+    await b.resize(1440, 900); await settle(b); await b.sleep(600);
+    const p = await b.ev(`LF.sky.packets().find(q => q.order === "docs-pass" && q.n === 2)`);
+    await b.s("Input.dispatchMouseEvent", { type: "mouseMoved", x: p.x, y: p.y }); await b.sleep(700);
+    const card = await b.ev(`({ head: document.querySelector(".skycard .st").textContent, rows: [...document.querySelectorAll(".skycard .hr")].map(r => ({ n: r.querySelector(".n").textContent, t: r.querySelector(".t").textContent, w: r.querySelector(".w").textContent, cur: r.classList.contains("cur") })), text: document.querySelector(".skycard").textContent })`);
+    assert.ok(/^Step 2 of 3 · Changes requested/.test(card.head), card.head);
+    assert.deepStrictEqual(card.rows.map(r => r.w), ["developer-lane3 work started", "finished", "reviewer-lane2 review started", "asked for changes", "developer-lane3 work started", "finished"], "start and end of each step, in the order they happened");
+    const ts = card.rows.map(r => r.t); assert.deepStrictEqual(ts, ts.slice().sort(), "oldest first");
+    assert.ok(ts.every(t => /^\d\d:\d\d$/.test(t)));
+    assert.deepStrictEqual(card.rows.map(r => r.cur), [false, false, true, true, false, false], "the hovered step is the one marked");
+    assert.deepStrictEqual(card.rows.filter(r => r.n).map(r => r.n), ["1", "2", "3"]);
+    assert.ok(card.text.includes("Click to open this job"));
+    await b.click(p.x, p.y); await b.sleep(700);
+    const mon = await b.ev(`FieldMonitor.current()`); assert.ok(mon && mon.job === p.id, "a click still opens that job's monitor: " + JSON.stringify(mon) + " " + p.id);
+    await b.ev(`FieldMonitor.close()`);
+    // the held write's step names it as waiting for the owner
+    const g = await b.ev(`LF.sky.packets().find(q => q.tone === "wait")`);
+    await b.s("Input.dispatchMouseEvent", { type: "mouseMoved", x: g.x, y: g.y }); await b.sleep(700);
+    const gold = await b.ev(`({ head: document.querySelector(".skycard .st").textContent, text: document.querySelector(".skycard").textContent, rows: [...document.querySelectorAll(".skycard .hr .w")].map(e => e.textContent) })`);
+    assert.ok(/^Step 3 of 3 · Waiting for you/.test(gold.head), gold.head);
+    assert.ok(gold.rows.includes("write held, waiting for you") && gold.rows.includes("asked for changes") === false && gold.rows.includes("approved"), JSON.stringify(gold.rows));
+    // reduced layout of the others: the sky's questions still pour the stars out (kinds, time, spend), then home brings the crystals back
+    await b.s("Input.dispatchMouseEvent", { type: "mouseMoved", x: 5, y: 300 });
+    for (const v of ["kinds", "time", "spend"]) {
+      await b.ev(`LF.sky.show(${JSON.stringify(v)})`); await b.sleep(1800);
+      const st = await b.ev(`LF.sky.starSlots()`); assert.ok(st.drawn > 0, `the ${v} view draws the stars: ${JSON.stringify(st)}`);
+      assert.strictEqual(await b.ev(`document.querySelectorAll("#tags .tag.ord.on").length`), 0, `the ${v} view has no order labels`);
+    }
+    await b.ev(`LF.sky.show("home")`); await b.sleep(2500); await settle(b);
+    assert.ok((await b.ev(LABELS)).labels.length >= 6, "home brings the labels back");
+    assert.deepStrictEqual(b.errors, [], "no page errors");
+  } finally { await b.close(); }
+}
+
 // The witness shuts her eyes when nothing has happened for a while, wakes for anything (a job, a held write, the keys; not the pointer),
 // and shows a ring of light while she is working. /api/state is steered from the page so the demo's jobs and cards come and go on cue.
 const STEER = `(() => { const real = window.fetch.bind(window); window.__st = { running: 0, gate: [] };
@@ -270,5 +364,5 @@ async function witness(url, reduced) {
 
 const url = process.argv[2];
 const only = process.env.FIELD_ONLY;
-(only === "picking" ? picking(url) : only === "witness" ? witness(url, 0).then(() => witness(url, 1)) : layouts(url, 0).then(() => layouts(url, 65)).then(() => picking(url)).then(() => witness(url, 0)).then(() => witness(url, 1)))
+(only === "crystals" ? crystals(url) : only === "picking" ? picking(url) : only === "witness" ? witness(url, 0).then(() => witness(url, 1)) : layouts(url, 0).then(() => layouts(url, 65)).then(() => picking(url)).then(() => crystals(url)).then(() => witness(url, 0)).then(() => witness(url, 1)))
   .then(() => console.log("field browser checks passed"), e => { console.error(e.stack || e); process.exit(1); });
