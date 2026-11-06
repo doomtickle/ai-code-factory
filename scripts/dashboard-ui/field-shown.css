@@ -19,6 +19,9 @@
 .shown.old pre { font-size: 13.5px; }
 .shown button:focus-visible { outline: 2px solid var(--blue); outline-offset: 3px; border-radius: 4px; }
 @media (prefers-reduced-motion: reduce) { .shown { animation: none; transition: none; } }
+/* On a short desktop viewport the crystals sit just below the pop-up: smaller type and a tighter glow keep it off them. */
+@media (min-width: 761px) and (max-height: 800px) { .shown { top: 62px; gap: 6px; padding: 10px 14px 12px; box-shadow: 0 0 8px 3px #070a12, 0 0 18px 8px rgba(7, 10, 18, .5); }
+  .shown pre { font-size: 13.5px; line-height: 1.35; } }
 @media (max-width: 760px) { .shown { top: 64px; max-height: 46vh; } }
 
 /* The new chip is longer than the one it replaced: below 1400px the row wraps instead of clipping it at the end. */
