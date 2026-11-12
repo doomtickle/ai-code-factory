@@ -98,7 +98,7 @@
   function setGrown(on, focus) { if (!termFrame) return; grown = on; $("term-panel").classList.toggle("grown", on); $("term-key").setAttribute("aria-expanded", String(on)); $("term-size").textContent = on ? "Smaller" : "Bigger"; if (on && focus) termFrame.focus(); else if (!on && document.activeElement === termFrame) termFrame.blur(); }
   // Clicking into the frame moves focus there without a message to this page; the window's blur is how this page hears it.
   addEventListener("blur", () => setTimeout(() => { if (!termFrame) return; if (document.activeElement === termFrame) setGrown(true); else if (cuFrame && document.activeElement === cuFrame) setGrown(false); }, 0));
-  document.addEventListener("pointerdown", e => { if (grown && !(e.target.closest && e.target.closest(".term-panel,#monitor-root,.cu-wrap.expanded"))) setGrown(false); });
+  document.addEventListener("pointerdown", e => { if (grown && !(e.target.closest && e.target.closest(".term-panel,#term-key,#monitor-root,.cu-wrap.expanded"))) setGrown(false); });
   addEventListener("message", e => { if (cuFrame && e.source === cuFrame.contentWindow && e.origin === cuOrigin) { if (e.data === "cu:expand") setCu(true); else if (e.data === "cu:collapse") setCu(false); else if (e.data === "cu:reload") location.reload(); return; } });
   $("settings-key").addEventListener("click", () => { if (cuFrame) cuFrame.contentWindow.postMessage({ type: "cu:open", screen: "settings" }, cuOrigin); });
   $("term-key").addEventListener("click", () => setGrown(!grown, true)); $("term-size").addEventListener("click", () => setGrown(!grown, !grown));
