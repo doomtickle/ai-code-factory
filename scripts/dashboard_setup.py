@@ -34,8 +34,8 @@ sys.path.append(str(Path(__file__).resolve().parent.parent))  # the factory pack
 from factory import policy, roles  # noqa: E402
 from factory.conf import read_conf  # noqa: E402
 
-from dashboard_service import (clean, notes_headers, notes_running, notes_saved, safe_read,  # noqa: E402
-                               snapshot_instructions, snapshot_made, snapshot_override, SNAPSHOT_MAX)
+from dashboard_service import (clean, instructions_changed, is_link, notes_running,  # noqa: E402
+                               notes_saved, safe_read, snapshot_instructions, snapshot_made, snapshot_override)
 
 NOTES_LIMIT = 20_000        # characters a role's instructions plus the project notes may total (dispatch/server.py)
 NOTES_READ_MAX = 1 << 20    # bytes read of one notes file; past this it is over the limit whatever it holds
@@ -84,7 +84,8 @@ def _role(paths, name: str, on: bool, runs: bool | None = None) -> dict:
     override_path = roles.role_override_file(paths, name)
     override = read_conf(override_path) if os.path.isfile(override_path) else {}
     # What the bridge runs: the snapshotted override over the committed role.conf (only for a role it runs,
-    # `runs`: on now and in the start's enabled-roles).
+    # `runs`: on now and in the start's enabled-roles). The snapshot holds the override only, so a key it
+    # doesn't set has an unknown running value (`running` None), not the file's current one.
     running = snapshot_override(paths, name) if (on if runs is None else runs) else None
     keys = []
     for key in roles.ROLE_OVERRIDE_KEYS:
@@ -94,8 +95,13 @@ def _role(paths, name: str, on: bool, runs: bool | None = None) -> dict:
             row["repo"] = clean(repo.get(key, ""))
         row["pending"] = False
         if running is not None:
-            row["running"] = clean(running.get(key, repo.get(key, "")))
-            row["pending"] = row["running"] != row["value"]
+            if key in running:
+                row["running"] = clean(running[key])
+                row["pending"] = row["running"] != row["value"]
+            else:
+                # An override saved since the start that differs from the repo can't be running yet.
+                row["running"] = None
+                row["pending"] = key in override and row["value"] != clean(repo.get(key, ""))
         keys.append(row)
     fixed = []
     for key, applies, note in FIXED_KEYS:
@@ -160,7 +166,6 @@ def _mark_notes(paths, project: str, running: list, notes: dict, out_roles: dict
     `instructions_pending` (the committed instructions.md itself changed) to the roles. Returns the
     number of pending notes files plus pending instructions."""
     pending = 0
-    shared_hdr, _ = notes_headers(project, "")
     files = {f["name"]: f for f in notes["files"]}  # keyed by the cleaned name
     for f in notes["files"]:
         f["pending"], f["running_chars"] = False, None
@@ -168,6 +173,8 @@ def _mark_notes(paths, project: str, running: list, notes: dict, out_roles: dict
 
     def note(name: str, role, saved, run):
         nonlocal pending
+        if is_link(os.path.join(paths.config, "projects", name)):
+            return   # followed by `factory start`, never by us: not compared, so never pending or gone
         f = files.get(clean(name))
         if f is None and run is not None:    # deleted (or emptied) since the start
             f = gone.setdefault(name, {"name": clean(name), "role": clean(role, 40) if role else None, "chars": 0,
@@ -189,13 +196,10 @@ def _mark_notes(paths, project: str, running: list, notes: dict, out_roles: dict
         shared_saved, own_saved = notes_saved(paths, project, role)
         note(project + ".md", None, shared_saved, shared_run)
         note(f"{project}.{role}.md", role, own_saved, own_run)
-        _, own_hdr = notes_headers(project, role)
-        cut = [i for i in (snap.find(shared_hdr), snap.find(own_hdr)) if i >= 0]
-        base_saved = safe_read(os.path.join(paths.root, "roles", role, "instructions.md"), SNAPSHOT_MAX)
         row = out_roles.get(role)
         if row is not None:
             row["instructions_running"] = _text_len(snap)
-            row["instructions_pending"] = base_saved is not None and base_saved != snap[:min(cut) if cut else len(snap)]
+            row["instructions_pending"] = instructions_changed(paths, role, snap, project)
             pending += row["instructions_pending"]
     notes["files"].extend(gone.values())
     for f in notes["files"]:

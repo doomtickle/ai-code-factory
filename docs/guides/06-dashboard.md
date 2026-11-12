@@ -416,7 +416,7 @@ not yet applied · applies on Restart". The bar is there whenever you open
 Settings and goes away when nothing is waiting, so you can tell whether a
 change has taken effect. It compares tuning keys, which optional roles are on,
 each project notes file (a deleted one counts) and a role's `instructions.md`;
-note text is compared on the host and never sent to the page. Before the first
+note text is compared on the host and never sent to the page. The same changes light the RESTART lamp. A key you haven't overridden shows "running not recorded", because the start copies your overrides but not the repo's `role.conf`; a notes file that is a symlink isn't compared. Before the first
 `factory start` there is nothing running to compare, and the screen says so.
 Each line ends with one of three plain tags: **applies on Restart**, **needs
 Update** or, for the look, **needs dashboard restart**. The screen has four

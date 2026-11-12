@@ -112,6 +112,24 @@ def notes_saved(paths: Paths, project: str, role: str) -> tuple:
                  for name in (f"{project}.md", f"{project}.{role}.md"))
 
 
+def is_link(path) -> bool:
+    """True if `path` is a symlink. `factory start` follows one when it snapshots notes, and the safe
+    readers here don't, so such a file can't be compared byte for byte."""
+    try:
+        return stat.S_ISLNK(os.lstat(path).st_mode)
+    except OSError:
+        return False
+
+
+def instructions_changed(paths: Paths, role: str, snapshot: bytes, project: str) -> bool:
+    """True if the role's committed instructions.md differs from the part of the running
+    instructions snapshot that comes before the project notes."""
+    shared_hdr, own_hdr = notes_headers(project, role)
+    cut = [i for i in (snapshot.find(shared_hdr), snapshot.find(own_hdr)) if i >= 0]
+    saved = safe_read(Path(paths.root) / "roles" / role / "instructions.md", SNAPSHOT_MAX)
+    return saved is not None and saved != snapshot[:min(cut) if cut else len(snapshot)]
+
+
 def _names(folder: Path, suffix: str) -> list:
     try:
         return sorted(n for n in os.listdir(folder) if n.endswith(suffix) and not n.startswith(".")
@@ -128,22 +146,26 @@ def stale_names(paths: Paths) -> list:
 def notes_changed(paths: Paths, project: str, since: float) -> list:
     """Names of the project's notes files that differ from what the bridge runs with, for the
     roles this machine runs. Where a role has an instructions snapshot the bytes are compared (so a
-    deleted file counts); where it has none, a file modified after `since` counts."""
+    deleted file counts); where it has none, or the file is a symlink, a file modified after
+    `since` counts."""
     changed = []
     for role in roles.list_roles(paths):
         snap = snapshot_instructions(paths, role)
         files = (f"{project}.md", f"{project}.{role}.md")
-        if snap is None:
-            for name in files:
-                try:
-                    if os.stat(Path(paths.config) / "projects" / name).st_mtime > since:
-                        changed.append(name)
-                except OSError:
-                    pass
-            continue
-        for name, saved, running in zip(files, notes_saved(paths, project, role), notes_running(snap, project, role)):
-            if saved != running:
-                changed.append(name)
+        folder = Path(paths.config) / "projects"
+        compared = {} if snap is None else dict(zip(files, zip(notes_saved(paths, project, role),
+                                                               notes_running(snap, project, role))))
+        for name in files:
+            if name in compared and not is_link(folder / name):
+                saved, running = compared[name]
+                if saved != running:
+                    changed.append(name)
+                continue
+            try:
+                if os.stat(folder / name).st_mtime > since:
+                    changed.append(name)
+            except OSError:
+                pass
     return list(dict.fromkeys(changed))
 
 
@@ -167,9 +189,14 @@ def restart_lines(paths: Paths, project: str) -> list:
     if sorted(roles.enabled_roles_listed(paths)) != sorted(
             roles.parse_enabled_roles((listed or b"").decode("utf-8", "replace"))):
         lines.append("enabled-roles changed")
-    if project and project != "(no project)" and "/" not in project and not project.startswith("."):
+    usable = bool(project) and project != "(no project)" and "/" not in project and not project.startswith(".")
+    if usable:
         for name in notes_changed(paths, project, since):
             lines.append(f"project notes {clean(name)} changed")
+    for role in roles.list_roles(paths):
+        snap = snapshot_instructions(paths, role)
+        if snap is not None and instructions_changed(paths, role, snap, project if usable else ""):
+            lines.append(f"role instructions {clean(role)} changed")
     return lines
 
 

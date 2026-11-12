@@ -32,6 +32,7 @@ import hashlib
 import patchview
 import dashboard as d
 import dashboard_controls as dc
+import dashboard_service
 import dashboard_setup
 import dashboard_term as dt
 from dashboard_service import Paths
@@ -1363,12 +1364,21 @@ class SetupTests(unittest.TestCase):
         self.assertEqual((cfg["snapshot"], cfg["pending"]), (True, 0))
         keys = self.keys("developer")
         self.assertEqual((keys["MODEL"]["running"], keys["MODEL"]["pending"]), ("haiku", False))
-        self.assertEqual((keys["MAX_TURNS"]["running"], keys["MAX_TURNS"]["pending"]), ("200", False))  # the repo's value runs
+        self.assertEqual((keys["MAX_TURNS"]["running"], keys["MAX_TURNS"]["pending"]), (None, False))  # not recorded
         self.conf("roles/developer.conf", 'MODEL="opus"\nLANES="2"\nEFFORT="high"\n')
         keys = self.keys("developer")
         self.assertEqual([(k, v["value"], v["running"]) for k, v in keys.items() if v["pending"]],
-                         [("MODEL", "opus", "haiku"), ("EFFORT", "high", "")])
+                         [("MODEL", "opus", "haiku"), ("EFFORT", "high", None)])
         self.assertEqual(self.cfg()["pending"], 2)
+
+    def test_a_repo_side_role_conf_change_is_not_claimed_to_be_running(self):
+        self.start()
+        self.write(self.root / "roles" / "developer" / "role.conf",
+                   'TEMPLATE="developer"\nWORKSPACE="rw"\nLANES="3"\nBROKER_TOOLS="git_fetch git_push"\n'
+                   'MODEL="claude-sonnet-5-5"\nMODELS="opus"\nMAX_TURNS="999"\n')
+        key = self.keys("developer")["MAX_TURNS"]
+        self.assertEqual((key["value"], key["running"], key["pending"]), ("999", None, False))
+        self.assertEqual(self.cfg()["pending"], 0)
 
     def test_an_override_removed_since_the_start_is_still_running(self):
         self.start({"developer": 'MODEL="haiku"\n'})
@@ -1395,7 +1405,7 @@ class SetupTests(unittest.TestCase):
         link.unlink()
         link.symlink_to(secret)
         key = self.keys("developer")["MODEL"]
-        self.assertEqual((key["running"], key["pending"]), ("claude-sonnet-5-5", True))  # read as no override at all
+        self.assertEqual((key["running"], key["pending"]), (None, True))  # read as no override at all
         self.assertNotIn("from-elsewhere", json.dumps(self.cfg()))
 
     def test_notes_are_compared_with_what_the_bridge_appended_and_their_text_is_never_sent(self):
@@ -1433,6 +1443,17 @@ class SetupTests(unittest.TestCase):
         briefing_names = [f["name"] for f in dashboard_setup.briefing(self.cfg(), self.paths, [], 0)["notes"]["files"]]
         self.assertEqual(briefing_names, ["proj.md"])  # the main page lists only files that exist (the emptied one does; the deleted one doesn't)
 
+    def test_a_symlinked_notes_file_is_not_compared_so_never_pending_or_gone(self):
+        elsewhere = self.write(self.root / "elsewhere.md", "linked notes\n")
+        (self.config / "projects").mkdir(parents=True, exist_ok=True)
+        (self.config / "projects" / "proj.md").symlink_to(elsewhere)
+        (self.config / "projects" / "proj.developer.md").symlink_to(self.root / "missing.md")
+        self.env.board.project = "proj"
+        self.start()  # `factory start` follows the links; the dashboard's safe readers don't
+        self.assertEqual(dashboard_service.restart_lines(self.paths, "proj"), [])
+        self.assertEqual({n: f["pending"] for n, f in self.files().items()}, {"proj.md": False})
+        self.assertEqual(self.cfg()["pending"], 0)
+
     def test_changed_role_instructions_are_pending_without_any_notes(self):
         self.write(self.root / "roles" / "developer" / "instructions.md", "BASE\n")
         self.start()
@@ -1440,6 +1461,7 @@ class SetupTests(unittest.TestCase):
         role = self.role("developer")
         self.assertEqual((role["instructions_pending"], role["instructions_running"]), (True, 5))
         self.assertEqual(self.cfg()["pending"], 1)
+        self.assertEqual(dashboard_service.restart_lines(self.paths, "proj"), ["role instructions developer changed"])  # the lamp agrees with the bar
 
     def test_the_look_values_are_cleaned(self):
         out = dashboard_setup.look_values({"plant": "LOIS\x1b[2J", "shifts": ["a", "b", "c"], "crt": 11, "sound": False, "ui": "bad",
