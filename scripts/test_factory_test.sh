@@ -16,6 +16,10 @@ set -euo pipefail
 #   unpinned requirements file, a missing -r file, -r outside the project.
 # - a Node lockfile wins over a requirements file; a project with neither
 #   keeps "project files only".
+# - per-copy files: the -q run log, install log and lock sit beside their own
+#   copy; two concurrent -q runs from different directories each report their
+#   own output and exit code; runs on one directory take turns; cleanup removes
+#   a gone directory's log, lock and src files, and only those.
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 FTEST="$REPO_ROOT/templates/agent/factory-test"
@@ -191,6 +195,63 @@ assert_eq "cleanup: a copy with no recorded source (made before .src) is removed
 assert_eq "cleanup: the copy of a directory that exists is kept, with its venv" \
   "$(test -x "$copy/.venv/bin/python" && test -d "$plain_copy" && echo kept)" "kept"
 assert_eq "cleanup: the package caches are kept" "$(test -d "$FACTORY_TEST_ROOT/yarn-cache" && echo kept)" "kept"
+
+# --- 7. per-copy logs and locks -----------------------------------------------------
+if command -v flock >/dev/null; then
+  # count_files PREFIX: how many entries under the root start with PREFIX.
+  count_files() { local n=0 f; for f in "$FACTORY_TEST_ROOT/$1"*; do [ ! -e "$f" ] || n=$((n + 1)); done; echo "$n"; }
+  mkdir -p "$tmp/lane/ca" "$tmp/lane/cb"
+  ca="$(run "$FTEST" -C "$tmp/lane/ca"; echo "$OUT")"
+  cb="$(run "$FTEST" -C "$tmp/lane/cb"; echo "$OUT")"
+  # Each command is still running when the other starts, and prints a different tail and status.
+  ( "$FTEST" -C "$tmp/lane/ca" -q -- sh -c 'sleep 1; echo from-a; exit 3' > "$tmp/a.out" 2> "$tmp/a.err" && echo 0 > "$tmp/a.rc" || echo $? > "$tmp/a.rc" ) &
+  ( "$FTEST" -C "$tmp/lane/cb" -q -- sh -c 'sleep 1; echo from-b; exit 0' > "$tmp/b.out" 2> "$tmp/b.err" && echo 0 > "$tmp/b.rc" || echo $? > "$tmp/b.rc" ) &
+  wait
+  assert_eq "concurrent -q runs: A's exit code is its own" "$(cat "$tmp/a.rc")" 3
+  assert_eq "concurrent -q runs: B's exit code is its own" "$(cat "$tmp/b.rc")" 0
+  assert_eq "concurrent -q runs: A prints its own tail" "$(grep -c 'from-a' "$tmp/a.out") $(grep -c 'from-b' "$tmp/a.out")" "1 0"
+  assert_eq "concurrent -q runs: B prints its own tail" "$(grep -c 'from-b' "$tmp/b.out") $(grep -c 'from-a' "$tmp/b.out")" "1 0"
+  assert_contains "concurrent -q runs: A reports its exit" "$(cat "$tmp/a.err")" "(exit 3)"
+  assert_contains "concurrent -q runs: B reports its exit" "$(cat "$tmp/b.err")" "(exit 0)"
+  assert_contains "-q: the log is per copy" "$(cat "$tmp/a.err")" "full output: $ca.last-run.log"
+  assert_eq "-q: each copy has its own log" "$(cat "$ca.last-run.log") $(cat "$cb.last-run.log")" "from-a from-b"
+  assert_eq "-q: nothing shared under the root" \
+    "$(count_files last-run.log) $(count_files install.log) $(count_files yarnrc)" "0 0 0"
+  assert_eq "install log: per copy, beside the copy" "$(test -s "$copy.install.log" && echo yes)" yes
+
+  # Same directory: the second run waits for the first, and runs after it.
+  ( "$FTEST" -C "$tmp/lane/ca" -- sh -c 'echo first-start; sleep 2; echo first-end' > "$tmp/s1.out" 2> "$tmp/s1.err" ) &
+  for _ in $(seq 100); do grep -q first-start "$tmp/s1.out" 2>/dev/null && break; sleep 0.1; done
+  grep -q first-start "$tmp/s1.out" 2>/dev/null && ok "same copy: the first run holds the lock" || bad "same copy: the first run didn't start within 10s"
+  ( "$FTEST" -C "$tmp/lane/ca" -- sh -c 'echo second' > "$tmp/s2.out" 2> "$tmp/s2.err" ) &
+  # A third run, on another directory, doesn't wait.
+  start=$SECONDS
+  run "$FTEST" -C "$tmp/lane/cb" -- true
+  assert_eq "a run on another copy doesn't wait" "$(( SECONDS - start < 2 ))" 1
+  assert_lacks "a run on another copy doesn't announce waiting" "$ERR" "waiting for another run"
+  wait
+  assert_contains "same copy: the second run says it waits" "$(cat "$tmp/s2.err")" "factory-test: waiting for another run on this copy"
+  assert_lacks "same copy: the first run doesn't wait" "$(cat "$tmp/s1.err")" "waiting for another run"
+  assert_eq "same copy: the second run's command ran, after the first finished" \
+    "$(cat "$tmp/s1.out" "$tmp/s2.out" | tr '\n' ' ')" "first-start first-end second "
+  assert_eq "same copy: the lock is free again" "$(flock -n "$ca.lock" true && echo free)" free
+
+  # Cleanup removes a gone directory's log, lock and src, and the host twin's log; others stay.
+  run "$FTEST" -C "$tmp/lane/cb" -q -- true
+  : > "$cb-host.last-run.log"
+  rm -rf "$tmp/lane/ca"
+  run "$FTEST" -C "$tmp/lane/cb" -q -- true
+  assert_eq "cleanup: the gone directory's log, lock, src and install log are removed" \
+    "$(count_files "$(basename "$ca")")" 0
+  assert_eq "cleanup: a live directory keeps its log, lock, src and host log" \
+    "$(for f in "$cb.last-run.log" "$cb.lock" "$cb.src" "$cb-host.last-run.log"; do test -e "$f" && printf y; done)" yyyy
+  rm -rf "$tmp/lane/cb"
+  run "$FTEST" -C "$plain" -q -- true
+  assert_eq "cleanup: a removed directory's log and lock go with it, the host twin's log too" \
+    "$(count_files "$(basename "$cb")")" 0
+else
+  echo "skip - factory-test per-copy locks (needs flock)"
+fi
 
 echo "---"
 echo "$pass passed, $fail failed"
