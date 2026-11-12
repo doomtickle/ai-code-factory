@@ -8,14 +8,19 @@ value is kept in the sbx secret store, the bridge sees only its SHA-256 (token.s
 dispatch state dir, outside the repo). The value goes only to `sbx secret set`'s stdin.
 """
 
+import contextlib
+import errno
+import fcntl
 import hashlib
 import http.client
 import os
 import secrets
 import shutil
 import signal
+import stat
 import subprocess
 import tempfile
+import time
 
 from factory import policy, preflight, roles, sbx, state
 from factory.context import FactoryError, basename
@@ -206,8 +211,61 @@ def _write_snapshot(state_dir, files):
         for name in sorted(wanted):
             _replace_file(folder, name, *wanted[name])
         for name in sorted(os.listdir(folder)):
-            if name not in wanted:
+            if name not in wanted and not _fresh_temp(folder, name):
                 _rm_rf(os.path.join(folder, name))
+
+
+# A writer's temp file (_replace_file) younger than this is left alone by the sweep: it may be
+# another writer's, mid-swap. Older ones are what a killed writer left behind.
+TEMP_GRACE_SECONDS = 3600
+
+
+def _fresh_temp(folder, name):
+    """Whether NAME in FOLDER is a _replace_file temp file (.<name>.*.tmp) modified in the last
+    TEMP_GRACE_SECONDS."""
+    if not (name.startswith(".") and name.endswith(".tmp")):
+        return False
+    try:
+        return time.time() - os.lstat(os.path.join(folder, name)).st_mtime < TEMP_GRACE_SECONDS
+    except FileNotFoundError:
+        return True
+
+
+# The lock both snapshot writers hold, in the dispatch state dir: `factory start` (_snapshot_roles,
+# the files and then enabled-roles) and `factory config apply` (_apply_snapshot, from reading
+# project and enabled-roles to the last write). Without it each one's sweep removes the other's
+# temp files mid-swap, and an Apply working from the old enabled-roles removes the instructions of
+# a role the start is switching on.
+SNAPSHOT_LOCK = "snapshot.lock"
+
+
+@contextlib.contextmanager
+def _snapshot_lock(ctx, state_dir, wait):
+    """Hold the snapshot lock (an fcntl.flock on STATE_DIR/snapshot.lock, opened without following
+    a symlink and created 0600). WAIT: block until the other writer is done (start, telling the
+    user once); otherwise refuse at once (apply). The lock goes when the process does, so a killed
+    writer never leaves it held."""
+    path = os.path.join(state_dir, SNAPSHOT_LOCK)
+    try:
+        fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+    except OSError as e:
+        if e.errno == errno.ELOOP:
+            raise FactoryError("%s is a symlink; remove it and run this again" % path)
+        raise
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise FactoryError("%s is not a regular file; remove it and run this again" % path)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            if not wait:
+                raise FactoryError("a start is running (or another Apply): it writes the same snapshot. "
+                                   "Nothing was applied; run this again once it is done")
+            ctx.say("Waiting for a 'factory config apply' to finish...")
+            fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        os.close(fd)
 
 
 def _snapshot_roles(ctx, state_dir, project_name):
@@ -218,14 +276,15 @@ def _snapshot_roles(ctx, state_dir, project_name):
     only (projects/<project>.<role>.md, e.g. a docs style for the developer). They live outside the
     project, so the project needs no factory files and no role can change what the others are told."""
     paths = ctx.paths
-    _write_snapshot(state_dir, _snapshot_files(ctx, paths, project_name, roles.list_roles(paths)))
-    # Which optional roles this machine switched on (FACTORY_CONFIG/enabled-roles, validated
-    # above): the bridge treats an optional role not named here as off. Written even when empty,
-    # so an old list never outlives its source file.
-    listed = os.path.join(state_dir, "enabled-roles")
-    with open(listed + ".tmp", "wb") as f:
-        f.write("".join(n + "\n" for n in roles.enabled_roles_listed(paths)).encode("utf-8", "surrogateescape"))
-    os.replace(listed + ".tmp", listed)
+    with _snapshot_lock(ctx, state_dir, wait=True):
+        _write_snapshot(state_dir, _snapshot_files(ctx, paths, project_name, roles.list_roles(paths)))
+        # Which optional roles this machine switched on (FACTORY_CONFIG/enabled-roles, validated
+        # above): the bridge treats an optional role not named here as off. Written even when empty,
+        # so an old list never outlives its source file.
+        listed = os.path.join(state_dir, "enabled-roles")
+        with open(listed + ".tmp", "wb") as f:
+            f.write("".join(n + "\n" for n in roles.enabled_roles_listed(paths)).encode("utf-8", "surrogateescape"))
+        os.replace(listed + ".tmp", listed)
 
 
 # What the bridge refuses a role's instructions past (dispatch/server.py MAX_INSTRUCTIONS_CHARS).
@@ -239,8 +298,10 @@ def apply_snapshot(ctx):
     from the next job; nothing is stopped, started or cancelled, and no sandbox, broker or job is
     touched. enabled-roles and the lane identity are left to `factory start`: turning a role on
     needs its sandbox and broker token, and the identity lives in policy.toml with the gateway's
-    settings. Validates as start does, and also refuses instructions the bridge would refuse as
-    too long; on any refusal nothing is written. Returns the names of the roles refreshed."""
+    settings. Validates as start does, and also refuses instructions the bridge would refuse (too
+    long, or not UTF-8); on any refusal nothing is written. Holds the snapshot lock without
+    waiting, so it refuses while a start is writing the snapshot. Returns the names of the roles
+    refreshed."""
     try:
         return _apply_snapshot(ctx)
     except OSError as e:
@@ -250,23 +311,40 @@ def apply_snapshot(ctx):
 def _apply_snapshot(ctx):
     paths = ctx.paths
     state_dir = paths.dispatch_state
+    if not os.path.isdir(os.path.join(state_dir, "instructions")):
+        raise FactoryError(NO_SNAPSHOT)
+    with _snapshot_lock(ctx, state_dir, wait=False):
+        return _apply_locked(ctx, paths, state_dir)
+
+
+NO_SNAPSHOT = ("there is no running snapshot to refresh: 'factory start' has not run here yet "
+               "(it makes the snapshot itself)")
+
+
+def _apply_locked(ctx, paths, state_dir):
     try:
         project = _read(os.path.join(state_dir, "project")).decode("utf-8", "surrogateescape").rstrip("\n")
         listed = _read(os.path.join(state_dir, "enabled-roles")).decode("utf-8", "surrogateescape")
     except OSError:
         project = listed = ""
-    if not project or not os.path.isdir(os.path.join(state_dir, "instructions")):
-        raise FactoryError("there is no running snapshot to refresh: 'factory start' has not run here yet "
-                           "(it makes the snapshot itself)")
+    if not project:
+        raise FactoryError(NO_SNAPSHOT)
     on = set(roles.parse_enabled_roles(listed))
     role_list = [r for r in roles.list_all_roles(paths) if not roles.role_optional(paths, r) or r in on]
     files = _snapshot_files(ctx, paths, basename(project), role_list)
     for name, (data, _) in sorted(files["instructions"].items()):
-        chars = len(data.decode("utf-8", "replace").strip())
+        role = name[:-len(".md")]
+        try:
+            text = data.decode("utf-8")
+        except UnicodeDecodeError:
+            # The bridge reads instructions as strict UTF-8 and would refuse every task for the role.
+            raise FactoryError("role %s: its instructions or this project's notes are not UTF-8 text; save the "
+                               "notes as UTF-8. Nothing was applied" % role)
+        chars = len(text.strip())
         if chars > MAX_INSTRUCTIONS_CHARS:
             raise FactoryError("role %s: its instructions plus this project's notes come to %d characters, past the "
                                "bridge's %d; shorten the notes. Nothing was applied"
-                               % (name[:-len(".md")], chars, MAX_INSTRUCTIONS_CHARS))
+                               % (role, chars, MAX_INSTRUCTIONS_CHARS))
     _write_snapshot(state_dir, files)
     return role_list
 
