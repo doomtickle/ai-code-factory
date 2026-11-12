@@ -150,7 +150,7 @@
     const s = b.s, dt = Math.min(.25, Math.max(0, (now - (b.lastAt || now)) / 1000)); b.lastAt = now;
     // idle: nothing said, thought, running or waiting for cfg.idleMs. The pointer alone never counts; a key, a click or the owner's focus in a frame does (touch below).
     b.working = !!b.thinking || b.running > 0;
-    if (b.working || b.speaking || b.waiting > 0 || (document.activeElement && document.activeElement.tagName === "IFRAME")) b.busyAt = now;
+    if (b.working || b.speaking || b.waiting > 0) b.busyAt = now;
     const idle = now - b.busyAt > cfg.idleMs; if (b.idle && !idle) b.wakeAt = now; b.idle = idle;
     const waking = now - b.wakeAt < 700;
     s.sleep += ((idle ? 1 : 0) - s.sleep) * (1 - Math.exp(-dt / (idle ? .6 : .15)));
@@ -196,7 +196,8 @@
   LF.drawBeing = drawBeing; let px = innerWidth / 2, py = innerHeight * .4; addEventListener("pointermove", e => { px = e.clientX; py = e.clientY; }); LF.pointer = () => [px, py];
   // the owner at the keys or clicking wakes her; moving the pointer does not
   LF.touch = () => { W.busyAt = performance.now(); };
-  ["keydown", "pointerdown"].forEach(t => addEventListener(t, LF.touch, true));
+  ["keydown", "pointerdown", "focus"].forEach(t => addEventListener(t, LF.touch, true));   // a key or click in the main page, or its window taking focus
+  addEventListener("blur", () => setTimeout(() => { if (document.activeElement && document.activeElement.tagName === "IFRAME") LF.touch(); }, 0));   // a click or key into a frame: the frame takes focus, this page hears only the blur
   // motes: light drifting off the skin
   const mc = document.getElementById("motes"), mx = mc.getContext("2d"); const motes = Array.from({ length: 140 }, () => ({ x: Math.random(), y: Math.random(), s: .3 + Math.random() * 1.4, v: .0002 + Math.random() * .0006, p: Math.random() * 7 }));
   // ---------- voice and chime

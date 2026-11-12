@@ -20,7 +20,7 @@
   W.skyBlocked = (x, y) => G.R && y > rimAt(x) - 4; W.geo = () => G; W.rimAt = rimAt; W.dayX = dayX; W.dayT0 = () => G.t0;
   function dayWindow() { const n = nowMin(), first = Sky && Sky.firstStart(), t0 = Math.floor(Math.min(first == null ? n : first, n - 60) / 60) * 60, t1 = Math.max(t0 + 420, Math.ceil((n + 60) / 60) * 60); return [Math.max(0, t0), Math.min(1440, t1)]; }
   function layout() {
-    const w = G.w = innerWidth, h = G.h = innerHeight, narrow = w <= 1040; [G.t0, G.t1] = dayWindow(); G.rim = Math.round(h * (narrow ? .52 : .565)); G.sag = Math.min(h * .13, w * .105); G.R = (w * w / 4 + G.sag * G.sag) / (2 * G.sag); G.cx = w / 2; G.cy = G.rim + G.R;
+    const w = G.w = innerWidth, h = G.h = innerHeight, narrow = w <= 1040; [G.t0, G.t1] = dayWindow(); G.rim = Math.round(h * (narrow ? .52 : .565)); if (termFrame) G.rim = Math.round(Math.min(G.rim, Math.max(h * .4, h * (1 - (w <= 760 ? .38 : .34)) - 190)));   // room for the caption above the docked pane G.sag = Math.min(h * .13, w * .105); G.R = (w * w / 4 + G.sag * G.sag) / (2 * G.sag); G.cx = w / 2; G.cy = G.rim + G.R;
     document.documentElement.style.setProperty("--rim", G.rim + "px");
     placeKey = ""; ords.forEach(el => { el._wd = el.offsetWidth; el._ht = el.offsetHeight; });
     const y0 = rimAt(0), arc = `M0 ${y0} A${G.R} ${G.R} 0 0 1 ${w} ${y0}`;
@@ -52,8 +52,9 @@
   function setCaption(text) { txt.textContent = ""; txt.classList.toggle("long", text.length > 110); capWords = []; capAll = false; capT0 = performance.now(); let off = 0; capSent = text.split(/(?<=[.!?])\s+/).map(c => { const r = { start: off, len: c.length }; off += c.length + 1; return r; }); capLen = off; let pos = 0; text.split(/\s+/).forEach(w => { const el = document.createElement("span"); el.className = "w" + (/\d\d:\d\d/.test(w) ? " t" : ""); el.textContent = w; txt.append(el, " "); capWords.push({ el, at: pos, on: false }); pos += w.length + 1; }); tight = null; txt.classList.remove("in"); void txt.offsetWidth; txt.classList.add("in"); }
   function say(text, m, opt = {}) { if (!entered) return; const fixed = queue.filter(q => !q.own); fixed.slice(0, Math.max(0, fixed.length - 2)).forEach(q => queue.splice(queue.indexOf(q), 1)); queue.push(Object.assign({ text, m }, opt)); if (!cur) next(); }
   // Its own words go ahead of any fixed sentence still waiting, in the order it said them. A fixed sentence already being spoken finishes first.
-  function sayOwn(text) { if (!entered) return; ownAt = performance.now(); stopThinking(); const own = queue.filter(q => q.own).length; queue.splice(own, 0, { text, m: "", own: true, ans: true, mood: "calm", fx: () => { W.focus = null; } }); if (own >= OWN_WAITING) queue.shift(); if (!cur) next(); }
+  function sayOwn(text) { if (!entered) return; ownAt = performance.now(); lensArmed = false; W.s.flash = Math.max(W.s.flash, .8); stopThinking(); const own = queue.filter(q => q.own).length; queue.splice(own, 0, { text, m: "", own: true, ans: true, mood: "calm", fx: () => { W.focus = null; } }); if (own >= OWN_WAITING) queue.shift(); if (!cur) next(); }
   // Between your line and its first words the face is thinking, and only that: there is no spoken "one moment", which would be a messenger.
+  let lensArmed = false, hadFocus = false;
   const STILL_MS = 45000, GIVE_UP_MS = 180000, OWN_WAITING = 4, OWN_QUIETS_START_MS = 30000; let ownAt = -Infinity, thinkTimers = [];
   const thinkLine = t => { thinkNote = t; if (!cur) { setCaption(""); meta.textContent = t; } };
   let thinkNote = "";
@@ -89,13 +90,18 @@
   let cuFrame = null, cuOrigin = "", termFrame = null, termOrigin = "";
   function frame(cls, title, src, allow) { const f = document.createElement("iframe"); f.className = cls; f.title = title; f.setAttribute("sandbox", "allow-scripts allow-same-origin"); f.setAttribute("referrerpolicy", "no-referrer"); if (allow) f.setAttribute("allow", allow); f.src = src; return f; }
   function ensureFrames() { const s = state; if (s.cu && !cuFrame) { cuOrigin = `http://${location.hostname}:${Number(s.cu.port)}`; cuFrame = frame("cu-frame", "Control unit", `${cuOrigin}/cu/field`); cuFrame.addEventListener("load", () => { setCu(false); $("settings-key").disabled = false; }); $("cu-wrap").append(cuFrame); }
-    if (s.term && !termFrame) { termOrigin = `http://${location.hostname}:${Number(s.term.port)}`; termFrame = frame("term-frame", "LOIS's terminal", `${termOrigin}/term/field`, "clipboard-write"); $("term-slot").append(termFrame); $("term-key").hidden = false; } }
+    if (s.term && !termFrame) { termOrigin = `http://${location.hostname}:${Number(s.term.port)}`; termFrame = frame("term-frame", "LOIS's terminal", `${termOrigin}/term/field`, "clipboard-write"); $("term-slot").append(termFrame); $("term-key").hidden = false; $("term-panel").hidden = false; document.body.classList.add("has-term"); layout(); } }
   function setCu(big) { $("cu-wrap").classList.toggle("expanded", big); }
   function selectCard(id) { if (cuFrame && CARD.test(id)) cuFrame.contentWindow.postMessage({ type: "cu:select", id }, cuOrigin); }
-  function setTerm(open) { const p = $("term-panel"); p.classList.toggle("open", open); p.inert = !open; $("term-key").setAttribute("aria-expanded", String(open)); if (open && termFrame) termFrame.focus(); }
+  // The pane is always there; "grown" is the owner's own click into it, T, or the Bigger key. Only those ever focus the terminal frame.
+  let grown = false;
+  function setGrown(on, focus) { if (!termFrame) return; grown = on; $("term-panel").classList.toggle("grown", on); $("term-key").setAttribute("aria-expanded", String(on)); $("term-size").textContent = on ? "Smaller" : "Bigger"; if (on && focus) termFrame.focus(); else if (!on && document.activeElement === termFrame) termFrame.blur(); }
+  // Clicking into the frame moves focus there without a message to this page; the window's blur is how this page hears it.
+  addEventListener("blur", () => setTimeout(() => { if (!termFrame) return; if (document.activeElement === termFrame) setGrown(true); else if (cuFrame && document.activeElement === cuFrame) setGrown(false); }, 0));
+  document.addEventListener("pointerdown", e => { if (grown && !(e.target.closest && e.target.closest(".term-panel,#monitor-root,.cu-wrap.expanded"))) setGrown(false); });
   addEventListener("message", e => { if (cuFrame && e.source === cuFrame.contentWindow && e.origin === cuOrigin) { if (e.data === "cu:expand") setCu(true); else if (e.data === "cu:collapse") setCu(false); else if (e.data === "cu:reload") location.reload(); return; } });
   $("settings-key").addEventListener("click", () => { if (cuFrame) cuFrame.contentWindow.postMessage({ type: "cu:open", screen: "settings" }, cuOrigin); });
-  $("term-key").addEventListener("click", () => setTerm(!$("term-panel").classList.contains("open"))); $("term-close").addEventListener("click", () => setTerm(false));
+  $("term-key").addEventListener("click", () => setGrown(!grown, true)); $("term-size").addEventListener("click", () => setGrown(!grown, !grown));
 
   // ---------- questions: the sky answers
   const back = $("back"); let viewIdle = 0;
@@ -105,6 +111,7 @@
   // dragging along the horizon rewinds the galaxy to that moment; letting go, it re-forms
   const toT = x => Math.max(0, Math.min(nowMin() - G.t0, (x - G.w * .04) / (G.w * .92) * (G.t1 - G.t0)));
   function doScrub(x) { const t = toT(x), p = onRim(dayX(t)), l = onRim(dayX(t), 35), d = $("scrubdot"), tx = $("scrubl"), at = G.t0 + t; Sky.scrub(at); d.setAttribute("cx", p.x); d.setAttribute("cy", p.y); d.setAttribute("visibility", "visible"); const near = ((state && state.events) || []).filter(e => BEAD[e.kind] && Math.abs((parseT(e.t) || 0) - at) <= 8).sort((a, b) => Math.abs(parseT(a.t) - at) - Math.abs(parseT(b.t) - at))[0]; tx.textContent = hhmm(at) + (near ? "  " + near.text.slice(0, 60) : ""); tx.setAttribute("x", l.x); tx.setAttribute("y", l.y); tx.setAttribute("transform", `rotate(${l.deg} ${l.x} ${l.y})`); tx.setAttribute("visibility", "visible"); }
+  world.addEventListener("dblclick", e => { if (Sky && e.target.id === "scrub") askView("time"); });
   let downAt = null;
   world.addEventListener("pointerdown", e => { if (!Sky || !(e.target.id === "scrub" || e.target._ev)) return; e.preventDefault(); downAt = { x: e.clientX, t: e.target }; goHome(); W.scrubbing = true; doScrub(e.clientX); });
   addEventListener("pointermove", e => { if (W.scrubbing) doScrub(e.clientX); viewIdle = performance.now(); W.overUI = !!(e.target.closest && e.target.closest(".top,.legend,.term-panel,#shown,#monitor-root,.work,.today")); });
@@ -117,7 +124,8 @@
   $("full").addEventListener("click", () => { if (!document.fullscreenElement) document.documentElement.requestFullscreen?.().catch(() => {}); else document.exitFullscreen?.(); });
   document.addEventListener("fullscreenchange", () => $("full").setAttribute("aria-pressed", String(!!document.fullscreenElement)));
   $("legend-k").addEventListener("click", () => { const closed = $("legend").classList.toggle("closed"); $("legend-k").setAttribute("aria-expanded", String(!closed)); });
-  document.addEventListener("keydown", e => { if (e.target.matches && e.target.matches("input,textarea")) return; if (window.FieldMonitor && FieldMonitor.isOpen()) return; const k = e.key.toLowerCase(); if (k === "v") setVoice(!on); else if (k === "t" && termFrame) { e.preventDefault(); setTerm(!$("term-panel").classList.contains("open")); } else if (k === "," ) $("settings-key").click(); else if (k === "escape") { if ($("term-panel").classList.contains("open")) setTerm(false); else if (Sky && Sky.view !== "home") goHome(); else $("legend").classList.add("closed"); } });
+  const LENS_KEYS = { __proto__: null, 1: "spend", 2: "stuck", 3: "kinds", 4: "time" };
+  document.addEventListener("keydown", e => { if (e.target.matches && e.target.matches("input,textarea")) return; if (window.FieldMonitor && FieldMonitor.isOpen()) return; const k = e.key.toLowerCase(); if (k === "v") setVoice(!on); else if (k === "t" && termFrame) { e.preventDefault(); setGrown(!grown, true); } else if (k === "," ) $("settings-key").click(); else if (LENS_KEYS[k] && !e.ctrlKey && !e.metaKey && !e.altKey) askView(LENS_KEYS[k]); else if (k === "escape") { if (grown) setGrown(false); else if (Sky && Sky.view !== "home") goHome(); else $("legend").classList.add("closed"); } });
   function enter(replay) { entered = true; $("gate").hidden = true; $("hud").hidden = false; try { sessionStorage.setItem("lois-entered", "1"); } catch (e) {} const unlock = () => { try { LF.audio(); if (window.LiveVoice) LiveVoice.unlock(); } catch (e) {} }; if (replay) { unlock(); if (Sky) Sky.replay(); } else addEventListener("pointerdown", unlock, { once: true }); layout(); greet(); }
   $("enter").addEventListener("click", () => enter(true));
   LF.fail = text => { $("gate").hidden = true; $("hud").hidden = false; entered = true; setCaption(text + " The classic view still works."); $("meta").textContent = "Open Classic, top right."; };
@@ -142,7 +150,7 @@
     const sv = s.service || {}, note = !s.bridge && !s.demo ? "The dispatch bridge is down" : sv.due === "restart" ? "Restart due · see Service" : sv.due ? "Update due · see Service" : ""; $("service-note").hidden = !note; $("service-note").textContent = note;
     const hint = (s.hints || [])[0]; $("hint-line").hidden = !hint; $("hint-line").textContent = hint ? String(hint.text || "").slice(0, 200) : "";
     $("sum").textContent = running + " running · " + (cards.length ? cards.length + " waiting · " : "") + "$" + cost.toFixed(2); document.title = cards.length ? `(${cards.length}) ${plant()}` : plant();
-    if (s.term) { $("term-lamp").classList.toggle("on", !!s.term.running); } if (s.demo) { $("foot").hidden = false; $("foot").textContent = "Demo: made-up data. Nothing here acts."; }
+    if (s.term) { const on = !!s.term.running; $("term-lamp").classList.toggle("on", on); $("pane-lamp").classList.toggle("on", on); $("term-panel").classList.toggle("run", on); } if (s.demo) { $("foot").hidden = false; $("foot").textContent = "Demo: made-up data. Nothing here acts."; }
     $("plate-project").textContent = String(s.project || ""); $("plate-name").textContent = plant(); $("gate-name").textContent = plant(); if (Sky) $("legend-rate").textContent = "About " + Sky.rate.toLocaleString() + " to the dollar"; G.dirty = true; drawBeads(); tickDay(); }
   const plant = () => { const p = state && state.look && state.look.plant; return typeof p === "string" && p ? p : "LOIS"; };
 
@@ -190,7 +198,9 @@
   if (LF.sky) LF.onReady();
   if (LF.failMsg) LF.fail(LF.failMsg);
   if (window.LiveVoice) LiveVoice.watch(); layout(); addEventListener("resize", layout); pollState(); pollField();
-  let lastSlow = 0;
-  function loop(now) { LF.drawBeing(W, now, ...LF.pointer()); LF.drawMotes(now); atmos.style.opacity = .62 + .38 * ((W.s ? W.s.pres : .75) - .75) * 4 * .6 + (W.speaking ? .1 * Math.min(1, LF.U.uTalk.value * 2) : 0); if (Sky) { if (G.dirty && now - lastSlow > 220) { lastSlow = now; G.dirty = false; hug(); } skyLabels(); threads(now); if (Sky.view !== "home") { if (cur && cur.ans && W.speaking) viewIdle = now; else if (now - viewIdle > 14000) goHome(); } } litCaption(now); requestAnimationFrame(loop); }
+  let lastSlow = 0, talkSet = -1;
+  function loop(now) { const has = !!termFrame && document.activeElement === termFrame && document.hasFocus(); if (has && !hadFocus) lensArmed = true; hadFocus = has; W.attendT = has && lensArmed ? 1 : 0;   // the sky dims while you are in the terminal, and blooms back when LOIS speaks
+    if (termFrame) { const tk = Math.round(Math.min(1, LF.U.uTalk.value * 2) * 25) / 25; if (tk !== talkSet) { talkSet = tk; $("term-panel").style.setProperty("--talk", String(tk)); } }
+    LF.drawBeing(W, now, ...LF.pointer()); LF.drawMotes(now); atmos.style.opacity = .62 + .38 * ((W.s ? W.s.pres : .75) - .75) * 4 * .6 + (W.speaking ? .1 * Math.min(1, LF.U.uTalk.value * 2) : 0); if (Sky) { if (G.dirty && now - lastSlow > 220) { lastSlow = now; G.dirty = false; hug(); } skyLabels(); threads(now); if (Sky.view !== "home") { if (cur && cur.ans && W.speaking) viewIdle = now; else if (now - viewIdle > 14000) goHome(); } } litCaption(now); requestAnimationFrame(loop); }
   requestAnimationFrame(loop);
 })();

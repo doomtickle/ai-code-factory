@@ -11,6 +11,8 @@
 window.TermSkin = {
   // In the Thoughtfield the Coordinator is LOIS (doomtickle/passdesk-ops#216). The classic page keeps its own words.
   who: "LOIS",
+  // The pane is always on screen beside the page, so a state message must never move the keys into the Coordinator: only a click does.
+  focusOnState: false,
   reasons: {
     elsewhere: ["Open elsewhere", "LOIS is open in `factory chat`. Close it there, then power on here."],
     "no-sandbox": ["LOIS isn't set up yet", "Run `factory start` first, then power on."],

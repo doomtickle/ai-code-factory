@@ -343,7 +343,8 @@
         }
       }
       show(running ? null : (msg.reason || (elsewhere ? "elsewhere" : "exited")));
-      if (running) term.focus();
+      // The Thoughtfield sits this frame beside the page the owner is using: only their own click may take the keys here.
+      if (running && skin.focusOnState !== false) term.focus();
     };
     sock.onclose = () => {
       if (ws !== sock) return;
