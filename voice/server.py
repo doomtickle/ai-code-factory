@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
-"""Local Kokoro speech for LOIS. Runs in its image, published on loopback only.
+"""Local Kokoro speech and Whisper transcription for LOIS. Runs in its image, published on
+loopback only.
 
 POST /speak {text, mix: [[voice, weight], ...], speed, lang} streams one chunked frame per
 sentence: uint32 sample count and uint32 lip byte count (both LE), the lip bytes (JSON, see
-lips(); empty if unavailable), then float32 PCM at 24 kHz. GET /health returns {ok, device,
-voices}. Nothing else is served, cookies are ignored and spoken text is never logged.
+lips(); empty if unavailable), then float32 PCM at 24 kHz. POST /listen takes raw mono 16 kHz
+signed 16-bit LE PCM (Content-Type audio/L16; rate=16000; channels=1, at most 60 s) and returns
+{text, ms}. GET /health returns {ok, device, voices, listen, listen_model}. Nothing else is
+served, cookies are ignored, and no text or audio is logged or kept.
 
-torch and kokoro are imported only in load_engine(), so the HTTP side can be tested without them.
+torch, kokoro and faster_whisper are imported only in load_engine() and load_listener(), so the
+HTTP side can be tested without them.
 """
 
 import json
@@ -24,6 +28,8 @@ PORT = int(os.environ.get("PORT", "8873"))
 BIND = os.environ.get("BIND", "127.0.0.1")  # The image sets 0.0.0.0; `docker run -p 127.0.0.1:...` keeps it local.
 KOKORO_DIR = os.environ.get("KOKORO_DIR", "/opt/kokoro")
 REPO = "hexgrad/Kokoro-82M"
+WHISPER_DIR = os.environ.get("WHISPER_DIR", "/opt/whisper")
+WHISPER_MODEL = os.environ.get("WHISPER_MODEL", "base.en")
 
 MAX_BODY = 8192
 MAX_TEXT = 1200
@@ -33,10 +39,14 @@ LANGS = "ab"
 PRELOAD = ("af_nicole", "af_kore", "bm_daniel", "bm_george")
 VOICE_FILE = re.compile(r"([ab][fm]_\w+)\.pt")
 
+LISTEN_RATE = 16000
+MAX_AUDIO = 60 * LISTEN_RATE * 2  # 60 s of 16-bit mono: 1,920,000 bytes.
+
 ORIGIN = re.compile(r"http://(127\.0\.0\.1|localhost):\d{1,5}", re.ASCII)
 LENGTH = re.compile(r"[0-9]{1,7}")
 SOCKET_TIMEOUT = 30  # A client that stops sending or reading is dropped, and so gives up the voice.
 WAIT_FOR_VOICE = 30  # How long a request waits for the one generation slot before a 503.
+WAIT_FOR_EARS = 30  # The same for the one transcription slot.
 
 
 def say(text):
@@ -92,6 +102,38 @@ class Engine:
         for result in pipe(text, voice=voice, speed=speed, split_pattern=SPLIT):
             if result.audio is not None:
                 yield frame(pcm_bytes(result.audio), lips(result, pipe.model.vocab))
+
+
+class Listener:
+    """faster-whisper behind one call: 16 kHz mono int16 LE PCM in, text out. The model is
+    given a numpy array, so nothing is decoded from a file and nothing is written."""
+
+    def __init__(self, model, name, numpy):
+        self.model = model
+        self.name = name
+        self.np = numpy
+
+    def transcribe(self, pcm):
+        audio = self.np.frombuffer(pcm, dtype="<i2").astype(self.np.float32) / 32768.0
+        segments, _ = self.model.transcribe(audio, language="en", beam_size=5, vad_filter=True,
+                                            condition_on_previous_text=False, without_timestamps=True)
+        return " ".join(s.text.strip() for s in segments if s.text.strip())
+
+
+def audio_type(value):
+    """True if a Content-Type is audio/L16 at 16 kHz, one channel. Type and parameter names
+    are case-insensitive; channels may be left out (RFC 2586: one by default)."""
+    kind, *params = [part.strip() for part in value.split(";")]
+    if kind.lower() != "audio/l16":
+        return False
+    seen = {}
+    for param in params:
+        name, eq, val = param.partition("=")
+        name = name.strip().lower()
+        if not eq or name not in ("rate", "channels") or name in seen:
+            return False
+        seen[name] = val.strip().strip('"')
+    return seen.get("rate") == str(LISTEN_RATE) and seen.get("channels", "1") == "1"
 
 
 def parse_speak(body, engine):
@@ -159,7 +201,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_OPTIONS(self):
         if not self.allowed():
             return
-        if self.path != "/speak":
+        if self.path not in ("/speak", "/listen"):
             return self.fail(404, "not found")
         self.send_response(204)
         self.send_header("Access-Control-Allow-Methods", "POST")
@@ -173,8 +215,12 @@ class Handler(BaseHTTPRequestHandler):
             return
         if self.path.split("?")[0] != "/health":
             return self.fail(404, "not found")
-        engine = self.server.engine
-        body = json.dumps({"ok": True, "device": engine.device, "voices": engine.voices}).encode()
+        engine, listener = self.server.engine, self.server.listener
+        self.reply({"ok": True, "device": engine.device, "voices": engine.voices,
+                    "listen": listener is not None, "listen_model": listener.name if listener else None})
+
+    def reply(self, data):
+        body = json.dumps(data).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
@@ -182,7 +228,7 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def read_body(self):
+    def read_body(self, limit=MAX_BODY):
         """The request body, or None once a refusal has been sent. Only a single, plain decimal
         Content-Length within the limit is read; anything else closes the connection."""
         if self.headers.get_all("Transfer-Encoding"):
@@ -193,7 +239,7 @@ class Handler(BaseHTTPRequestHandler):
             self.fail(400 if lengths else 411, "bad content-length")
             return None
         n = int(lengths[0])
-        if not 0 < n <= MAX_BODY:
+        if not 0 < n <= limit:
             self.fail(413, "too large")
             return None
         try:
@@ -209,6 +255,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         if not self.allowed():
             return
+        if self.path == "/listen":
+            return self.listen()
         if self.path != "/speak":
             return self.fail(404, "not found")
         if self.headers.get("Content-Type", "").split(";")[0].strip().lower() != "application/json":
@@ -226,6 +274,33 @@ class Handler(BaseHTTPRequestHandler):
             self.stream(text, mix, speed, lang)
         finally:
             self.server.voice_lock.release()
+
+    def listen(self):
+        """One transcription at a time, with its own lock: a speech stream lasts as long as its
+        client takes to read it, and the owner talking must not wait behind LOIS talking. The
+        audio and the text live only in this call's locals."""
+        if not audio_type(self.headers.get("Content-Type", "")):
+            return self.fail(415, "audio/L16; rate=16000; channels=1 only")
+        listener = self.server.listener
+        if listener is None:
+            return self.fail(503, "no speech recognition in this image")
+        pcm = self.read_body(MAX_AUDIO)
+        if pcm is None:
+            return
+        if len(pcm) % 2:
+            return self.fail(400, "not whole 16-bit samples")
+        if not self.server.listen_lock.acquire(timeout=WAIT_FOR_EARS):
+            return self.fail(503, "busy")
+        try:
+            started = time.monotonic()
+            text = listener.transcribe(pcm)
+            ms = round((time.monotonic() - started) * 1000)
+        except Exception as e:  # The type only: a message could hold the text.
+            say("listen failed: %s" % type(e).__name__)
+            return self.fail(500, "transcription failed")
+        finally:
+            self.server.listen_lock.release()
+        self.reply({"text": text, "ms": ms})
 
     def stream(self, text, mix, speed, lang):
         """One voice speaks at a time. A client that went away stops generation at the next
@@ -251,10 +326,12 @@ class Handler(BaseHTTPRequestHandler):
 class Server(ThreadingHTTPServer):
     daemon_threads = True
 
-    def __init__(self, address, engine):
+    def __init__(self, address, engine, listener=None):
         super().__init__(address, Handler)
         self.engine = engine
+        self.listener = listener
         self.voice_lock = threading.Lock()
+        self.listen_lock = threading.Lock()
 
     def handle_error(self, request, client_address):
         # The default prints a traceback, whose message could hold the text.
@@ -291,6 +368,19 @@ def load_engine(kokoro_dir=KOKORO_DIR):
     return engine
 
 
+def load_listener(whisper_dir=WHISPER_DIR, name=WHISPER_MODEL):
+    """The baked Whisper model from whisper_dir/name, on the GPU when CTranslate2 sees one.
+    local_files_only and HF_HUB_OFFLINE make a missing model an error, never a download."""
+    import ctranslate2
+    import numpy
+    from faster_whisper import WhisperModel
+
+    gpu = ctranslate2.get_cuda_device_count() > 0
+    model = WhisperModel(os.path.join(whisper_dir, name), device="cuda" if gpu else "cpu",
+                         compute_type="float16" if gpu else "int8", local_files_only=True)
+    return Listener(model, name, numpy)
+
+
 def main():
     # As PID 1 in a container, SIGTERM is ignored unless handled, and `docker stop` would wait.
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
@@ -298,9 +388,17 @@ def main():
     started = time.time()
     list(engine.speak("Ready.", [(PRELOAD[0], 1.0)], 1.0, "a"))
     say("ready on %s, warm-up %.2fs, %d voices" % (engine.device, time.time() - started, len(engine.voices)))
+    # Listening is optional: an image without the model still speaks, and /health says so.
+    try:
+        listener = load_listener()
+        listener.transcribe(bytes(LISTEN_RATE * 2))  # One second of silence, to warm it up.
+        say("listening with whisper %s" % listener.name)
+    except Exception as e:
+        listener = None
+        say("not listening: %s" % type(e).__name__)
     # misaki prints words it cannot read. Nothing of ours writes to stdout.
     sys.stdout = open(os.devnull, "w")
-    Server((BIND, PORT), engine).serve_forever()
+    Server((BIND, PORT), engine, listener).serve_forever()
 
 
 if __name__ == "__main__":

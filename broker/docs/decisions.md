@@ -18,6 +18,19 @@ Dated entries, for the user to review. Newest first.
   - **The pane takes room from the caption, and the face gets smaller rather than cut.** The horizon lifts (`G.rim`) only as far as the caption, decision row and chips need (`below()` in `field-hud.js`), and `LF.frameFace` frames the face smaller so her chin stays about 12% of the height above it; the lists drop each job's second line and `hug()` never moves them into the caption's column. The caption, decision row and chips sit above a 31vh pane (38vh sheet under 760 px); the footer note hides while
     the pane is there. A grown pane (60vh) covers the caption on purpose; it shrinks on Escape, a click on the world or its own button.
   - **Demo mode has no Terminal 0,** so no pane renders there; the layout keeps its old room.
+- **Local speech-to-text is in** (owner decision 12 Nov 2026: talk to the Coordinator instead of typing). This reverses "Speech-to-text is
+  out" (Thoughtfield entry below), which rejected the browser's recognition service because it sends audio to a cloud provider. The new path
+  never does: the page sends raw PCM to the voice container on `127.0.0.1:8873`, a local Whisper model (faster-whisper, `base.en` by default)
+  transcribes it there, and only the text comes back. Typing remains, and every feature works without the voice container. Choices to review:
+  - **`POST /listen` lives on the voice server**, under the same Host/Origin/CORS rules as `/speak` and still without a key: it acts on
+    nothing, and a transcript only becomes an action through the page, as typed text would. It keeps and logs no audio and no text.
+  - **The body is raw 16 kHz mono 16-bit PCM (`audio/L16`), at most 60 s.** No container format means no decoder runs on the request (PyAV
+    comes in with faster-whisper but is never called), and the size limit is exact: 1,920,000 bytes, 413 above it, 415 for any other type.
+  - **Its own lock, not the voice's.** One transcription at a time with the same 503 after 30 s, but a `/speak` stream holds its lock as
+    long as its client takes to read, so the owner talking could otherwise wait behind LOIS talking. On a CPU-only Mac the two share cores
+    while both run; that costs time, not correctness.
+  - **Listening is optional inside the image.** If the model fails to load the server still speaks and `/health` says `"listen": false`.
+
 - **CI skips what a change can't affect, and runs the broker suite twice, not three times** (owner-approved: cut CI wall-clock time). Choices to review:
   - **Skipping is by step, never by job.** Branch protection requires the job names, and a job skipped at job level reports nothing under a matrix name (`tests (Linux, ${{ matrix.label }})`), which would leave the check waiting forever. So a `changes` job computes flags (`scripts/ci-changes.sh`, plain git and shell, no third-party action) and each job keeps its steps behind `if:`. Jobs run with `!cancelled()` and steps test `!= 'false'`, so a failed `changes` job runs everything instead of skipping the required checks (a skipped required check counts as passing).
   - **Only a pull request is compared.** Pushes to main and manual runs run everything. The diff is `base...head` with `--no-renames`, from a full-history checkout.
