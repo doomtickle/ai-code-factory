@@ -672,10 +672,11 @@ const card = (over) => Object.assign({ id: "c1", tool: "git_push", role: "develo
     const text = () => $("con-body").textContent;
     const bar = () => kids().find(n => n.id === "set-pending");
     assert.ok(bar(), "the bar is there");
-    assert.strictEqual(bar().textContent, "2 changes saved, not yet applied · applies on Restart");
+    const barText = () => bar().children[0].textContent.trim();
+    assert.strictEqual(barText(), "2 changes saved, not yet applied · applies on Restart · Apply now applies from the next job");
     assert.ok(bar().className.includes("banner") && bar().className.includes("k-warn"));
     assert.ok(text().startsWith("Settings: saved and running") && !text().includes("effective"), "the screen no longer claims to be the effective configuration");
-    assert.ok(text().includes("saved 3 · running 1 · applies on Restart"), "a knob says what it holds and what runs");
+    assert.ok(text().includes("saved 3 · running 1 · next job (after Apply)"), "a knob says what it holds and what runs");
     assert.ok(text().includes("saved 200 · running 80"), "a knob that differs says so");
     assert.ok(text().includes("instructions.md changed, running has 700"), "the instructions line says its running size");
     assert.ok(!text().includes("→ on start") && !text().includes("→ on update"), "the old tags are gone");
@@ -688,14 +689,36 @@ const card = (over) => Object.assign({ id: "c1", tool: "git_push", role: "develo
     $("con-cancel").click(); await flush();
     $("svc-setup").click(); await flush();
     assert.ok(bar() && /^2 changes saved/.test(bar().textContent), "reopening Settings shows the bar again");
+    // Apply now: the APPLY prepare lists what it applies, CONFIRM stays dark for the hold, then runs with the token.
+    server.handlers.prepare = async () => [200, { action: "apply", confirm: "tokA", expires_in: 120, project: "/p", jobs: [], held: [], queued: [],
+      changes: ["developer LANES: running 1, saved 3", AGENTISH.slice(0, 30)], later: ["researcher switched on"] }];
+    server.handlers.run = async () => [202, { started: true }];
+    const applyKey = bar().children[1];
+    assert.strictEqual(applyKey.textContent, "Apply now");
+    applyKey.click(); await flush();
+    assert.deepStrictEqual(calls.filter(c => c[0] === "prepare").pop()[1], { action: "apply" });
+    assert.ok(text().includes("runs exactly: factory config apply") && text().includes("developer LANES: running 1, saved 3"));
+    assert.ok(text().includes("Still needs Restart") && text().includes("researcher switched on") && text().includes("No jobs are cancelled"));
+    assert.ok(!walk($("con-body")).some(n => n.tagName === "b"), "the listed changes are text");
+    assert.ok($("con-go").disabled, "CONFIRM is dark for the hold");
+    $("con-go").fire("click"); await flush();
+    assert.ok(!calls.some(c => c[0] === "run"), "a press during the hold runs nothing");
+    await advance(2600);
+    assert.ok(!$("con-go").disabled, "CONFIRM lights after the hold");
+    $("con-go").click(); await flush();
+    assert.deepStrictEqual(calls.filter(c => c[0] === "run").pop()[1], { action: "apply", confirm: "tokA" });
+    delete server.handlers.prepare; delete server.handlers.run;
+    $("con-cancel").click(); await flush();
+    $("svc-setup").click(); await flush();
+    assert.ok(bar(), "Settings opens again after the apply");
     tabBtn("Project notes").click(); await flush();
     assert.ok(text().includes("saved 120 · running 80 characters"), text());
     assert.ok(text().includes("deleted since the start, running has 40 characters"));
     assert.ok(text().includes("new since the start, not running"));
-    assert.strictEqual((text().match(/ applies on Restart/g) || []).length >= 5, true, "every notes file carries the same tag");
+    assert.strictEqual((text().match(/ next job \(after Apply\)/g) || []).length >= 4, true, "every notes file carries the same tag");
     // One pending change reads in the singular; none drops the bar.
     snap.pending = 1; await advance(2000);
-    assert.strictEqual(bar().textContent, "1 change saved, not yet applied · applies on Restart");
+    assert.strictEqual(barText(), "1 change saved, not yet applied · applies on Restart · Apply now applies from the next job");
     snap.pending = 0; await advance(2000);
     assert.ok(!bar(), "the bar clears when nothing is pending");
     // Gateway and fixed settings use the other tag; the Look tab shows values and says what applies them.

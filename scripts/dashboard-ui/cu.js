@@ -554,9 +554,9 @@
   let svc = null, svcSeq = 0, lastKey = null;
   const P = (cls, text) => el("p", cls, text);
   const H = (text, tag) => { const h = el("h5", null, text); if (tag) h.append(el("span", "tag", tag)); return h; };
-  const RUNS = { restart: "factory restart", update: "factory update --yes", doctor: "factory doctor" };
-  const TITLES = { restart: "Restart the factory", update: "Update the factory", doctor: "Diagnose the factory" };
-  const NAMES = { restart: "restart", update: "update", doctor: "diagnose" };  // what the keys say
+  const RUNS = { restart: "factory restart", update: "factory update --yes", doctor: "factory doctor", apply: "factory config apply" };
+  const TITLES = { restart: "Restart the factory", update: "Update the factory", doctor: "Diagnose the factory", apply: "Apply saved settings" };
+  const NAMES = { restart: "restart", update: "update", doctor: "diagnose", apply: "apply" };  // what the keys say
   const keyName = action => NAMES[action] || str(action);
 
   function head(action, tag, tagCls, led, note) {
@@ -577,8 +577,8 @@
   }
 
   function openService(action) {
-    if (running() || (action === "restart" && !(st && st.bound))) return;
-    lastKey = $(`svc-${action}`);
+    if (running() || ((action === "restart" || action === "apply") && !(st && st.bound))) return;
+    lastKey = $(action === "apply" ? "svc-setup" : `svc-${action}`);
     const seq = ++svcSeq;
     svc = { action, seq, token: null, deadline: 0, state: "checking", onGo: null };
     go("confirm");
@@ -588,7 +588,7 @@
       P("banner", TITLES[action]),
       P("cursor", action === "update"
         ? "Fetching the factory's upstream and comparing the sandboxes with it (this can take up to a minute and a half)…"
-        : action === "doctor" ? "Getting ready…" : "Checking what a restart would stop…"));
+        : action === "doctor" || action === "apply" ? "Getting ready…" : "Checking what a restart would stop…"));
     conBody.scrollTop = 0;
     moreCue();
     cancelKey.focus();
@@ -639,7 +639,8 @@
   // Built on the host from the factory's own parsers (dashboard_setup.py); nothing here
   // can change a setting. Every string goes in with textContent.
   // One plain phrase per way a setting is applied (fixed map; nothing from the data picks it).
-  const APPLIES = { START: "applies on Restart", UPDATE: "needs Update", LOOK: "needs dashboard restart" };
+  const APPLIES = { START: "applies on Restart", UPDATE: "needs Update", LOOK: "needs dashboard restart", APPLY: "next job (after Apply)" };
+  const viaApply = a => (a === "START" ? "APPLY" : a);  // tuning keys and notes: Apply now refreshes them
   const SOURCES = { REPO: "repo", LOCAL: "your override" };
   const num = n => (Number.isFinite(Number(n)) ? Number(n).toLocaleString("en-US") : "?");
   const span = (cls, text) => el("span", cls, text);
@@ -688,14 +689,14 @@
       const tail = [tag(local ? "k-warn" : "k-dim", SOURCES[k.source] || "?")];
       if (local && str(k.repo) !== str(k.value)) tail.push(tag("k-dim", `repo: ${str(k.repo) || "empty"}`));
       if (k.pending) tail.push(savedRunning(k.value, k.running));
-      tail.push(applyTag(k.applies));
+      tail.push(applyTag(viaApply(k.applies)));
       more.push(row(k.key, k.value, ...tail));
     }
     const boundary = boundaryRow(r);
     if (boundary) more.push(boundary);
     if (r.instructions_chars != null) {
       const tail = r.over ? [tag("k-err", "over")] : [];
-      if (r.instructions_pending) tail.push(tag("k-warn", `instructions.md changed, running has ${num(r.instructions_running)}`), applyTag("START"));
+      if (r.instructions_pending) tail.push(tag("k-warn", `instructions.md changed, running has ${num(r.instructions_running)}`), applyTag("APPLY"));
       more.push(row("Instructions + notes", `${num(r.instructions_chars)} of ${num(c().notes && c().notes.limit)} characters`, ...tail));
     }
     return tuneRack(r, alert, more);
@@ -742,7 +743,7 @@
           : f.running_chars == null ? "new since the start, not running"
           : `saved ${num(f.chars)} · running ${num(f.running_chars)} characters`));
       }
-      tail.push(applyTag(nt.applies));
+      tail.push(applyTag(viaApply(nt.applies)));
       out.push(row(f.name, "", ...tail));
     }
     if (notes) out.push(notes.openKey());
@@ -804,9 +805,15 @@
   const SECTIONS = { roles: rolesSection, notes: notesSection, gateway: gatewaySection, look: lookSection };
 
   // Built from the host's count on every draw, so it is there whenever Settings is open and gone when nothing is pending.
+  // Its Apply now key opens the APPLY confirm step (`factory config apply`, prepare/run token, CONFIRM dark for HOLD_MS).
   function pendingBar(n) {
-    const bar = P("banner k-warn", `${num(n)} change${n === 1 ? "" : "s"} saved, not yet applied · ${APPLIES.START}`);
+    const bar = P("banner k-warn");
     bar.id = "set-pending";
+    const key = el("button", "svckey", "Apply now");
+    key.type = "button";
+    key.disabled = running() || !(st && st.bound);
+    key.addEventListener("click", () => openService("apply"));
+    bar.append(span(null, `${num(n)} change${n === 1 ? "" : "s"} saved, not yet applied · ${APPLIES.START} · Apply now applies from the next job `), key);
     return bar;
   }
 
@@ -870,6 +877,30 @@
     svc.state = "ready";
     svc.onGo = runAction;
     const out = [P("banner", TITLES[action])];
+    if (action === "apply") {
+      out.push(P(null, "Apply refreshes the dispatch bridge's copy of the role tuning, the role instructions and the project notes, checked as factory start checks them. Each role uses them from its next job."));
+      if (d.project) out.push(P("ind k-dim", `  project: ${str(d.project)}`));
+      out.push(P("ind k-cmd", `  runs exactly: ${RUNS[action]}`));
+      const changes = list(d.changes), later = list(d.later);
+      out.push(H("Applied from the next job"));
+      if (changes.length) for (const ch of changes) out.push(P("ind k-warn", `  ${str(ch)}`));
+      else out.push(P("k-dim", "  Nothing is pending: the copy is refreshed as it is."));
+      if (later.length) {
+        out.push(H("Still needs Restart"));
+        for (const ch of later) out.push(P("ind k-dim", `  ${str(ch)}`));
+      }
+      out.push(P("k-ok", "✓ No jobs are cancelled: running jobs finish with what they started with. Terminal 0 stays attached."));
+      out.push(el("div", "gap"), P("k-dim", "Nothing has run yet. Confirm starts it; Cancel or Esc backs out."));
+      conBody.replaceChildren(...out);
+      conBody.scrollTop = 0;
+      moreCue();
+      // Dark for HOLD_MS, so a list that just arrived is never confirmed unread.
+      keys("Cancel", "Confirm apply", false);
+      const seq = svc.seq;
+      setTimeout(() => { if (svc && svc.seq === seq && svc.state === "ready") goKey.disabled = false; }, HOLD_MS);
+      tickConfirm();
+      return;
+    }
     if (action === "doctor") {
       out.push(P(null, "Diagnose runs the factory's doctor: it checks this machine, its tools, Docker, the sandboxes and the gateway, and prints the fix for each problem. It changes nothing."));
       if (d.project) out.push(P("ind k-dim", `  project: ${str(d.project)}`));
@@ -1111,7 +1142,7 @@
           return;
         }
         const local = row.source === "LOCAL";
-        const pend = row.pending ? ` · saved ${shown(row.value)} · running ${shown(row.running)} · ${APPLIES.START}` : "";
+        const pend = row.pending ? ` · saved ${shown(row.value)} · running ${shown(row.running)} · ${APPLIES.APPLY}` : "";
         setClass(state, `tstate ${local || row.pending ? "k-warn" : "k-dim"}`);
         setText(state, `${SOURCES[row.source] || "?"}${local && str(row.repo) !== str(row.value) ? ` · repo: ${str(row.repo) || "empty"}` : ""}${pend}`);
       });
