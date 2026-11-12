@@ -79,7 +79,7 @@
   // ---------- screens
   // Each screen is a node and whether it needs the frame expanded to the whole
   // window. Switching to one that does tells the main page "cu:expand", and back
-  // "cu:collapse". The setup screen shows the effective configuration and writes only the tuning knobs and the project notes;
+  // "cu:collapse". The setup screen shows each setting as saved and as running, and writes only the tuning knobs and the project notes;
   // settings that move the security boundary (broker policy and hosts,
   // credentials) are never edited from a browser.
   const SCREENS = {
@@ -87,7 +87,7 @@
     confirm: { node: $("scr-console"), expanded: true },  // what RESTART / UPDATE would do, and CONFIRM
     log: { node: $("scr-console"), expanded: true },      // the running action's output
     inspect: { node: $("scr-inspect"), expanded: true },  // a held push's patch, and the gate's keys
-    setup: { node: $("scr-console"), expanded: true },    // the effective configuration, its tuning knobs and the notes editor
+    setup: { node: $("scr-console"), expanded: true },    // saved and running configuration, its tuning knobs and the notes editor
   };
   let screen = null, expanded = false;
   function go(name) {
@@ -635,14 +635,17 @@
     return strip;
   }
 
-  // ---------- the setup screen: the effective configuration (st.config), plus the notes editor
+  // ---------- the setup screen: saved and running configuration (st.config), plus the notes editor
   // Built on the host from the factory's own parsers (dashboard_setup.py); nothing here
   // can change a setting. Every string goes in with textContent.
-  const APPLIES = { START: "on start", UPDATE: "on update" };
+  // One plain phrase per way a setting is applied (fixed map; nothing from the data picks it).
+  const APPLIES = { START: "applies on Restart", UPDATE: "needs Update", LOOK: "needs dashboard restart" };
   const SOURCES = { REPO: "repo", LOCAL: "your override" };
   const num = n => (Number.isFinite(Number(n)) ? Number(n).toLocaleString("en-US") : "?");
   const span = (cls, text) => el("span", cls, text);
-  const applyTag = a => span("k-cmd", `  → ${APPLIES[a] || "?"}`);
+  const applyTag = a => span("k-cmd", `  · ${APPLIES[a] || "?"}`);
+  const shown = v => (str(v) === "" ? "empty" : str(v));
+  const savedRunning = (saved, running) => span("k-warn", `  saved ${shown(saved)} · running ${shown(running)}`);
   let setupKey = null;
 
   function row(label, value, ...tail) {
@@ -661,6 +664,7 @@
       const local = k.source === "LOCAL";
       const tail = [span(local ? "k-warn" : "k-dim", `  ${SOURCES[k.source] || "?"}`)];
       if (local && str(k.repo) !== str(k.value)) tail.push(span("k-dim", ` (repo: ${str(k.repo) || "empty"})`));
+      if (k.pending) tail.push(savedRunning(k.value, k.running));
       tail.push(applyTag(k.applies));
       out.push(row(k.key, k.value, ...tail));
     }
@@ -671,23 +675,29 @@
     }
     for (const name of list(r.ignored)) out.push(P("ind k-err", `  ✕ ${str(name)} in the override isn't allowed: factory start refuses it`));
     if (r.instructions_chars != null) {
-      out.push(P(`ind ${r.over ? "k-err" : "k-dim"}`, `  instructions + notes  ${num(r.instructions_chars)} of ${num(c().notes && c().notes.limit)} characters${r.over ? " · over: the bridge refuses this role's tasks" : ""}`));
+      const p = P(`ind ${r.over ? "k-err" : "k-dim"}`, `  instructions + notes  ${num(r.instructions_chars)} of ${num(c().notes && c().notes.limit)} characters${r.over ? " · over: the bridge refuses this role's tasks" : ""}`);
+      if (r.instructions_pending) p.append(span("k-warn", `  · instructions.md changed, running has ${num(r.instructions_running)}`), applyTag("START"));
+      out.push(p);
     }
     return out;
   }
   const c = () => (st && st.config && typeof st.config === "object" ? st.config : null);
 
   // The four sections of the SETTINGS screen (shown one at a time under a tab strip).
-  const SETTINGS_HINT = "Change a role's knobs or the project notes here; everything else is read-only. Nothing is written until you prepare and confirm it, and changes apply after a restart.";
+  const SETTINGS_HINT = "Saved is what the config folder holds; running is what the factory started with. Change a role's knobs or the project notes here; everything else is read-only. Nothing is written until you prepare and confirm it.";
 
   function rolesSection(cfg) {
-    const out = [P("k-dim", "Each knob writes your override in the config folder, on top of the committed role.conf. Fixed values can't be overridden. → on start and → on update say which factory command applies a value.")];
+    const out = [P("k-dim", "Each knob writes your override in the config folder, on top of the committed role.conf. Fixed values can't be overridden. Each value says how it is applied: on Restart or by Update. A value saved but not yet running says so.")];
     for (const r of list(cfg.roles).filter(x => x && typeof x === "object")) out.push(...roleBlock(r));
     const en = cfg.enabled || {};
     out.push(H("Optional roles", "enabled-roles"));
     const optional = list(cfg.roles).filter(r => r && r.optional);
     if (!optional.length) out.push(P("k-dim", "  No role is optional."));
-    for (const r of optional) out.push(row(r.name, r.on ? "ON" : "OFF", span("k-dim", `  ${en.file ? "enabled-roles file" : "no enabled-roles file"}`), applyTag(en.applies)));
+    for (const r of optional) {
+      const tail = [span("k-dim", `  ${en.file ? "enabled-roles file" : "no enabled-roles file"}`)];
+      if (r.on_pending) tail.push(savedRunning(r.on ? "ON" : "OFF", r.running_on ? "ON" : "OFF"));
+      out.push(row(r.name, r.on ? "ON" : "OFF", ...tail, applyTag(en.applies)));
+    }
     for (const n of list(en.unknown)) out.push(P("ind k-err", `  ✕ ${str(n)} is named in enabled-roles but is not a role: factory start refuses it`));
     return out;
   }
@@ -701,6 +711,12 @@
     for (const f of files) {
       const tail = [span(f.over ? "k-err" : "k-dim", `  ${num(f.chars)} of ${num(nt.limit)} characters${f.over ? " · over" : ""}`)];
       if (f.read === false) tail.push(span("k-dim", " · role off, not read"));
+      if (f.pending) {
+        const text = f.gone ? `deleted since the start, running has ${num(f.running_chars)} characters`
+          : f.running_chars == null ? "new since the start, not running"
+          : `saved ${num(f.chars)} · running ${num(f.running_chars)} characters`;
+        tail.push(span("k-warn", `  · ${text}`));
+      }
       tail.push(applyTag(nt.applies));
       out.push(row(f.name, "", ...tail));
     }
@@ -725,21 +741,56 @@
     return out;
   }
 
+  // The values the dashboard started with (the host cleaned them; they are checked again here). Colours reach the
+  // page only as a validated #rrggbb through style.setProperty; nothing becomes a class, attribute or HTML.
+  const HEX = /^#[0-9a-f]{6}$/, ROLE_NAME = /^[a-z][a-z0-9-]{1,30}$/, LOOK_UI = { field: "field", classic: "classic" };
+  const lookText = (v, cap) => (typeof v === "string" && v.length <= cap && /^[\x20-\x7e]+$/.test(v) ? v : "");
+  function swatch(hex) {
+    const sw = span("swatch", " ");
+    for (const [k, v] of [["display", "inline-block"], ["width", "1.6em"], ["height", "0.8em"], ["margin-right", "0.6em"],
+      ["vertical-align", "middle"], ["border", "1px solid currentColor"], ["background-color", hex]]) sw.style.setProperty(k, v);
+    return sw;
+  }
   function lookSection(cfg) {
     const lk = cfg.look && typeof cfg.look === "object" ? cfg.look : {};
+    const v = lk.values && typeof lk.values === "object" ? lk.values : {};
     const out = [H("Dashboard look", "dashboard.toml")];
-    if (lk.problem) out.push(P("ind k-err", `  ✕ ignored, the defaults show: ${str(lk.problem)}`), P("ind k-dim", "  Fix the file, then restart factory dashboard."));
-    else out.push(P("k-dim", lk.file ? "  Read when factory dashboard started: the nameplate, shift names, defaults and role colours." : "  No dashboard.toml in the config folder: the defaults show."));
+    if (lk.problem) out.push(P("ind k-err", `  ✕ ignored, the defaults show: ${str(lk.problem)}`), P("ind k-dim", `  Fix the file, then restart factory dashboard (${APPLIES.LOOK}).`));
+    else out.push(P("k-dim", lk.file ? "  Showing what factory dashboard read when it started. A change to the file shows after the dashboard restarts." : "  No dashboard.toml in the config folder: the defaults show."));
+    const tag = () => span("k-cmd", `  · ${APPLIES.LOOK}`);
+    const val = (label, text) => out.push(row(label, text || "default", tag()));
+    val("nameplate", lookText(v.plant, 40));
+    const shifts = list(v.shifts).map(x => lookText(x, 20));
+    val("shifts", shifts.length === 3 && shifts.every(Boolean) ? shifts.join(", ") : "");
+    val("crt", Number.isInteger(v.crt) && v.crt >= 0 && v.crt <= 10 ? String(v.crt) : "");
+    val("sound", typeof v.sound === "boolean" ? (v.sound ? "on" : "off") : "");
+    val("ui", LOOK_UI[v.ui] || "field");
+    const colors = v.colors && typeof v.colors === "object" ? Object.keys(v.colors).filter(r => ROLE_NAME.test(r) && typeof v.colors[r] === "string" && HEX.test(v.colors[r])).slice(0, 32) : [];
+    if (!colors.length) out.push(row("role colours", "default", tag()));
+    for (const r of colors) {
+      const p = el("p", "ind");
+      p.append(span(null, `  ${("colour " + r).padEnd(19)} `), swatch(v.colors[r]), span(null, v.colors[r]), tag());
+      out.push(p);
+    }
     out.push(P("k-dim", "  Read-only. The Bright, Contrast, V-Hold and CRT knobs on the Coordinator's screen are remembered by this browser."));
     return out;
   }
 
   const SECTIONS = { roles: rolesSection, notes: notesSection, gateway: gatewaySection, look: lookSection };
 
+  // Built from the host's count on every draw, so it is there whenever Settings is open and gone when nothing is pending.
+  function pendingBar(n) {
+    const bar = P("banner k-warn", `${num(n)} change${n === 1 ? "" : "s"} saved, not yet applied · ${APPLIES.START}`);
+    bar.id = "set-pending";
+    return bar;
+  }
+
   function setupBlocks() {
     const cfg = c();
     if (!cfg) return [P("k-dim", "No configuration to show: this dashboard was started without the factory's config folder.")];
     const out = [P("shint", SETTINGS_HINT), settingsTabs(() => renderSetup(true))];
+    if (Number(cfg.pending) > 0) out.unshift(pendingBar(Number(cfg.pending)));
+    else if (cfg.snapshot === false) out.push(P("k-dim", "  Nothing has been started yet, so there is no running copy to compare with."));
     if (tuneNote) out.unshift(P(`banner ${tuneNote.cls}`, tuneNote.text));
     const body = el("div", "spanel");
     body.append(...SECTIONS[settingsTab](cfg));
@@ -755,7 +806,7 @@
     setupKey = k;
     tuneFocus = false;
     const keep = conBody.scrollTop;
-    conBody.replaceChildren(P("banner", "Settings · effective configuration"), ...setupBlocks());
+    conBody.replaceChildren(P("banner", "Settings: saved and running"), ...setupBlocks());
     conBody.scrollTop = keep;
     moreCue();
   }
@@ -1011,8 +1062,9 @@
           return;
         }
         const local = row.source === "LOCAL";
-        setClass(state, `tstate ${local ? "k-warn" : "k-dim"}`);
-        setText(state, `${SOURCES[row.source] || "?"}${local && str(row.repo) !== str(row.value) ? ` · repo: ${str(row.repo) || "empty"}` : ""}`);
+        const pend = row.pending ? ` · saved ${shown(row.value)} · running ${shown(row.running)} · ${APPLIES.START}` : "";
+        setClass(state, `tstate ${local || row.pending ? "k-warn" : "k-dim"}`);
+        setText(state, `${SOURCES[row.source] || "?"}${local && str(row.repo) !== str(row.value) ? ` · repo: ${str(row.repo) || "empty"}` : ""}${pend}`);
       });
       return p;
     };
@@ -1258,7 +1310,7 @@
     if (!tune || tune.seq !== seq) return;
     if (res.ok) {
       // Every change waits for a restart; an answer that doesn't say so is still shown as a write.
-      tuneNote = res.data.applies === "RESTART" ? { text: "Saved. Restart to apply.", cls: "k-warn" } : { text: "Applied", cls: "k-ok" };
+      tuneNote = res.data.applies === "RESTART" ? { text: `Saved · ${APPLIES.START}`, cls: "k-warn" } : { text: "Applied", cls: "k-ok" };
       await pollFresh();  // the host dropped its SETUP cache: the knobs show what was written
       if (!tune || tune.seq !== seq) return;
       drafts.delete(role);

@@ -9,8 +9,14 @@ printable ASCII and capped here, because the control unit's page draws it as tex
 Each line carries the command that applies a change to it (`applies`: START or UPDATE), the
 table in docs/guides/04-customize.md:
   START   roles' MODEL, MODELS, EFFORT, LANES, MAX_SESSION_TOKENS, MAX_TURNS, MAX_JOB_SECONDS;
-          a role's BROKER_TOOLS (once it had some); enabled-roles; project notes
-  UPDATE  a role's TEMPLATE and WORKSPACE; the local policy.toml; the Coordinator's kit
+          enabled-roles; project notes
+  UPDATE  a role's TEMPLATE, WORKSPACE and BROKER_TOOLS; the local policy.toml; the Coordinator's kit
+
+What is saved is not always what runs: the bridge reads only the copy `factory start` made in
+FACTORY_STATE/dispatch/ (role-overrides/, instructions/, enabled-roles). Where that copy exists
+(`snapshot`), each tuning key carries the `running` value, each notes file the `running_chars` and
+each of them a `pending` flag when the two differ, and `pending` counts them. Notes are compared
+by their bytes, which are never sent.
 
 Standard library only; runs on the macOS system Python (3.9).
 """
@@ -28,14 +34,15 @@ sys.path.append(str(Path(__file__).resolve().parent.parent))  # the factory pack
 from factory import policy, roles  # noqa: E402
 from factory.conf import read_conf  # noqa: E402
 
-from dashboard_service import clean  # noqa: E402
+from dashboard_service import (clean, notes_headers, notes_running, notes_saved, safe_read,  # noqa: E402
+                               snapshot_instructions, snapshot_made, snapshot_override, SNAPSHOT_MAX)
 
 NOTES_LIMIT = 20_000        # characters a role's instructions plus the project notes may total (dispatch/server.py)
 NOTES_READ_MAX = 1 << 20    # bytes read of one notes file; past this it is over the limit whatever it holds
 MAX_ROLES = 32
 MAX_ITEMS = 64
 FIXED_KEYS = (("WORKSPACE", "UPDATE", ""), ("TEMPLATE", "UPDATE", ""),
-              ("BROKER_TOOLS", "START", "UPDATE if the role had none, or has none now"))
+              ("BROKER_TOOLS", "UPDATE", "Restart is enough only if the role had tools and keeps some"))
 NO_PROJECT = "(no project)"
 
 
@@ -72,16 +79,23 @@ def _read_chars(path: str) -> int | None:
         return None
 
 
-def _role(paths, name: str, on: bool) -> dict:
+def _role(paths, name: str, on: bool, runs: bool | None = None) -> dict:
     repo = read_conf(roles.role_conf_path(paths, name))
     override_path = roles.role_override_file(paths, name)
     override = read_conf(override_path) if os.path.isfile(override_path) else {}
+    # What the bridge runs: the snapshotted override over the committed role.conf (only for a role it runs,
+    # `runs`: on now and in the start's enabled-roles).
+    running = snapshot_override(paths, name) if (on if runs is None else runs) else None
     keys = []
     for key in roles.ROLE_OVERRIDE_KEYS:
         row = {"key": key, "value": clean(roles.role_get(paths, name, key)), "applies": "START",
                "source": "LOCAL" if key in override else "REPO"}
         if key in override:
             row["repo"] = clean(repo.get(key, ""))
+        row["pending"] = False
+        if running is not None:
+            row["running"] = clean(running.get(key, repo.get(key, "")))
+            row["pending"] = row["running"] != row["value"]
         keys.append(row)
     fixed = []
     for key, applies, note in FIXED_KEYS:
@@ -135,6 +149,60 @@ def _notes(paths, project: str, running: list, chars=_read_chars) -> tuple:
     return block, totals
 
 
+def _text_len(data: bytes) -> int:
+    return len(data.decode("utf-8", "replace"))
+
+
+def _mark_notes(paths, project: str, running: list, notes: dict, out_roles: dict) -> int:
+    """Compare the notes files, and each running role's instructions, with the copy the bridge runs
+    on (dispatch/instructions/<role>.md). Adds `running_chars` and `pending` to each notes file,
+    `gone` entries for a file that was deleted since the start, and `instructions_running` and
+    `instructions_pending` (the committed instructions.md itself changed) to the roles. Returns the
+    number of pending notes files plus pending instructions."""
+    pending = 0
+    shared_hdr, _ = notes_headers(project, "")
+    files = {f["name"]: f for f in notes["files"]}  # keyed by the cleaned name
+    for f in notes["files"]:
+        f["pending"], f["running_chars"] = False, None
+    gone: dict = {}
+
+    def note(name: str, role, saved, run):
+        nonlocal pending
+        f = files.get(clean(name))
+        if f is None and run is not None:    # deleted (or emptied) since the start
+            f = gone.setdefault(name, {"name": clean(name), "role": clean(role, 40) if role else None, "chars": 0,
+                                       "over": False, "gone": True, "read": True, "pending": False,
+                                       "running_chars": _text_len(run)})
+        if f is None:
+            return
+        if f["running_chars"] is None and run is not None:
+            f["running_chars"] = _text_len(run)
+        if saved != run and not f["pending"]:
+            f["pending"] = True
+            pending += 1
+
+    for role in running[:MAX_ROLES]:
+        snap = snapshot_instructions(paths, role)
+        if snap is None:
+            continue
+        shared_run, own_run = notes_running(snap, project, role)
+        shared_saved, own_saved = notes_saved(paths, project, role)
+        note(project + ".md", None, shared_saved, shared_run)
+        note(f"{project}.{role}.md", role, own_saved, own_run)
+        _, own_hdr = notes_headers(project, role)
+        cut = [i for i in (snap.find(shared_hdr), snap.find(own_hdr)) if i >= 0]
+        base_saved = safe_read(os.path.join(paths.root, "roles", role, "instructions.md"), SNAPSHOT_MAX)
+        row = out_roles.get(role)
+        if row is not None:
+            row["instructions_running"] = _text_len(snap)
+            row["instructions_pending"] = base_saved is not None and base_saved != snap[:min(cut) if cut else len(snap)]
+            pending += row["instructions_pending"]
+    notes["files"].extend(gone.values())
+    for f in notes["files"]:
+        f.setdefault("pending", False)
+    return pending
+
+
 def build(paths, project: str) -> dict:
     """The SETUP screen's data. Missing files read as nothing set, never as an error."""
     listed = roles.enabled_roles_listed(paths)
@@ -142,12 +210,27 @@ def build(paths, project: str) -> dict:
     running = set(roles.list_roles(paths))
     notes, totals = _notes(paths, project, [r for r in every if r in running])
     out_roles = []
+    snapshot = snapshot_made(paths)
+    listed_running = None
+    if snapshot:
+        data = safe_read(os.path.join(paths.dispatch_state, "enabled-roles"), 1 << 16) or b""
+        listed_running = set(roles.parse_enabled_roles(data.decode("utf-8", "replace")))
     for name in every:
-        row = _role(paths, name, name in running)
+        optional = roles.role_optional(paths, name)
+        row = _role(paths, name, name in running,
+                    name in running and (not optional or (listed_running is not None and name in listed_running)))
         if name in totals:
             row["instructions_chars"] = totals[name]
             row["over"] = totals[name] > NOTES_LIMIT
+        if listed_running is not None and row["optional"]:
+            row["running_on"] = name in listed_running
+            row["on_pending"] = row["running_on"] != row["on"]
         out_roles.append(row)
+    pending = sum(k["pending"] for r in out_roles for k in r["keys"]) + sum(r.get("on_pending", False) for r in out_roles)
+    notes["snapshot"] = snapshot
+    if snapshot and usable_project(project):
+        pending += _mark_notes(paths, project, [r for r in every if r in running and (not roles.role_optional(paths, r) or r in listed_running)],
+                               notes, {r["name"]: r for r in out_roles})
 
     def policy_row(section, key):
         raw, source = policy.policy_value_source(paths, section, key)
@@ -164,6 +247,7 @@ def build(paths, project: str) -> dict:
         coordinator = ""
     return {
         "project": notes["project"],
+        "snapshot": snapshot, "pending": pending,
         "roles": out_roles,
         "enabled": {"file": os.path.isfile(roles.enabled_roles_file(paths)), "applies": "START",
                     "listed": [clean(n, 40) for n in listed][:MAX_ITEMS],
@@ -220,22 +304,47 @@ def briefing(config: dict | None, paths, repos: list | None, now: float) -> dict
         "notes": {"usable": usable, "limit": NOTES_LIMIT,
                   "path": clean(os.path.join(paths.config, "projects", project + ".md"), 240) if usable else "",
                   "files": [{"name": f["name"], "role": f["role"], "chars": f["chars"], "over": f["over"]}
-                            for f in notes["files"]]},
+                            for f in notes["files"] if not f.get("gone")]},
         "roles": out_roles,
         "holds": {"on": bool(tools), "tools": tools},
         "prompt": example_prompt(now),
     }
 
 
-def setup(paths, project: str, look_problem: str = "") -> dict | None:
-    """build() plus the dashboard.toml row (`look`: is there a file, and why it was refused, if it was),
-    or None when there is no config to read (no paths) or reading it failed."""
+_COLOR = re.compile(r"#[0-9a-f]{6}")
+_ROLE = re.compile(r"[a-z][a-z0-9-]{1,30}")
+LOOK_UIS = ("field", "classic")
+
+
+def look_values(look) -> dict:
+    """What the dashboard is running with from dashboard.toml (dashboard_config.load's result), as plain
+    values for the Look tab: text cleaned to one line, a number or flag or None, and a colour only as a
+    lower-case #rrggbb under a role name that is one."""
+    look = look if isinstance(look, dict) else {}
+    shifts, colors = look.get("shifts"), look.get("colors")
+    crt = look.get("crt")
+    return {
+        "plant": clean(look["plant"], 40) if isinstance(look.get("plant"), str) else None,
+        "shifts": [clean(x, 20) for x in shifts[:3]] if isinstance(shifts, list) else None,
+        "crt": crt if isinstance(crt, int) and not isinstance(crt, bool) and 0 <= crt <= 10 else None,
+        "sound": look["sound"] if isinstance(look.get("sound"), bool) else None,
+        "ui": look["ui"] if look.get("ui") in LOOK_UIS else "field",
+        "colors": {r: c.lower() for r, c in list(colors.items())[:MAX_ITEMS]
+                   if isinstance(r, str) and _ROLE.fullmatch(r) and isinstance(c, str) and _COLOR.fullmatch(c.lower())}
+        if isinstance(colors, dict) else {},
+    }
+
+
+def setup(paths, project: str, look_problem: str = "", look: dict | None = None) -> dict | None:
+    """build() plus the dashboard.toml row (`look`: is there a file, why it was refused if it was, and
+    the `values` the dashboard started with), or None when there is no config to read (no paths) or
+    reading it failed."""
     if paths is None:
         return None
     try:
         out = build(paths, project)
         out["look"] = {"file": os.path.isfile(os.path.join(paths.config, "dashboard.toml")),
-                       "problem": clean(look_problem, 400)}
+                       "problem": clean(look_problem, 400), "values": look_values(look)}
         return out
     except Exception:  # a screen must not take the state view down; a broken fixture reads as unavailable
         return None

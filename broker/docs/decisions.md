@@ -2,6 +2,15 @@
 
 Dated entries, for the user to review. Newest first.
 
+## 2026-11-12
+
+- **Settings shows saved and running side by side, read from the bridge's own snapshot** (owner request: tell the truth about what is running). Choices to review:
+  - **Running is the file `factory start` copied, read only once `dispatch/enabled-roles` exists.** That file is the last thing the snapshot writes, so before the first start (or while a start is mid-way) nothing is compared and nothing shows as pending.
+  - **Notes are compared by splitting the role's snapshotted instructions at the two fixed `# This project (...)` header lines and comparing bytes with the current file.** No second copy of the composition rules, no digest to send; the text never leaves the host. A file whose own text contains one of those header lines would confuse it; the bridge refuses nothing for that today either.
+  - **The Restart lamp uses the same comparison where a role has an instructions snapshot, so a deleted or emptied notes file lights it.** With no instructions snapshot it keeps the old "modified after the start" test.
+  - **"Next job" is not claimed.** Until the bridge re-reads settings per job, every tuning key and notes file says "applies on Restart". `BROKER_TOOLS` now says "needs Update" with a note that Restart suffices when the role had tools and keeps some.
+  - **The Look tab reads the running dashboard's parsed values, not the file.** A changed `dashboard.toml` is not detected; the tag says "needs dashboard restart".
+
 ## 2026-11-06
 
 - **The Coordinator may post a copyable list to the main page, display only** (owner decision: "What do you need from me?" replaces "When was it busiest?" among the helper

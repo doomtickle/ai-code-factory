@@ -256,9 +256,13 @@ class DashboardWiringTests(unittest.TestCase):
         for p in (root / "roles", config, state):
             p.mkdir(parents=True)
         paths = Paths(str(root), str(config), str(state))
-        self.assertEqual(dashboard_setup.setup(paths, "proj")["look"], {"file": False, "problem": ""})
+        def look(*a):
+            got = dashboard_setup.setup(paths, "proj", *a)["look"]
+            got.pop("values")
+            return got
+        self.assertEqual(look(), {"file": False, "problem": ""})
         (config / "dashboard.toml").write_text("crt = 3\n")
-        self.assertEqual(dashboard_setup.setup(paths, "proj")["look"], {"file": True, "problem": ""})
+        self.assertEqual(look(), {"file": True, "problem": ""})
         got = dashboard_setup.setup(paths, "proj", "/x/dashboard.toml: line 2: unknown key \"bogus\"\x1b[2J")["look"]
         self.assertEqual(got["file"], True)
         self.assertIn('unknown key "bogus"', got["problem"])

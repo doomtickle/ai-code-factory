@@ -1036,6 +1036,39 @@ class ServiceTests(unittest.TestCase):
         self.config("projects/other.md", "not this project\n")
         self.assertEqual(self.service(), {"due": "restart", "lines": ["project notes proj.developer.md changed"]})
 
+    def test_a_deleted_or_emptied_notes_file_is_restart_by_comparing_with_the_snapshot(self):
+        self.record()
+        self.snapshot_start()
+        snap = self.fx.state / "dispatch" / "instructions"
+        snap.mkdir()
+        (snap / "reviewer.md").write_bytes(b"BASE\n\n# This project (proj)\nshared\n")
+        (snap / "developer.md").write_bytes(b"BASE\n\n# This project (proj)\nshared\n\n# This project (proj), for the developer\nown\n")
+        shared = self.config("projects/proj.md", "shared\n")
+        own = self.config("projects/proj.developer.md", "own\n")
+        self.assertIsNone(self.service()["due"])  # the same text, however old or new the files are
+        own.unlink()
+        self.assertEqual(self.service(), {"due": "restart", "lines": ["project notes proj.developer.md changed"]})
+        self.config("projects/proj.developer.md", "own\n")
+        shared.write_text("")
+        self.assertEqual(self.service()["lines"], ["project notes proj.md changed"])
+        shared.write_text("shared\n")
+        self.config("projects/proj.reviewer.md", "new\n")
+        self.assertEqual(self.service()["lines"], ["project notes proj.reviewer.md changed"])
+
+    def test_a_snapshot_that_is_a_symlink_is_not_followed_by_the_lamp(self):
+        self.record()
+        self.snapshot_start()
+        snap = self.fx.state / "dispatch" / "instructions"
+        snap.mkdir()
+        elsewhere = self.fx.state / "elsewhere.md"
+        elsewhere.write_bytes(b"BASE\n\n# This project (proj)\nshared\n")
+        for role in ("developer", "reviewer"):
+            (snap / f"{role}.md").symlink_to(elsewhere)
+        self.config("projects/proj.md", "shared\n")
+        old = time.time() - 500
+        os.utime(Path(self.paths.config) / "projects" / "proj.md", (old, old))
+        self.assertIsNone(self.service()["due"])  # read as no snapshot: the old file is not newer than the start
+
     def test_nothing_to_compare_before_the_first_start(self):
         self.record()
         self.config("enabled-roles", "researcher\n")

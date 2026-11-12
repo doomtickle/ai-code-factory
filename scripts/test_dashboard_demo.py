@@ -323,6 +323,14 @@ class SetupTests(unittest.TestCase):
         self.assertEqual((cfg["gitlab"]["url"], cfg["repos"]["source"]), ("https://gitlab.example.com/", "LOCAL"))
         self.assertEqual([f["name"] for f in cfg["notes"]["files"]], ["DEMO.md", "DEMO.developer.md"])
 
+    def test_the_demo_shows_one_saved_change_not_yet_running(self):
+        cfg = self.env.post("state")[1]["config"]
+        self.assertEqual((cfg["snapshot"], cfg["pending"]), (True, 1))
+        lanes = next(k for r in cfg["roles"] if r["name"] == "developer" for k in r["keys"] if k["key"] == "LANES")
+        self.assertEqual((lanes["value"], lanes["running"], lanes["pending"]), ("2", "3", True))
+        self.assertEqual([f["pending"] for f in cfg["notes"]["files"]], [False, False])
+        self.assertEqual(cfg["look"]["values"]["ui"], "field")
+
     def test_the_demo_shows_a_shift_briefing_from_the_fixture(self):
         b = self.env.board.snapshot(self.env.now)["briefing"]
         self.assertEqual((b["project"], b["repos"], b["repos_known"]), ("DEMO", list(demo.DEMO_REPOS), True))

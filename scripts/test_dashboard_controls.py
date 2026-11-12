@@ -1272,8 +1272,8 @@ class SetupTests(unittest.TestCase):
         fixed = {k["key"]: k for k in self.role("developer")["fixed"]}
         self.assertEqual({k: (v["value"], v["applies"]) for k, v in fixed.items()},
                          {"WORKSPACE": ("rw", "UPDATE"), "TEMPLATE": ("developer", "UPDATE"),
-                          "BROKER_TOOLS": ("git_fetch git_push", "START")})
-        self.assertIn("UPDATE", fixed["BROKER_TOOLS"]["note"])
+                          "BROKER_TOOLS": ("git_fetch git_push", "UPDATE")})
+        self.assertIn("Restart", fixed["BROKER_TOOLS"]["note"])
 
     def test_an_override_is_marked_local_with_the_repo_value_beside_it(self):
         self.conf("roles/developer.conf", '# mine\nMODEL="claude-haiku-5-5"\nLANES="2"\nMAX_TURNS="200"\n')
@@ -1325,6 +1325,133 @@ class SetupTests(unittest.TestCase):
         self.assertEqual((cfg["local_policy"], cfg["notes"]["files"]), (False, []))
         shutil.rmtree(self.root / "roles")
         self.assertEqual(self.cfg()["roles"], [])
+
+    # --- saved and running: the bridge reads only the copy `factory start` made in FACTORY_STATE/dispatch/
+
+    def start(self, overrides=None, listed="", notes=None):
+        """What `factory start` leaves for the bridge, from what is saved now (notes: {role: [shared, own]} overrides)."""
+        snap = Path(self.paths.dispatch_state)
+        for role in ("developer", "reviewer"):
+            text = (self.root / "roles" / role / "instructions.md").read_bytes() if (self.root / "roles" / role / "instructions.md").exists() else b""
+            shared, own = (notes or {}).get(role, (None, None))
+            shared = shared if shared is not None else (self.config / "projects" / "proj.md").read_bytes() if (self.config / "projects" / "proj.md").exists() else b""
+            own = own if own is not None else (self.config / "projects" / f"proj.{role}.md").read_bytes() if (self.config / "projects" / f"proj.{role}.md").exists() else b""
+            if shared:
+                text += b"\n# This project (proj)\n" + shared
+            if own:
+                text += f"\n# This project (proj), for the {role}\n".encode() + own
+            (snap / "instructions").mkdir(parents=True, exist_ok=True)
+            (snap / "instructions" / f"{role}.md").write_bytes(text)
+        (snap / "role-overrides").mkdir(parents=True, exist_ok=True)
+        for role, body in (overrides or {}).items():
+            (snap / "role-overrides" / f"{role}.conf").write_text(body)
+        (snap / "enabled-roles").write_text(listed)
+
+    def files(self):
+        return {f["name"]: f for f in self.cfg()["notes"]["files"]}
+
+    def test_before_the_first_start_nothing_is_compared(self):
+        self.conf("roles/developer.conf", 'MODEL="haiku"\n')
+        cfg = self.cfg()
+        self.assertEqual((cfg["snapshot"], cfg["pending"], cfg["notes"]["snapshot"]), (False, 0, False))
+        self.assertTrue(all("running" not in k and k["pending"] is False for r in cfg["roles"] for k in r["keys"]))
+
+    def test_a_saved_key_that_is_running_is_not_pending_and_one_that_differs_is(self):
+        self.conf("roles/developer.conf", 'MODEL="haiku"\nLANES="2"\n')
+        self.start({"developer": 'MODEL="haiku"\nLANES="2"\n'})
+        cfg = self.cfg()
+        self.assertEqual((cfg["snapshot"], cfg["pending"]), (True, 0))
+        keys = self.keys("developer")
+        self.assertEqual((keys["MODEL"]["running"], keys["MODEL"]["pending"]), ("haiku", False))
+        self.assertEqual((keys["MAX_TURNS"]["running"], keys["MAX_TURNS"]["pending"]), ("200", False))  # the repo's value runs
+        self.conf("roles/developer.conf", 'MODEL="opus"\nLANES="2"\nEFFORT="high"\n')
+        keys = self.keys("developer")
+        self.assertEqual([(k, v["value"], v["running"]) for k, v in keys.items() if v["pending"]],
+                         [("MODEL", "opus", "haiku"), ("EFFORT", "high", "")])
+        self.assertEqual(self.cfg()["pending"], 2)
+
+    def test_an_override_removed_since_the_start_is_still_running(self):
+        self.start({"developer": 'MODEL="haiku"\n'})
+        key = self.keys("developer")["MODEL"]
+        self.assertEqual((key["value"], key["running"], key["pending"]), ("claude-sonnet-5-5", "haiku", True))
+
+    def test_a_role_that_is_off_has_nothing_running_to_compare(self):
+        self.write(self.root / "roles" / "researcher" / "role.conf", 'OPTIONAL="1"\nTEMPLATE="reviewer"\nMODEL="sonnet"\n')
+        self.start()
+        self.conf("roles/researcher.conf", 'MODEL="opus"\n')
+        role = self.role("researcher")
+        self.assertTrue(all("running" not in k and not k["pending"] for k in role["keys"]))
+        self.assertEqual((role["running_on"], role["on_pending"]), (False, False))
+        self.conf("enabled-roles", "researcher\n")
+        role = self.role("researcher")
+        self.assertEqual((role["on"], role["running_on"], role["on_pending"]), (True, False, True))
+        self.assertEqual(self.cfg()["pending"], 1)
+
+    def test_a_snapshot_that_is_a_symlink_is_not_followed(self):
+        self.conf("roles/developer.conf", 'MODEL="haiku"\n')
+        self.start({"developer": 'MODEL="haiku"\n'})
+        secret = self.write(self.root / "secret.conf", 'MODEL="from-elsewhere"\n')
+        link = Path(self.paths.dispatch_state) / "role-overrides" / "developer.conf"
+        link.unlink()
+        link.symlink_to(secret)
+        key = self.keys("developer")["MODEL"]
+        self.assertEqual((key["running"], key["pending"]), ("claude-sonnet-5-5", True))  # read as no override at all
+        self.assertNotIn("from-elsewhere", json.dumps(self.cfg()))
+
+    def test_notes_are_compared_with_what_the_bridge_appended_and_their_text_is_never_sent(self):
+        self.write(self.root / "roles" / "developer" / "instructions.md", "BASE\n")
+        self.write(self.root / "roles" / "reviewer" / "instructions.md", "REVIEW BASE\n")
+        self.conf("projects/proj.md", "shared notes\n")
+        self.conf("projects/proj.developer.md", "own notes\n")
+        self.env.board.project = "proj"
+        self.start()
+        files = self.files()
+        self.assertEqual({n: (f["pending"], f["running_chars"]) for n, f in files.items()},
+                         {"proj.md": (False, 13), "proj.developer.md": (False, 10)})
+        self.assertEqual(self.cfg()["pending"], 0)
+        self.conf("projects/proj.md", "SECRET-NEW-TEXT\n")
+        self.conf("projects/proj.reviewer.md", "added later\n")
+        files = self.files()
+        self.assertEqual((files["proj.md"]["pending"], files["proj.md"]["chars"], files["proj.md"]["running_chars"]), (True, 16, 13))
+        self.assertEqual((files["proj.reviewer.md"]["pending"], files["proj.reviewer.md"]["running_chars"]), (True, None))
+        self.assertFalse(files["proj.developer.md"]["pending"])
+        self.assertEqual(self.cfg()["pending"], 2)
+        self.assertNotIn("SECRET-NEW-TEXT", json.dumps(self.cfg()))
+        self.assertNotIn("shared notes", json.dumps(self.cfg()))
+
+    def test_a_deleted_notes_file_is_pending_and_still_listed(self):
+        self.conf("projects/proj.md", "shared\n")
+        self.conf("projects/proj.developer.md", "own\n")
+        self.env.board.project = "proj"
+        self.start()
+        (self.config / "projects" / "proj.developer.md").unlink()
+        (self.config / "projects" / "proj.md").write_text("")  # emptied counts as gone
+        files = self.files()
+        self.assertEqual({n: (f["pending"], f.get("gone"), f["chars"], f["running_chars"]) for n, f in files.items()},
+                         {"proj.developer.md": (True, True, 0, 4), "proj.md": (True, None, 0, 7)})
+        self.assertEqual(self.cfg()["pending"], 2)
+        briefing_names = [f["name"] for f in dashboard_setup.briefing(self.cfg(), self.paths, [], 0)["notes"]["files"]]
+        self.assertEqual(briefing_names, ["proj.md"])  # the main page lists only files that exist (the emptied one does; the deleted one doesn't)
+
+    def test_changed_role_instructions_are_pending_without_any_notes(self):
+        self.write(self.root / "roles" / "developer" / "instructions.md", "BASE\n")
+        self.start()
+        self.write(self.root / "roles" / "developer" / "instructions.md", "BASE, edited and longer\n")
+        role = self.role("developer")
+        self.assertEqual((role["instructions_pending"], role["instructions_running"]), (True, 5))
+        self.assertEqual(self.cfg()["pending"], 1)
+
+    def test_the_look_values_are_cleaned(self):
+        out = dashboard_setup.look_values({"plant": "LOIS\x1b[2J", "shifts": ["a", "b", "c"], "crt": 11, "sound": False, "ui": "bad",
+                                           "colors": {"designer": "#D08CFF", "bad role": "#ffffff", "x": "red", "ok": "#12345",
+                                                      "reviewer": "#00ff00"}})
+        self.assertEqual(out, {"plant": "LOIS?[2J", "shifts": ["a", "b", "c"], "crt": None, "sound": False, "ui": "field",
+                               "colors": {"designer": "#d08cff", "reviewer": "#00ff00"}})
+        self.assertEqual(dashboard_setup.look_values(None), {"plant": None, "shifts": None, "crt": None, "sound": None,
+                                                              "ui": "field", "colors": {}})
+        self.env.board.look = {"plant": "ACME", "shifts": None, "crt": 3, "sound": None, "ui": "classic", "colors": {}}
+        self.assertEqual(self.cfg()["look"]["values"]["plant"], "ACME")
+        self.assertEqual(self.cfg()["look"]["values"]["ui"], "classic")
 
     def test_policy_values_name_the_file_they_came_from(self):
         self.write(self.root / "broker" / "policy.toml", '[git]\nrepos = ["base/repo"]\n[gitlab]\nurl = ""\n')
@@ -1432,7 +1559,9 @@ class SetupTests(unittest.TestCase):
         js = (UI / "cu.js").read_text()
         block = js[js.index("// ---------- the setup screen"):js.index("function renderConfirm(d)")]
         self.assertNotRegex(block, r"\.title\s*=")
-        self.assertNotRegex(block, r"\.(href|src|style|dataset|innerHTML)\b")
+        self.assertNotRegex(block, r"\.(href|src|dataset|innerHTML)\b")
+        self.assertNotRegex(block, r"\.style\b(?!\.setProperty\()")  # a colour reaches the page only through setProperty
+        self.assertEqual(len(re.findall(r"\.style\b", block)), 1)
         self.assertNotIn("setAttribute", block)
         self.assertNotIn("api(", block)  # it reads the polled state and makes no request
         tune = js[js.index("// ---------- SETUP tuning"):js.index("// ---------- the log screen")]
@@ -1549,6 +1678,7 @@ class CuScriptTests(unittest.TestCase):
                           "tuning confirm holds, then sends the token once", "tuning 409 changed",
                           "tuning cancel drops the token", "tuning demo 403 line",
                           "SETTINGS: comma, hint and tabs", "SETTINGS: the header's message",
+                          "SETTINGS: saved vs running, the bar, the Look values",
                           "a pending knob check is dropped when the notes editor opens"])
 
 

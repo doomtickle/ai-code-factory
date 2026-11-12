@@ -16,6 +16,7 @@ class El {
   constructor(tag, id) {
     this.tagName = tag; this.id = id || ""; this.children = []; this._text = ""; this.className = "";
     this.hidden = false; this.disabled = false; this.value = ""; this.title = ""; this.attrs = {};
+    this.style = { props: {}, setProperty(k, v) { this.props[k] = v; } };
     this.listeners = {}; this.scrollTop = 0; this.scrollHeight = 0; this.clientHeight = 0; this.offsetTop = 0;
     const self = this;
     this.classList = {
@@ -511,7 +512,7 @@ const card = (over) => Object.assign({ id: "c1", tool: "git_push", role: "develo
   assert.strictEqual($("con-title").textContent, "Tune developer", "Esc and CANCEL did not leave the diff");
   release(); await flush();
   assert.deepStrictEqual(wrote.slice(1), [["config-run", { token: "tok1" }]], "the token goes once");
-  assert.match($("con-body").textContent, /Saved\. Restart to apply\./);
+  assert.match($("con-body").textContent, /Saved · applies on Restart/);
   assert.strictEqual($("con-cancel").disabled, false, "CANCEL is back");
   assert.ok(calls.filter(c => c[0] === "state").length >= 1, "state is refreshed");
   assert.strictEqual($("con-title").textContent, "Settings");
@@ -577,7 +578,7 @@ const card = (over) => Object.assign({ id: "c1", tool: "git_push", role: "develo
   assert.ok(sent.includes("cu:settings"), "and tells the page, so its key stops pulsing");
   assert.ok(sent.includes("cu:expand"));
   const hint = kids().find(n => n.className === "shint");
-  assert.ok(hint && /Change a role/.test(hint.textContent) && /read-only/.test(hint.textContent) && /restart/.test(hint.textContent), "a one-line hint says what is editable and when it applies");
+  assert.ok(hint && /Change a role/.test(hint.textContent) && /read-only/.test(hint.textContent) && /Saved is what the config folder holds/.test(hint.textContent), "a one-line hint says what is editable and what saved and running mean");
   const tabs = () => kids().filter(n => n.attrs.role === "tab");
   assert.deepStrictEqual(tabs().map(n => n.textContent), ["Roles", "Project notes", "Gateway", "Dashboard look"]);
   assert.deepStrictEqual(tabs().map(n => n.attrs["aria-selected"]), ["true", "false", "false", "false"], "it opens on Roles");
@@ -631,6 +632,69 @@ const card = (over) => Object.assign({ id: "c1", tool: "git_push", role: "develo
   assert.ok(isOpen(), "asked again while open: still open, nothing else");
   $("con-cancel").click(); await flush();
   results.push("SETTINGS: the header's message");
+
+  // Saved and running (truthful Settings): rows that differ say so, one bar counts them, and it outlives closing the screen.
+  {
+    const cfg = server.config, dev = cfg.roles[0];
+    assert.ok(!kids().some(n => n.id === "set-pending"), "no bar while nothing is pending");
+    const snap = JSON.parse(JSON.stringify(cfg));
+    snap.snapshot = true; snap.pending = 2;
+    const sd = snap.roles[0];
+    sd.keys = sd.keys.map(k => k.key === "LANES" ? Object.assign({}, k, { value: "3", running: "1", pending: true }) : k.key === "MAX_TURNS" ? Object.assign({}, k, { running: "80", pending: true }) : k);
+    sd.instructions_chars = 900; sd.instructions_running = 700; sd.instructions_pending = true;
+    snap.notes = { project: "p", limit: 20000, applies: "START", snapshot: true, files: [
+      { name: "p.md", role: null, chars: 120, over: false, pending: true, running_chars: 80 },
+      { name: "p.gone.md", role: "developer", chars: 0, over: false, pending: true, gone: true, running_chars: 40 },
+      { name: "p.new.md", role: "reviewer", chars: 10, over: false, pending: true, running_chars: null, read: true },
+      { name: "p.same.md", role: "reviewer", chars: 10, over: false, pending: false, running_chars: 10, read: true }] };
+    server.config = snap;
+    await advance(2000);
+    $("svc-setup").click(); await flush();
+    const text = () => $("con-body").textContent;
+    const bar = () => kids().find(n => n.id === "set-pending");
+    assert.ok(bar(), "the bar is there");
+    assert.strictEqual(bar().textContent, "2 changes saved, not yet applied · applies on Restart");
+    assert.ok(bar().className.includes("banner") && bar().className.includes("k-warn"));
+    assert.ok(text().startsWith("Settings: saved and running") && !text().includes("effective"), "the screen no longer claims to be the effective configuration");
+    assert.ok(text().includes("saved 3 · running 1 · applies on Restart"), "a knob says what it holds and what runs");
+    assert.ok(text().includes("saved 200 · running 80"), "a knob that differs says so");
+    assert.ok(text().includes("instructions.md changed, running has 700"), "the instructions line says its running size");
+    assert.ok(!text().includes("→ on start") && !text().includes("→ on update"), "the old tags are gone");
+    $("con-cancel").click(); await flush();
+    $("svc-setup").click(); await flush();
+    assert.ok(bar() && /^2 changes saved/.test(bar().textContent), "reopening Settings shows the bar again");
+    tabBtn("Project notes").click(); await flush();
+    assert.ok(text().includes("saved 120 · running 80 characters"), text());
+    assert.ok(text().includes("deleted since the start, running has 40 characters"));
+    assert.ok(text().includes("new since the start, not running"));
+    assert.strictEqual((text().match(/ applies on Restart/g) || []).length >= 5, true, "every notes file carries the same tag");
+    // One pending change reads in the singular; none drops the bar.
+    snap.pending = 1; await advance(2000);
+    assert.strictEqual(bar().textContent, "1 change saved, not yet applied · applies on Restart");
+    snap.pending = 0; await advance(2000);
+    assert.ok(!bar(), "the bar clears when nothing is pending");
+    // Gateway and fixed settings use the other tag; the Look tab shows values and says what applies them.
+    tabBtn("Gateway").click(); await flush();
+    assert.ok(text().includes("needs Update") && !text().includes("applies on Restart"), "gateway values need Update");
+    snap.look = { file: true, problem: "", values: { plant: AGENTISH.slice(0, 24), shifts: ["day", "swing", "night"], crt: 3, sound: false, ui: "classic",
+      colors: { designer: "#D08CFF", "bad role": "#ffffff", reviewer: "red", "a-b": "#00ff00", reaper: "url(javascript:x)" } } };
+    snap.look.values.plant = '<b>x</b> & "q"';
+    await advance(2000);
+    tabBtn("Dashboard look").click(); await flush();
+    assert.ok(text().includes("nameplate") && text().includes('<b>x</b> & "q"'), "the nameplate is drawn as text");
+    assert.ok(text().includes("day, swing, night") && text().includes("classic") && text().includes("off"));
+    assert.ok(text().includes("needs dashboard restart"));
+    const sw = walk($("con-body")).filter(n => n.className === "swatch");
+    assert.deepStrictEqual(sw.map(n => n.style.props["background-color"]), ["#00ff00"], "only a valid lower-case #rrggbb becomes a swatch");
+    assert.ok(text().includes("colour a-b") && !text().includes("bad role") && !text().includes("javascript"), "other colours are dropped");
+    assert.ok(!walk($("con-body")).some(n => n.tagName === "b" || Object.keys(n.attrs).some(k => /^(style|on)/.test(k))), "nothing from the data becomes markup or an attribute");
+    snap.look = { file: false, problem: "", values: {} }; await advance(2000);
+    assert.ok(text().includes("nameplate") && text().includes("default"), "no values reads as the defaults");
+    $("con-cancel").click(); await flush();
+    server.config = cfg;
+    await advance(2000);
+    results.push("SETTINGS: saved vs running, the bar, the Look values");
+  }
 
   // A knob check still waiting for its answer when the notes editor opens is dropped: its diff never lands on the editor.
   $("svc-setup").click(); await flush();

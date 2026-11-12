@@ -167,9 +167,21 @@ without seeing N files?" with CANCEL and CONFIRM APPROVE (dark for 1 s), and the
 changing or going cancels the question.
 
 An unexpected exception in any control is a 500 with a fixed message, and only its
-type is logged. SETUP, now labelled SETTINGS (doomtickle/passdesk-ops#183; the ids, `setup` screen and `svc-setup` plate keep the old name; four tabs, Roles / Project notes / Gateway / Dashboard look, one section drawn at a time, and no new request or write) shows the effective configuration read-only: `config`
+type is logged. SETUP, now labelled SETTINGS (doomtickle/passdesk-ops#183; the ids, `setup` screen and `svc-setup` plate keep the old name; four tabs, Roles / Project notes / Gateway / Dashboard look, one section drawn at a time, and no new request or write) shows the configuration read-only, as saved and as running ("Settings: saved and running"): `config`
 in the unit's state, built by `scripts/dashboard_setup.py` from the factory's parsers, cached
-a few seconds and read outside the board's lock. Its read-only view adds no endpoint and runs nothing
+a few seconds and read outside the board's lock. "Running" is the copy `factory start` made in
+`FACTORY_STATE/dispatch/` (`role-overrides/`, `instructions/`, `enabled-roles`), which is all the bridge reads; it is read
+with `dashboard_service.safe_read` (`O_NOFOLLOW|O_NONBLOCK`, a regular file by `fstat`, capped) and
+`dashboard_service`'s notes helpers, only once `enabled-roles` exists there. Each tuning key carries `running` and `pending`, each notes file
+`running_chars` and `pending` (compared by bytes against the segment `factory start` appended after its fixed
+`# This project (...)` header; a file deleted since the start stays listed as `gone`; no note text is sent beyond
+what the editor reads on request), a role `instructions_running`/`instructions_pending`, an optional role
+`running_on`/`on_pending`, and `config.pending` counts them for the bar at the top of the screen (`cu.js` `pendingBar`,
+drawn from every poll, so it survives reopening Settings). The page shows one apply tag per setting from a fixed map:
+"applies on Restart" (tuning, notes, enabled-roles), "needs Update" (`WORKSPACE`, `TEMPLATE`, `BROKER_TOOLS`, Gateway),
+"needs dashboard restart" (Look). The Look tab shows `config.look.values` (`dashboard_setup.look_values`: what the
+running dashboard parsed from `dashboard.toml`, cleaned again), colours only as a validated `#rrggbb` through
+`style.setProperty`, never a class or attribute from data. Its read-only view adds no endpoint and runs nothing
 (its one write is CONFIG WRITE below); it takes
 only named policy keys (never a credential, and a URL's user, password, query and fragment are
 cut), and every string is cleaned to one printable line and drawn as text. Anything that moves
