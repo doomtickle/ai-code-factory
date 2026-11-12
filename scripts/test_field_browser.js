@@ -8,7 +8,8 @@
 // checked again with the pointer on the leftmost and the rightmost packet. With no witness outline at all, the packets
 // still show on the sky and the page throws nothing. Every star drawn sits in its own job's packet:
 // past MAXJOB jobs the shader's slots would wrap, so the oldest job's stars are hidden rather than drawn in the newest's. A packet takes hover and a click across its
-// whole body and a ring round it, the click opens that job's monitor, and the packet stays marked while it is open.
+// whole body and a ring round it, the click opens that job's monitor, and the packet stays marked while it is open. A lane starting a job sends one
+// comet from the witness to its crystal, the job ending sends one light back, and reduced motion sends none (`comet`).
 "use strict";
 const assert = require("node:assert");
 const { spawn } = require("node:child_process");
