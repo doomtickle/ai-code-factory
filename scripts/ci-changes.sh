@@ -12,7 +12,9 @@ set -euo pipefail
 #            the build code and its pins, ci.yml)
 #   broker=  the broker's own image tests need running (broker/ code, ci.yml)
 #   code=    something other than prose changed, so the test suites run
-#   docs=    README.md or docs/ changed; scripts/test_docs.py and scripts/test_sbx_reference.sh read
+#   docs=    README.md or docs/ changed; scripts/test_docs.py, scripts/test_dashboard.py (it builds
+#            the real docs and checks the dashboard's help links against docs/guides/06-dashboard.md),
+#            factory/test_command_docs.py's RealRenderTest and scripts/test_sbx_reference.sh read
 #            those, so a docs-only change still runs them
 #
 # Each is true or false. It is false only when the file list is complete and every file is known to
@@ -32,7 +34,8 @@ is_inert() {
   return 1
 }
 
-# Prose that scripts/test_docs.py and scripts/test_sbx_reference.sh read from the repo.
+# Prose that scripts/test_docs.py, scripts/test_dashboard.py, RealRenderTest in
+# factory/test_command_docs.py and scripts/test_sbx_reference.sh read from the repo.
 is_docs() {
   case "$1" in
     README.md | docs/*) return 0 ;;

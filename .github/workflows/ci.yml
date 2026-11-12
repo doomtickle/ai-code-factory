@@ -156,6 +156,8 @@ jobs:
         if: env.RUN_DOCS_TESTS == 'true'
         run: |
           python3 -m unittest discover -s scripts -p 'test_docs.py' -v
+          python3 -m unittest discover -s scripts -p 'test_dashboard.py' -v
+          python3 -m unittest factory.test_command_docs.RealRenderTest -v
           bash scripts/test_sbx_reference.sh
       - name: no tests needed (only prose changed)
         if: env.RUN_TESTS != 'true' && env.RUN_DOCS_TESTS != 'true'

@@ -1476,7 +1476,9 @@ hasn't dispatched any jobs yet just shows an empty report.
   can't affect: image builds unless `templates/`, `kits/`, `broker/` or the
   build code changed, the broker image tests unless `broker/` did, and all the
   tests when only prose changed (a README or `docs/` change still runs
-  `scripts/test_docs.py` and `scripts/test_sbx_reference.sh`). Pushes to main
+  `scripts/test_docs.py`, `scripts/test_dashboard.py` (it checks the dashboard's help links
+  against the guides), `RealRenderTest` in `factory/test_command_docs.py` and
+  `scripts/test_sbx_reference.sh`). Pushes to main
   and manual runs run everything, and unsure means run. The required checks
   always report, as skipped steps rather than skipped jobs. To run the tests
   yourself (use `/usr/bin/python3` on macOS):
