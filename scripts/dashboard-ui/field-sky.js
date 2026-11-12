@@ -120,7 +120,7 @@ window.makeSky = function (scene, camera, C, U, W) {
 
   // ---- delegation comet: one flare from the witness to a job's crystal when the job starts, one small light back when it ends.
   // Driven only by a lane's job id and state change (field-hud.js passes an id that passed its pattern); one comet per event, nothing loops.
-  const CMT = { N: 28, out: 1500, back: 1300, fadeOut: 1100, fadeBack: 300, waitMs: 6000, max: 6 }, comets = [], cometWait = [], cometSeen = { out: 0, back: 0, still: 0 };
+  const CMT = { N: 28, K: 8, out: 1500, back: 1300, fadeOut: 1100, fadeBack: 300, waitMs: 6000, max: 6 }, comets = [], cometWait = [], cometSeen = { out: 0, back: 0, still: 0 };
   const cometEase = f => .5 - .5 * Math.cos(Math.PI * f), cometP = new THREE.Vector3(), cometQ = new THREE.Vector3();
   const stillMotion = () => !!(window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches);
   const bez = (c, f, out) => { const a = 1 - f; return out.copy(c.a).multiplyScalar(a * a).addScaledVector(c.m, 2 * a * f).addScaledVector(c.b, f * f); };
@@ -128,22 +128,25 @@ window.makeSky = function (scene, camera, C, U, W) {
   function cometSpawn(w, pk, now) {
     const back = w.kind === "back", col = back ? (w.state === "approved" || w.state === "done" || !w.state ? new THREE.Color(.3, 1, .6) : /^(revise)$/.test(w.state) ? new THREE.Color(1, .65, .2) : RED.clone()) : pk.order.spark.clone().lerp(new THREE.Color(1, 1, 1), .45);
     if (stillMotion()) { glowAt(C, col, .5); glowAt(pk.pos, col, pk.w * 3); cometSeen.still++; return; }
+    if (!back) glowAt(C, col, .3);
     const head = sprite(FLARE, col, 1, 0), N = CMT.N, geo = new THREE.BufferGeometry(); geo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(N * 3), 3)); geo.setAttribute("color", new THREE.BufferAttribute(new Float32Array(N * 3), 3));
     const line = new THREE.Line(geo, new THREE.LineBasicMaterial(basic({ vertexColors: true, opacity: 0, depthTest: false }))); line.frustumCulled = false; line.renderOrder = 6; head.renderOrder = 7; head.material.depthTest = false; head.frustumCulled = false;
-    root.add(line, head); comets.push({ back, pk, col, head, line, geo, t0: now, c: { a: new THREE.Vector3(), m: new THREE.Vector3(), b: new THREE.Vector3() } }); cometSeen[w.kind]++; }
+    const tr = []; for (let k = 0; k < CMT.K; k++) { const t = sprite(FLARE, col, 1, 0); t.renderOrder = 6; t.material.depthTest = false; t.frustumCulled = false; tr.push(t); root.add(t); }
+    root.add(line, head); comets.push({ back, pk, col, head, line, geo, tr, t0: now, c: { a: new THREE.Vector3(), m: new THREE.Vector3(), b: new THREE.Vector3() } }); cometSeen[w.kind]++; }
   function cometStep(now, vis) {
     for (let i = cometWait.length - 1; i >= 0; i--) { const w = cometWait[i], pk = PK.get("j" + w.id);
       if (pk && pk.placed && pk.g.visible) { cometWait.splice(i, 1); cometSpawn(w, pk, now); } else if (now - w.t0 > CMT.waitMs || (!pk && w.kind === "back" && now - w.t0 > 1500 && !J.has(w.id))) cometWait.splice(i, 1); }
     for (let i = comets.length - 1; i >= 0; i--) { const c = comets[i], fly = c.back ? CMT.back : CMT.out, fade = c.back ? CMT.fadeBack : CMT.fadeOut, el = now - c.t0, f = Math.min(1, el / fly), e = cometEase(f), after = Math.max(0, el - fly) / fade;
-      if (after >= 1 || !PK.has(c.pk.key)) { root.remove(c.line, c.head); c.line.material.dispose(); c.geo.dispose(); c.head.material.dispose(); comets.splice(i, 1); continue; }
+      if (after >= 1 || !PK.has(c.pk.key)) { root.remove(c.line, c.head, ...c.tr); c.line.material.dispose(); c.geo.dispose(); c.head.material.dispose(); c.tr.forEach(t => t.material.dispose()); comets.splice(i, 1); continue; }
       const A = c.c.a.copy(C), B = c.c.b.copy(c.pk.pos), M = c.c.m, dx = B.x - A.x, dy = B.y - A.y, L = Math.hypot(dx, dy) || 1; let px = -dy / L, py = dx / L; if (py < 0) { px = -px; py = -py; }
       M.set((A.x + B.x) / 2 + px * .22 * L, (A.y + B.y) / 2 + py * .22 * L, A.z);
       // the head rides the path (face to crystal; the other way for the return); the thread is the path behind it, bright at the head
       const s1 = c.back ? 1 - e : e, pos = c.geo.attributes.position, col = c.geo.attributes.color, N = CMT.N, vis2 = vis ? 1 : 0;
-      for (let k = 0; k < N; k++) { const u1 = k / (N - 1), sp = c.back ? Math.min(1, s1 + .28 * u1) : s1 * (1 - u1), q = bez(c.c, sp, cometQ), m = (1 - u1) * (1 - u1) * (c.back ? .5 : .8) * vis2 * (1 - after); pos.setXYZ(k, q.x, q.y, q.z); col.setXYZ(k, c.col.r * m, c.col.g * m, c.col.b * m); }
+      for (let k = 0; k < N; k++) { const u1 = k / (N - 1), sp = c.back ? Math.min(1, s1 + .28 * u1) : s1 * (1 - u1), q = bez(c.c, sp, cometQ), m = (1 - u1) * (1 - u1) * (c.back ? .6 : 1.1) * vis2 * (1 - after); pos.setXYZ(k, q.x, q.y, q.z); col.setXYZ(k, c.col.r * m, c.col.g * m, c.col.b * m); }
       pos.needsUpdate = true; col.needsUpdate = true; c.line.material.opacity = 1;
-      bez(c.c, s1, cometP); c.head.position.copy(cometP); const rise = Math.min(1, f * 8), land = c.back ? 1 : 1 - Math.pow(Math.max(0, f - .85) / .15, 2) * .6, sz = c.pk.w * (c.back ? .55 : .9) * (.7 + .3 * Math.sin(Math.PI * Math.min(1, f))) * land;
+      bez(c.c, s1, cometP); c.head.position.copy(cometP); const rise = Math.min(1, f * 8), land = c.back ? 1 : 1 - Math.pow(Math.max(0, f - .85) / .15, 2) * .6, sz = c.pk.w * (c.back ? .7 : 1.1) * (.7 + .3 * Math.sin(Math.PI * Math.min(1, f))) * land;
       c.head.scale.setScalar(Math.max(1e-4, sz)); c.head.material.opacity = (f >= 1 ? 0 : .95 * rise * (c.back ? 1 - Math.pow(Math.max(0, f - .8) / .2, 2) : 1)) * vis2;
+      for (let k = 0; k < CMT.K; k++) { const d = .035 * (k + 1), q = bez(c.c, c.back ? Math.min(1, s1 + d) : Math.max(0, s1 - d), cometQ), w = 1 - (k + 1) / (CMT.K + 1), t = c.tr[k]; t.position.copy(q); t.scale.setScalar(Math.max(1e-4, sz * (.35 + .65 * w))); t.material.opacity = c.head.material.opacity * w * .75; }
       if (f >= 1 && !c.landed) { c.landed = true; if (vis) glowAt(c.back ? C : c.pk.pos, c.col, c.back ? .35 : c.pk.w * 2.4); } } }
   function ingest(field, state) { // one poll of /api/field, with the /api/state it goes with
     const list = (field && field.jobs) || []; if (dayKey !== null && field.date !== dayKey) reset(); dayKey = field.date;
