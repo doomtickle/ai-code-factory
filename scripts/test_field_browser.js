@@ -195,6 +195,15 @@ async function picking(url) {
     await until(`LF.sky.packets().length === 0`, "packets fade out while a question's shape is up");
     await b.ev(`LF.sky.show("home")`);
     await until(`LF.sky.packets().length >= 6`, "and come back");
+    // with no typed line, the keys 1 to 4 are the lenses (the main page has focus), and Escape comes home
+    await b.key("4", "Digit4");
+    await until(`LF.sky.view === "time"`, "key 4 shows the busiest time");
+    await b.key("Escape", "Escape");
+    await until(`LF.sky.view === "home"`, "Escape comes home");
+    await b.key("2", "Digit2");
+    await until(`LF.sky.view === "stuck"`, "key 2 shows what is stuck");
+    await b.ev(`LF.sky.show("home")`);
+    await until(`LF.sky.packets().length >= 6`, "and the packets come back again");
     // no witness outline at all (some odd viewport size): the packets ring a stand-in instead, and nothing throws per frame
     const n = await b.ev(`LF.sky.packets().length`);
     assert.strictEqual(await b.ev(`LF.sky.noOutline(true)`), true, "the stand-in outline is in use");

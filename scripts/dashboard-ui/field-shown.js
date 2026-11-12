@@ -11,7 +11,7 @@
 (() => {
   const HOLD_MS = 2500;       // COPY stays dark this long after the text changes (term.js and the control unit hold the same)
   const OLD_S = 600;          // after this the pop-up shrinks and dims; it never closes by itself
-  const EMPTY = "Nothing posted yet. Ask me on the line.";
+  const EMPTY = "Nothing posted yet. Ask me in the terminal.";
   const FLAGGED = /⟨U\+[0-9A-F]{4,6}⟩/;
   const $ = id => document.getElementById(id);
 

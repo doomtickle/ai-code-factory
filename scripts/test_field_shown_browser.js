@@ -215,7 +215,7 @@ async function main(url, png) {
     await b.ev(`window.__mut = j => { j.shown = null; }`);
     await poll(); await b.sleep(100);
     assert.strictEqual(await shown(), true);
-    assert.strictEqual(await b.ev(`document.getElementById("shown-text").textContent`), "Nothing posted yet. Ask me on the line.");
+    assert.strictEqual(await b.ev(`document.getElementById("shown-text").textContent`), "Nothing posted yet. Ask me in the terminal.");
     assert.strictEqual(await b.ev(`document.getElementById("shown-copy").disabled`), true, "nothing to copy");
 
     // Display only: the pop-up added no request. Everything the page sent was a GET (the polls, the voice service's health check).

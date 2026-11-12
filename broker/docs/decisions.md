@@ -4,6 +4,20 @@ Dated entries, for the user to review. Newest first.
 
 ## 2026-11-12
 
+- **Terminal 0 lives in the world; the typed line is gone** (owner decisions, newest first: the sky reacts to terminal focus; voice and captions from `say` stay; Terminal 0 is shown in the
+  world by default; the "Ask LOIS" line is removed). Choices to review:
+  - **The line's whole surface went.** `/term/line`, `line_csp`, `line.html/js/css` and `field-ask.js` are deleted, so the main page has no path that sends text and the `ln:<word>` message
+    is gone. The lenses are keys 1 to 4 (when the main page has focus), a double click on the horizon (time) and the chips.
+  - **The pane is never inert, so focus safety moved to the skin.** `term-field.js` sets `focusOnState: false` and `term.js` gates its focus-on-state-message with it; the classic page is
+    unchanged. The main page calls `termFrame.focus()` in one place, from a user gesture. A click into the cross-origin frame reaches the main page only as a window `blur`, so that is what
+    grows the pane.
+  - **The idle test counts events, not standing focus.** With the pane always there, a focused iframe would otherwise keep her awake forever; `field-face.js` now counts key, click and focus
+    events (and the `blur` a click into a frame causes).
+  - **The lens stays dim until she speaks, not until you leave.** It dims while the frame has focus and blooms back on the next `say` line with the existing star flash, then stays bright
+    until you click in again. Reduced motion: brightness changes at once, no drift.
+  - **The pane takes room from the caption.** The horizon lifts (`G.rim`) so the caption, decision row and chips sit above a 31vh pane (38vh sheet under 760 px); the footer note hides while
+    the pane is there. A grown pane (60vh) covers the caption on purpose; it shrinks on Escape, a click on the world or its own button.
+  - **Demo mode has no Terminal 0,** so no pane renders there; the layout keeps its old room.
 - **Settings shows saved and running side by side, read from the bridge's own snapshot** (owner request: tell the truth about what is running). Choices to review:
   - **Running is the file `factory start` copied, read only once `dispatch/enabled-roles` exists.** That file is the last thing the snapshot writes, so before the first start (or while a start is mid-way) nothing is compared and nothing shows as pending.
   - **Notes are compared by splitting the role's snapshotted instructions at the two fixed `# This project (...)` header lines and comparing bytes with the current file.** No second copy of the composition rules, no digest to send; the text never leaves the host. A file whose own text contains one of those header lines would confuse it; the bridge refuses nothing for that today either.

@@ -1142,17 +1142,20 @@ spiral galaxy, above the dark curve of a world whose lit edge is the day:
   running job is a spark at its arm's tip, a held write a gold star whose arm
   stops turning, a failed job a dark void, and a blocked request red at the
   galaxy's edge. Hover a star to see what it was, and click it to open the job.
-- **Questions:** chips or the typed line. "What cost the most?", "What's stuck?",
-  "What have they been doing?" and "When was it busiest?" (typed) reshape the
-  stars to answer. This is keyword matching in the browser, not comprehension.
+- **Questions:** the chips, or the keys 1 to 4, reshape the stars to answer
+  "What cost the most?", "What's stuck?", "What have they been doing?" and
+  "When was it busiest?" (also a double click on the horizon). They are fixed
+  views, not comprehension.
 - **What do you need from me?** A chip that opens a small copyable panel with the
   last list the Coordinator posted with its `show` tool: decisions, merges, held
   writes. It pops up when a new list arrives, Copy writes only on your click, and
   it sends nothing. It can't refresh itself, so it shows the list's age.
 - **The horizon:** drag it to rewind the galaxy. Its beads are the day's events.
-- **The typed line:** a sky question stays in the browser. Anything else goes
-  to the Coordinator on Enter, as if typed in Terminal 0. There is no
-  speech-to-text. `t` or the Terminal key opens Terminal 0 as a panel.
+- **Terminal 0:** docked low in the world once it runs. Click into it to grow
+  it and type to the Coordinator; the sky dims while you are in it and blooms
+  back when LOIS speaks. Esc inside it goes to the Coordinator; the pane's
+  Smaller button, `T`, or a click on the world shrinks it. There is no typed
+  line and no speech-to-text.
 - **The monitor:** a job's Transcript, Packet and Changes.
 - **The decision row:** the control unit in another skin, with the same keys and
   rules. Holding the gold light for 2.5 seconds presses Approve, and letting go
@@ -1272,7 +1275,7 @@ shows:
   from the factory checkout once, when it starts: restart `factory dashboard`
   to see edits.
 
-Both views are local. Apart from the terminal, the typed line and the control unit, they only read the
+Both views are local. Apart from the terminal and the control unit, they only read the
 state folder (lane transcripts, both audit logs, review packets, approval
 cards, and for INSPECT the stored patch), and at start-up the factory's docs,
 and makes no network connection. The
@@ -1331,11 +1334,9 @@ records never carry it.
 
 The Thoughtfield's main page follows the same rules: it only displays, holds no
 key and frames the pages that can act. The decision row is the control unit
-(`/cu/field`, the same script behind the same key). The typed line (`/term/line`)
-is on the terminal's key and origin: it sends text to the Coordinator only on
-Enter, with control characters removed, never powers anything on and ignores
-what the terminal prints. The main page learns only one word from a fixed list,
-never what was typed. `/api/field` gives an action as a time and a kind, never its
+(`/cu/field`, the same script behind the same key). Terminal 0 (`/term/field`) is docked on the page in a frame on the terminal's
+key and origin; the main page never types into it, never focuses it without a
+click, and learns nothing of what is typed. `/api/field` gives an action as a time and a kind, never its
 text. The page's one other connection is to the optional voice service on
 `127.0.0.1:8873`, sent fixed sentences without the dashboard's cookie.
 
