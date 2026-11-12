@@ -103,16 +103,13 @@ STATIC = {
     "/cu.js": ("cu.js", "text/javascript; charset=utf-8"),
     "/cu.css": ("cu.css", "text/css; charset=utf-8"),
     "/cu-notes.js": ("cu-notes.js", "text/javascript; charset=utf-8"),   # the NOTES editor on SETUP; cu.js loads after it
-    # The Thoughtfield's frames: the control unit in its decision-row skin (/cu/field), Terminal 0 in its skin (/term/field) and the typed line (/term/line).
+    # The Thoughtfield's frames: the control unit in its decision-row skin (/cu/field), and Terminal 0 in its skin (/term/field).
     "/term-field.js": ("term-field.js", "text/javascript; charset=utf-8"),
     "/term-field.css": ("term-field.css", "text/css; charset=utf-8"),
     "/fonts/jetbrains-mono-400.woff2": ("fonts/jetbrains-mono-400.woff2", "font/woff2"),
     "/fonts/jetbrains-mono-700.woff2": ("fonts/jetbrains-mono-700.woff2", "font/woff2"),
     "/cu-field.js": ("cu-field.js", "text/javascript; charset=utf-8"),
     "/cu-field.css": ("cu-field.css", "text/css; charset=utf-8"),
-    "/field-ask.js": ("field-ask.js", "text/javascript; charset=utf-8"),
-    "/line.js": ("line.js", "text/javascript; charset=utf-8"),
-    "/line.css": ("line.css", "text/css; charset=utf-8"),
     # cu.css imports this (same origin, allowed by style-src 'self').
     "/theme.css": ("theme.css", "text/css; charset=utf-8"),
     "/fonts/barlow-condensed-600.woff2": ("fonts/barlow-condensed-600.woff2", "font/woff2"),
@@ -149,11 +146,6 @@ def cu_csp(term_port: int, main_port: int) -> str:
             f"connect-src http://127.0.0.1:{term_port} http://localhost:{term_port}; img-src 'self'; "
             f"frame-ancestors http://127.0.0.1:{main_port} http://localhost:{main_port}; "
             "base-uri 'none'; form-action 'none'")
-
-
-def line_csp(term_port: int, main_port: int) -> str:
-    """The typed line's CSP: the terminal's, with no inline style (it has no xterm to style)."""
-    return term_csp(term_port, main_port).replace("style-src 'self' 'unsafe-inline'", "style-src 'self'")
 
 
 def control_refusal(headers, *, hosts, origins, cookie: str, token: str, key: str, limit: int = MAX_BODY) -> tuple:
@@ -857,18 +849,6 @@ def make_handler(term: Term | None, token: str, cookie: str, key: str, port: int
                     self.refuse(500, f"missing {page}")
                     return
                 self.send(200, html.replace(KEY_SLOT, key).encode("utf-8"), "text/html; charset=utf-8")
-            elif path == "/term/line" and term is not None:
-                # The Thoughtfield's typed line carries the terminal key too: the same rule as /term.
-                if not self.framed():
-                    self.refuse(403, "the terminal opens inside the dashboard: open the link 'factory dashboard' printed")
-                    return
-                try:
-                    html = (UI / "line.html").read_text(encoding="utf-8")
-                except OSError:
-                    self.refuse(500, "missing line.html")
-                    return
-                html = html.replace(KEY_SLOT, key).replace(CU_PORT_SLOT, str(int(main_port)))
-                self.send(200, html.encode("utf-8"), "text/html; charset=utf-8", page_csp=line_csp(port, main_port))
             elif path in ("/cu", "/cu/field") and controls is not None:
                 # The control unit carries its own key: the same rule as /term. /cu/field is the same unit and
                 # the same cu.js, in the Thoughtfield's decision-row skin.

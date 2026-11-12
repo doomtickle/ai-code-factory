@@ -1,6 +1,6 @@
 // The Thoughtfield's Horizon interface (doomtickle/passdesk-ops#207). LOIS rises behind a dark world whose lit edge is the day.
 // The main page only displays: it polls /api/state and /api/field, draws with textContent, and frames the two pages that can
-// act (the control unit at /cu/field, the typed line and Terminal 0 at /term*), which it can't script. It may also POST fixed
+// act (the control unit at /cu/field and Terminal 0 at /term/field), which it can't script. It may also POST fixed
 // text to the optional local voice: fixed event sentences and the lines the Coordinator gives its say tool (state.said, doomtickle/passdesk-ops#216).
 // Nothing else an agent wrote is spoken: task and branch labels stay in the detail line.
 "use strict";
@@ -58,7 +58,7 @@
   const thinkLine = t => { thinkNote = t; if (!cur) { setCaption(""); meta.textContent = t; } };
   let thinkNote = "";
   function stopThinking() { W.thinking = false; thinkNote = ""; thinkTimers.forEach(clearTimeout); thinkTimers = []; }
-  function startThinking() { stopThinking(); queue.splice(0, queue.length, ...queue.filter(q => !q.own)); if (cur && window.LiveVoice) LiveVoice.stop(); if (cur) { cur = null; W.speaking = false; W.mood = "calm"; } W.focus = null; W.thinking = true; thinkLine("Thinking. My working is in Terminal: press T."); thinkTimers = [setTimeout(() => thinkLine("Still thinking. My working is in Terminal: press T."), STILL_MS), setTimeout(() => { stopThinking(); if (!cur) meta.textContent = ""; }, GIVE_UP_MS)]; if (queue.length) next(); }
+  function startThinking() { stopThinking(); queue.splice(0, queue.length, ...queue.filter(q => !q.own)); if (cur && window.LiveVoice) LiveVoice.stop(); if (cur) { cur = null; W.speaking = false; W.mood = "calm"; } W.focus = null; W.thinking = true; thinkLine("Thinking."); thinkTimers = [setTimeout(() => thinkLine("Still thinking. My working is below."), STILL_MS), setTimeout(() => { stopThinking(); if (!cur) meta.textContent = ""; }, GIVE_UP_MS)]; if (queue.length) next(); }
   function next() { const it = queue.shift(); if (!it) { cur = null; if (thinkNote) thinkLine(thinkNote); return; } cur = it;  setCaption(it.text); meta.textContent = it.m || ""; marks = it.marks || []; if (it.fx) it.fx(); W.speaking = true; W.mood = it.mood || (/failed|Declined|changes|blocked/i.test(it.text) ? "stern" : /^Hi|Approved|approved/i.test(it.text) ? "lit" : "calm");
     const done = () => { if (cur !== it) return; capWords.forEach(w => { w.on = true; w.el.classList.add("on"); }); capAll = true; W.speaking = false; W.mood = "calm"; setTimeout(() => { if (!cur || cur === it) W.focus = null; }, 1500); setTimeout(() => { if (cur === it) next(); }, 900); };
     it.finish = done; const quiet = () => setTimeout(done, 1500 + it.text.length * 60);
@@ -86,15 +86,14 @@
   function greet() { const s = state || {}, n = (s.totals || {}).running || 0, m = (s.gate || []).length; const parts = n ? `${n === 1 ? "One job is" : n + " jobs are"} running` : "Nothing is running"; const wait = m ? ` and ${m === 1 ? "one is" : m + " are"} waiting for you` : ""; const b = s.briefing || {}; say(`Hi. ${parts}${wait}.`, !n && b.prompt ? "Try: " + String(b.prompt).slice(0, 160) : (s.totals ? `Today so far: ${s.totals.jobs} jobs · spend $${s.totals.cost.toFixed(2)}` : ""), { fx: () => { W.focus = null; } }); }
 
   // ---------- the frames that can act. The main page can't script them; they're other origins.
-  let cuFrame = null, cuOrigin = "", termFrame = null, lineFrame = null, termOrigin = "";
+  let cuFrame = null, cuOrigin = "", termFrame = null, termOrigin = "";
   function frame(cls, title, src, allow) { const f = document.createElement("iframe"); f.className = cls; f.title = title; f.setAttribute("sandbox", "allow-scripts allow-same-origin"); f.setAttribute("referrerpolicy", "no-referrer"); if (allow) f.setAttribute("allow", allow); f.src = src; return f; }
   function ensureFrames() { const s = state; if (s.cu && !cuFrame) { cuOrigin = `http://${location.hostname}:${Number(s.cu.port)}`; cuFrame = frame("cu-frame", "Control unit", `${cuOrigin}/cu/field`); cuFrame.addEventListener("load", () => { setCu(false); $("settings-key").disabled = false; }); $("cu-wrap").append(cuFrame); }
-    if (s.term && !termFrame) { termOrigin = `http://${location.hostname}:${Number(s.term.port)}`; termFrame = frame("term-frame", "LOIS's terminal", `${termOrigin}/term/field`, "clipboard-write"); $("term-slot").append(termFrame); lineFrame = frame("line-frame", "Talk to LOIS", `${termOrigin}/term/line`); $("you-slot").textContent = ""; $("you-slot").append(lineFrame); $("term-key").hidden = false; } }
+    if (s.term && !termFrame) { termOrigin = `http://${location.hostname}:${Number(s.term.port)}`; termFrame = frame("term-frame", "LOIS's terminal", `${termOrigin}/term/field`, "clipboard-write"); $("term-slot").append(termFrame); $("term-key").hidden = false; } }
   function setCu(big) { $("cu-wrap").classList.toggle("expanded", big); }
   function selectCard(id) { if (cuFrame && CARD.test(id)) cuFrame.contentWindow.postMessage({ type: "cu:select", id }, cuOrigin); }
   function setTerm(open) { const p = $("term-panel"); p.classList.toggle("open", open); p.inert = !open; $("term-key").setAttribute("aria-expanded", String(open)); if (open && termFrame) termFrame.focus(); }
-  addEventListener("message", e => { if (cuFrame && e.source === cuFrame.contentWindow && e.origin === cuOrigin) { if (e.data === "cu:expand") setCu(true); else if (e.data === "cu:collapse") setCu(false); else if (e.data === "cu:reload") location.reload(); return; }
-    if (lineFrame && e.source === lineFrame.contentWindow && e.origin === termOrigin && typeof e.data === "string") { const m = /^ln:(spend|stuck|kinds|time|home|sent|off|noconn)$/.exec(e.data); if (!m) return; const w = m[1]; if (w === "sent") startThinking(); else if (w === "off") answer("I'm switched off. Open Terminal at the top to power me on, then send that again.", ""); else if (w === "noconn") answer("I can't reach Terminal 0 right now. Too many open tabs can do that.", ""); else if (w === "home") { goHome(); answer("Back to the galaxy.", ""); } else askView(w); } });
+  addEventListener("message", e => { if (cuFrame && e.source === cuFrame.contentWindow && e.origin === cuOrigin) { if (e.data === "cu:expand") setCu(true); else if (e.data === "cu:collapse") setCu(false); else if (e.data === "cu:reload") location.reload(); return; } });
   $("settings-key").addEventListener("click", () => { if (cuFrame) cuFrame.contentWindow.postMessage({ type: "cu:open", screen: "settings" }, cuOrigin); });
   $("term-key").addEventListener("click", () => setTerm(!$("term-panel").classList.contains("open"))); $("term-close").addEventListener("click", () => setTerm(false));
 
@@ -102,10 +101,7 @@
   const back = $("back"); let viewIdle = 0;
   function goHome() { if (Sky && Sky.view !== "home") Sky.show("home"); back.hidden = true; }
   function askView(v) { if (!Sky) { answer("This view needs WebGL, so there's no sky to answer with. The classic view still works.", ""); return; } const r = Sky.show(v); if (r.same) return; if (r.none) { answer(r.say, r.meta); return; } back.hidden = v === "home"; viewIdle = performance.now(); W.focus = null; W.hoverFocus = null; answer(r.say, r.meta); }
-  function askUnknown() { answer("I can show you what cost the most, what's stuck, what the agents have been doing, or when the day was busiest.", "For anything else, talk to me in Terminal: press T"); }
   $("chips").addEventListener("click", e => { if (e.target.id === "back") { goHome(); return; } const v = e.target.dataset && e.target.dataset.v; if (v) askView(v); });
-  $("ask").addEventListener("input", () => $("ask").classList.toggle("has", !!$("ask-in").value.trim()));
-  $("ask").addEventListener("submit", e => { e.preventDefault(); const q = $("ask-in").value.trim(); if (!q) return; $("ask-in").value = ""; $("ask").classList.remove("has"); const v = FieldAsk.view(q); if (v === "home") { goHome(); answer("Back to the galaxy.", ""); } else if (v) askView(v); else if (state && state.demo || !termFrame) askUnknown(); else answer(state && state.demo ? "This is the demo, so nothing here acts." : "My terminal isn't attached, so I can't hear that.", ""); });
   // dragging along the horizon rewinds the galaxy to that moment; letting go, it re-forms
   const toT = x => Math.max(0, Math.min(nowMin() - G.t0, (x - G.w * .04) / (G.w * .92) * (G.t1 - G.t0)));
   function doScrub(x) { const t = toT(x), p = onRim(dayX(t)), l = onRim(dayX(t), 35), d = $("scrubdot"), tx = $("scrubl"), at = G.t0 + t; Sky.scrub(at); d.setAttribute("cx", p.x); d.setAttribute("cy", p.y); d.setAttribute("visibility", "visible"); const near = ((state && state.events) || []).filter(e => BEAD[e.kind] && Math.abs((parseT(e.t) || 0) - at) <= 8).sort((a, b) => Math.abs(parseT(a.t) - at) - Math.abs(parseT(b.t) - at))[0]; tx.textContent = hhmm(at) + (near ? "  " + near.text.slice(0, 60) : ""); tx.setAttribute("x", l.x); tx.setAttribute("y", l.y); tx.setAttribute("transform", `rotate(${l.deg} ${l.x} ${l.y})`); tx.setAttribute("visibility", "visible"); }

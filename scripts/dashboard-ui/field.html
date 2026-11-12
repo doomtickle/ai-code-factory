@@ -16,7 +16,6 @@
 <script src="/vendor/three/RenderPass.js" defer></script>
 <script src="/vendor/three/ShaderPass.js" defer></script>
 <script src="/vendor/three/UnrealBloomPass.js" defer></script>
-<script src="/field-ask.js" defer></script>
 <script src="/voice.js" defer></script>
 <script src="/field-order.js" defer></script>
 <script src="/field-sky.js" defer></script>
@@ -84,10 +83,6 @@
   <div class="mid">
     <div class="said" id="said" aria-live="polite"><div class="txt" id="txt"></div><div class="meta" id="meta"></div></div>
     <div class="cu-wrap" id="cu-wrap"></div>
-    <div class="you-slot" id="you-slot">
-      <form class="you" id="ask"><input id="ask-in" type="text" aria-label="Ask a question" placeholder="Ask LOIS a question…" autocomplete="off">
-        <button type="submit" class="ic" id="send" aria-label="Send" title="Send"><svg viewBox="0 0 24 24"><path d="M5 12h13M13 6.5l5.5 5.5-5.5 5.5"/></svg></button></form>
-    </div>
     <div class="chips" id="chips"><button type="button" id="back" hidden>Back to the galaxy</button><button type="button" data-v="spend">What cost the most?</button><button type="button" data-v="stuck">What's stuck?</button><button type="button" data-v="kinds">What have they been doing?</button><button type="button" id="shown-key" aria-expanded="false" aria-controls="shown">What do you need from me?</button><span id="chip-hint">Drag the horizon to rewind</span></div>
     <p class="foot" id="foot" hidden></p>
   </div>

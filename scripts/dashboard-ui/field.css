@@ -56,7 +56,7 @@ body.holding #t-gold { stroke-width: 2; }
 #legend-k { font: 500 17px var(--f-voice); }
 
 /* the centre line: the voice, then a decision if there is one, then you */
-.mid { position: fixed; left: 0; right: 0; margin-inline: auto; top: calc(var(--rim) + 54px); bottom: 24px; width: min(calc(100vw - 2 * var(--side) - 2 * var(--edge) - 20px), 860px); display: grid; grid-template-rows: minmax(0, 1fr) var(--dh) auto auto auto; pointer-events: none; }
+.mid { position: fixed; left: 0; right: 0; margin-inline: auto; top: calc(var(--rim) + 54px); bottom: 24px; width: min(calc(100vw - 2 * var(--side) - 2 * var(--edge) - 20px), 860px); display: grid; grid-template-rows: minmax(0, 1fr) var(--dh) auto auto; pointer-events: none; }
 .said { grid-row: 1; text-align: center; min-height: 0; }
 .said .txt { font: 500 clamp(21px, 2.85vh, 28px)/1.35 var(--f-voice); text-wrap: balance; min-height: 1.35em; }
 .said .txt.long { font-size: clamp(18px, 2.25vh, 21px); line-height: 1.4; }   /* a line near the say limit (dispatch/server.py MAX_SAY_CHARS) still clears the decision row */
@@ -70,8 +70,6 @@ body.holding #t-gold { stroke-width: 2; }
 .cu-wrap { grid-row: 2; pointer-events: auto; min-height: 0; }
 .cu-frame { display: block; width: 100%; height: 100%; border: 0; background: transparent; color-scheme: dark; }
 .cu-wrap.expanded { position: fixed; inset: 0; z-index: 40; background: linear-gradient(rgba(3, 5, 10, .74), rgba(3, 5, 10, .86)); }   /* the world stays visible round the screens, as round the lane monitor */
-.you-slot { grid-row: 3; pointer-events: auto; min-height: 40px; }
-.line-frame { display: block; width: 100%; height: 50px; border: 0; background: transparent; color-scheme: dark; }
 /* Terminal 0: slides up over the world, always loaded, unreachable while closed */
 .term-panel { position: fixed; z-index: 35; left: 50%; bottom: 0; width: min(1180px, 96vw); height: min(76vh, 820px); transform: translate(-50%, 104%); transition: transform .35s ease; display: grid; grid-template-rows: auto minmax(0, 1fr); background: #070a12; border-radius: 22px 22px 0 0; box-shadow: 0 0 44px 22px #070a12, 0 0 0 100vmax rgba(3,5,10,.8); visibility: hidden; }
 .term-panel.open { transform: translate(-50%, 0); visibility: visible; }
@@ -80,14 +78,7 @@ body.holding #t-gold { stroke-width: 2; }
 .textkey { width: auto; padding: 0 14px; border-radius: 19px; display: flex; align-items: center; gap: 8px; font: 500 14.5px var(--f-data); color: var(--ink); text-decoration: none; } .ic { text-decoration: none; } .lamp { width: 7px; height: 7px; border-radius: 50%; background: var(--ink-3); } .lamp.on { background: var(--ok); box-shadow: 0 0 7px var(--ok); }
 .hint-line { font: 500 14.5px var(--f-data); color: var(--ink-2); margin-left: 8px; max-width: 46vw; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #roles, #service-note { margin-top: 12px; font: 400 clamp(14px, 1.6vh, 16px) var(--f-data); color: var(--ink-2); } #service-note { color: var(--amber); }
-/* your line: no box, just a lit edge */
-.you { display: flex; align-items: center; gap: 4px; position: relative; pointer-events: auto; padding: 2px 0 4px; }
-.you::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 1px; background: linear-gradient(90deg, rgba(127,224,255,0), rgba(127,224,255,.75) 18%, rgba(127,224,255,.75) 82%, rgba(127,224,255,0)); transition: box-shadow .25s; }
-.you:focus-within::after { box-shadow: 0 0 12px 1px rgba(127,224,255,.75); height: 1.5px; }
-.you input { flex: 1; min-width: 0; background: none; border: 0; outline: none; padding: 6px 4px; font: 500 clamp(18px, 2.3vh, 21px) var(--f-voice); color: #fff; text-align: center; }
-.you input::placeholder { color: var(--ink-3); opacity: 1; text-overflow: ellipsis; }
-.you .ic { width: 32px; height: 32px; flex: none; } #send { opacity: 0; pointer-events: none; transition: opacity .2s; } .you.has #send { opacity: 1; pointer-events: auto; } #mic[data-on="true"] { color: var(--bg); background: var(--blue); }
-.chips { grid-row: 4; min-height: 22px; margin-top: 14px; display: flex; justify-content: safe center; align-items: baseline; gap: 6px 24px; pointer-events: auto; white-space: nowrap; overflow-x: auto; scrollbar-width: none; }
+.chips { grid-row: 3; min-height: 22px; margin-top: 14px; display: flex; justify-content: safe center; align-items: baseline; gap: 6px 24px; pointer-events: auto; white-space: nowrap; overflow-x: auto; scrollbar-width: none; }
 .chips button { font: 500 clamp(14px, 1.6vh, 15.5px) var(--f-data); color: var(--ink-2); border-bottom: 1px solid rgba(203,218,238,.3); transition: color .2s, border-color .2s; } .chips button:hover { color: #fff; border-bottom-color: var(--blue); }
 #back:not([hidden]) ~ #chip-hint { display: none; } @media (max-width: 2100px) { #chip-hint { display: none; } } @media (max-width: 1400px) { .chips { gap: 6px 16px; } } #back { color: var(--blue); border-bottom-color: rgba(127,224,255,.6); } #chip-hint { font: 400 clamp(14px, 1.6vh, 15.5px) var(--f-data); color: var(--ink-3); }
 
@@ -163,7 +154,7 @@ body.holding #t-gold { stroke-width: 2; }
   .decide { grid-template-columns: 62px minmax(0, 1fr); grid-template-rows: auto auto; column-gap: 14px; row-gap: 2px; align-content: center; } .sun { grid-column: 1; grid-row: 1 / 3; width: 62px; height: 62px; } .sun .core { inset: 18px; } .d-l { grid-column: 2; grid-row: 1; text-align: left; } .d-r { grid-column: 2; grid-row: 2; } #d-facts { display: none; } #hint { display: inline; margin-right: 10px; font-size: 18px; } .d-r .f { display: inline; } #why input { text-align: left; } .said .txt { font-size: clamp(19px, 2.4vh, 24px); } .said .txt.long { font-size: 17px; } .mid:has(.txt.long) .chips { display: none; } }
 @media (prefers-reduced-motion: reduce) { *, *::before { animation-duration: .01ms !important; transition-duration: .01ms !important; } }
 
-.foot { grid-row: 5; margin: 6px 0 0; text-align: center; font: 400 13.5px var(--f-data); color: var(--ink-3); }
+.foot { grid-row: 4; margin: 6px 0 0; text-align: center; font: 400 13.5px var(--f-data); color: var(--ink-3); }
 .legend a { color: var(--blue); }
 .voice-lab { overflow: auto; } .voice-lab main { max-width: 620px; margin: 0 auto; padding: 40px 20px; display: grid; gap: 14px; } .voice-lab h1 { font: 500 36px var(--f-voice); letter-spacing: .3em; margin: 0; color: #fff; } .voice-lab p { margin: 0; color: var(--ink-2); }
 .voice-lab textarea { width: 100%; background: #070c16; color: #fff; border: 0; border-bottom: 1px solid var(--blue); padding: 8px; font: 500 20px/1.25 var(--f-voice); }
