@@ -403,7 +403,46 @@ async function pane(url) {
   } finally { await b.close(); }
 }
 
+// The delegation comet: a lane going idle -> running sends one flare from the witness to that job's crystal, running -> done
+// sends one small light back, and under reduced motion nothing flies (a brief glow instead). /api/state's lanes are steered from the page.
+const STEER_LANE = `(() => { const real = window.fetch.bind(window); window.__lane = { name: "steer-lane", job: null, state: "idle", role: "developer" };
+  window.fetch = async (u, o) => { const r = await real(u, o); if (!String(u).startsWith("/api/state")) return r;
+    const j = await r.json(); j.said = []; j.gate = []; j.lanes = [Object.assign({}, window.__lane)];
+    return new Response(JSON.stringify(j), { status: 200, headers: { "Content-Type": "application/json" } }); }; })()`;
+async function comet(url, reduced) {
+  const b = await launch(url, reduced ? [{ name: "prefers-reduced-motion", value: "reduce" }] : null, ENTERED + STEER_LANE);
+  const until = async (expr, what, ms = 30000) => { for (let t = 0; t < ms; t += 100) { if (await b.ev(expr)) return; await b.sleep(100); } throw new Error("never: " + what + " " + await b.ev(`JSON.stringify(LF.sky.cometInfo())`)); };
+  const info = () => b.ev(`LF.sky.cometInfo()`);
+  try {
+    await until(`!!(window.LF && LF.W.ready && LF.sky && !document.getElementById("hud").hidden && LF.sky.packets().some(p => p.kind !== "gold"))`, "the page and a crystal are up");
+    const id = await b.ev(`String(LF.sky.packets().find(p => p.kind !== "gold").id)`);
+    await b.sleep(2600);   // the first poll primes the narration; later changes are events
+    assert.deepStrictEqual(await info(), { active: 0, waiting: 0, out: 0, back: 0, still: 0 }, "nothing flies before any job starts");
+    await b.ev(`window.__lane.job = ${JSON.stringify(id)}; window.__lane.state = "running"`);
+    if (reduced) {
+      await until(`LF.sky.cometInfo().still === 1`, "a glow instead of a flight");
+      await b.sleep(600);
+      assert.deepStrictEqual(await info(), { active: 0, waiting: 0, out: 0, back: 0, still: 1 }, "reduced motion: a glow, no comet");
+      await b.ev(`window.__lane.state = "approved"`);
+      await until(`LF.sky.cometInfo().still === 2`, "a glow when the job ends");
+      assert.deepStrictEqual(await info(), { active: 0, waiting: 0, out: 0, back: 0, still: 2 }, "reduced motion: still no comet");
+    } else {
+      await until(`LF.sky.cometInfo().out === 1`, "the comet leaves for the crystal");
+      assert.strictEqual((await info()).active, 1, "one comet in flight");
+      await until(`LF.sky.cometInfo().active === 0`, "the comet lands and its thread fades", 8000);
+      await b.sleep(2400);   // more polls with the same state: still one
+      assert.deepStrictEqual(await info(), { active: 0, waiting: 0, out: 1, back: 0, still: 0 }, "one comet per event, and no return yet");
+      await b.ev(`window.__lane.state = "approved"`);
+      await until(`LF.sky.cometInfo().back === 1`, "a light comes back from the crystal");
+      await until(`LF.sky.cometInfo().active === 0`, "the light reaches her", 8000);
+      await b.sleep(2400);
+      assert.deepStrictEqual(await info(), { active: 0, waiting: 0, out: 1, back: 1, still: 0 }, "one return light, nothing loops");
+    }
+    assert.deepStrictEqual(b.errors, [], "no page errors");
+  } finally { await b.close(); }
+}
+
 const url = process.argv[2];
 const only = process.env.FIELD_ONLY;
-(only === "pane" ? pane(url) : only === "crystals" ? crystals(url) : only === "picking" ? picking(url) : only === "witness" ? witness(url, 0).then(() => witness(url, 1)) : layouts(url, 0).then(() => layouts(url, 65)).then(() => picking(url)).then(() => crystals(url)).then(() => witness(url, 0)).then(() => witness(url, 1)).then(() => pane(url)))
+(only === "pane" ? pane(url) : only === "comet" ? comet(url, 0).then(() => comet(url, 1)) : only === "crystals" ? crystals(url) : only === "picking" ? picking(url) : only === "witness" ? witness(url, 0).then(() => witness(url, 1)) : layouts(url, 0).then(() => layouts(url, 65)).then(() => picking(url)).then(() => crystals(url)).then(() => witness(url, 0)).then(() => witness(url, 1)).then(() => pane(url)).then(() => comet(url, 0)).then(() => comet(url, 1)))
   .then(() => console.log("field browser checks passed"), e => { console.error(e.stack || e); process.exit(1); });
