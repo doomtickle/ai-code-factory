@@ -1015,13 +1015,13 @@ class TermScriptTests(unittest.TestCase):
                               "replay raises no prompt", "preview is visible text", "fallback when writeText is refused",
                               "selection copied trimmed", "copy keys"], platform)
 
-
-if __name__ == "__main__":
-    unittest.main()
-
     def test_page_tells_the_main_page_three_fixed_words_or_nothing(self):
         here = Path(__file__).resolve().parent
         proc = subprocess.run(["node", str(here / "test_term_tell.js"), str(UI / "term.js")], capture_output=True, text=True, timeout=60)
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(json.loads(proc.stdout.strip().splitlines()[-1]),
                          ["enter", "out and still", "replay says nothing", "hidden and closed", "classic sends nothing"])
+
+
+if __name__ == "__main__":
+    unittest.main()
