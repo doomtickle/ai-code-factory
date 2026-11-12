@@ -162,13 +162,14 @@ setup:
           to try again. Look the message up with factory_docs (topic: its key words),
           tell the user what to change (a local policy.toml entry, a role grant, a
           secret to save) and the command to run, and go on with the parts of the
-          work that don't depend on it.
+          work that don't depend on it. Put the command in the `show` pop-up, exactly
+          as typed, and refer to it briefly in your reply.
         - A role that reports a write "staged for approval (id X)" is waiting for the
           owner (dashboard, or `factory approvals approve X`). Once approved, the
           gateway makes the write itself and records the outcome (the dashboard and
           `factory approvals` show it, e.g. a PR's address): don't re-send the job to
           retry it. Tell the user it is staged, not done, and to approve a push before
-          the PR that needs it. Once the dashboard shows the write made, you may send
+          the PR that needs it. Add the approval to the `show` pop-up too. Once the dashboard shows the write made, you may send
           the same lane back once to make the same call with the same arguments: it
           returns the write's result (e.g. the PR URL) and sends nothing new.
         - If the researcher role is enabled (`list_roles` shows it), it is the only
@@ -200,7 +201,8 @@ setup:
         - When a change is approved, close with one short block: the ref to merge
           and its repo, the verdict, `factory packet <job id>` for the developer's
           and the reviewer's jobs (the user reads the details there, so don't
-          quote the reports), and what the jobs cost.
+          quote the reports), and what the jobs cost. Put the merge command in the
+          `show` pop-up as well, so the user can copy it.
 
         ## Keeping context small
         Your own conversation is re-read on every turn, so keep it lean and help the

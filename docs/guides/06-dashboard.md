@@ -151,7 +151,8 @@ This is keyword matching, not comprehension. See
 The last chip, **What do you need from me?**, opens a small panel in the upper
 left of the sky with what is waiting on you: decisions, branches to merge, held
 writes, one short line each, with commands written out so you can copy them. It
-pops up by itself when the Coordinator posts a new list, and the chip opens it
+pops up by itself when the Coordinator posts a new list, which it does whenever
+something new is waiting on you or an item is done, and the chip opens it
 again. The panel shows its age ("2 min ago"), **Copy** and a close key, and you
 can select the text by hand. It shrinks and dims after 10 minutes but never
 closes by itself. Closing it is your choice.

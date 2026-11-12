@@ -15,7 +15,7 @@ Dated entries, for the user to review. Newest first.
     to copy a command out of a ticket, file or report and to compose commands only from facts it checked, but injected text is what could override that, so the owner reads before pasting.
   - **No CSP, header or `allow` change.** The main page is a top-level page on loopback, where `clipboard.writeText` works from a click with none.
   - **"When was it busiest?" has no chip now but still works typed.** The `time` view and its keyword stay.
-  - **Not measured:** how reliably the real Coordinator calls `show` when the list changes. This host had no signed-in `sbx` or `claude` to try it with.
+  - **Not measured:** how reliably the real Coordinator calls `show` when the list changes, now that the bridge instructions and the Coordinator brief name it (2026-11-12). This host had no signed-in `sbx` or `claude` to try it with.
 
 ## 2026-11-05
 
