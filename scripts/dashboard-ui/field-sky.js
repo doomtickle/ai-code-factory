@@ -118,6 +118,36 @@ window.makeSky = function (scene, camera, C, U, W) {
   const golds = new Map(), flashes = [], ships = [], tmp = new THREE.Vector3(), tmp2 = new THREE.Vector3();
   function flashAt(pos, color, size = .22, dur = 900) { const f = sprite(FLARE, color, size, .95); f.position.copy(pos); f.renderOrder = 6; root.add(f); flashes.push({ s: f, t0: performance.now(), dur, size }); }
 
+  // ---- delegation comet: one flare from the witness to a job's crystal when the job starts, one small light back when it ends.
+  // Driven only by a lane's job id and state change (field-hud.js passes an id that passed its pattern); one comet per event, nothing loops.
+  const CMT = { N: 28, K: 8, out: 1500, back: 1300, fadeOut: 1100, fadeBack: 300, waitMs: 6000, max: 6 }, comets = [], cometWait = [], cometSeen = { out: 0, back: 0, still: 0 };
+  const cometEase = f => .5 - .5 * Math.cos(Math.PI * f), cometP = new THREE.Vector3(), cometQ = new THREE.Vector3();
+  const stillMotion = () => !!(window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches);
+  const bez = (c, f, out) => { const a = 1 - f; return out.copy(c.a).multiplyScalar(a * a).addScaledVector(c.m, 2 * a * f).addScaledVector(c.b, f * f); };
+  function glowAt(pos, color, size) { flashAt(pos, color, size, 1000); const f = flashes[flashes.length - 1]; f.s.material.depthTest = false; }
+  function cometSpawn(w, pk, now) {
+    const back = w.kind === "back", col = back ? (w.state === "approved" || w.state === "done" || !w.state ? new THREE.Color(.3, 1, .6) : /^(revise)$/.test(w.state) ? new THREE.Color(1, .65, .2) : RED.clone()) : pk.order.spark.clone().lerp(new THREE.Color(1, 1, 1), .45);
+    if (stillMotion()) { glowAt(C, col, .5); glowAt(pk.pos, col, pk.w * 3); cometSeen.still++; return; }
+    if (!back) glowAt(C, col, .3);
+    const head = sprite(FLARE, col, 1, 0), N = CMT.N, geo = new THREE.BufferGeometry(); geo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(N * 3), 3)); geo.setAttribute("color", new THREE.BufferAttribute(new Float32Array(N * 3), 3));
+    const line = new THREE.Line(geo, new THREE.LineBasicMaterial(basic({ vertexColors: true, opacity: 0, depthTest: false }))); line.frustumCulled = false; line.renderOrder = 6; head.renderOrder = 7; head.material.depthTest = false; head.frustumCulled = false;
+    const tr = []; for (let k = 0; k < CMT.K; k++) { const t = sprite(FLARE, col, 1, 0); t.renderOrder = 6; t.material.depthTest = false; t.frustumCulled = false; tr.push(t); root.add(t); }
+    root.add(line, head); comets.push({ back, pk, col, head, line, geo, tr, t0: now, c: { a: new THREE.Vector3(), m: new THREE.Vector3(), b: new THREE.Vector3() } }); cometSeen[w.kind]++; }
+  function cometStep(now, vis) {
+    for (let i = cometWait.length - 1; i >= 0; i--) { const w = cometWait[i], pk = PK.get("j" + w.id);
+      if (pk && pk.placed && pk.g.visible) { cometWait.splice(i, 1); cometSpawn(w, pk, now); } else if (now - w.t0 > CMT.waitMs || (!pk && w.kind === "back" && now - w.t0 > 1500 && !J.has(w.id))) cometWait.splice(i, 1); }
+    for (let i = comets.length - 1; i >= 0; i--) { const c = comets[i], fly = c.back ? CMT.back : CMT.out, fade = c.back ? CMT.fadeBack : CMT.fadeOut, el = now - c.t0, f = Math.min(1, el / fly), e = cometEase(f), after = Math.max(0, el - fly) / fade;
+      if (after >= 1 || !PK.has(c.pk.key)) { root.remove(c.line, c.head, ...c.tr); c.line.material.dispose(); c.geo.dispose(); c.head.material.dispose(); c.tr.forEach(t => t.material.dispose()); comets.splice(i, 1); continue; }
+      const A = c.c.a.copy(C), B = c.c.b.copy(c.pk.pos), M = c.c.m, dx = B.x - A.x, dy = B.y - A.y, L = Math.hypot(dx, dy) || 1; let px = -dy / L, py = dx / L; if (py < 0) { px = -px; py = -py; }
+      M.set((A.x + B.x) / 2 + px * .22 * L, (A.y + B.y) / 2 + py * .22 * L, A.z);
+      // the head rides the path (face to crystal; the other way for the return); the thread is the path behind it, bright at the head
+      const s1 = c.back ? 1 - e : e, pos = c.geo.attributes.position, col = c.geo.attributes.color, N = CMT.N, vis2 = vis ? 1 : 0;
+      for (let k = 0; k < N; k++) { const u1 = k / (N - 1), sp = c.back ? Math.min(1, s1 + .28 * u1) : s1 * (1 - u1), q = bez(c.c, sp, cometQ), m = (1 - u1) * (1 - u1) * (c.back ? .6 : 1.1) * vis2 * (1 - after); pos.setXYZ(k, q.x, q.y, q.z); col.setXYZ(k, c.col.r * m, c.col.g * m, c.col.b * m); }
+      pos.needsUpdate = true; col.needsUpdate = true; c.line.material.opacity = 1;
+      bez(c.c, s1, cometP); c.head.position.copy(cometP); const rise = Math.min(1, f * 8), land = c.back ? 1 : 1 - Math.pow(Math.max(0, f - .85) / .15, 2) * .6, sz = c.pk.w * (c.back ? .7 : 1.1) * (.7 + .3 * Math.sin(Math.PI * Math.min(1, f))) * land;
+      c.head.scale.setScalar(Math.max(1e-4, sz)); c.head.material.opacity = (f >= 1 ? 0 : .95 * rise * (c.back ? 1 - Math.pow(Math.max(0, f - .8) / .2, 2) : 1)) * vis2;
+      for (let k = 0; k < CMT.K; k++) { const d = .035 * (k + 1), q = bez(c.c, c.back ? Math.min(1, s1 + d) : Math.max(0, s1 - d), cometQ), w = 1 - (k + 1) / (CMT.K + 1), t = c.tr[k]; t.position.copy(q); t.scale.setScalar(Math.max(1e-4, sz * (.35 + .65 * w))); t.material.opacity = c.head.material.opacity * w * .75; }
+      if (f >= 1 && !c.landed) { c.landed = true; if (vis) glowAt(c.back ? C : c.pk.pos, c.col, c.back ? .35 : c.pk.w * 2.4); } } }
   function ingest(field, state) { // one poll of /api/field, with the /api/state it goes with
     const list = (field && field.jobs) || []; if (dayKey !== null && field.date !== dayKey) reset(); dayKey = field.date;
     list.forEach(f => { let j = J.get(f.id); if (!j) { const o = orderFor(f.order, f.label); j = { id: f.id, i: jobs.length, order: o, stars: [], placed: 0, blocked: 0 }; jobs.push(j); J.set(f.id, j); o.jobs.push(j); makePacket("j" + j.id, o, j, null); }
@@ -272,6 +302,7 @@ window.makeSky = function (scene, camera, C, U, W) {
     const tp = tether.geometry.attributes.position, tc = tether.geometry.attributes.color, lim = (rings ? rings.R * 2.6 : 60) * 2.2; let ns2 = 0;
     for (let k = 1; k < seq.length && ns2 < 256; k++) { const a = seq[k - 1], b = seq[k]; if (a.order !== b.order || !a.g.visible || !b.g.visible || Math.hypot(a.sx - b.sx, a.sy - b.sy) > lim) continue; tmp.subVectors(b.pos, a.pos); const L = tmp.length(); if (L < 1e-6) continue; tmp.multiplyScalar(1 / L); tmp2.copy(a.pos).addScaledVector(tmp, a.g.scale.x * .95); tp.setXYZ(ns2 * 2, tmp2.x, tmp2.y, tmp2.z); tmp2.copy(b.pos).addScaledVector(tmp, -b.g.scale.x * .95); tp.setXYZ(ns2 * 2 + 1, tmp2.x, tmp2.y, tmp2.z); const c = a.order.color, m = homeAmt * (hovOrder === a.order ? 1 : hovOrder ? .3 : .7); tc.setXYZ(ns2 * 2, c.r * m, c.g * m, c.b * m); tc.setXYZ(ns2 * 2 + 1, c.r * m, c.g * m, c.b * m); ns2++; }
     tether.geometry.setDrawRange(0, ns2 * 2); tp.needsUpdate = true; tc.needsUpdate = true;
+    cometStep(now, view === "home" && !rewinding);
     for (let i = ships.length - 1; i >= 0; i--) { const p = ships[i], f = (now - p.t0) / p.dur; p.s.position.copy(p.from).addScaledVector(p.dir, p.len * Math.min(1, f)); p.s.material.opacity = .95 * (1 - f); p.s.visible = view === "home" && !rewinding; if (f >= 1) { root.remove(p.s); p.s.material.dispose(); ships.splice(i, 1); } }
     for (let i = flashes.length - 1; i >= 0; i--) { const fl = flashes[i], f = (now - fl.t0) / fl.dur; fl.s.material.opacity = Math.max(0, .95 * (1 - f)); fl.s.scale.setScalar(fl.size * (.6 + f)); if (f >= 1) { root.remove(fl.s); fl.s.material.dispose(); flashes.splice(i, 1); } }
     if (view === "stuck") stuckEls.forEach(([el, it]) => { const P = it.at().clone().project(camera), g = W.geo(), w = el.offsetWidth, x = Math.max(6, Math.min(g.w - w - 6, (P.x * .5 + .5) * g.w - w / 2)), y = Math.max(66, Math.min(W.rimAt(x + w / 2) - el.offsetHeight - 14, (-P.y * .5 + .5) * g.h + 16)); el.style.transform = `translate(${x}px, ${y}px)`; });
@@ -280,6 +311,9 @@ window.makeSky = function (scene, camera, C, U, W) {
     document.body.style.cursor = hovered && !W.overUI ? "pointer" : ""; }
   const pkFor = id => PK.get("j" + id) || null;
   return { update, ingest,
+    // a job started ("out") or ended ("back"; state is the lane's state word); waits a few seconds for its crystal, then gives up
+    comet(kind, id, state) { if (kind !== "out" && kind !== "back") return; if (comets.length + cometWait.length >= CMT.max || cometWait.some(w => w.kind === kind && w.id === id)) return; cometWait.push({ kind, id, state: String(state || "").slice(0, 20), t0: performance.now() }); },
+    cometInfo() { return { active: comets.length, waiting: cometWait.length, out: cometSeen.out, back: cometSeen.back, still: cometSeen.still }; },
     get view() { return view; }, get rate() { return RATE; }, get stars() { return nStars; }, get hasWork() { return jobs.length > 0; },
     show, rescale() { relayout(true); if (view === "spend" || view === "kinds" || view === "time") { const r = layoutView(view); if (!r.none) { bB.needsUpdate = true; renderTags(r.tags); } } },
     replay() { let earliest = 1e6; for (let i = 0; i < nStars; i += 50) earliest = Math.min(earliest, aMeta[i * 4]); if (earliest < 1e5) { const s = nowMin(); tEff = earliest; replaySpeed = Math.max(1, (s - earliest) / 3.4); } },
