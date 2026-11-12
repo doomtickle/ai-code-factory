@@ -148,8 +148,10 @@ through the same `prepare`/`run` token and the same runner (fixed argv `<factory
 RESTART, UPDATE and DIAG), only once the factory is bound to a project. The command (`factory/dispatch_start.py`
 `apply_snapshot`) refreshes only the bridge's snapshot of role overrides and instructions plus notes, validated as
 `factory start` validates them (`validate_role_overrides`, `validate_role`) and refused if a role's instructions
-plus notes pass the bridge's 20,000 characters; on a refusal nothing is written. Each file is swapped in with
-`os.replace` from a temp file in its folder, and stale files go only after, so the bridge never sees a gap. It
+plus notes pass the bridge's 20,000 characters or aren't UTF-8; on a refusal nothing is written. Each file is
+swapped in with `os.replace` from a temp file in its folder (atomic per file, not across the snapshot), and stale
+files go only after, so the bridge never sees a gap. It holds the snapshot lock `factory start` holds
+(`FACTORY_STATE/dispatch/snapshot.lock`) and refuses with "a start is running" while a start writes. It
 touches no sandbox, broker, job or `enabled-roles`/`lane-identity.conf` (those still apply on RESTART), so its
 `prepare` lists no jobs or held writes but the pending changes it applies (`changes`) and those that still need a
 restart (`later`), from the SETTINGS data (`dashboard_controls.pending_changes`; already cleaned strings, drawn as
