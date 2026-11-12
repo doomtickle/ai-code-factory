@@ -2,6 +2,13 @@
 # like the rest of the repo: actions by commit SHA (tag in the comment),
 # runners by OS version, Python by exact version, shellcheck by version and
 # SHA-256 (scripts/lib/common.sh).
+#
+# The `changes` job reads what a pull request touched (scripts/ci-changes.sh) and
+# the other jobs skip the steps that change cannot affect. The jobs themselves
+# always run and report, because branch protection requires them by name; only
+# steps are skipped. Every flag is fail-open: pushes to main and manual runs run
+# everything, and so does a `changes` job that fails (its outputs are then empty,
+# and each step tests for `!= 'false'`).
 name: CI
 
 on:
@@ -13,25 +20,72 @@ on:
 permissions:
   contents: read
 
+# A new push to a pull request cancels the old run. A push to main never does,
+# and each main commit has its own group, so every merge keeps its own result
+# (a shared group would still drop all but the newest queued run).
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  changes:
+    name: changes
+    runs-on: ubuntu-24.04
+    outputs:
+      images: ${{ steps.flags.outputs.images }}
+      broker: ${{ steps.flags.outputs.broker }}
+      code: ${{ steps.flags.outputs.code }}
+      docs: ${{ steps.flags.outputs.docs }}
+    steps:
+      # Full history, so the diff against the base branch has its merge base.
+      # Only pull requests are compared; any other event runs everything.
+      - if: github.event_name == 'pull_request'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - id: flags
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if [ "$EVENT" = pull_request ]; then
+            scripts/ci-changes.sh "$BASE" "$HEAD" | tee -a "$GITHUB_OUTPUT"
+          else
+            echo "$EVENT: running everything"
+            printf 'images=true\nbroker=true\ncode=true\ndocs=true\n' | tee -a "$GITHUB_OUTPUT"
+          fi
+
   lint:
     name: shellcheck
+    needs: changes
+    # Not skipped when `changes` fails: required checks must still report.
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
+    env:
+      RUN: ${{ needs.changes.outputs.code != 'false' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - run: scripts/lint.sh
+      - if: env.RUN == 'true'
+        run: scripts/lint.sh
+      - if: env.RUN != 'true'
+        run: echo "::notice::Only prose changed; no shell script to lint."
 
   linux:
     # Job names are stable (no versions in them): branch protection on main
     # requires them by name.
     name: tests (Linux, ${{ matrix.label }})
+    needs: changes
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
+    env:
+      # Tests run unless `changes` found only prose. A docs-only change still
+      # runs the two tests that read the real README and docs/.
+      RUN_TESTS: ${{ needs.changes.outputs.code != 'false' }}
+      RUN_DOCS_TESTS: ${{ needs.changes.outputs.code == 'false' && needs.changes.outputs.docs == 'true' }}
     strategy:
       fail-fast: false
       matrix:
@@ -54,90 +108,147 @@ jobs:
           git config --global user.name "CI"
           git config --global user.email "ci@example.invalid"
       - name: dispatch bridge
+        if: env.RUN_TESTS == 'true'
         run: python3 -m unittest discover -s dispatch -v
       - name: factory Python CLI (factory/)
+        if: env.RUN_TESTS == 'true'
         run: python3 -m unittest discover -s factory -t . -p 'test_*.py' -v
       - name: host Python scripts (analytics, approvals, dashboard, docs)
+        if: env.RUN_TESTS == 'true'
         run: python3 -m unittest discover -s scripts -p 'test_*.py' -v
       - name: voice server (no torch needed)
+        if: env.RUN_TESTS == 'true'
         run: python3 -m unittest discover -s voice -p 'test_*.py' -v
       - name: factory-lane
+        if: env.RUN_TESTS == 'true'
         run: bash scripts/test_factory_lane.sh
       - name: project_repos parity (factory/repos.py, dispatch/server.py, factory-lane)
+        if: env.RUN_TESTS == 'true'
         run: bash scripts/test_project_repos.sh
       - name: factory-test Python mode
+        if: env.RUN_TESTS == 'true'
         run: bash scripts/test_factory_test.sh
       - name: factory update
+        if: env.RUN_TESTS == 'true'
         run: bash scripts/test_factory_update.sh
       - name: sbx CLI reference
+        if: env.RUN_TESTS == 'true'
         run: bash scripts/test_sbx_reference.sh
       - name: factory-shot argument handling
+        if: env.RUN_TESTS == 'true'
         run: bash scripts/test_factory_shot.sh
       - name: factory-demo (PID-tracked demo dashboard)
+        if: env.RUN_TESTS == 'true'
         run: bash scripts/test_factory_demo.sh
       - name: factory state (token minting, update's failed rm)
+        if: env.RUN_TESTS == 'true'
         run: bash scripts/test_factory_state.sh
       - name: fresh-clone and setup helper checks
+        if: env.RUN_TESTS == 'true'
         run: bash scripts/test_factory_helpers.sh
       - name: lint.sh shellcheck selection checks
+        if: env.RUN_TESTS == 'true'
         run: bash scripts/test_lint.sh
+      - name: ci-changes.sh (which parts of CI a change needs)
+        if: env.RUN_TESTS == 'true'
+        run: bash scripts/test_ci_changes.sh
+      - name: docs tests (only docs changed)
+        if: env.RUN_DOCS_TESTS == 'true'
+        run: |
+          python3 -m unittest discover -s scripts -p 'test_docs.py' -v
+          python3 -m unittest discover -s scripts -p 'test_dashboard.py' -v
+          python3 -m unittest factory.test_command_docs.RealRenderTest -v
+          bash scripts/test_sbx_reference.sh
+      - name: no tests needed (only prose changed)
+        if: env.RUN_TESTS != 'true' && env.RUN_DOCS_TESTS != 'true'
+        run: echo "::notice::Only prose changed (no README, docs or code); nothing to test."
 
   macos:
     # What a Mac user runs: the system bash (3.2) and the system Python
     # (/usr/bin/python3, from the Command Line Tools), not Homebrew's.
     name: tests (macOS, system bash and Python)
+    needs: changes
+    if: ${{ !cancelled() }}
     runs-on: macos-15
+    env:
+      # macOS runs the host suites; the README and docs/ tests are Linux's.
+      RUN_TESTS: ${{ needs.changes.outputs.code != 'false' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Use the system bash and Python first on PATH
+        if: env.RUN_TESTS == 'true'
         run: |
           echo /usr/bin >> "$GITHUB_PATH"
           echo /bin >> "$GITHUB_PATH"
       - name: Versions
+        if: env.RUN_TESTS == 'true'
         run: |
           command -v bash python3
           bash --version | head -n 1
           python3 --version
       - name: Git identity for test fixtures
+        if: env.RUN_TESTS == 'true'
         run: |
           git config --global user.name "CI"
           git config --global user.email "ci@example.invalid"
       - name: dispatch bridge
+        if: env.RUN_TESTS == 'true'
         run: python3 -m unittest discover -s dispatch -v
       - name: factory Python CLI (factory/)
+        if: env.RUN_TESTS == 'true'
         run: python3 -m unittest discover -s factory -t . -p 'test_*.py' -v
       - name: host Python scripts (analytics, approvals, dashboard, docs)
+        if: env.RUN_TESTS == 'true'
         run: python3 -m unittest discover -s scripts -p 'test_*.py' -v
       - name: voice server (no torch needed)
+        if: env.RUN_TESTS == 'true'
         run: python3 -m unittest discover -s voice -p 'test_*.py' -v
       - name: factory update
+        if: env.RUN_TESTS == 'true'
         run: bash scripts/test_factory_update.sh
       - name: factory-shot argument handling
+        if: env.RUN_TESTS == 'true'
         run: bash scripts/test_factory_shot.sh
       - name: factory state (token minting, update's failed rm)
+        if: env.RUN_TESTS == 'true'
         run: bash scripts/test_factory_state.sh
       - name: fresh-clone and setup helper checks
+        if: env.RUN_TESTS == 'true'
         run: bash scripts/test_factory_helpers.sh
       - name: lint.sh shellcheck selection checks
+        if: env.RUN_TESTS == 'true'
         run: bash scripts/test_lint.sh
+      - name: ci-changes.sh (which parts of CI a change needs)
+        if: env.RUN_TESTS == 'true'
+        run: bash scripts/test_ci_changes.sh
+      - name: no tests needed (only README, docs or other prose changed)
+        if: env.RUN_TESTS != 'true'
+        run: echo "::notice::No code changed; nothing to test."
       # factory-lane runs only inside the Linux sandboxes, so it's tested on Linux.
 
   images:
     name: images and broker tests
+    needs: changes
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
+    env:
+      RUN: ${{ needs.changes.outputs.images != 'false' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Build the developer, reviewer and broker images (as factory setup does, without sbx)
+        if: env.RUN == 'true'
         run: scripts/00-build-templates.sh --build-only
       - name: Broker tests, inside the broker image, without network
+        if: env.RUN == 'true'
         run: >
           docker run --rm --network none -v "$PWD/broker:/b:ro" -w /b factory-broker:v3
           python3 -B -m unittest discover -s tests -t .
       - name: Role images carry the factory tools
+        if: env.RUN == 'true'
         run: |
           for image in factory-developer:v3 factory-reviewer:v3; do
             docker run --rm --network none --entrypoint sh "$image" -c \
@@ -151,41 +262,39 @@ jobs:
             [ "$got" = "$pin" ] \
               || { echo "::error::$image has shellcheck '$got', expected the pinned $pin"; exit 1; }
           done
+      - name: Nothing to build (no image input changed)
+        if: env.RUN != 'true'
+        run: echo "::notice::No template, kit, broker or image-build file changed; skipping the image builds."
 
   broker:
     # The broker's own tests, as passdesk-broker's workflow ran them before
-    # the broker moved into this repo: inside both images built from
-    # broker/Dockerfile (the sbx image the factory uses and the standalone
-    # image), without network, then the compose file and a smoke test of the
-    # standalone image. The image Pythons are the digest-pinned ones in the
-    # Dockerfile; the first step runs the same suite on this file's pinned
-    # Python (the broker needs 3.11+). No third-party actions beyond checkout
-    # and setup-python: the rest is the runner's docker CLI.
+    # the broker moved into this repo: inside the standalone image built from
+    # broker/Dockerfile, without network, then the compose file and a smoke
+    # test of the standalone image. The suite also runs inside the sbx image,
+    # in the images job. There is no run on the runner's own Python: the sbx
+    # image's Python is the 3.14 that run used, so it repeated that run (see
+    # broker/docs/decisions.md, 2026-11-12). No third-party actions beyond
+    # checkout: the rest is the runner's docker CLI.
     name: broker tests
+    needs: changes
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
+    env:
+      RUN: ${{ needs.changes.outputs.broker != 'false' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: "3.14.8"
-      - name: Git identity for test fixtures
-        run: |
-          git config --global user.name "CI"
-          git config --global user.email "ci@example.invalid"
-      - name: Run the tests on the runner's Python
-        working-directory: broker
-        run: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest -v
-
       # The standalone target (plain Docker, no sbx): built with no
       # --build-context, so the Dockerfile's default empty overlay and
       # plugins stages are what get exercised here, then the same test suite
       # inside it, as its non-root user, on its Python and git.
       - name: Build standalone image
+        if: env.RUN == 'true'
         working-directory: broker
         run: docker buildx build --load --target standalone -t passdesk:ci-standalone .
       - name: Run tests in the standalone image
+        if: env.RUN == 'true'
         # The image's own BROKER_* defaults are unset first: the tests
         # expect the environment a bare checkout has (deployment "sbx").
         run: |
@@ -193,6 +302,7 @@ jobs:
             sh -c 'unset BROKER_DEPLOYMENT BROKER_STATE BROKER_WORKSPACE BROKER_SECRETS_DIR
                    exec python3 -m unittest -v'
       - name: Validate the compose quickstart
+        if: env.RUN == 'true'
         # The stack itself (and its isolation check) runs in CI as a
         # separate change (doomtickle/passdesk-ops#59); this only checks the
         # file parses with the secret and workspace it expects.
@@ -201,6 +311,7 @@ jobs:
           mkdir -p secrets workspace && : > secrets/github
           docker compose config --quiet
       - name: Standalone image smoke test
+        if: env.RUN == 'true'
         run: |
           docker run --rm --network none passdesk:ci-standalone sh -c '
             set -eu
@@ -210,3 +321,6 @@ jobs:
             python3 -m passdesk principal list
             python3 -m passdesk.doctor || true
             git --version'
+      - name: Nothing to test (broker/ unchanged)
+        if: env.RUN != 'true'
+        run: echo "::notice::broker/ and this workflow are unchanged; skipping the broker image tests."
