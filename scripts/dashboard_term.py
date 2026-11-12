@@ -848,7 +848,9 @@ def make_handler(term: Term | None, token: str, cookie: str, key: str, port: int
                 except OSError:
                     self.refuse(500, f"missing {page}")
                     return
-                self.send(200, html.replace(KEY_SLOT, key).encode("utf-8"), "text/html; charset=utf-8")
+                # Only the Thoughtfield's page has the main-port slot: it tells the main page three fixed words, to that exact origin.
+                html = html.replace(KEY_SLOT, key).replace(CU_PORT_SLOT, str(int(main_port)))
+                self.send(200, html.encode("utf-8"), "text/html; charset=utf-8")
             elif path in ("/cu", "/cu/field") and controls is not None:
                 # The control unit carries its own key: the same rule as /term. /cu/field is the same unit and
                 # the same cu.js, in the Thoughtfield's decision-row skin.

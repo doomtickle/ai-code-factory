@@ -13,6 +13,8 @@ window.TermSkin = {
   who: "LOIS",
   // The pane is always on screen beside the page, so a state message must never move the keys into the Coordinator: only a click does.
   focusOnState: false,
+  // Tells the Thoughtfield's page three fixed words (Enter pressed, output arriving, output stopped), never text or sizes. term.js sends them only in a frame the server gave the main page's port.
+  tell: true,
   reasons: {
     elsewhere: ["Open elsewhere", "LOIS is open in `factory chat`. Close it there, then power on here."],
     "no-sandbox": ["LOIS isn't set up yet", "Run `factory start` first, then power on."],
