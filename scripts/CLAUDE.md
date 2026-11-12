@@ -167,14 +167,34 @@ without seeing N files?" with CANCEL and CONFIRM APPROVE (dark for 1 s), and the
 changing or going cancels the question.
 
 An unexpected exception in any control is a 500 with a fixed message, and only its
-type is logged. SETUP, now labelled SETTINGS (doomtickle/passdesk-ops#183; the ids, `setup` screen and `svc-setup` plate keep the old name; four tabs, Roles / Project notes / Gateway / Dashboard look, one section drawn at a time, and no new request or write) shows the effective configuration read-only: `config`
+type is logged. SETUP, now labelled SETTINGS (doomtickle/passdesk-ops#183; the ids, `setup` screen and `svc-setup` plate keep the old name; four tabs, Roles / Project notes / Gateway / Dashboard look, one section drawn at a time, and no new request or write) shows the configuration read-only, as saved and as running ("Settings: saved and running"): `config`
 in the unit's state, built by `scripts/dashboard_setup.py` from the factory's parsers, cached
-a few seconds and read outside the board's lock. Its read-only view adds no endpoint and runs nothing
+a few seconds and read outside the board's lock. "Running" is the copy `factory start` made in
+`FACTORY_STATE/dispatch/` (`role-overrides/`, `instructions/`, `enabled-roles`), which is all the bridge reads; it is read
+with `dashboard_service.safe_read` (`O_NOFOLLOW|O_NONBLOCK`, a regular file by `fstat`, capped) and
+`dashboard_service`'s notes helpers, only once `enabled-roles` exists there. Each tuning key carries `running` and `pending`, each notes file
+`running_chars` and `pending` (compared by bytes against the segment `factory start` appended after its fixed
+`# This project (...)` header; a file deleted since the start stays listed as `gone`; no note text is sent beyond
+what the editor reads on request), a role `instructions_running`/`instructions_pending`, an optional role
+`running_on`/`on_pending`, and `config.pending` counts them for the bar at the top of the screen (`cu.js` `pendingBar`,
+drawn from every poll, so it survives reopening Settings; the Restart lamp lists the same instructions and notes changes). Only overrides and notes go through the snapshot; the bridge reads the committed `role.conf` live (`dispatch/server.py` `load_roles`), so a tuning key the snapshot override doesn't set runs at the current `role.conf` value, and is `pending` only when the saved value differs from that. A notes file that is a symlink (which `factory start` follows and these readers don't) is not compared: never pending, never `gone`, and the lamp falls back to its modified-after-start test for it. The page shows one apply tag per setting from a fixed map:
+"applies on Restart" (tuning, notes, enabled-roles), "needs Update" (`WORKSPACE`, `TEMPLATE`, `BROKER_TOOLS`, Gateway),
+"needs dashboard restart" (Look). The Look tab shows `config.look.values` (`dashboard_setup.look_values`: what the
+running dashboard parsed from `dashboard.toml`, cleaned again), colours only as a validated `#rrggbb` through
+`style.setProperty`, never a class or attribute from data. Its read-only view adds no endpoint and runs nothing
 (its one write is CONFIG WRITE below); it takes
 only named policy keys (never a credential, and a URL's user, password, query and fragment are
 cut), and every string is cleaned to one printable line and drawn as text. Anything that moves
 the security boundary (broker policy and hosts, credentials, kits) is shown there read-only,
 never edited.
+
+SETTINGS layout (both skins draw it from `cu.js`; `cu-field.css` is the designed one, `cu.css` a plain stacked version): one line of intro per tab; Roles
+opens with the "Optional roles" row, then one `rack` per role as a table row (`.rtab` > `.rhead` + `.rline`: role, lanes stepper, model,
+effort segments, three limits) that a container query (`@container (min-width: 61rem)` on `.rtab`) turns into a stacked card when narrow. The
+other keys, the Boundary line (WORKSPACE, TEMPLATE, BROKER_TOOLS, read-only) and the prompt size sit behind a per-role Details toggle
+(`.rdetail`, state kept in `detailsOpen`). Alignment is grid/flex only: no `padEnd` and no runs of spaces (the field skin is proportional).
+Inputs are real boxed fields with a visible focus ring and 32px targets; a changed value is blue, a refused one red, one set by the override has
+an amber left bar.
 
 CONFIG WRITE (doomtickle/passdesk-ops#185, #186, owner decision 29 Oct 2026,
 `scripts/dashboard_configwrite.py`) is SETUP's one write, and the only file the control unit

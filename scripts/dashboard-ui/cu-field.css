@@ -124,57 +124,105 @@ html.svc #svc-back { display: inline; }
 .crt-body p { margin: 0 0 8px; overflow-wrap: anywhere; }
 .crt-body .banner { display: none; }   /* the title already says it; only a result stands out */
 .crt-body .banner.k-ok, .crt-body .banner.k-warn { display: block; margin: 0 0 12px; font: 500 1.45rem/1.2 var(--f-voice); }
-.crt-body h5 { margin: 24px 0 8px; color: var(--i1); font: 500 1.5rem/1.2 var(--f-voice); }
+.crt-body #set-pending.banner { margin: 0 0 14px; padding: 7px 12px; border-left: 3px solid var(--amber); background: rgba(255, 190, 60, .08); font: 600 1rem/1.3 var(--f-voice); }
+.crt-body h5 { margin: 20px 0 6px; color: var(--i1); font: 600 1.15rem/1.3 var(--f-voice); }
 .crt-body h5::first-letter { text-transform: uppercase; }
-.crt-body h5 .tag { margin-left: .7em; color: var(--i3); font: 400 .9rem var(--f-data); }
+.crt-body h5 .tag { margin-left: .8em; color: var(--i3); font: 400 .85rem var(--f-data); }
 .k-ok { color: var(--ok); } .k-err { color: var(--crit2); } .k-warn { color: var(--amber); } .k-cmd { color: var(--blue); } .k-dim { color: var(--i3); }
 .crt-body .gap { height: 12px; }
-.crt-body p.ind { display: flex; flex-wrap: wrap; column-gap: 12px; padding: 1px 0; }
-.crt-body p.ind > span:first-child:not(:last-child) { flex: 0 0 11.5rem; color: var(--i3); }
-.crt-body p.ind > span:not(:first-child):not(:nth-child(2)) { font-size: .9rem; line-height: 1.8; }
 .crt-body .cursor::after { content: ""; display: inline-block; width: 7px; height: 7px; margin-left: 8px; border-radius: 50%; background: var(--blue); animation: pulse 1.2s ease-in-out infinite; }
 .crt-body pre.log { margin: 0; color: var(--i2); font: 400 .88rem/1.55 var(--f-code); white-space: pre-wrap; overflow-wrap: anywhere; }
 .crt-body .exit { margin-top: 12px; font-weight: 600; } .crt-body .exit .k-dim { font-weight: 400; }
 .crt-body p.diff, .crt-body .nd { margin: 0; color: var(--i2); font: 400 .88rem/1.55 var(--f-code); white-space: pre-wrap; overflow-wrap: anywhere; }
 .crt-body p.diff.k-ok, .crt-body .nd-add { color: var(--ok); } .crt-body p.diff.k-err, .crt-body .nd-del { color: var(--crit2); } .crt-body p.diff.k-dim, .crt-body .nd-ctx { color: var(--i3); }
 
-/* ---------- Settings: the tabs, then each role's knobs as a plain form */
-.crt-body .shint { margin: 0 0 12px; color: var(--i2); max-width: 72ch; }
+/* ---------- Settings: the tabs, then the facts and the Roles table.
+   One type scale: 1.85rem the screen's title, 1.15rem a section or a role, 1rem the words and values, .85rem captions, tags and
+   labels. Fields are real boxes (a 50% hairline, 3:1 on the pool) so they read as inputs; a value you set is bright and
+   upright, what the repo supplies is dim and italic. Blue marks a change not yet saved, amber a value from your override. */
+:root { --field-line: rgba(203, 218, 238, .5); --field-fill: rgba(203, 218, 238, .08); --row-line: rgba(203, 218, 238, .16); }
+.crt-body .shint { margin: 0 0 14px; color: var(--i2); max-width: 80ch; }
 .crt-body .ntabs { display: flex; flex-wrap: wrap; gap: 4px 20px; margin: 0 0 14px; }
 .crt-body .ntabs.stabs { position: sticky; top: 0; z-index: 2; padding: 4px 0 6px; background: var(--pool); }
-.crt-body .ntab { border: 0; border-bottom: 2px solid transparent; background: none; padding: 4px 2px; color: var(--i3); font-weight: 500; cursor: pointer; }
+.crt-body .ntab { border: 0; border-bottom: 2px solid transparent; background: none; padding: 6px 2px 4px; color: var(--i3); font-weight: 500; cursor: pointer; }
 .crt-body .ntab:hover { color: var(--i1); }
 .crt-body .ntab.on { color: var(--i1); border-bottom-color: var(--blue); }
-.crt-body .spanel > p.k-dim:first-child { max-width: 80ch; font-size: .92rem; }
 .crt-body .spanel > h5:first-child { margin-top: 0; }
-.rack { margin: 0 0 12px; max-width: 58rem; }
-.trow { display: grid; grid-template-columns: 8.5rem minmax(0, 25rem) minmax(0, 1fr) 1.6rem; align-items: center; gap: 4px 20px; min-height: 2.9rem; padding: 5px 0; }
-.trow.tfoot { grid-template-columns: minmax(0, 1fr) auto; min-height: 2rem; padding-top: 8px; }
-.tlabel { color: var(--i2); }
-.tctl { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 10px; }
-.tstate, .tmsg { min-width: 0; font-size: .9rem; overflow-wrap: anywhere; }
-.nubkey { border: 0; background: none; padding: 2px 5px; color: var(--i2); font-size: .82rem; line-height: 1; cursor: pointer; } .nubkey:hover { color: var(--i1); }
-.nubkey.rst { font-size: 1.05rem; }
-.dial { position: relative; width: 30px; height: 30px; flex: none; border-radius: 50%; border: 1px solid var(--i2); cursor: pointer; transition: transform .22s cubic-bezier(.3, 1.6, .5, 1); }
-.dial i { position: absolute; left: 50%; top: 3px; width: 5px; height: 5px; margin-left: -2.5px; border-radius: 50%; background: var(--i1); }
-.dial.dim { border-color: var(--i3); } .dial.dim i { background: var(--i3); }
-.dial:focus-visible { border-radius: 50%; outline-offset: 3px; }
-.dial.d1 { transform: rotate(-135deg); } .dial.d2 { transform: rotate(-96.4deg); } .dial.d3 { transform: rotate(-57.9deg); } .dial.d4 { transform: rotate(-19.3deg); }
-.dial.d5 { transform: rotate(19.3deg); } .dial.d6 { transform: rotate(57.9deg); } .dial.d7 { transform: rotate(96.4deg); } .dial.d8 { transform: rotate(135deg); }
-.tdigit { display: none; }   /* the marked number in the row beside it says it */
-.ticks { display: inline-flex; gap: 2px; font-size: .92rem; }
-.tick { min-width: 1.35em; padding: 0 2px; text-align: center; color: var(--i3); border-bottom: 2px solid transparent; font-variant-numeric: tabular-nums; }
-.tick.on { color: var(--i1); font-weight: 600; border-bottom-color: var(--blue); }
-.seg-row { display: inline-flex; flex-wrap: wrap; gap: 2px 14px; }
-.seg { border: 0; border-bottom: 2px solid transparent; background: none; padding: 3px 1px; color: var(--i3); font-size: .96rem; cursor: pointer; }
-.seg:hover { color: var(--i1); }
-.seg.on { color: var(--i1); font-weight: 600; border-bottom-color: var(--blue); }
-.tape { width: 100%; max-width: 25rem; border: 0; border-bottom: 1px solid var(--hair); border-radius: 0; background: none; padding: 4px 2px; color: var(--i1); }
-.tape::placeholder { color: var(--i3); opacity: 1; }
-.tape:focus-visible { outline: none; border-bottom-color: var(--blue); }
+
+/* a read-only fact: the label in its own column, the value and its tags beside it */
+.krow { display: grid; grid-template-columns: 10.5rem minmax(0, 1fr); align-items: baseline; gap: 2px 16px; padding: 6px 0; max-width: 62rem; }
+.klab { color: var(--i3); font-size: .85rem; }
+.kbody { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 12px; min-width: 0; }
+.kval { color: var(--i1); overflow-wrap: anywhere; }
+.kt { font-size: .85rem; }
+.boundary { gap: 4px 24px; }
+.kitem { display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: 0 8px; }
+.kk { color: var(--i3); font-size: .85rem; } .kv { color: var(--i1); overflow-wrap: anywhere; }
+.crt-body .knote { margin: 6px 0 2px; font-size: .85rem; max-width: 62rem; }
+
+/* the Roles table: one row a role (a table when there is room, a wrapped card when there is not) */
+.rtab { container-type: inline-size; margin: 12px 0 8px; max-width: 70rem; }
+.rhead { display: none; }
+.rack { margin: 0; padding: 12px 0 4px; border-top: 1px solid var(--row-line); }
+.rack.off .rline { opacity: .62; }
+.rline { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: end; gap: 10px 16px; }
+.rname { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 12px; min-width: 0; }
+.rtitle { color: var(--i1); font: 600 1.15rem/1.3 var(--f-voice); overflow-wrap: anywhere; } .rtitle::first-letter { text-transform: uppercase; }
+.rtags { color: var(--i3); font-size: .85rem; }
+.rcell { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; min-width: 0; }
+.rcell.c-model { grid-column: span 2; } .rcell.c-effort { grid-column: 1 / -1; }
+.rcap { color: var(--i3); font-size: .85rem; }
+.rcell.c-model .tape, .rcell.c-num .tape { max-width: 24rem; }
+.rcell.c-effort .seg-row { width: 100%; max-width: 21rem; } .rcell.c-effort .seg { flex: 1 1 auto; }
+@container (min-width: 61rem) {
+  .rhead, .rline { grid-template-columns: 7rem 7rem minmax(9.5rem, 1fr) 16.5rem repeat(3, 6rem); gap: 0 12px; align-items: center; }
+  .rhead { display: grid; padding: 0 0 6px; color: var(--i3); font-size: .85rem; }
+  .rname { grid-column: auto; flex-direction: column; align-items: flex-start; gap: 0; }
+  .rcell.c-model, .rcell.c-effort { grid-column: auto; }
+  .rcell.c-model .tape, .rcell.c-num .tape { max-width: none; }
+  .rcell.c-effort .seg-row { width: max-content; max-width: 100%; }
+  .rcap { display: none; }
+}
+.rfoot { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 0 22px; margin-top: 2px; min-height: 36px; }
+.rfoot .tmsg { margin-right: auto; font-size: .85rem; }
+.console .rfoot .svckey { padding: 8px 4px 6px; font-size: 1rem; }
+.rmore { color: var(--i2); }
+.rdetail { margin: 6px 0 4px 2px; padding: 4px 0 4px 16px; border-left: 2px solid rgba(124, 196, 255, .35); }
+.rdetail .krow { padding: 4px 0; }
+.trow { display: grid; grid-template-columns: 10.5rem minmax(0, 18rem) 2rem; align-items: baseline; gap: 2px 16px; padding: 4px 0; max-width: 62rem; }
+.tlabel { color: var(--i3); font-size: .85rem; }
+.thint { margin-left: 8px; color: var(--i3); font-size: .85rem; opacity: .85; }
+.tstate, .tmsg { min-width: 0; font-size: .85rem; overflow-wrap: anywhere; }
+.nubkey { border: 0; background: none; padding: 2px 5px; color: var(--i2); font-size: 1rem; line-height: 1; cursor: pointer; } .nubkey:hover { color: var(--i1); }
+.nubkey.rst { align-self: center; min-width: 32px; min-height: 32px; font-size: 1.1rem; border-radius: 8px; } .nubkey.rst:hover { background: var(--field-fill); }
+
+/* the controls: boxes you can see */
+.tape, .stepper, .seg-row { border: 1px solid var(--field-line); border-radius: 8px; background: var(--field-fill); }
+.tape:hover, .stepper:hover, .seg-row:hover { border-color: rgba(203, 218, 238, .8); }
+.rcell.own .tape, .rcell.own .stepper, .rcell.own .seg-row { box-shadow: inset 3px 0 0 var(--amber); }
+.rcell.pend .tape, .rcell.pend .stepper, .rcell.pend .seg-row { border-style: dashed; border-color: var(--amber); }
+.rpend { color: var(--amber); font-size: .85rem; }
+.rpend[hidden] { display: none; }
+.rwait { display: block; width: max-content; margin-top: 2px; padding: 0 .5em; border: 1px dashed var(--amber); border-radius: 999px; color: var(--amber); }
+.swatch { display: inline-block; width: 1.6em; height: .9em; margin-right: .6em; vertical-align: middle; border: 1px solid var(--field-line); border-radius: 3px; }
+.rcell.dirty .tape, .rcell.dirty .stepper, .rcell.dirty .seg-row { border-color: var(--blue); background: rgba(124, 196, 255, .12); }
+.rcell.bad .tape { border-color: var(--crit2); background: rgba(255, 154, 165, .1); }
+.tape { width: 100%; min-height: 36px; padding: 5px 10px; color: var(--i1); font-size: 1rem; }
+.tape::placeholder { color: var(--i3); font-size: .9rem; font-style: italic; opacity: 1; }
+.tape:focus-visible { border-color: var(--blue); outline-offset: 1px; border-radius: 8px; }
+select.tape { padding: 5px 6px; }
 select.tape option { background: #0b1020; color: var(--i1); }
-.trow.bad .tape { border-bottom-color: var(--crit2); }
-.prepkey { justify-self: end; }
+.stepper { display: inline-flex; align-items: stretch; width: max-content; overflow: hidden; }
+.nubkey.stepbtn { width: 36px; min-height: 36px; padding: 0; font-size: 1.2rem; color: var(--i1); } .nubkey.stepbtn:hover { background: rgba(203, 218, 238, .14); }
+.stepval { display: grid; place-items: center; min-width: 2.4rem; border-inline: 1px solid var(--row-line); color: var(--i1); font-weight: 700; font-variant-numeric: tabular-nums; }
+.stepval.dim { color: var(--i3); font-weight: 400; font-style: italic; }
+.stepper :focus-visible, .seg-row :focus-visible { outline-offset: -2px; border-radius: 0; }
+.seg-row { display: inline-flex; width: max-content; max-width: 100%; overflow: hidden; }
+.seg { min-height: 34px; padding: 0 7px; border: 0; border-left: 1px solid var(--row-line); background: none; color: var(--i2); font-size: .85rem; cursor: pointer; }
+.seg:first-child { border-left: 0; }
+.seg:hover { background: rgba(203, 218, 238, .1); color: var(--i1); }
+.seg.on { background: rgba(124, 196, 255, .26); color: #fff; font-weight: 700; box-shadow: inset 0 -2px 0 var(--blue); }
+.stepper:has(:focus-visible), .seg-row:has(:focus-visible) { border-color: var(--blue); }
 .crt-body .nopen { margin: 8px 0 2px; }
 .crt-body .nedit { display: block; width: 100%; height: clamp(11em, 34vh, 24em); margin: 6px 0 8px; padding: 10px 12px; resize: vertical; border: 0; border-radius: 12px; background: rgba(203, 218, 238, .06); color: var(--i1); font: 400 .92rem/1.5 var(--f-code); scrollbar-width: thin; scrollbar-color: var(--i3) transparent; }
 .crt-body .nedit:focus-visible { outline: 1.5px solid var(--blue); outline-offset: 0; border-radius: 12px; }
@@ -234,7 +282,6 @@ select.tape option { background: #0b1020; color: var(--i1); }
 
 @media (prefers-reduced-motion: reduce) {
   .sun .core, .led.blink, .crt-body .cursor::after, .pv-msg.cursor::after, .monitor { animation: none; }
-  .dial { transition: none; }
 }
 /* a short window: the pool takes more of it */
 @media (max-height: 640px) { .console { padding: 3vh 5vw; } .monitor { gap: 10px; padding: 14px 22px; } .title { font-size: 1.6rem; } }
@@ -246,7 +293,6 @@ select.tape option { background: #0b1020; color: var(--i1); }
   .crt.pv { flex-direction: column; gap: 10px; }
   .pv-list { flex: 0 0 30%; } .pv-main { flex: 1 1 0; }
   .pv-foot { flex-wrap: wrap; position: relative; } .pv-reason { flex: 1 1 100%; order: -1; } .pv-keys { flex: 1 1 auto; min-width: 0; justify-content: flex-end; gap: 10px; } .pv-keys .hint { flex: 0 1 8em; width: auto; }
-  .trow { grid-template-columns: minmax(0, 1fr) 1.6rem; } .trow .tlabel { grid-column: 1 / -1; color: var(--i3); font-size: .9rem; } .trow .tstate { grid-column: 1; grid-row: 3; }
-  .crt-body p.ind > span:first-child:not(:last-child) { flex-basis: 100%; }
+  .krow, .trow { grid-template-columns: minmax(0, 1fr); } .trow { grid-template-columns: minmax(0, 1fr) 2rem; } .trow .tlabel { grid-column: 1 / -1; }
   .crt-body .ntabs.stabs { gap: 2px 14px; }
 }

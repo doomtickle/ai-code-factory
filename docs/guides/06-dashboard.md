@@ -416,14 +416,27 @@ service keys. In the classic view it is the big **SETTINGS** key under the
 nameplate, and the plate on the control unit's deck. (It was called SETUP in
 earlier versions.) Esc closes it.
 
-It shows the configuration the factory will use, read on this machine with the
-same code `factory start` uses. A line under the title says what you can do
-here: most of it is read-only (edit the files as [Make it
-yours](04-customize.md) describes), and two things can be changed, a role's
-tuning ([below](#tuning-a-role-from-settings)) and the [project
-notes](#the-notes-editor). Every change is read at `factory start`, so it
-applies after **RESTART**, not live. The screen has four tabs, one section at a
-time, and refreshes every few seconds while open, except while you are in the
+The screen is titled "Settings: saved and running" because it shows two things
+for a setting: what is **saved** (the files in your config folder, read with the
+same code `factory start` uses) and what is **running** (the copy `factory
+start` made for the dispatch bridge, which is all the bridge ever reads). A
+line under the title says what you can do here: most of it is read-only (edit
+the files as [Make it yours](04-customize.md) describes), and two things can be
+changed, a role's tuning ([below](#tuning-a-role-from-settings)) and the
+[project notes](#the-notes-editor). Nothing is live: a change is saved at once
+and runs after **RESTART**.
+
+When a saved value differs from the running one, its line says **saved X ·
+running Y**, and a bar at the top of the screen counts them: "3 changes saved,
+not yet applied · applies on Restart". The bar is there whenever you open
+Settings and goes away when nothing is waiting, so you can tell whether a
+change has taken effect. It compares tuning keys, which optional roles are on,
+each project notes file (a deleted one counts) and a role's `instructions.md`;
+note text is compared on the host and never sent to the page. The same changes light the RESTART lamp. Only your overrides and notes go through the start's snapshot; the bridge reads the committed `role.conf` live, so a key you haven't overridden runs at its current `role.conf` value. A notes file that is a symlink isn't compared. Before the first
+`factory start` there is nothing running to compare, and the screen says so.
+Each line ends with one of three plain tags: **applies on Restart**, **needs
+Update** or, for the look, **needs dashboard restart**. The screen has four
+tabs, one section at a time, and refreshes every few seconds while open, except while you are in the
 middle of turning a knob or editing the notes. Switching tabs keeps your
 unsent knob changes.
 
@@ -432,7 +445,8 @@ unsent knob changes.
   `LANES`, `MAX_SESSION_TOKENS`, `MAX_TURNS` and `MAX_JOB_SECONDS`, each
   marked **REPO** (from the role's own `role.conf`) or **LOCAL** (your
   override in `roles/<role>.conf`). A LOCAL line also shows the value it
-  replaced. `WORKSPACE`, `TEMPLATE` and `BROKER_TOOLS` are marked **FIXED**:
+  replaced, and a key that is not yet running shows what is. `WORKSPACE`,
+  `TEMPLATE` and `BROKER_TOOLS` are marked **FIXED**:
   an override can't change them, and a block says so if your override file
   tries.
   Also on this tab: the **optional roles** and the names in `enabled-roles` (a name that matches no
@@ -444,13 +458,20 @@ unsent knob changes.
 - **Project notes** tab. The notes files for the project the dashboard is bound to,
   and for each running role its instructions plus the notes against the
   20,000-character limit. A role over it is flagged: the dispatch
-  bridge refuses that role's tasks. **Edit notes** opens the
+  bridge refuses that role's tasks. A file that is new, edited or deleted
+  since the start says so, with the size the bridge still has. **Edit notes** opens the
   [notes editor](#the-notes-editor).
 - **Dashboard look** tab. Whether `dashboard.toml` was read at start-up, or the
-  reason it was ignored. It does not show the values; the page itself does.
+  reason it was ignored, and the values the dashboard is running with: the
+  nameplate, the shift names, the CRT and sound defaults, the `ui` and a
+  swatch with the `#rrggbb` for each role colour. Read-only, and read once when
+  `factory dashboard` started, so a change to the file shows after you restart
+  the dashboard.
 
-Each line ends with the command that applies a change to it, **START** or
-**UPDATE**, as in the table in [Make it yours](04-customize.md#which-command-applies-a-change).
+The tag at the end of a line says what applies a change, as in the table in
+[Make it yours](04-customize.md#which-command-applies-a-change): **applies on
+Restart** (`factory start`) or **needs Update** (`factory update`; a role's
+`BROKER_TOOLS` needs only a restart if it had some and keeps some).
 Tokens, passwords and other credentials are never shown, and it never runs a
 command. If the files can't be read the screen says it is unavailable.
 
@@ -483,8 +504,8 @@ changes kept; nothing was written. If the file changed on disk after the
 check, the host refuses to write over it: the screen says so, and you prepare
 again.
 
-When it is written, the screen says when it takes effect. **Saved. Restart to
-apply.** means press RESTART: these keys are read at `factory start`
+When it is written, the screen says when it takes effect. **Saved · applies on
+Restart** means press RESTART: these keys are read at `factory start`
 (see the table in [Make it yours](04-customize.md#which-command-applies-a-change)),
 and RESTART runs `factory restart`, which cancels running jobs, so its usual
 check shows first. Every change here waits for a restart: the dispatch bridge
@@ -522,7 +543,7 @@ It appears once the factory is bound to a project.
   **CANCEL** drops the pending save (while the write itself is in flight CANCEL
   and Esc are dark). A confirmation not used within two
   minutes expires.
-- **After a save** the editor says "Saved. Restart to apply.":
+- **After a save** the editor says "Saved · applies on Restart":
   the new notes reach the roles when the factory next starts, so the Restart
   key's light comes on. Press it (or run `factory start`).
 - **A file that changed meanwhile.** If the file changed on disk between SAVE

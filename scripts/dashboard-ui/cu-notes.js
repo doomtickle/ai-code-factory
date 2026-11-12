@@ -18,7 +18,7 @@
   const GAUGE = { ok: "k-ok", warn: "k-warn", over: "k-err" };
   const DIFF = { "+": ["nd nd-add", "+"], "-": ["nd nd-del", "-"], " ": ["nd nd-ctx", " "] };
   const DEMO = "Demo: changes are off";
-  const SAVED = "Saved. Restart to apply.";
+  const SAVED = "Saved · applies on Restart";
   const APPLIES = { RESTART: "restart" };
   // Control, invisible and bidi characters would hide what a diff really writes: shown as tokens.
   const HIDDEN = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u00ad\u061c\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff]/g;

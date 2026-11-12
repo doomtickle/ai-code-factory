@@ -273,7 +273,7 @@ class Controls:
         at, cached = self._setup
         if now - at >= SETUP_TTL or now < at:
             paths, project = self.setup_source()
-            cached = dashboard_setup.setup(paths, project, self.board.look_problem)
+            cached = dashboard_setup.setup(paths, project, self.board.look_problem, self.board.look)
             self._setup = (now, cached)
         return cached
 

@@ -168,7 +168,7 @@ module.exports = async function run(h) {
     assert.deepStrictEqual(calls.filter(c => c[0] === "config-run").map(c => c[1]), [{ token: "tok1" }]);
     goKey.click(); await flush();
     assert.strictEqual(countCalls("config-run"), 1, "the token is used once");
-    assert.ok(text().includes("Saved. Restart to apply."), text());
+    assert.ok(text().includes("Saved · applies on Restart"), text());
     assert.ok(countCalls("state") > 0, "the state is fetched again");
     assert.strictEqual(area().value, "hello");
     assert.strictEqual(goKey.disabled, true, "saved, so nothing to save");
@@ -269,7 +269,7 @@ module.exports = async function run(h) {
     assert.ok(!text().includes("Unsaved changes in developer"));
     cancelKey.click(); await flush();
     button("Discard").click(); await flush();
-    assert.ok(text().includes("Settings · effective configuration"), "back on SETTINGS");
+    assert.ok(text().includes("Settings: saved and running"), "back on SETTINGS");
     assert.strictEqual($("scr-console").hidden, false);
     cancelKey.click(); await flush();
     assert.strictEqual($("scr-console").hidden, true, "Close closes");

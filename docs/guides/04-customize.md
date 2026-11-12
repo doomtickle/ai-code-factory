@@ -26,8 +26,8 @@ affected, after listing what each one loses and asking you.
 | The Coordinator's default model or briefing (`kits/coordinator/spec.yaml`) | `factory update` |
 | `dashboard.toml` (the dashboard's look) | restart `factory dashboard` |
 
-The dashboard's **Settings** key (the sliders in the top bar, or `,`; formerly SETUP) shows the effective value of each line above and
-which of the two commands applies it: see
+The dashboard's **Settings** key (the sliders in the top bar, or `,`; formerly SETUP) shows, for each line above, the saved value, the value that is
+running and which of the two commands applies it: see
 [Settings](06-dashboard.md#settings-the-configuration-in-force). For a role's
 `MODEL`, `EFFORT`, `LANES`, `MAX_SESSION_TOKENS`, `MAX_TURNS` and
 `MAX_JOB_SECONDS` it also has knobs (see [Tune a role](#tune-a-role)).
