@@ -424,7 +424,8 @@ const card = (over) => Object.assign({ id: "c1", tool: "git_push", role: "develo
   const byText = (role, tag, text) => inRack(role, n => n.tagName === tag && n.textContent === text);
   const prepKey = role => byText(role, "button", "Prepare");
   const row = (key, value, source, repo) => Object.assign({ key, value, applies: "START", source }, source === "LOCAL" ? { repo } : {});
-  const role = (name, keys) => ({ name, optional: false, on: true, override: false, ignored: [], fixed: [],
+  const role = (name, keys) => ({ name, optional: false, on: true, override: false, ignored: [],
+    fixed: name === "developer" ? [{ key: "WORKSPACE", value: "/work", applies: "START" }, { key: "BROKER_TOOLS", value: "", applies: "UPDATE", note: "pinned" }] : [],
     keys: [row("MODEL", "claude-sonnet-5-5", "REPO"), row("MODELS", "claude-haiku-5-5 opus", "REPO"), row("EFFORT", "", "REPO"),
       row("LANES", name === "developer" ? "3" : "1", "REPO"), row("MAX_SESSION_TOKENS", "", "REPO"), ...keys, row("MAX_JOB_SECONDS", "", "REPO")] });
   server.config = { project: "p", roles: [role("developer", [row("MAX_TURNS", "80", "LOCAL", "200")]), role("reviewer", [row("MAX_TURNS", "200", "REPO")])],
@@ -449,10 +450,28 @@ const card = (over) => Object.assign({ id: "c1", tool: "git_push", role: "develo
   assert.strictEqual(prepKey("developer").disabled, true, "nothing changed, nothing to prepare");
   assert.deepStrictEqual(inRack("developer", n => n.tagName === "select").children.map(o => o.value), ["", "claude-haiku-5-5", "opus", "claude-sonnet-5-5"], "the model list is the role's MODELS");
 
+  // The table's shape: the optional-roles line leads, the fixed keys sit in one Boundary line behind Details, which is closed.
+  const klabs = kids().filter(n => n.className === "klab").map(n => n.textContent);
+  assert.strictEqual(klabs[0], "Optional roles", "the optional-roles line comes before the roles");
+  const boundary = kids().find(n => n.className === "kbody boundary");
+  assert.ok(boundary, "the fixed keys are one Boundary line");
+  assert.ok(/WORKSPACE\/work/.test(boundary.textContent) && /BROKER_TOOLS\(empty\)/.test(boundary.textContent), "each fixed key and value is on it");
+  assert.strictEqual(kids().filter(n => n.className === "kbody boundary").length, 1, "only the role with fixed keys has one");
+  const details = byText("developer", "button", "Details");
+  assert.strictEqual(details.attrs["aria-expanded"], "false", "the details start closed");
+  assert.strictEqual(inRack("developer", n => n.className === "rdetail").hidden, true);
+  details.click();
+  assert.strictEqual(details.attrs["aria-expanded"], "true");
+  assert.strictEqual(inRack("developer", n => n.className === "rdetail").hidden, false, "the details open on click");
+  assert.strictEqual(details.textContent, "Hide details");
+  details.click();
+  assert.strictEqual(inRack("developer", n => n.className === "rdetail").hidden, true, "and close again");
+  assert.ok(!kids().some(n => /st-check/.test(n.className || "")), "the Tuning tag is not drawn as a warning");
+
   // Turn LANES 3 -> 5, EFFORT high, clear MAX_TURNS (a LOCAL value: unset), and set nothing else.
   byLabel("developer", "More lanes").click(); byLabel("developer", "More lanes").click();
   assert.strictEqual(byLabel("developer", "Lanes").attrs["aria-valuenow"], "5");
-  assert.ok(byLabel("developer", "Lanes").className.split(" ").includes("d5"), "the dial turned to detent 5");
+  assert.strictEqual(byLabel("developer", "Lanes").textContent, "5", "the stepper shows the lanes");
   byText("developer", "button", "high").click();
   const turns = turnsNow("developer"); turns.value = ""; turns.fire("input");
   const sess = byLabel("developer", "Session tokens"); sess.value = "12x"; sess.fire("input");
@@ -660,6 +679,12 @@ const card = (over) => Object.assign({ id: "c1", tool: "git_push", role: "develo
     assert.ok(text().includes("saved 200 · running 80"), "a knob that differs says so");
     assert.ok(text().includes("instructions.md changed, running has 700"), "the instructions line says its running size");
     assert.ok(!text().includes("→ on start") && !text().includes("→ on update"), "the old tags are gone");
+    assert.deepStrictEqual(kids().filter(n => n.className === "rwait").map(n => n.textContent), ["3 saved, not running"], "only the role with pending keys carries the row mark");
+    assert.deepStrictEqual(walk(rack("developer")).filter(n => n.className === "rpend" && !n.hidden).map(n => n.textContent), ["running 1", "running 80"],
+      "a pending cell says what is running, under its control");
+    assert.ok(walk(rack("developer")).filter(n => /\bpend\b/.test(n.className || "") && /\brcell\b/.test(n.className)).length === 2, "and is marked");
+    assert.strictEqual(walk(rack("reviewer")).filter(n => n.className === "rpend" && !n.hidden).length, 0, "a role with nothing pending shows none");
+    assert.ok(walk(rack("developer")).some(n => n.className === "tmsg k-warn" && /saved, not running/.test(n.textContent)), "the footer says it too");
     $("con-cancel").click(); await flush();
     $("svc-setup").click(); await flush();
     assert.ok(bar() && /^2 changes saved/.test(bar().textContent), "reopening Settings shows the bar again");
@@ -681,15 +706,15 @@ const card = (over) => Object.assign({ id: "c1", tool: "git_push", role: "develo
     snap.look.values.plant = '<b>x</b> & "q"';
     await advance(2000);
     tabBtn("Dashboard look").click(); await flush();
-    assert.ok(text().includes("nameplate") && text().includes('<b>x</b> & "q"'), "the nameplate is drawn as text");
+    assert.ok(text().includes("Nameplate") && text().includes('<b>x</b> & "q"'), "the nameplate is drawn as text");
     assert.ok(text().includes("day, swing, night") && text().includes("classic") && text().includes("off"));
     assert.ok(text().includes("needs dashboard restart"));
     const sw = walk($("con-body")).filter(n => n.className === "swatch");
     assert.deepStrictEqual(sw.map(n => n.style.props["background-color"]), ["#00ff00"], "only a valid lower-case #rrggbb becomes a swatch");
-    assert.ok(text().includes("colour a-b") && !text().includes("bad role") && !text().includes("javascript"), "other colours are dropped");
+    assert.ok(text().includes("Colour a-b") && !text().includes("bad role") && !text().includes("javascript"), "other colours are dropped");
     assert.ok(!walk($("con-body")).some(n => n.tagName === "b" || Object.keys(n.attrs).some(k => /^(style|on)/.test(k))), "nothing from the data becomes markup or an attribute");
     snap.look = { file: false, problem: "", values: {} }; await advance(2000);
-    assert.ok(text().includes("nameplate") && text().includes("default"), "no values reads as the defaults");
+    assert.ok(text().includes("Nameplate") && text().includes("default"), "no values reads as the defaults");
     $("con-cancel").click(); await flush();
     server.config = cfg;
     await advance(2000);

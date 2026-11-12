@@ -643,62 +643,88 @@
   const SOURCES = { REPO: "repo", LOCAL: "your override" };
   const num = n => (Number.isFinite(Number(n)) ? Number(n).toLocaleString("en-US") : "?");
   const span = (cls, text) => el("span", cls, text);
-  const applyTag = a => span("k-cmd", `  · ${APPLIES[a] || "?"}`);
+  // A small tag after a value; the class comes from the caller's fixed list (k-dim, k-warn, k-cmd, k-err).
+  const tag = (cls, text) => span(`kt ${cls}`, text);
+  const applyTag = a => tag("k-cmd", `→ ${APPLIES[a] || "?"}`);
   const shown = v => (str(v) === "" ? "empty" : str(v));
-  const savedRunning = (saved, running) => span("k-warn", `  saved ${shown(saved)} · running ${shown(running)}`);
+  const savedRunning = (saved, running) => tag("k-warn", `saved ${shown(saved)} · running ${shown(running)}`);
   let setupKey = null;
 
+  // One read-only fact: the label in a fixed column, the value and its tags beside it (a grid, never padding).
   function row(label, value, ...tail) {
-    const p = el("p", "ind");
-    p.append(span(null, `  ${str(label).padEnd(19)} `), value === "" || value == null ? span("k-dim", "(empty)") : span(null, str(value)), ...tail);
+    const p = el("div", "krow");
+    const body = el("span", "kbody");
+    body.append(value === "" || value == null ? span("kval k-dim", "(empty)") : span("kval", str(value)), ...tail);
+    p.append(span("klab", str(label)), body);
+    return p;
+  }
+  const note = (cls, text) => P(`knote ${cls}`, text);
+
+  // The keys the role's committed role.conf fixes (WORKSPACE, TEMPLATE, BROKER_TOOLS): one read-only line.
+  function boundaryRow(r) {
+    const fixed = list(r.fixed).filter(x => x && typeof x === "object");
+    if (!fixed.length) return null;
+    const body = el("span", "kbody boundary");
+    for (const k of fixed) {
+      const item = el("span", "kitem");
+      item.append(span("kk", str(k.key)), span("kv", str(k.value) || "(empty)"), applyTag(k.applies));
+      if (k.note) item.append(tag("k-dim", str(k.note)));
+      body.append(item);
+    }
+    const p = el("div", "krow");
+    p.append(span("klab", "Boundary"), body);
     return p;
   }
 
+  // What sits under one role's table row: what must be seen at once (a refused key, an over-long prompt, a role
+  // that is off) and what can wait behind Details (the other keys, the boundary, the prompt's size).
   function roleBlock(r) {
-    const out = [];
-    const tags = [r.on ? "on" : "off", r.optional ? "optional" : null, r.override ? "your override" : null].filter(Boolean).join(" · ");
-    out.push(H(str(r.name), tags));
-    if (!r.on) out.push(P("k-dim", "  Switched off in enabled-roles: no sandbox, so none of this is applied."));
-    out.push(tuneRack(r));
+    const alert = [], more = [];
+    if (!r.on) alert.push(note("k-dim", "Switched off in enabled-roles: no sandbox, so none of this is applied."));
+    for (const name of list(r.ignored)) alert.push(note("k-err", `✕ ${str(name)} in the override isn't allowed: factory start refuses it`));
+    if (r.over) alert.push(note("k-err", "Instructions plus notes are over the limit: the bridge refuses this role's tasks."));
     for (const k of list(r.keys).filter(x => x && typeof x === "object" && !TUNE_KEYS.includes(x.key))) {
       const local = k.source === "LOCAL";
-      const tail = [span(local ? "k-warn" : "k-dim", `  ${SOURCES[k.source] || "?"}`)];
-      if (local && str(k.repo) !== str(k.value)) tail.push(span("k-dim", ` (repo: ${str(k.repo) || "empty"})`));
+      const tail = [tag(local ? "k-warn" : "k-dim", SOURCES[k.source] || "?")];
+      if (local && str(k.repo) !== str(k.value)) tail.push(tag("k-dim", `repo: ${str(k.repo) || "empty"}`));
       if (k.pending) tail.push(savedRunning(k.value, k.running));
       tail.push(applyTag(k.applies));
-      out.push(row(k.key, k.value, ...tail));
+      more.push(row(k.key, k.value, ...tail));
     }
-    for (const k of list(r.fixed).filter(x => x && typeof x === "object")) {
-      const tail = [span("k-dim", "  fixed"), applyTag(k.applies)];
-      if (k.note) tail.push(span("k-dim", ` (${str(k.note)})`));
-      out.push(row(k.key, k.value, ...tail));
-    }
-    for (const name of list(r.ignored)) out.push(P("ind k-err", `  ✕ ${str(name)} in the override isn't allowed: factory start refuses it`));
+    const boundary = boundaryRow(r);
+    if (boundary) more.push(boundary);
     if (r.instructions_chars != null) {
-      const p = P(`ind ${r.over ? "k-err" : "k-dim"}`, `  instructions + notes  ${num(r.instructions_chars)} of ${num(c().notes && c().notes.limit)} characters${r.over ? " · over: the bridge refuses this role's tasks" : ""}`);
-      if (r.instructions_pending) p.append(span("k-warn", `  · instructions.md changed, running has ${num(r.instructions_running)}`), applyTag("START"));
-      out.push(p);
+      const tail = r.over ? [tag("k-err", "over")] : [];
+      if (r.instructions_pending) tail.push(tag("k-warn", `instructions.md changed, running has ${num(r.instructions_running)}`), applyTag("START"));
+      more.push(row("Instructions + notes", `${num(r.instructions_chars)} of ${num(c().notes && c().notes.limit)} characters`, ...tail));
     }
-    return out;
+    return tuneRack(r, alert, more);
   }
   const c = () => (st && st.config && typeof st.config === "object" ? st.config : null);
 
-  // The four sections of the SETTINGS screen (shown one at a time under a tab strip).
-  const SETTINGS_HINT = "Saved is what the config folder holds; running is what the factory started with. Change a role's knobs or the project notes here; everything else is read-only. Nothing is written until you prepare and confirm it.";
+  // The four sections of the SETTINGS screen (shown one at a time under a tab strip), each with one line of its own.
+  const INTRO = {
+    roles: "Saved is what the config folder holds; running is what the factory started with. Change a role's knobs here; the rest is read-only.",
+    notes: "Notes are added to the roles' instructions. Edit them here; a restart applies a change.",
+    gateway: "Read-only: these move the security boundary, so they are never edited from a browser. Change the files in the config folder, then restart.",
+    look: "Read-only: what factory dashboard read when it started. The Bright, Contrast, V-Hold and CRT knobs on the Coordinator's screen are remembered by this browser.",
+  };
 
   function rolesSection(cfg) {
-    const out = [P("k-dim", "Each knob writes your override in the config folder, on top of the committed role.conf. Fixed values can't be overridden. Each value says how it is applied: on Restart or by Update. A value saved but not yet running says so.")];
-    for (const r of list(cfg.roles).filter(x => x && typeof x === "object")) out.push(...roleBlock(r));
+    const out = [];
     const en = cfg.enabled || {};
-    out.push(H("Optional roles", "enabled-roles"));
     const optional = list(cfg.roles).filter(r => r && r.optional);
-    if (!optional.length) out.push(P("k-dim", "  No role is optional."));
-    for (const r of optional) {
-      const tail = [span("k-dim", `  ${en.file ? "enabled-roles file" : "no enabled-roles file"}`)];
-      if (r.on_pending) tail.push(savedRunning(r.on ? "ON" : "OFF", r.running_on ? "ON" : "OFF"));
-      out.push(row(r.name, r.on ? "ON" : "OFF", ...tail, applyTag(en.applies)));
-    }
-    for (const n of list(en.unknown)) out.push(P("ind k-err", `  ✕ ${str(n)} is named in enabled-roles but is not a role: factory start refuses it`));
+    // Optional roles first: whether a role exists at all matters more than how it is tuned.
+    const optTail = [tag("k-dim", en.file ? "enabled-roles file" : "no enabled-roles file")];
+    for (const r of optional.filter(x => x.on_pending)) optTail.push(savedRunning(r.on ? "ON" : "OFF", r.running_on ? "ON" : "OFF"));
+    out.push(row("Optional roles", optional.length ? optional.map(r => `${str(r.name)} ${r.on ? "on" : "off"}`).join(" · ") : "none", ...optTail, applyTag(en.applies)));
+    for (const n of list(en.unknown)) out.push(note("k-err", `✕ ${str(n)} is named in enabled-roles but is not a role: factory start refuses it`));
+    const table = el("div", "rtab");
+    const head = el("div", "rhead");
+    head.append(...["Role", "Lanes", "Model", "Effort", ...TUNE_NUMBERS.map(k => TUNE_LABELS[k])].map(t => span(null, t)));
+    table.append(head);
+    for (const r of list(cfg.roles).filter(x => x && typeof x === "object")) table.append(roleBlock(r));
+    out.push(table);
     return out;
   }
 
@@ -707,15 +733,14 @@
     const nt = cfg.notes || {};
     out.push(H("Project notes", str(nt.project) || "no project"));
     const files = list(nt.files).filter(x => x && typeof x === "object");
-    if (!files.length) out.push(P("k-dim", `  No notes file for ${str(nt.project) || "this project"} in the config folder's projects/.`));
+    if (!files.length) out.push(P("k-dim", `No notes file for ${str(nt.project) || "this project"} in the config folder's projects/.`));
     for (const f of files) {
-      const tail = [span(f.over ? "k-err" : "k-dim", `  ${num(f.chars)} of ${num(nt.limit)} characters${f.over ? " · over" : ""}`)];
-      if (f.read === false) tail.push(span("k-dim", " · role off, not read"));
+      const tail = [tag(f.over ? "k-err" : "k-dim", `${num(f.chars)} of ${num(nt.limit)} characters${f.over ? " · over" : ""}`)];
+      if (f.read === false) tail.push(tag("k-dim", "role off, not read"));
       if (f.pending) {
-        const text = f.gone ? `deleted since the start, running has ${num(f.running_chars)} characters`
+        tail.push(tag("k-warn", f.gone ? `deleted since the start, running has ${num(f.running_chars)} characters`
           : f.running_chars == null ? "new since the start, not running"
-          : `saved ${num(f.chars)} · running ${num(f.running_chars)} characters`;
-        tail.push(span("k-warn", `  · ${text}`));
+          : `saved ${num(f.chars)} · running ${num(f.running_chars)} characters`));
       }
       tail.push(applyTag(nt.applies));
       out.push(row(f.name, "", ...tail));
@@ -726,53 +751,53 @@
 
   function gatewaySection(cfg) {
     const ap = cfg.approvals || {}, rp = cfg.repos || {}, gl = cfg.gitlab || {}, co = cfg.coordinator || {};
-    const out = [P("k-dim", "Read-only. These move the security boundary, so they are never edited from a browser: change the files in the config folder, then restart.")];
-    out.push(H("Broker policy", cfg.local_policy ? "local policy.toml" : "repo policy.toml only"));
-    const src = o => span(o.source === "LOCAL" ? "k-warn" : "k-dim", `  ${SOURCES[o.source] || "not set"}`);
+    const out = [H("Broker policy", cfg.local_policy ? "local policy.toml" : "repo policy.toml only")];
+    const src = o => tag(o.source === "LOCAL" ? "k-warn" : "k-dim", SOURCES[o.source] || "not set");
     const tools = list(ap.tools);
-    out.push(row("held tools", tools.join(", "), src(ap), applyTag(ap.applies)));
-    if (!tools.length) out.push(P("ind k-dim", "                      (nothing is held: the gateway makes every write at once)"));
-    out.push(row("hold expires after", ap.expire_seconds ? `${str(ap.expire_seconds)} s` : "", span("k-dim", ap.expire_seconds ? `  ${SOURCES[ap.expire_source] || "?"}` : "  default one day"), applyTag(ap.applies)));
+    out.push(row("Held tools", tools.join(", "), src(ap), applyTag(ap.applies)));
+    if (!tools.length) out.push(note("k-dim", "Nothing is held: the gateway makes every write at once."));
+    out.push(row("Hold expires after", ap.expire_seconds ? `${str(ap.expire_seconds)} s` : "", tag("k-dim", ap.expire_seconds ? SOURCES[ap.expire_source] || "?" : "default one day"), applyTag(ap.applies)));
     const repos = list(rp.list);
-    out.push(row("allowed repos", repos.join(", "), src(rp), applyTag(rp.applies)));
-    if (!repos.length) out.push(P("ind k-dim", "                      (git tools are off until [git].repos names a repo)"));
+    out.push(row("Allowed repos", repos.join(", "), src(rp), applyTag(rp.applies)));
+    if (!repos.length) out.push(note("k-dim", "Git tools are off until [git].repos names a repo."));
     out.push(row("GitLab url", gl.url, src(gl), applyTag(gl.applies)));
-    out.push(row("Coordinator tools", list(co.broker_tools).join(" "), span("k-dim", "  kits/coordinator/broker.conf"), applyTag(co.applies)));
+    out.push(row("Coordinator tools", list(co.broker_tools).join(" "), tag("k-dim", "kits/coordinator/broker.conf"), applyTag(co.applies)));
     return out;
   }
 
   // The values the dashboard started with (the host cleaned them; they are checked again here). Colours reach the
-  // page only as a validated #rrggbb through style.setProperty; nothing becomes a class, attribute or HTML.
+  // page only as a validated #rrggbb through style.setProperty on the swatch (its size and border are CSS); nothing
+  // becomes a class, attribute or HTML.
   const HEX = /^#[0-9a-f]{6}$/, ROLE_NAME = /^[a-z][a-z0-9-]{1,30}$/, LOOK_UI = { field: "field", classic: "classic" };
   const lookText = (v, cap) => (typeof v === "string" && v.length <= cap && /^[\x20-\x7e]+$/.test(v) ? v : "");
   function swatch(hex) {
     const sw = span("swatch", " ");
-    for (const [k, v] of [["display", "inline-block"], ["width", "1.6em"], ["height", "0.8em"], ["margin-right", "0.6em"],
-      ["vertical-align", "middle"], ["border", "1px solid currentColor"], ["background-color", hex]]) sw.style.setProperty(k, v);
+    sw.style.setProperty("background-color", hex);
     return sw;
   }
   function lookSection(cfg) {
     const lk = cfg.look && typeof cfg.look === "object" ? cfg.look : {};
     const v = lk.values && typeof lk.values === "object" ? lk.values : {};
     const out = [H("Dashboard look", "dashboard.toml")];
-    if (lk.problem) out.push(P("ind k-err", `  ✕ ignored, the defaults show: ${str(lk.problem)}`), P("ind k-dim", `  Fix the file, then restart factory dashboard (${APPLIES.LOOK}).`));
-    else out.push(P("k-dim", lk.file ? "  Showing what factory dashboard read when it started. A change to the file shows after the dashboard restarts." : "  No dashboard.toml in the config folder: the defaults show."));
-    const tag = () => span("k-cmd", `  · ${APPLIES.LOOK}`);
-    const val = (label, text) => out.push(row(label, text || "default", tag()));
-    val("nameplate", lookText(v.plant, 40));
+    if (lk.problem) out.push(note("k-err", `✕ Ignored, the defaults show: ${str(lk.problem)}`), note("k-dim", `Fix the file, then restart factory dashboard (${APPLIES.LOOK}).`));
+    else if (!lk.file) out.push(P("k-dim", "No dashboard.toml in the config folder: the defaults show."));
+    const look = (label, text) => out.push(row(label, text || "default", tag("k-cmd", `→ ${APPLIES.LOOK}`)));
+    look("Nameplate", lookText(v.plant, 40));
     const shifts = list(v.shifts).map(x => lookText(x, 20));
-    val("shifts", shifts.length === 3 && shifts.every(Boolean) ? shifts.join(", ") : "");
-    val("crt", Number.isInteger(v.crt) && v.crt >= 0 && v.crt <= 10 ? String(v.crt) : "");
-    val("sound", typeof v.sound === "boolean" ? (v.sound ? "on" : "off") : "");
-    val("ui", LOOK_UI[v.ui] || "field");
+    look("Shifts", shifts.length === 3 && shifts.every(Boolean) ? shifts.join(", ") : "");
+    look("CRT", Number.isInteger(v.crt) && v.crt >= 0 && v.crt <= 10 ? String(v.crt) : "");
+    look("Sound", typeof v.sound === "boolean" ? (v.sound ? "on" : "off") : "");
+    look("UI", LOOK_UI[v.ui] || "field");
     const colors = v.colors && typeof v.colors === "object" ? Object.keys(v.colors).filter(r => ROLE_NAME.test(r) && typeof v.colors[r] === "string" && HEX.test(v.colors[r])).slice(0, 32) : [];
-    if (!colors.length) out.push(row("role colours", "default", tag()));
+    if (!colors.length) look("Role colours", "");
     for (const r of colors) {
-      const p = el("p", "ind");
-      p.append(span(null, `  ${("colour " + r).padEnd(19)} `), swatch(v.colors[r]), span(null, v.colors[r]), tag());
+      const p = el("div", "krow");
+      const body = el("span", "kbody");
+      const val = span("kval", v.colors[r]);
+      body.append(swatch(v.colors[r]), val, tag("k-cmd", `→ ${APPLIES.LOOK}`));
+      p.append(span("klab", `Colour ${r}`), body);
       out.push(p);
     }
-    out.push(P("k-dim", "  Read-only. The Bright, Contrast, V-Hold and CRT knobs on the Coordinator's screen are remembered by this browser."));
     return out;
   }
 
@@ -788,12 +813,12 @@
   function setupBlocks() {
     const cfg = c();
     if (!cfg) return [P("k-dim", "No configuration to show: this dashboard was started without the factory's config folder.")];
-    const out = [P("shint", SETTINGS_HINT), settingsTabs(() => renderSetup(true))];
+    const out = [settingsTabs(() => renderSetup(true))];
     if (Number(cfg.pending) > 0) out.unshift(pendingBar(Number(cfg.pending)));
-    else if (cfg.snapshot === false) out.push(P("k-dim", "  Nothing has been started yet, so there is no running copy to compare with."));
+    else if (cfg.snapshot === false) out.push(P("knote k-dim", "Nothing has been started yet, so there is no running copy to compare with."));
     if (tuneNote) out.unshift(P(`banner ${tuneNote.cls}`, tuneNote.text));
     const body = el("div", "spanel");
-    body.append(...SECTIONS[settingsTab](cfg));
+    body.append(P("shint", INTRO[settingsTab]), ...SECTIONS[settingsTab](cfg));
     out.push(body);
     return out;
   }
@@ -814,7 +839,7 @@
   function setupHead() {
     setText($("con-title"), "Settings");
     const t = $("con-state");
-    setClass(t, "state-tag st-check");
+    setClass(t, "state-tag st-plain");
     setText(t, "Tuning");
     setClass($("con-led"), "led g");
     setText($("con-project"), st ? str(st.project) : "");
@@ -989,6 +1014,7 @@
   // A draft is undefined (untouched), null (unset: the repo's value applies) or a string to set.
   const drafts = new Map();   // role -> Map(key -> draft)
   const rackMsg = new Map();  // role -> {text, cls}: the last word on that role's rack
+  const detailsOpen = new Set();  // roles whose Details are open: kept across a redraw
   let tune = null, tuneNote = null, tuneSeq = 0, tuneFocus = false, tuneChecking = null;
 
   const draftOf = (role, key) => (drafts.has(role) ? drafts.get(role).get(key) : undefined);
@@ -1020,9 +1046,13 @@
   }
   const problemsOf = r => TUNE_KEYS.filter(key => problemOf(key, draftOf(str(r.name), key)));
 
-  function tuneRack(r) {
+  // One role as one row of the Roles table: lanes, model, effort and the three limits side by side, a footer with the
+  // word on the row and its keys, and (behind Details) each knob's state with its reset key, plus what the caller
+  // passes in: `alert` lines stay in view, `more` goes behind Details. Attributes are fixed role/aria ones; classes
+  // come from fixed strings; every word goes in with textContent.
+  function tuneRack(r, alert, more) {
     const name = str(r.name);
-    const box = el("div", "rack");
+    const box = el("div", r.on ? "rack" : "rack off");
     box.setAttribute("role", "group");
     box.setAttribute("aria-label", `Tuning ${name}`);
     const updates = [];
@@ -1047,11 +1077,30 @@
       updates.push(() => { b.hidden = !shownOf(r, key).set; });
       return b;
     };
-    const line = (key, control) => {
+    // A cell of the row: a caption (shown when the row wraps) over the control. It carries the knob's state:
+    // changed (not saved yet), refused (a bad value), or set by your override.
+    const cell = (key, cls, control) => {
+      const p = el("div", `rcell ${cls}`);
+      const pend = el("span", "rpend");
+      p.append(el("span", "rcap", TUNE_LABELS[key]), control, pend);
+      updates.push(() => {
+        const row = keyRow(r, key), ch = changeOf(r, key), bad = problemOf(key, draftOf(name, key));
+        const own = !bad && !ch && row.source === "LOCAL" && draftOf(name, key) === undefined;
+        const waiting = !bad && !ch && !!row.pending;
+        setClass(p, `rcell ${cls}${bad ? " bad" : ch ? " dirty" : waiting ? " pend" : own ? " own" : ""}`);
+        p.title = own ? "Set by your override" : "";
+        pend.hidden = !waiting;
+        setText(pend, waiting ? `running ${shown(row.running)}` : "");
+      });
+      return p;
+    };
+    // A line of the Details panel: the knob, what it is now and how it differs from the repo, and its reset key.
+    const line = key => {
       const state = span("tstate", "");
-      const lab = el("span", "silk tlabel", TUNE_LABELS[key]);
       const p = el("div", "trow");
-      p.append(lab, control, state, reset(key));
+      const lab = el("span", "tlabel", TUNE_LABELS[key]);
+      if (TUNE_HINTS[key]) lab.append(el("span", "thint", TUNE_HINTS[key]));
+      p.append(lab, state, reset(key));
       updates.push(() => {
         const row = keyRow(r, key), ch = changeOf(r, key), bad = problemOf(key, draftOf(name, key));
         setClass(p, `trow${ch ? " dirty" : ""}${bad ? " bad" : ""}`);
@@ -1069,50 +1118,42 @@
       return p;
     };
 
-    // LANES: a dial with eight detents, a digit and a pair of nudge keys.
+    // LANES: one stepper, 1 to 8. The number is dim while it follows the repo.
     const lanesNow = () => {
       const n = parseInt(shownOf(r, "LANES").v, 10);
       return Math.min(8, Math.max(1, Number.isFinite(n) ? n : 1));
     };
     const turn = d => setDraft("LANES", String(Math.min(8, Math.max(1, lanesNow() + d))));
-    const dial = el("div", "dial");
-    dial.tabIndex = 0;
-    dial.setAttribute("role", "slider");
-    dial.setAttribute("aria-label", "Lanes");
-    dial.setAttribute("aria-valuemin", "1");
-    dial.setAttribute("aria-valuemax", "8");
-    dial.append(el("i"));
-    dial.addEventListener("click", () => setDraft("LANES", String(lanesNow() % 8 + 1)));
-    dial.addEventListener("keydown", e => {
-      const d = { ArrowRight: 1, ArrowUp: 1, ArrowLeft: -1, ArrowDown: -1 }[e.key];
-      if (d) { e.preventDefault(); turn(d); }
-      else if (e.key === "Home") { e.preventDefault(); setDraft("LANES", "1"); }
-      else if (e.key === "End") { e.preventDefault(); setDraft("LANES", "8"); }
-    });
-    focusFlag(dial);
     const nub = (txt, label, d) => {
-      const b = el("button", "nubkey", txt);
+      const b = el("button", "nubkey stepbtn", txt);
       b.type = "button";
       b.setAttribute("aria-label", label);
       b.addEventListener("click", () => turn(d));
       focusFlag(b);
       return b;
     };
-    const digit = el("span", "lcd tdigit", "");
-    const ticks = el("span", "ticks");
-    const tickNodes = [1, 2, 3, 4, 5, 6, 7, 8].map(n => el("span", "tick", n));
-    ticks.append(...tickNodes);
+    const digit = el("span", "stepval", "");
+    digit.tabIndex = 0;
+    digit.setAttribute("role", "spinbutton");
+    digit.setAttribute("aria-label", "Lanes");
+    digit.setAttribute("aria-valuemin", "1");
+    digit.setAttribute("aria-valuemax", "8");
+    digit.addEventListener("keydown", e => {
+      const d = { ArrowRight: 1, ArrowUp: 1, ArrowLeft: -1, ArrowDown: -1 }[e.key];
+      if (d) { e.preventDefault(); turn(d); }
+      else if (e.key === "Home") { e.preventDefault(); setDraft("LANES", "1"); }
+      else if (e.key === "End") { e.preventDefault(); setDraft("LANES", "8"); }
+    });
+    focusFlag(digit);
     updates.push(() => {
       const n = lanesNow(), sh = shownOf(r, "LANES");
-      setClass(dial, `dial d${n}${sh.set ? "" : " dim"}`);
-      dial.setAttribute("aria-valuenow", String(n));
-      dial.setAttribute("aria-valuetext", `${n} lane${n > 1 ? "s" : ""}${sh.set ? "" : ", the repo default"}`);
+      digit.setAttribute("aria-valuenow", String(n));
+      digit.setAttribute("aria-valuetext", `${n} lane${n > 1 ? "s" : ""}${sh.set ? "" : ", the repo default"}`);
       setText(digit, n);
-      setClass(digit, `lcd tdigit${sh.set ? "" : " dim"}`);
-      tickNodes.forEach((t, i) => setClass(t, `tick${i + 1 === n ? " on" : ""}`));
+      setClass(digit, `stepval${sh.set ? "" : " dim"}`);
     });
-    const lanesCtl = el("span", "tctl");
-    lanesCtl.append(nub("◀", "Fewer lanes", -1), dial, nub("▶", "More lanes", 1), digit, ticks);
+    const lanesCtl = el("span", "stepper");
+    lanesCtl.append(nub("−", "Fewer lanes", -1), digit, nub("+", "More lanes", 1));
 
     // MODEL: a selector over the role's MODELS (plus whatever is set now).
     const modelRow = keyRow(r, "MODEL"), modelsRow = keyRow(r, "MODELS");
@@ -1121,19 +1162,20 @@
     const select = el("select", "tape");
     select.setAttribute("aria-label", "Model");
     const opt = (v, t) => { const o = el("option", null, t); o.value = v; return o; };
-    select.append(opt("", `Role default${repoVal(modelRow) ? ` (${repoVal(modelRow)})` : ""}`), ...models.map(m => opt(m, m)));
+    select.append(opt("", `Default${repoVal(modelRow) ? ` · ${repoVal(modelRow)}` : ""}`), ...models.map(m => opt(m, m)));
     select.addEventListener("change", () => setDraft("MODEL", select.value === "" ? null : select.value));
     focusFlag(select);
     updates.push(() => { const sh = shownOf(r, "MODEL"); select.value = sh.set ? sh.v : ""; });
 
-    // EFFORT: a detent switch, "role default" being unset.
+    // EFFORT: a segmented control, "Default" being unset.
     const effort = el("span", "seg-row");
     effort.setAttribute("role", "radiogroup");
     effort.setAttribute("aria-label", "Effort");
-    const segs = [[null, "Role default"], ...EFFORTS.map(e => [e, e])].map(([v, t]) => {
+    const segs = [[null, "Default"], ...EFFORTS.map(e => [e, e])].map(([v, t]) => {
       const b = el("button", "seg", t);
       b.type = "button";
       b.setAttribute("role", "radio");
+      if (v === null) b.title = "Use the role's default";
       b.addEventListener("click", () => setDraft("EFFORT", v));
       focusFlag(b);
       return [v, b];
@@ -1148,7 +1190,15 @@
       }
     });
 
-    box.append(line("LANES", lanesCtl), line("MODEL", select), line("EFFORT", effort));
+    // The row.
+    const who = el("div", "rname");
+    const tags = [r.on ? null : "off", r.optional ? "optional" : null, r.override ? "your override" : null].filter(Boolean).join(" · ");
+    const waitingKeys = list(r.keys).filter(k => k && typeof k === "object" && k.pending).length + (r.instructions_pending ? 1 : 0);
+    const rtags = el("span", "rtags", tags);
+    if (waitingKeys) rtags.append(span("rwait", `${waitingKeys} saved, not running`));
+    who.append(el("span", "rtitle", name), rtags);
+    const grid = el("div", "rline");
+    grid.append(who, cell("LANES", "c-lanes", lanesCtl), cell("MODEL", "c-model", select), cell("EFFORT", "c-effort", effort));
     for (const key of TUNE_NUMBERS) {
       const inp = el("input", "tape num");
       inp.type = "text";
@@ -1157,18 +1207,21 @@
       inp.spellcheck = false;
       inp.setAttribute("inputmode", "numeric");
       inp.setAttribute("aria-label", TUNE_LABELS[key]);
+      inp.title = TUNE_HINTS[key];
       const onType = () => { const v = inp.value.trim(); setDraft(key, v === "" ? null : v); };
       inp.addEventListener("input", onType);
       inp.addEventListener("change", onType);
       focusFlag(inp);
       updates.push(() => {
         const sh = shownOf(r, key), row = keyRow(r, key);
-        inp.placeholder = `${repoVal(row) ? `repo: ${repoVal(row)}` : "repo default"} · ${TUNE_HINTS[key]}`;
+        inp.placeholder = repoVal(row) ? `repo ${repoVal(row)}` : "default";
         if (document.activeElement !== inp) inp.value = sh.set ? sh.v : "";
       });
-      box.append(line(key, inp));
+      grid.append(cell(key, "c-num", inp));
     }
+    box.append(grid, ...(alert || []));
 
+    // The footer: what the row says, then its keys.
     const msg = span("tmsg", "");
     const prep = el("button", "svckey prepkey");
     prep.type = "button";
@@ -1176,8 +1229,21 @@
     prep.append(lamp, "Prepare");
     focusFlag(prep);
     prep.addEventListener("click", () => tunePrepare(r, redraw));
-    const foot = el("div", "trow tfoot");
-    foot.append(msg, prep);
+    const detail = el("div", "rdetail");
+    detail.append(...TUNE_KEYS.map(line), ...(more || []));
+    const toggle = el("button", "svckey rmore");
+    toggle.type = "button";
+    focusFlag(toggle);
+    const showDetail = on => {
+      if (on) detailsOpen.add(name); else detailsOpen.delete(name);
+      detail.hidden = !on;
+      toggle.setAttribute("aria-expanded", on ? "true" : "false");
+      setText(toggle, on ? "Hide details" : "Details");
+    };
+    toggle.addEventListener("click", () => showDetail(!detailsOpen.has(name)));
+    showDetail(detailsOpen.has(name));
+    const foot = el("div", "rfoot");
+    foot.append(msg, toggle, prep);
     updates.push(() => {
       const ch = changesOf(r), n = Object.keys(ch.set).length + ch.unset.length, bad = problemsOf(r).length > 0;
       const m = rackMsg.get(name);
@@ -1185,10 +1251,10 @@
       prep.disabled = !ready;
       prep.title = bad ? "Fix the marked value first" : n ? "" : "Nothing has changed";
       setClass(lamp, `led${ready ? " a" : ""}${tuneChecking === name ? " blink" : ""}`);
-      setClass(msg, `tmsg ${m ? m.cls : "k-dim"}`);
-      setText(msg, m ? m.text : tuneChecking === name ? "Checking what would change…" : n ? `${n} change${n > 1 ? "s" : ""} ready to prepare` : "No changes");
+      setClass(msg, `tmsg ${m ? m.cls : bad ? "k-err" : n || waitingKeys ? "k-warn" : "k-dim"}`);
+      setText(msg, m ? m.text : tuneChecking === name ? "Checking what would change…" : bad ? "Fix the marked value first" : n ? `${n} change${n > 1 ? "s" : ""} ready to prepare` : waitingKeys ? `No new changes · ${waitingKeys} saved, not running (Details)` : "No changes");
     });
-    box.append(foot);
+    box.append(foot, detail);
     redraw();
     return box;
   }
@@ -1231,11 +1297,11 @@
       armAt: Date.now() + HOLD_MS, state: "ready", onGo: runTune, armTimer: 0, changed: d.changed === true };
     // The bridge reads only the snapshot `factory start` takes, so the host always answers RESTART.
     const restart = d.applies === "RESTART";
-    const out = [P("banner", `Tune ${role}`), P("ind k-dim", `  writes: ${str(d.path) || "(unknown path)"}`),
-      P("ind k-warn", restart ? "  applies: after a restart" : "  applies: unknown")];
+    const out = [P("banner", `Tune ${role}`), P("knote k-dim", `writes: ${str(d.path) || "(unknown path)"}`),
+      P("knote k-warn", restart ? "applies: after a restart" : "applies: unknown")];
     out.push(H("Change"));
     const lines = list(d.diff).filter(l => l && typeof l === "object");
-    if (!d.changed || !lines.length) out.push(P("k-dim", "  Nothing would change: the file already says this."));
+    if (!d.changed || !lines.length) out.push(P("k-dim", "Nothing would change: the file already says this."));
     for (const l of lines.slice(0, DIFF_CAP)) out.push(P(`diff ${diffCls(l.op)}`, `${diffOp(l.op)} ${str(l.text)}`));
     if (lines.length > DIFF_CAP) out.push(P("k-dim", `  … ${lines.length - DIFF_CAP} more lines`));
     out.push(el("div", "gap"), P("k-dim", `Nothing has been written yet. Confirm writes it; Cancel or Esc backs out.${tune.changed ? " Confirm lights up in a moment." : ""}`));
@@ -1271,7 +1337,7 @@
   function tuneReset() {
     tuneStop();
     tuneChecking = null; tuneFocus = false; tuneNote = null;
-    drafts.clear(); rackMsg.clear();
+    drafts.clear(); rackMsg.clear(); detailsOpen.clear();
   }
 
   // Back to the knobs with the drafts kept.

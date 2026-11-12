@@ -188,6 +188,14 @@ cut), and every string is cleaned to one printable line and drawn as text. Anyth
 the security boundary (broker policy and hosts, credentials, kits) is shown there read-only,
 never edited.
 
+SETTINGS layout (both skins draw it from `cu.js`; `cu-field.css` is the designed one, `cu.css` a plain stacked version): one line of intro per tab; Roles
+opens with the "Optional roles" row, then one `rack` per role as a table row (`.rtab` > `.rhead` + `.rline`: role, lanes stepper, model,
+effort segments, three limits) that a container query (`@container (min-width: 61rem)` on `.rtab`) turns into a stacked card when narrow. The
+other keys, the Boundary line (WORKSPACE, TEMPLATE, BROKER_TOOLS, read-only) and the prompt size sit behind a per-role Details toggle
+(`.rdetail`, state kept in `detailsOpen`). Alignment is grid/flex only: no `padEnd` and no runs of spaces (the field skin is proportional).
+Inputs are real boxed fields with a visible focus ring and 32px targets; a changed value is blue, a refused one red, one set by the override has
+an amber left bar.
+
 CONFIG WRITE (doomtickle/passdesk-ops#185, #186, owner decision 29 Oct 2026,
 `scripts/dashboard_configwrite.py`) is SETUP's one write, and the only file the control unit
 writes besides a decision and an action's log: a role's tuning override `FACTORY_CONFIG/roles/<role>.conf` and the bound
