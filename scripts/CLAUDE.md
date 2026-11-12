@@ -142,6 +142,20 @@ DIAG (doomtickle/passdesk-ops#118) runs `factory doctor` through the same
 same way, one at a time with RESTART and UPDATE); doctor changes nothing (apart from fetching an empty broker/), so its
 `prepare` lists no jobs or held writes and it leaves Terminal 0 attached.
 
+APPLY (owner decision 12 Nov 2026, SETTINGS' **Apply now** key in the pending bar) runs `factory config apply`
+through the same `prepare`/`run` token and the same runner (fixed argv `<factory> config apply`, no shell, stdin
+`/dev/null`, its own session, logged to a 0600 file under `FACTORY_STATE/dashboard/actions/`, one at a time with
+RESTART, UPDATE and DIAG), only once the factory is bound to a project. The command (`factory/dispatch_start.py`
+`apply_snapshot`) refreshes only the bridge's snapshot of role overrides and instructions plus notes, validated as
+`factory start` validates them (`validate_role_overrides`, `validate_role`) and refused if a role's instructions
+plus notes pass the bridge's 20,000 characters; on a refusal nothing is written. Each file is swapped in with
+`os.replace` from a temp file in its folder, and stale files go only after, so the bridge never sees a gap. It
+touches no sandbox, broker, job or `enabled-roles`/`lane-identity.conf` (those still apply on RESTART), so its
+`prepare` lists no jobs or held writes but the pending changes it applies (`changes`) and those that still need a
+restart (`later`), from the SETTINGS data (`dashboard_controls.pending_changes`; already cleaned strings, drawn as
+text), and it leaves Terminal 0 attached. Its CONFIRM is dark for `HOLD_MS` after the list arrives. When it ends the
+SETTINGS and SERVICE DUE caches are dropped, so the bar and running values update on the next state poll.
+
 INSPECT (doomtickle/passdesk-ops#113) shows a held push's patch, and acts on nothing:
 `POST /cu/api/patch {"id", "fp"}` behind the same checks finds the card exactly as a
 decision does (exact id, fingerprint, `gone`/`changed`/`ambiguous` are 409), takes the
@@ -178,7 +192,7 @@ with `dashboard_service.safe_read` (`O_NOFOLLOW|O_NONBLOCK`, a regular file by `
 what the editor reads on request), a role `instructions_running`/`instructions_pending`, an optional role
 `running_on`/`on_pending`, and `config.pending` counts them for the bar at the top of the screen (`cu.js` `pendingBar`,
 drawn from every poll, so it survives reopening Settings; the Restart lamp lists the same instructions and notes changes). Only overrides and notes go through the snapshot; the bridge reads the committed `role.conf` live (`dispatch/server.py` `load_roles`), so a tuning key the snapshot override doesn't set runs at the current `role.conf` value, and is `pending` only when the saved value differs from that. A notes file that is a symlink (which `factory start` follows and these readers don't) is not compared: never pending, never `gone`, and the lamp falls back to its modified-after-start test for it. The page shows one apply tag per setting from a fixed map:
-"applies on Restart" (tuning, notes, enabled-roles), "needs Update" (`WORKSPACE`, `TEMPLATE`, `BROKER_TOOLS`, Gateway),
+"next job (after Apply)" (tuning, notes, instructions), "applies on Restart" (enabled-roles), "needs Update" (`WORKSPACE`, `TEMPLATE`, `BROKER_TOOLS`, Gateway),
 "needs dashboard restart" (Look). The Look tab shows `config.look.values` (`dashboard_setup.look_values`: what the
 running dashboard parsed from `dashboard.toml`, cleaned again), colours only as a validated `#rrggbb` through
 `style.setProperty`, never a class or attribute from data. Its read-only view adds no endpoint and runs nothing
@@ -220,7 +234,8 @@ past `NOTES_LIMIT` and higher than it is now. Below `FACTORY_CONFIG` nothing is 
 `roles/` and `projects/` are opened `O_NOFOLLOW|O_DIRECTORY` (made 0700 if missing), the file
 `O_NOFOLLOW|O_NONBLOCK` and fstat'ed as a regular file, and the write is a 0600 temp file in that
 folder (`O_CREAT|O_EXCL|O_NOFOLLOW`, by its fd), fsynced and `os.replace`d. The bridge reads only
-`factory start`'s snapshot in `FACTORY_STATE`, so every change says `applies: "RESTART"`, and a
+`factory start`'s snapshot in `FACTORY_STATE`, so every change says `applies: "RESTART"` (APPLY above
+refreshes that snapshot without a restart, from the next job), and a
 write drops the SERVICE DUE and SETUP caches so the lamp lights at once. Nothing reads
 `FACTORY_CONFIG` live because of this, and nothing else in the config folder is written.
 
