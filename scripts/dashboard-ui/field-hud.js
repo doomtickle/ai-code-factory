@@ -49,7 +49,7 @@
   // With Terminal 0 docked, the room the caption, the decision row and the chips need between the horizon and the pane (field.css: body.has-term .mid).
   const paneS = (h, w) => h * (w <= 760 ? .38 : .31);   // --pane-s
   function below() { const px = (el, p) => parseFloat(getComputedStyle(el)[p]) || 0, txt = $("txt"), chips = $("chips");
-    return 34 + 2 * px(txt, "fontSize") * 1.35 + $("meta").offsetHeight + px($("meta"), "marginTop") + (parseFloat(getComputedStyle(document.body).getPropertyValue("--dh")) || 92) + chips.offsetHeight + px(chips, "marginTop") + 14; }
+    return (innerWidth <= 1040 ? 50 : 34) + 2 * px(txt, "fontSize") * 1.35 + $("meta").offsetHeight + px($("meta"), "marginTop") + (parseFloat(getComputedStyle(document.body).getPropertyValue("--dh")) || 92) + chips.offsetHeight + px(chips, "marginTop") + 14; }
   function hug() { const mid = document.querySelector(".mid").getBoundingClientRect(); [["#jobs-list > *, .work h2", -1], [".today > *", 1]].forEach(([q, side]) => document.querySelectorAll(q).forEach(el => { el.style.transform = ""; const r = el.getBoundingClientRect(); if (!r.height) return; const rr = G.R - 34, half = Math.sqrt(Math.max(0, rr * rr - (G.cy - r.top) ** 2)), need = Math.min(side < 0 ? (G.cx - half) - r.left : r.right - (G.cx + half), side < 0 ? mid.left - 12 - r.right : r.left - mid.right - 12); if (need > 0) el.style.transform = `translateX(${side < 0 ? need : -need}px)`; })); }
 
   // ---------- what LOIS says: these fixed sentences, whose names go in the detail line as text, and the Coordinator's own lines (sayOwn).

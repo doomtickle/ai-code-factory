@@ -15,7 +15,7 @@ Dated entries, for the user to review. Newest first.
     events (and the `blur` a click into a frame causes).
   - **The lens stays dim until she speaks, not until you leave.** It dims while the frame has focus and blooms back on the next `say` line with the existing star flash, then stays bright
     until you click in again. Reduced motion: brightness changes at once, no drift.
-  - **The pane takes room from the caption.** The horizon lifts (`G.rim`) so the caption, decision row and chips sit above a 31vh pane (38vh sheet under 760 px); the footer note hides while
+  - **The pane takes room from the caption, and the face gets smaller rather than cut.** The horizon lifts (`G.rim`) only as far as the caption, decision row and chips need (`below()` in `field-hud.js`), and `LF.frameFace` frames the face smaller so her chin stays about 12% of the height above it; the lists drop each job's second line and `hug()` never moves them into the caption's column. The caption, decision row and chips sit above a 31vh pane (38vh sheet under 760 px); the footer note hides while
     the pane is there. A grown pane (60vh) covers the caption on purpose; it shrinks on Escape, a click on the world or its own button.
   - **Demo mode has no Terminal 0,** so no pane renders there; the layout keeps its old room.
 - **Settings shows saved and running side by side, read from the bridge's own snapshot** (owner request: tell the truth about what is running). Choices to review:
