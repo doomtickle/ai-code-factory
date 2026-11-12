@@ -15,6 +15,7 @@ import secrets
 import shutil
 import signal
 import subprocess
+import tempfile
 
 from factory import policy, preflight, roles, sbx, state
 from factory.context import FactoryError, basename
@@ -132,42 +133,92 @@ def _mint_token(ctx, state_dir, secret_name):
         f.write(token_hash + "\n")
 
 
+def _umask():
+    mask = os.umask(0)
+    os.umask(mask)
+    return mask
+
+
+def _snapshot_files(ctx, paths, project_name, role_list):
+    """{folder: {file name: (bytes, mode)}} for the instructions/ and role-overrides/ snapshot of
+    ROLE_LIST, built in memory once every role has passed roles.validate_role (and every override
+    has a role), so a bad file raises FactoryError before anything is written. Each role's
+    instructions.md, then this project's notes (projects/<project>.md) for every role, then its own
+    (projects/<project>.<role>.md); an override is copied as it is. A new file takes its source's
+    permission bits less the umask, as cp did."""
+    notes = os.path.join(paths.config, "projects", project_name + ".md")
+    roles.validate_role_overrides(paths)
+    for role in role_list:
+        roles.validate_role(paths, role)
+    mask = _umask()
+    instructions, overrides = {}, {}
+    name = os.fsencode(project_name)
+    shared = _read(notes) if _nonempty(notes) else None
+    for role in role_list:
+        override = roles.role_override_file(paths, role)
+        if os.path.isfile(override):
+            overrides[role + ".conf"] = (_read(override), os.stat(override).st_mode & 0o777 & ~mask)
+            ctx.say("Applied local overrides for %s from %s" % (role, override))
+        source = os.path.join(paths.root, "roles", role, "instructions.md")
+        text = _read(source)
+        if shared is not None:
+            text += b"\n# This project (" + name + b")\n" + shared
+        role_notes = os.path.join(paths.config, "projects", "%s.%s.md" % (project_name, role))
+        if _nonempty(role_notes):
+            text += b"\n# This project (" + name + b"), for the " + role.encode() + b"\n" + _read(role_notes)
+            ctx.say("Added %s notes from %s to its instructions" % (role, role_notes))
+        instructions[role + ".md"] = (text, os.stat(source).st_mode & 0o777 & ~mask)
+    if shared is not None:
+        ctx.say("Added project notes from %s to the role instructions" % notes)
+    return {"instructions": instructions, "role-overrides": overrides}
+
+
+def _replace_file(folder, name, data, mode):
+    """FOLDER/NAME holds DATA, swapped in with os.replace from a temp file in the same folder, so a
+    reader sees the old file or the new one, never a gap or a part. The temp name starts with a dot
+    and ends in .tmp: the bridge reads only <role>.md and *.conf."""
+    fd, tmp = tempfile.mkstemp(prefix="." + name + ".", suffix=".tmp", dir=folder)
+    try:
+        with os.fdopen(fd, "wb") as f:
+            os.fchmod(f.fileno(), mode)
+            f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, os.path.join(folder, name))
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def _write_snapshot(state_dir, files):
+    """Swap each snapshot folder's files in one by one (_replace_file), and only then remove what
+    is no longer in it (a role's override deleted since, a role gone, leftover temp files). A
+    folder that isn't a real folder is replaced first; the old whole-folder temp copies go too."""
+    for folder_name, wanted in files.items():
+        folder = os.path.join(state_dir, folder_name)
+        _rm_rf(folder + ".tmp")
+        if os.path.islink(folder) or (os.path.lexists(folder) and not os.path.isdir(folder)):
+            os.unlink(folder)
+        os.makedirs(folder, exist_ok=True)
+        for name in sorted(wanted):
+            _replace_file(folder, name, *wanted[name])
+        for name in sorted(os.listdir(folder)):
+            if name not in wanted:
+                _rm_rf(os.path.join(folder, name))
+
+
 def _snapshot_roles(ctx, state_dir, project_name):
     """Each role's instructions (dispatch passes them to every task) and this machine's role
     overrides. The bridge reads these copies, not roles/ or FACTORY_CONFIG, so edits take effect
-    on the next start. Notes for this project from the factory config folder (e.g. its test
-    command), if any, are appended for every role, then notes for one role only
-    (projects/<project>.<role>.md, e.g. a docs style for the developer). They live outside the
+    on the next start (or `factory config apply`). Notes for this project from the factory config
+    folder (e.g. its test command), if any, are appended for every role, then notes for one role
+    only (projects/<project>.<role>.md, e.g. a docs style for the developer). They live outside the
     project, so the project needs no factory files and no role can change what the others are told."""
     paths = ctx.paths
-    notes = os.path.join(paths.config, "projects", project_name + ".md")
-    roles.validate_role_overrides(paths)
-    instructions, overrides = os.path.join(state_dir, "instructions"), os.path.join(state_dir, "role-overrides")
-    _rm_rf(instructions + ".tmp")
-    _rm_rf(overrides + ".tmp")
-    os.makedirs(instructions + ".tmp", exist_ok=True)
-    os.makedirs(overrides + ".tmp", exist_ok=True)
-    name = os.fsencode(project_name)
-    for role in roles.list_roles(paths):
-        roles.validate_role(paths, role)
-        override = roles.role_override_file(paths, role)
-        if os.path.isfile(override):
-            _cp(override, os.path.join(overrides + ".tmp", role + ".conf"))
-            ctx.say("Applied local overrides for %s from %s" % (role, override))
-        target = os.path.join(instructions + ".tmp", role + ".md")
-        _cp(os.path.join(paths.root, "roles", role, "instructions.md"), target)
-        if _nonempty(notes):
-            _append(target, b"\n# This project (" + name + b")\n" + _read(notes))
-        role_notes = os.path.join(paths.config, "projects", "%s.%s.md" % (project_name, role))
-        if _nonempty(role_notes):
-            _append(target, b"\n# This project (" + name + b"), for the " + role.encode() + b"\n" + _read(role_notes))
-            ctx.say("Added %s notes from %s to its instructions" % (role, role_notes))
-    if _nonempty(notes):
-        ctx.say("Added project notes from %s to the role instructions" % notes)
-    _rm_rf(instructions)
-    os.rename(instructions + ".tmp", instructions)
-    _rm_rf(overrides)
-    os.rename(overrides + ".tmp", overrides)
+    _write_snapshot(state_dir, _snapshot_files(ctx, paths, project_name, roles.list_roles(paths)))
     # Which optional roles this machine switched on (FACTORY_CONFIG/enabled-roles, validated
     # above): the bridge treats an optional role not named here as off. Written even when empty,
     # so an old list never outlives its source file.
@@ -175,6 +226,49 @@ def _snapshot_roles(ctx, state_dir, project_name):
     with open(listed + ".tmp", "wb") as f:
         f.write("".join(n + "\n" for n in roles.enabled_roles_listed(paths)).encode("utf-8", "surrogateescape"))
     os.replace(listed + ".tmp", listed)
+
+
+# What the bridge refuses a role's instructions past (dispatch/server.py MAX_INSTRUCTIONS_CHARS).
+MAX_INSTRUCTIONS_CHARS = 20_000
+
+
+def apply_snapshot(ctx):
+    """`factory config apply`: refresh the bridge's snapshot of role overrides and instructions
+    (with this project's notes) from FACTORY_CONFIG and roles/, as `factory start` makes it, for
+    the roles the running snapshot has on. The bridge reads it on every delegate, so it applies
+    from the next job; nothing is stopped, started or cancelled, and no sandbox, broker or job is
+    touched. enabled-roles and the lane identity are left to `factory start`: turning a role on
+    needs its sandbox and broker token, and the identity lives in policy.toml with the gateway's
+    settings. Validates as start does, and also refuses instructions the bridge would refuse as
+    too long; on any refusal nothing is written. Returns the names of the roles refreshed."""
+    try:
+        return _apply_snapshot(ctx)
+    except OSError as e:
+        raise FactoryError("%s: %s" % (e.filename or "I/O error", e.strerror or e))
+
+
+def _apply_snapshot(ctx):
+    paths = ctx.paths
+    state_dir = paths.dispatch_state
+    try:
+        project = _read(os.path.join(state_dir, "project")).decode("utf-8", "surrogateescape").rstrip("\n")
+        listed = _read(os.path.join(state_dir, "enabled-roles")).decode("utf-8", "surrogateescape")
+    except OSError:
+        project = listed = ""
+    if not project or not os.path.isdir(os.path.join(state_dir, "instructions")):
+        raise FactoryError("there is no running snapshot to refresh: 'factory start' has not run here yet "
+                           "(it makes the snapshot itself)")
+    on = set(roles.parse_enabled_roles(listed))
+    role_list = [r for r in roles.list_all_roles(paths) if not roles.role_optional(paths, r) or r in on]
+    files = _snapshot_files(ctx, paths, basename(project), role_list)
+    for name, (data, _) in sorted(files["instructions"].items()):
+        chars = len(data.decode("utf-8", "replace").strip())
+        if chars > MAX_INSTRUCTIONS_CHARS:
+            raise FactoryError("role %s: its instructions plus this project's notes come to %d characters, past the "
+                               "bridge's %d; shorten the notes. Nothing was applied"
+                               % (name[:-len(".md")], chars, MAX_INSTRUCTIONS_CHARS))
+    _write_snapshot(state_dir, files)
+    return role_list
 
 
 def _write_lane_identity(ctx, path):
