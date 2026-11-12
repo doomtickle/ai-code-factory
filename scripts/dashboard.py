@@ -40,6 +40,10 @@ runs, and nothing else:
     hook-free `git fetch` of the factory checkout) to show what it would do.
   - DIAG, after the same confirm step: the fixed argv `<factory> doctor`
     (read-only), its output logged the same way. Terminal 0 stays attached.
+  - APPLY, after the same confirm step: the fixed argv `<factory> config apply`,
+    which refreshes the bridge's snapshot of role tuning and instructions plus
+    notes from the next job; logged the same way, no job cancelled, Terminal 0
+    stays attached.
 
 With --coordinator NAME it also serves Terminal 0, the Coordinator's live
 terminal (dashboard_term.py): one of two fixed argv, `sbx run --name NAME` or

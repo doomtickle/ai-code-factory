@@ -1005,6 +1005,76 @@ class ActionTests(unittest.TestCase):
         (e.dir / "block").unlink()
         self.assertTrue(e.controls.wait())
 
+    CONFIG = {"pending": 4, "snapshot": True,
+              "roles": [{"name": "developer", "on": True,
+                         "keys": [{"key": "MODEL", "value": "opus", "running": "sonnet", "pending": True},
+                                  {"key": "LANES", "value": "2", "running": "2", "pending": False}],
+                         "instructions_pending": True},
+                        {"name": "researcher", "on": True, "optional": True, "on_pending": True, "keys": []}],
+              "notes": {"files": [{"name": "proj.md", "pending": True}, {"name": "proj.reviewer.md", "pending": True,
+                                                                         "gone": True},
+                                  {"name": "proj.developer.md", "pending": False}]}}
+
+    def test_apply_needs_a_bound_project(self):
+        self.assertEqual(self.prepare("apply")[0], 409)
+        self.assertEqual(self.env.argv(), [])
+
+    def test_prepare_apply_lists_the_pending_changes_and_stops_nothing(self):
+        e = self.env
+        e.bind()
+        with mock.patch.object(dc.dashboard_setup, "setup", return_value=self.CONFIG) as built:
+            code, out, _ = self.prepare("apply")
+        self.assertEqual(code, 200, out)
+        built.assert_called_once()  # fresh, not the cached copy
+        self.assertEqual((out["action"], out["jobs"], out["held"], out["queued"]), ("apply", [], [], []))
+        self.assertEqual(out["changes"], ["developer MODEL: running sonnet, saved opus",
+                                          "developer instructions.md changed",
+                                          "notes proj.md: changed", "notes proj.reviewer.md: deleted"])
+        self.assertEqual(out["later"], ["researcher switched on"])
+        self.assertEqual(e.argv(), [])  # prepare ran nothing
+
+    def test_pending_changes_takes_no_config(self):
+        self.assertEqual(dc.pending_changes(None), ([], []))
+        self.assertEqual(dc.pending_changes({"roles": [{"name": "x", "keys": [{"key": "K", "pending": True}]}]}),
+                         (["x K: running empty, saved empty"], []))
+
+    def test_apply_runs_its_fixed_argv_with_its_own_token(self):
+        e = self.env
+        e.bind()
+        token = self.prepare("apply")[1]["confirm"]
+        self.assertEqual(self.run_action("restart", token)[0], 403)  # an apply token runs only apply
+        self.assertEqual(self.run_action("apply", "made-up")[0], 403)
+        self.assertEqual(e.argv(), [])
+        token = self.prepare("apply")[1]["confirm"]
+        e.controls._setup = (e.clock(), {"pending": 1})
+        self.assertEqual(self.run_action("apply", token)[0], 202)
+        self.assertEqual(self.run_action("apply", token)[0], 403)  # single use
+        self.assertTrue(e.controls.wait())
+        self.assertEqual(e.argv(), ["config apply"])
+        self.assertEqual(e.controls._setup, (0.0, None))  # the next state shows the new snapshot
+        out = e.post("log", {"offset": 0})[1]
+        self.assertEqual((out["phase"], out["exit"]), ("done", 0))
+        self.assertIn("stdin=eof", out["text"])
+        logs = list((e.fx.state / "dashboard" / "actions").glob("*-apply.log"))
+        self.assertEqual([oct(p.stat().st_mode & 0o777) for p in logs], ["0o600"])
+
+    def test_one_action_at_a_time_includes_apply(self):
+        e = self.env
+        e.bind()
+        (e.dir / "block").write_text("")
+        token = self.prepare("apply")[1]["confirm"]
+        self.assertEqual(self.run_action("apply", token)[0], 202)
+        for action in ("restart", "update", "doctor", "apply"):
+            self.assertEqual(self.prepare(action)[0], 409)
+        (e.dir / "block").unlink()
+        self.assertTrue(e.controls.wait())
+        token = self.prepare("doctor")[1]["confirm"]
+        (e.dir / "block").write_text("")
+        self.assertEqual(self.run_action("doctor", token)[0], 202)
+        self.assertEqual(self.prepare("apply")[0], 409)
+        (e.dir / "block").unlink()
+        self.assertTrue(e.controls.wait())
+
     def test_factory_that_cannot_start(self):
         e = self.env
         token = self.prepare("update")[1]["confirm"]
@@ -1020,6 +1090,7 @@ class ActionTests(unittest.TestCase):
         self.assertEqual(c.argv("restart"), [str(self.env.factory), "restart"])
         self.assertEqual(c.argv("update"), [str(self.env.factory), "update", "--yes"])
         self.assertEqual(c.argv("doctor"), [str(self.env.factory), "doctor"])
+        self.assertEqual(c.argv("apply"), [str(self.env.factory), "config", "apply"])
         self.assertEqual(dc.FACTORY, Path(dc.__file__).resolve().parent.parent / "bin" / "factory")
 
 
@@ -1207,6 +1278,16 @@ class TermAroundActionTests(unittest.TestCase):
         self.assertTrue(self.c.wait())
         self.assertTrue(t.running())
         self.assertIsNone(t.held)
+
+    def test_apply_leaves_the_terminal_alone(self):
+        t = self.term
+        t.power_on()
+        self.start("apply")
+        self.assertTrue(t.running())
+        self.assertIsNone(t.held)
+        (self.env.dir / "block").unlink()
+        self.assertTrue(self.c.wait())
+        self.assertTrue(t.running())
 
     def test_hang_up_keeps_the_term_usable(self):
         t = self.term
