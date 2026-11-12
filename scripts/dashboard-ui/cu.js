@@ -645,8 +645,7 @@
   const span = (cls, text) => el("span", cls, text);
   const applyTag = a => span("k-cmd", `  · ${APPLIES[a] || "?"}`);
   const shown = v => (str(v) === "" ? "empty" : str(v));
-  const runShown = v => (v == null ? "not recorded" : shown(v));
-  const savedRunning = (saved, running) => span("k-warn", `  saved ${shown(saved)} · running ${runShown(running)}`);
+  const savedRunning = (saved, running) => span("k-warn", `  saved ${shown(saved)} · running ${shown(running)}`);
   let setupKey = null;
 
   function row(label, value, ...tail) {
@@ -688,7 +687,7 @@
   const SETTINGS_HINT = "Saved is what the config folder holds; running is what the factory started with. Change a role's knobs or the project notes here; everything else is read-only. Nothing is written until you prepare and confirm it.";
 
   function rolesSection(cfg) {
-    const out = [P("k-dim", "Each knob writes your override in the config folder, on top of the committed role.conf. Fixed values can't be overridden. Each value says how it is applied: on Restart or by Update. A value saved but not yet running says so; the start records only what your override sets, so a key without one has no recorded running value.")];
+    const out = [P("k-dim", "Each knob writes your override in the config folder, on top of the committed role.conf. Fixed values can't be overridden. Each value says how it is applied: on Restart or by Update. A value saved but not yet running says so.")];
     for (const r of list(cfg.roles).filter(x => x && typeof x === "object")) out.push(...roleBlock(r));
     const en = cfg.enabled || {};
     out.push(H("Optional roles", "enabled-roles"));
@@ -1063,7 +1062,7 @@
           return;
         }
         const local = row.source === "LOCAL";
-        const pend = row.pending ? ` · saved ${shown(row.value)} · running ${runShown(row.running)} · ${APPLIES.START}` : "";
+        const pend = row.pending ? ` · saved ${shown(row.value)} · running ${shown(row.running)} · ${APPLIES.START}` : "";
         setClass(state, `tstate ${local || row.pending ? "k-warn" : "k-dim"}`);
         setText(state, `${SOURCES[row.source] || "?"}${local && str(row.repo) !== str(row.value) ? ` · repo: ${str(row.repo) || "empty"}` : ""}${pend}`);
       });

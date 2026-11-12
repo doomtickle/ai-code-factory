@@ -1364,20 +1364,20 @@ class SetupTests(unittest.TestCase):
         self.assertEqual((cfg["snapshot"], cfg["pending"]), (True, 0))
         keys = self.keys("developer")
         self.assertEqual((keys["MODEL"]["running"], keys["MODEL"]["pending"]), ("haiku", False))
-        self.assertEqual((keys["MAX_TURNS"]["running"], keys["MAX_TURNS"]["pending"]), (None, False))  # not recorded
+        self.assertEqual((keys["MAX_TURNS"]["running"], keys["MAX_TURNS"]["pending"]), ("200", False))  # the repo's value runs
         self.conf("roles/developer.conf", 'MODEL="opus"\nLANES="2"\nEFFORT="high"\n')
         keys = self.keys("developer")
         self.assertEqual([(k, v["value"], v["running"]) for k, v in keys.items() if v["pending"]],
-                         [("MODEL", "opus", "haiku"), ("EFFORT", "high", None)])
+                         [("MODEL", "opus", "haiku"), ("EFFORT", "high", "")])
         self.assertEqual(self.cfg()["pending"], 2)
 
-    def test_a_repo_side_role_conf_change_is_not_claimed_to_be_running(self):
+    def test_a_repo_side_role_conf_change_is_running_because_the_bridge_reads_it_live(self):
         self.start()
         self.write(self.root / "roles" / "developer" / "role.conf",
                    'TEMPLATE="developer"\nWORKSPACE="rw"\nLANES="3"\nBROKER_TOOLS="git_fetch git_push"\n'
                    'MODEL="claude-sonnet-5-5"\nMODELS="opus"\nMAX_TURNS="999"\n')
         key = self.keys("developer")["MAX_TURNS"]
-        self.assertEqual((key["value"], key["running"], key["pending"]), ("999", None, False))
+        self.assertEqual((key["value"], key["running"], key["pending"]), ("999", "999", False))
         self.assertEqual(self.cfg()["pending"], 0)
 
     def test_an_override_removed_since_the_start_is_still_running(self):
@@ -1405,7 +1405,7 @@ class SetupTests(unittest.TestCase):
         link.unlink()
         link.symlink_to(secret)
         key = self.keys("developer")["MODEL"]
-        self.assertEqual((key["running"], key["pending"]), (None, True))  # read as no override at all
+        self.assertEqual((key["running"], key["pending"]), ("claude-sonnet-5-5", True))  # read as no override at all
         self.assertNotIn("from-elsewhere", json.dumps(self.cfg()))
 
     def test_notes_are_compared_with_what_the_bridge_appended_and_their_text_is_never_sent(self):

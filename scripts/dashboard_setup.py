@@ -84,8 +84,8 @@ def _role(paths, name: str, on: bool, runs: bool | None = None) -> dict:
     override_path = roles.role_override_file(paths, name)
     override = read_conf(override_path) if os.path.isfile(override_path) else {}
     # What the bridge runs: the snapshotted override over the committed role.conf (only for a role it runs,
-    # `runs`: on now and in the start's enabled-roles). The snapshot holds the override only, so a key it
-    # doesn't set has an unknown running value (`running` None), not the file's current one.
+    # `runs`: on now and in the start's enabled-roles). The snapshot holds the override only; the bridge reads
+    # role.conf live, so a key the snapshot override doesn't set runs at the file's current value.
     running = snapshot_override(paths, name) if (on if runs is None else runs) else None
     keys = []
     for key in roles.ROLE_OVERRIDE_KEYS:
@@ -95,13 +95,8 @@ def _role(paths, name: str, on: bool, runs: bool | None = None) -> dict:
             row["repo"] = clean(repo.get(key, ""))
         row["pending"] = False
         if running is not None:
-            if key in running:
-                row["running"] = clean(running[key])
-                row["pending"] = row["running"] != row["value"]
-            else:
-                # An override saved since the start that differs from the repo can't be running yet.
-                row["running"] = None
-                row["pending"] = key in override and row["value"] != clean(repo.get(key, ""))
+            row["running"] = clean(running.get(key, repo.get(key, "")))
+            row["pending"] = row["running"] != row["value"]
         keys.append(row)
     fixed = []
     for key, applies, note in FIXED_KEYS:
