@@ -1,7 +1,7 @@
 // Drives the Thoughtfield's "What do you need from me?" chip and pop-up (scripts/dashboard-ui/field-shown.js) in headless Chrome against
 // `factory dashboard --demo`. Run by test_field_shown_browser.py:   node scripts/test_field_shown_browser.js <dashboard url with token> [png]
 // Checks: the demo's block that is already there at load does not pop up; the chip opens the panel and "When was it busiest?" is gone;
-// a new id pops it up by itself, and an unchanged id does not reopen a closed panel; sixteen lines fit without scrolling; COPY is dark for
+// a new id pops it up by itself, and an unchanged id does not reopen a closed panel; sixteen lines fit without scrolling; a selection (by Range or mouse drag) survives polls with the same text and a changed text replaces it; COPY is dark for
 // 2.5 s after the text changes, a click in the hold writes nothing and one after it writes exactly the text on screen with the real
 // clipboard API, under the page's own CSP (no violation); hostile text is plain text; hidden characters raise the warning; nothing is
 // sent to the Coordinator (only GETs of /api/state and /api/field leave the page).
@@ -71,6 +71,13 @@ async function launch(url, media, init, grantClipboard = true) {
     async click(x, y) {
       for (const type of ["mouseMoved", "mousePressed", "mouseReleased"])
         await s("Input.dispatchMouseEvent", { type, x, y, button: "left", buttons: type === "mousePressed" ? 1 : 0, clickCount: 1 });
+    },
+    async drag(x0, y0, x1, y1) {
+      await s("Input.dispatchMouseEvent", { type: "mouseMoved", x: x0, y: y0 });
+      await s("Input.dispatchMouseEvent", { type: "mousePressed", x: x0, y: y0, button: "left", buttons: 1, clickCount: 1 });
+      await s("Input.dispatchMouseEvent", { type: "mouseMoved", x: (x0 + x1) / 2, y: (y0 + y1) / 2, button: "left", buttons: 1 });
+      await s("Input.dispatchMouseEvent", { type: "mouseMoved", x: x1, y: y1, button: "left", buttons: 1 });
+      await s("Input.dispatchMouseEvent", { type: "mouseReleased", x: x1, y: y1, button: "left", buttons: 0, clickCount: 1 });
     },
     async key(key, code, text) {
       await s("Input.dispatchKeyEvent", { type: "keyDown", key, code, ...(text ? { text } : {}) });
@@ -161,10 +168,33 @@ async function main(url, png) {
     await b.sleep(300);
     assert.deepStrictEqual(await b.ev(`window.__writes`), [LINES16]);
 
+    // The owner can select part of the text and copy it with the browser's own copy: a poll with the same text leaves the selection alone.
+    assert.strictEqual(await b.ev(`getComputedStyle(document.getElementById("shown-text")).userSelect`), "text");
+    const sel = "Merge factory-developer/factory/topic-1";
+    await b.ev(`(() => { const t = document.getElementById("shown-text").firstChild, i = t.data.indexOf(${JSON.stringify(sel)}), r = document.createRange();
+      r.setStart(t, i); r.setEnd(t, i + ${sel.length}); const g = getSelection(); g.removeAllRanges(); g.addRange(r); })()`);
+    assert.strictEqual(await b.ev(`getSelection().toString()`), sel);
+    await b.ev(`(() => { window.__node = document.getElementById("shown-text").firstChild; window.__muts = 0;
+      new MutationObserver(m => { window.__muts += m.length; }).observe(document.getElementById("shown-text"), { subtree: true, childList: true, characterData: true }); })()`);
+    await poll(); await poll(); await b.sleep(100);
+    assert.strictEqual(await b.ev(`window.__muts`), 0, "polls with the same text leave the <pre> untouched (not even a rewrite of the same string)");
+    assert.strictEqual(await b.ev(`document.getElementById("shown-text").firstChild === window.__node`), true, "the same text is not rewritten");
+    assert.strictEqual(await b.ev(`getSelection().toString()`), sel, "a poll with the same text keeps the selection");
+    assert.strictEqual(await b.ev(`document.getElementById("shown-text").textContent`), LINES16);
+    // A drag with the pointer selects too (nothing on the page swallows it), and survives a poll.
+    await b.ev(`getSelection().removeAllRanges()`);
+    const pr = await rect("shown-text");
+    await b.drag(pr.x + 4, pr.y + 30, pr.x + pr.w - 40, pr.y + 50);
+    const dragged = await b.ev(`getSelection().toString()`);
+    assert.ok(dragged.length > 10 && LINES16.includes(dragged.replace(/\n+$/, "")), `a mouse drag selects text of the panel (${JSON.stringify(dragged)})`);
+    await poll();
+    assert.strictEqual(await b.ev(`getSelection().toString()`), dragged, "and a poll keeps it");
+
     // A block swapped in just before a click is never the one written.
     await b.ev(`window.__writes.length = 0; window.__mut = j => { j.shown = { id: "aaaaaaaaaaa2", t: j.now, text: "second" }; }`);
     await poll(); await b.sleep(100);
-    assert.strictEqual(await b.ev(`document.getElementById("shown-text").textContent`), "second");
+    assert.strictEqual(await b.ev(`document.getElementById("shown-text").textContent`), "second", "changed text replaces the panel content");
+    assert.strictEqual(await b.ev(`getSelection().toString()`), "", "and a selection of the old text is gone with it");
     await b.ev(`document.getElementById("shown-copy").click()`);
     assert.deepStrictEqual(await b.ev(`window.__writes`), [], "the swap re-arms the hold");
 

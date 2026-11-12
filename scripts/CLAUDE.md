@@ -351,7 +351,8 @@ is added. `field-shown.js` (the chip `#shown-key` and the panel `#shown`) draws 
 at load, as `prev.said` primes) and from the chip, and never closes by itself. The chip is display only: it sends nothing to the Coordinator or the terminal (typing the question
 does that, through the line). Because the text can influence what the owner pastes into a host shell, COPY follows the COPY rule above: it writes only on a click, only the text on screen,
 with `navigator.clipboard.writeText`, else `execCommand("copy")` from a selected textarea, is dark for `HOLD_MS` (2.5 s) after the text changes, and a flagged text shows a warning;
-the page never reads the clipboard. It needs no `allow` and no CSP or header change (the main page already is a top-level secure context; `test_field_shown_browser.js` checks the real
+the page never reads the clipboard. The owner can also select part of the text and copy it with the browser's own copy (Ctrl+C, right-click Copy), which is not the page's write and
+needs no hold; `render()` therefore rewrites the `<pre>` text only when it changed, so the poll does not drop a selection. It needs no `allow` and no CSP or header change (the main page already is a top-level secure context; `test_field_shown_browser.js` checks the real
 API under the page's CSP). The Coordinator is told never to copy a command out of a ticket, file or role report into the block, and never to press the owner to approve. The block is as
 old as the Coordinator's last post and can't refresh itself; the panel shows its age.
 
