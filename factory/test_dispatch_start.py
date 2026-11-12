@@ -8,6 +8,7 @@ sbx, ps and lsof are stubs on a private PATH, the bridge is a small stand-in ser
 made up (ctx.uname), so nothing here touches a real sandbox, HOME or fixed port.
 """
 
+import fcntl
 import hashlib
 import json
 import os
@@ -16,6 +17,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import threading
 import time
 import unittest
 from unittest import mock
@@ -184,6 +186,9 @@ class StartDispatchTest(CommandTest):
         for d, _, files in os.walk(self.dstate):
             for n in files:
                 p = os.path.join(d, n)
+                if os.path.islink(p):
+                    found[os.path.relpath(p, self.dstate)] = "-> " + os.readlink(p)
+                    continue
                 with open(p, "rb") as f:
                     found[os.path.relpath(p, self.dstate)] = f.read().decode()
         return found
@@ -373,6 +378,218 @@ class SnapshotTest(StartDispatchTest):
         self.start()
         self.assertEqual(sorted(n for n in self.tree() if n.startswith("docs/")), ["docs/README.md"])
         self.assertTrue(os.path.isdir(os.path.join(self.dstate, "docs", "guides")))
+
+
+class ApplyTest(StartDispatchTest):
+    """`factory config apply` (dispatch_start.apply_snapshot): the snapshot alone, from the next job."""
+
+    def apply(self, *args):
+        from factory.commands import config
+        return config.run(self.ctx(), ["apply"] + list(args)), self.out.getvalue()
+
+    def apply_error(self, *args):
+        with self.assertRaises(FactoryError) as caught:
+            self.apply(*args)
+        return str(caught.exception)
+
+    def started(self):
+        self.start()
+        self.environ.update(FAKE_SECRETS=STORED)
+        os.unlink(self.args_log)
+
+    def test_before_any_start_there_is_nothing_to_refresh(self):
+        self.assertIn("factory start", self.apply_error())
+        self.assertFalse(os.path.exists(os.path.join(self.dstate, "instructions")))
+
+    def test_it_takes_no_arguments(self):
+        self.started()
+        self.assertIn("usage: factory config", self.apply_error("--yes"))
+
+    def test_it_refreshes_overrides_and_notes_and_touches_nothing_else(self):
+        self.started()
+        pid, enabled = self.read("pid"), self.read("enabled-roles")
+        docs = {n: v for n, v in self.tree().items() if n.startswith("docs/")}
+        self.put_config("roles/developer.conf", 'MODEL="opus"\n')
+        self.put_config("projects/project.md", "Test with make.\n")
+        self.put_config("enabled-roles", "researcher\n")
+        self.put_config("policy.toml", '[git]\nauthor_name = "A B"\nauthor_email = "a@b.example"\n')
+        rc, out = self.apply()
+        self.assertEqual(rc, 0)
+        self.assertEqual(self.read("role-overrides", "developer.conf"), 'MODEL="opus"\n')
+        self.assertTrue(self.read("instructions", "reviewer.md").endswith("\n# This project (project)\nTest with make.\n"))
+        self.assertIn("from the next job", out)
+        # No sandbox, broker or bridge call; the bridge, its role list, the identity and the docs are as start left them.
+        self.assertEqual((self.sbx_calls(), self.ran), ([], []))
+        self.assertEqual((self.read("pid"), self.read("enabled-roles")), (pid, enabled))
+        self.assertFalse(os.path.exists(os.path.join(self.dstate, "lane-identity.conf")))
+        self.assertFalse(os.path.exists(os.path.join(self.dstate, "instructions", "researcher.md")))
+        self.assertEqual({n: v for n, v in self.tree().items() if n.startswith("docs/")}, docs)
+        self.assertEqual(len(self.procs), 1)
+
+    def test_a_bad_override_changes_nothing(self):
+        self.put_config("roles/developer.conf", 'MODEL="opus"\n')
+        self.started()
+        before = self.tree()
+        self.put_config("roles/developer.conf", 'BROKER_TOOLS="git_push"\n')
+        self.put_config("projects/project.md", "new notes\n")
+        self.assertIn("BROKER_TOOLS", self.apply_error())
+        self.assertEqual(self.tree(), before)
+        self.put_config("roles/developer.conf", 'LANES="99"\n')
+        self.assertIn("LANES", self.apply_error())
+        self.assertEqual(self.tree(), before)
+
+    def test_notes_past_the_bridge_limit_change_nothing(self):
+        self.started()
+        before = self.tree()
+        self.put_config("projects/project.developer.md", "x" * dispatch_start.MAX_INSTRUCTIONS_CHARS)
+        message = self.apply_error()
+        self.assertIn("role developer", message)
+        self.assertIn("Nothing was applied", message)
+        self.assertEqual(self.tree(), before)
+
+    def test_stale_files_and_leftover_temp_files_are_removed(self):
+        self.put_config("roles/developer.conf", 'MODEL="opus"\n')
+        self.started()
+        os.unlink(os.path.join(self.paths.config, "roles", "developer.conf"))
+        self.write("state/ai-code-factory/dispatch/instructions/gone.md", "old role")
+        old = self.write("state/ai-code-factory/dispatch/instructions/.developer.md.x.tmp", "half")
+        past = time.time() - dispatch_start.TEMP_GRACE_SECONDS - 60
+        os.utime(old, (past, past))
+        self.apply()
+        self.assertEqual(os.listdir(os.path.join(self.dstate, "role-overrides")), [])
+        names = os.listdir(os.path.join(self.dstate, "instructions"))
+        self.assertNotIn("gone.md", names)
+        self.assertFalse([n for n in names if n.endswith(".tmp")])
+
+    def test_another_writers_fresh_temp_file_is_left_alone(self):
+        # Race (a): a sweep that removed it would make the other writer's os.replace fail.
+        self.started()
+        theirs = self.write("state/ai-code-factory/dispatch/instructions/.reviewer.md.abc123.tmp", "mid-swap")
+        self.apply()
+        self.assertTrue(os.path.isfile(theirs))
+        self.start()
+        self.assertTrue(os.path.isfile(theirs))
+
+    def hold_lock(self):
+        """Hold the snapshot lock as another writer would (a separate open file description); returns
+        a function that lets it go."""
+        fd = os.open(os.path.join(self.dstate, dispatch_start.SNAPSHOT_LOCK), os.O_RDWR | os.O_CREAT, 0o600)
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        held = [True]
+
+        def release():
+            if held[0]:
+                held[0] = False
+                os.close(fd)
+        self.addCleanup(release)
+        return release
+
+    def test_while_a_start_writes_the_snapshot_apply_refuses_and_changes_nothing(self):
+        self.started()
+        before = self.tree()
+        self.put_config("projects/project.md", "new notes\n")
+        self.hold_lock()
+        message = self.apply_error()
+        self.assertIn("a start is running", message)
+        self.assertIn("Nothing was applied", message)
+        self.assertEqual(self.tree(), before)
+
+    def test_an_apply_during_a_start_that_turns_a_role_on_never_removes_its_instructions(self):
+        # Race (b): an Apply between start's files and its enabled-roles would build its role list
+        # from the old enabled-roles and sweep the role start just switched on.
+        self.started()
+        self.put_config("enabled-roles", "researcher\n")
+        real, refused = dispatch_start._write_snapshot, []
+
+        def write_snapshot(state_dir, files):
+            real(state_dir, files)
+            refused.append(self.apply_error())
+        with mock.patch.object(dispatch_start, "_write_snapshot", write_snapshot):
+            self.start()
+        self.assertEqual(len(refused), 1)
+        self.assertIn("a start is running", refused[0])
+        self.assertEqual(self.read("enabled-roles"), "researcher\n")
+        self.apply()
+        self.assertTrue(os.path.isfile(os.path.join(self.dstate, "instructions", "researcher.md")))
+
+    def test_a_start_waits_for_a_running_apply(self):
+        self.started()
+        self.put_config("projects/project.md", "Started notes.\n")
+        release = self.hold_lock()
+        timer = threading.Timer(0.3, release)
+        timer.start()
+        self.addCleanup(timer.cancel)
+        began = time.monotonic()
+        _, out = self.start()
+        self.assertGreaterEqual(time.monotonic() - began, 0.25)
+        self.assertIn("Waiting for a 'factory config apply' to finish", out)
+        self.assertIn("Started notes.", self.read("instructions", "developer.md"))
+
+    def test_the_lock_file_is_0600_and_never_followed_as_a_symlink(self):
+        self.started()
+        lock = os.path.join(self.dstate, dispatch_start.SNAPSHOT_LOCK)
+        self.assertEqual(os.stat(lock).st_mode & 0o777, 0o600)
+        os.unlink(lock)
+        target = os.path.join(self.tmp, "elsewhere")
+        os.symlink(target, lock)
+        before = self.tree()
+        self.put_config("projects/project.md", "new notes\n")
+        self.assertIn("is a symlink", self.apply_error())
+        self.assertIn("is a symlink", self.error(self.project))
+        self.assertFalse(os.path.lexists(target))
+        self.assertEqual(self.tree(), before)
+
+    def test_notes_that_are_not_utf8_change_nothing(self):
+        self.started()
+        before = self.tree()
+        self.put_config("projects/project.developer.md", "")
+        with open(os.path.join(self.paths.config, "projects", "project.developer.md"), "wb") as f:
+            f.write(b"caf\xe9\n")
+        message = self.apply_error()
+        self.assertIn("role developer", message)
+        self.assertIn("not UTF-8", message)
+        self.assertEqual(self.tree(), before)
+
+    def test_each_file_is_replaced_in_place_and_stale_ones_go_last(self):
+        self.put_config("roles/reviewer.conf", 'MODEL="opus"\n')
+        self.started()
+        os.unlink(os.path.join(self.paths.config, "roles", "reviewer.conf"))
+        self.put_config("roles/developer.conf", 'MODEL="sonnet"\n')
+        self.put_config("projects/project.md", "New notes.\n")
+        folder = os.path.join(self.dstate, "instructions")
+        every = sorted(os.listdir(folder))
+        real_replace, real_rm, seen = os.replace, dispatch_start._rm_rf, []
+
+        def replace(src, dst):
+            # Never a gap: every instructions file and the old override are there at each swap.
+            self.assertEqual(os.path.dirname(src), os.path.dirname(dst))
+            self.assertTrue(all(os.path.isfile(os.path.join(folder, n)) for n in every))
+            self.assertTrue(os.path.isfile(os.path.join(self.dstate, "role-overrides", "reviewer.conf")))
+            seen.append(os.path.basename(dst))
+            return real_replace(src, dst)
+
+        def rm(path):
+            if os.path.basename(path) == "reviewer.conf":
+                seen.append("rm reviewer.conf")
+            return real_rm(path)
+
+        with mock.patch.object(os, "replace", replace), mock.patch.object(dispatch_start, "_rm_rf", rm):
+            self.apply()
+        self.assertEqual(sorted(n for n in seen if n.endswith(".md")), every)
+        self.assertIn("developer.conf", seen)
+        self.assertEqual(seen[-1], "rm reviewer.conf")
+        self.assertFalse(os.path.exists(os.path.join(self.dstate, "role-overrides", "reviewer.conf")))
+        self.assertIn("New notes.", self.read("instructions", "developer.md"))
+
+    def test_an_optional_role_the_running_snapshot_has_on_is_refreshed(self):
+        self.put_config("enabled-roles", "researcher\n")
+        self.started()
+        self.put_config("roles/researcher.conf", 'EFFORT="low"\n')
+        os.unlink(os.path.join(self.paths.config, "enabled-roles"))
+        self.apply()
+        self.assertEqual(self.read("role-overrides", "researcher.conf"), 'EFFORT="low"\n')
+        self.assertTrue(os.path.isfile(os.path.join(self.dstate, "instructions", "researcher.md")))
+        self.assertEqual(self.read("enabled-roles"), "researcher\n")
 
 
 class IdentityTest(StartDispatchTest):

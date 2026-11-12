@@ -108,7 +108,8 @@ socket, or host credentials. Full picture: README.md.
   tuning override `FACTORY_CONFIG/roles/<role>.conf` (`ROLE_OVERRIDE_KEYS` only, validated
   as `factory start` does) and the bound project's notes `FACTORY_CONFIG/projects/<project>[.<role>].md`,
   through one path (`scripts/dashboard_configwrite.py`), behind a prepare/run token, no symlink
-  followed, applied on the next restart. Full rules: **`scripts/CLAUDE.md` — read before changing dashboard
+  followed, applied on the next restart or by SETTINGS' Apply now (`factory config apply`, owner decision 12 Nov
+  2026: refreshes only the bridge's snapshot, from the next job, no job cancelled). Full rules: **`scripts/CLAUDE.md` — read before changing dashboard
   code** (`scripts/dashboard*.py`, `scripts/patchview.py`).
 - The optional local voice (`voice/`, `factory voice`) is not an agent sandbox and carries no agent traffic: a plain pinned Docker
   container on `127.0.0.1:8873` that turns the dashboard's fixed sentences and the Coordinator's `say` lines, which the page sends it, into speech. It needs no network at run time and makes no calls, but is not firewalled. It is a named exception to the

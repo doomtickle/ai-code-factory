@@ -2,15 +2,21 @@
 
 Every placeholder in the example is commented out, so the copy is inert (the notes
 in projects/ apply only to a project folder of that exact name). Writes nothing at
-all if any target file exists, unless --force."""
+all if any target file exists, unless --force.
+
+factory config apply: refresh the dispatch bridge's snapshot of role tuning overrides
+and role instructions plus project notes (dispatch_start.apply_snapshot), so a saved
+change applies from the next job without a restart. It touches no sandbox, broker or
+job; enabled-roles and the lane identity still apply on `factory start`/restart."""
 
 import os
 import shutil
 import stat
 
+from factory import dispatch_start
 from factory.context import FactoryError
 
-USAGE = "usage: factory config init [--force]"
+USAGE = "usage: factory config init [--force] | factory config apply"
 
 
 def example_files(example):
@@ -39,7 +45,20 @@ def _copy(src, dest):
         os.chmod(dest, stat.S_IMODE(os.stat(src).st_mode) & ~_umask())
 
 
+def apply(ctx, args):
+    if args:
+        raise FactoryError(USAGE)
+    ctx.step("Config apply (%s)" % ctx.paths.dispatch_state)
+    done = dispatch_start.apply_snapshot(ctx)
+    ctx.ok("applied for %s: role tuning overrides, instructions and project notes" % ", ".join(done))
+    ctx.say("The bridge uses them from the next job; running jobs carry on as they started. "
+            "Turning a role on or off, and the lane git identity, still apply on 'factory restart'.")
+    return 0
+
+
 def run(ctx, args):
+    if args and args[0] == "apply":
+        return apply(ctx, args[1:])
     if not args or args[0] != "init":
         raise FactoryError(USAGE)
     force = False
