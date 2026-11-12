@@ -72,7 +72,7 @@ body.holding #t-gold { stroke-width: 2; }
 .cu-wrap.expanded { position: fixed; inset: 0; z-index: 40; background: linear-gradient(rgba(3, 5, 10, .74), rgba(3, 5, 10, .86)); }   /* the world stays visible round the screens, as round the lane monitor */
 /* Terminal 0: docked low in the world, always there. Opaque inside (the text sits on a plain pool, never the sky); the rim round it is light that
    takes the power lamp's colour and breathes with the voice (--talk, set by field-hud.js). Clicking into it grows it; Smaller or a click on the world shrinks it. */
-:root { --pane-s: 34vh; --pane-l: 60vh; }
+:root { --pane-s: 31vh; --pane-l: 60vh; }
 .term-panel { --lamp: 127, 224, 255; --rimA: .34; position: fixed; z-index: 35; left: 50%; bottom: 0; width: min(1160px, calc(100vw - 2 * var(--edge))); height: var(--pane-s); transform: translateX(-50%); transition: height .55s cubic-bezier(.2, .8, .2, 1); display: grid; grid-template-rows: auto minmax(0, 1fr); background: #070a12; border-radius: 22px 22px 0 0; }
 .term-panel.run { --lamp: 138, 240, 184; --rimA: .62; }
 .term-panel.grown { height: var(--pane-l); }
@@ -169,7 +169,7 @@ body.holding #t-gold { stroke-width: 2; }
 .vl-note { font-size: 14.5px; color: var(--ink-3); } .vl-note code { color: #fff; }
 @media (max-width: 640px) { .tag.ord { white-space: normal; padding-left: 22px; } .tag.ord b, .tag.ord .wd { display: block; max-width: 118px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .tag.ord .sep { display: none; } .tag.ord i { position: absolute; left: 8px; top: 12px; margin: 0; } .top { flex-wrap: wrap; gap: 2px 10px; padding-bottom: 14px; } .compact { order: 3; width: 100%; margin: 0; white-space: nowrap; font-size: 14px; } .top .r { gap: 4px; } #classic-key, #full, .top .r a.ic { display: none; } .ic { width: 34px; height: 34px; } .textkey { width: auto; } }
 
-body.has-term .mid { bottom: calc(var(--pane-s) + 14px); }
+body.has-term .mid { bottom: calc(var(--pane-s) + 14px); } body.has-term .foot { display: none; } @media (min-width: 1041px) { body.has-term { --dh: 92px; } }
 body.has-term .work, body.has-term .today { bottom: calc(var(--pane-s) + 16px); }
 @media (prefers-reduced-motion: reduce) { .term-panel, .term-rim { transition: none; } }
 @media (max-width: 760px) { :root { --pane-s: 38vh; --pane-l: 72vh; } .term-panel { width: 100vw; border-radius: 18px 18px 0 0; padding-bottom: env(safe-area-inset-bottom); } .term-bar { padding: 10px 14px 6px 16px; } .term-bar .term-hint { display: none; } }

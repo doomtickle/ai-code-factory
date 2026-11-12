@@ -20,7 +20,7 @@
   W.skyBlocked = (x, y) => G.R && y > rimAt(x) - 4; W.geo = () => G; W.rimAt = rimAt; W.dayX = dayX; W.dayT0 = () => G.t0;
   function dayWindow() { const n = nowMin(), first = Sky && Sky.firstStart(), t0 = Math.floor(Math.min(first == null ? n : first, n - 60) / 60) * 60, t1 = Math.max(t0 + 420, Math.ceil((n + 60) / 60) * 60); return [Math.max(0, t0), Math.min(1440, t1)]; }
   function layout() {
-    const w = G.w = innerWidth, h = G.h = innerHeight, narrow = w <= 1040; [G.t0, G.t1] = dayWindow(); G.rim = Math.round(h * (narrow ? .52 : .565)); if (termFrame) G.rim = Math.round(Math.min(G.rim, Math.max(h * .4, h * (1 - (w <= 760 ? .38 : .34)) - 190)));   // room for the caption above the docked pane G.sag = Math.min(h * .13, w * .105); G.R = (w * w / 4 + G.sag * G.sag) / (2 * G.sag); G.cx = w / 2; G.cy = G.rim + G.R;
+    const w = G.w = innerWidth, h = G.h = innerHeight, narrow = w <= 1040; [G.t0, G.t1] = dayWindow(); G.rim = Math.round(h * (narrow ? .52 : .565)); if (termFrame) G.rim = Math.round(Math.min(G.rim, Math.max(h * .3, h * (1 - (w <= 760 ? .38 : .31)) - (w <= 760 ? 300 : 300)))); G.sag = Math.min(h * .13, w * .105); G.R = (w * w / 4 + G.sag * G.sag) / (2 * G.sag); G.cx = w / 2; G.cy = G.rim + G.R;
     document.documentElement.style.setProperty("--rim", G.rim + "px");
     placeKey = ""; ords.forEach(el => { el._wd = el.offsetWidth; el._ht = el.offsetHeight; });
     const y0 = rimAt(0), arc = `M0 ${y0} A${G.R} ${G.R} 0 0 1 ${w} ${y0}`;
