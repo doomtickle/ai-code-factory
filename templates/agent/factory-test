@@ -12,6 +12,8 @@ set -euo pipefail
 #     (where test runners put the summary) and the log's path, to grep for more.
 #     If the command fails, it first lists the failure lines from above the tail.
 #     Use it for full-suite runs; drop it to see everything from a narrow run.
+#     The log is <copy>.last-run.log beside the copy (see below), so runs from
+#     different directories never share one.
 #
 # Python projects: with no yarn.lock or package-lock.json, a hash-pinned
 # requirements file (-r <file> relative to <project-dir>; else requirements.txt,
@@ -47,6 +49,14 @@ set -euo pipefail
 # The copy is kept for the next run from the same directory; each run removes
 # the copies of directories that no longer exist.
 #
+# Concurrent runs: all lanes of a role share one sandbox, so everything a run
+# writes besides its copy sits beside the copy, keyed to it (<copy> is
+# $FACTORY_TEST_ROOT/<dir>-<12 hex of the path>, default root ~/.cache/factory-test):
+# <copy>.src, <copy>.lock, <copy>.install.log, <copy>.yarnrc, <copy>.last-run.log
+# (the -host twin has its own .last-run.log). Runs on the same directory take
+# turns (flock on <copy>.lock, held from the sync until the command exits; a
+# waiting run says so); runs on different directories don't wait for each other.
+#
 # Baked into the developer and reviewer images (templates/*/Dockerfile).
 
 FAILURE_RE='^[[:space:]]*(FAIL|FAILED|ERROR)([[:space:]:]|$)|^[[:space:]]*(×|✗|✕|●)[[:space:]]|^--- FAIL:|error TS[0-9]+|^[[:space:]]+[0-9]+:[0-9]+[[:space:]]+error[[:space:]]'
@@ -78,27 +88,42 @@ base="$root/$(basename "$src")-$(printf '%s' "$src" | sha256sum | cut -c1-12)"
 # Copies are kept between runs (installed dependencies survive), so remove the
 # ones nothing will use again: each copy's source path is recorded in <copy>.src
 # (written before the copy is made, so a concurrent run's new copy always has
-# one); a copy whose source is gone is removed, with its -host twin. A copy with
-# no .src predates this and is removed too: it is only a cache, rebuilt on its
-# next run.
+# one); a copy whose source is gone is removed, with its -host twin and the
+# files kept beside them (<copy>.lock, .install.log, .yarnrc, .last-run.log). A
+# copy with no .src predates this and is removed too: it is only a cache,
+# rebuilt on its next run.
 mkdir -p "$root"
 printf '%s' "$src" > "$base.src"
 for d in "$root"/*; do
-  copy="${d%.src}"
+  [ -e "$d" ] || continue  # already removed with its copy
+  copy="$d"
+  for suffix in .src .lock .install.log .yarnrc .last-run.log .last-run.log.tmp; do
+    copy="${copy%"$suffix"}"
+  done
   copy="${copy%-host}"
-  [[ "${copy##*/}" =~ -[0-9a-f]{12}$ ]] || continue  # logs, yarn-cache, npm-cache
+  [[ "${copy##*/}" =~ -[0-9a-f]{12}$ ]] || continue  # yarn-cache, npm-cache
   if [ -f "$copy.src" ]; then
-    from="$(cat "$copy.src")"
+    from="$(cat "$copy.src" 2>/dev/null || true)"  # a concurrent cleanup may have removed it
+    [ -n "$from" ] || continue
     [ ! -d "$from" ] || continue
     why="its source, $from, is gone"
   else
     why="it has no recorded source"
   fi
   [ ! -d "$d" ] || say "removing the copy $d: $why"
-  rm -rf "$d"
-  rm -f "$copy.src"
+  rm -rf "$copy" "$copy-host" "$copy".* "$copy-host".*
 done
-copy="" from="" why=""
+copy="" from="" why="" suffix=""
+
+# One run at a time per copy: the sync, the install and the command's output
+# files all belong to it. Held (fd 9) until this script exits; the command
+# itself gets fd 9 closed, so a process it leaves behind can't keep the lock.
+if command -v flock >/dev/null; then
+  exec 9> "$base.lock"
+  flock -n 9 || { say "waiting for another run on this copy"; flock 9; }
+else
+  say "flock not found: runs on this copy are not serialized"
+fi
 # find_factory_dir NAME: .factory/NAME at the nearest directory at or above
 # <project-dir> (npm_fetch writes the mirror at the workspace root, which is above
 # <project-dir> when the lockfile is in a subdirectory), else the host project's
@@ -167,24 +192,24 @@ clean_install() {
     say "no package mirror at $mirror: call the broker's npm_fetch tool first"
     return 1
   fi
-  say "installing dependencies offline from $mirror (install scripts disabled; log: $root/install.log)..."
+  say "installing dependencies offline from $mirror (install scripts disabled; log: $base.install.log)..."
   rm -rf "$base/node_modules"
   if [ "$lock" = yarn.lock ]; then
     # Only this rc file: the mirror is the sole package source.
-    printf 'yarn-offline-mirror "%s"\nyarn-offline-mirror-pruning false\n' "$mirror" > "$root/yarnrc"
-    (cd "$base" && yarn install --no-default-rc --use-yarnrc "$root/yarnrc" --offline --frozen-lockfile \
-      --ignore-scripts --non-interactive --cache-folder "$root/yarn-cache" > "$root/install.log" 2>&1) || {
-      grep -E '^error' "$root/install.log" >&2 || tail -n 20 "$root/install.log" >&2
-      say "yarn install failed (full log: $root/install.log); if a package is missing from the mirror, call npm_fetch again"
+    printf 'yarn-offline-mirror "%s"\nyarn-offline-mirror-pruning false\n' "$mirror" > "$base.yarnrc"
+    (cd "$base" && yarn install --no-default-rc --use-yarnrc "$base.yarnrc" --offline --frozen-lockfile \
+      --ignore-scripts --non-interactive --cache-folder "$root/yarn-cache" > "$base.install.log" 2>&1) || {
+      grep -E '^error' "$base.install.log" >&2 || tail -n 20 "$base.install.log" >&2
+      say "yarn install failed (full log: $base.install.log); if a package is missing from the mirror, call npm_fetch again"
       return 1
     }
   else
     find "$mirror" -maxdepth 1 -name '*.tgz' -print0 \
       | xargs -0 -r npm cache add --cache "$root/npm-cache" >/dev/null
     (cd "$base" && npm ci --offline --ignore-scripts --no-audit --no-fund --cache "$root/npm-cache" \
-      > "$root/install.log" 2>&1) || {
-      grep -E '^npm (ERR|error)' "$root/install.log" | head -n 20 >&2 || tail -n 20 "$root/install.log" >&2
-      say "npm ci failed (full log: $root/install.log); if a package is missing from the mirror, call npm_fetch again"
+      > "$base.install.log" 2>&1) || {
+      grep -E '^npm (ERR|error)' "$base.install.log" | head -n 20 >&2 || tail -n 20 "$base.install.log" >&2
+      say "npm ci failed (full log: $base.install.log); if a package is missing from the mirror, call npm_fetch again"
       return 1
     }
   fi
@@ -206,17 +231,17 @@ python_install() {
     say "no wheel folder at $wheels: call the broker's pip_download tool first"
     return 1
   fi
-  say "installing $req offline from $wheels (binary wheels only; log: $root/install.log)..."
+  say "installing $req offline from $wheels (binary wheels only; log: $base.install.log)..."
   rm -rf "$venv"
   # Some images' python3 lacks ensurepip: make the venv without pip then, and
   # install into it with the interpreter's own pip (--python needs pip 22.3+).
-  if python3 -m venv "$venv" > "$root/install.log" 2>&1; then
+  if python3 -m venv "$venv" > "$base.install.log" 2>&1; then
     pipcmd=("$venv/bin/python" -m pip)
   else
     rm -rf "$venv"
-    python3 -m venv --without-pip "$venv" >> "$root/install.log" 2>&1 || {
-      tail -n 20 "$root/install.log" >&2
-      say "could not create a venv with python3 (full log: $root/install.log)"
+    python3 -m venv --without-pip "$venv" >> "$base.install.log" 2>&1 || {
+      tail -n 20 "$base.install.log" >&2
+      say "could not create a venv with python3 (full log: $base.install.log)"
       return 1
     }
     pipcmd=(python3 -m pip --python "$venv/bin/python")
@@ -224,9 +249,9 @@ python_install() {
   # No pip config or environment index: the wheel folder is the sole source.
   PIP_CONFIG_FILE=/dev/null "${pipcmd[@]}" install --disable-pip-version-check --no-input \
     --no-index --find-links "$wheels" --require-hashes --only-binary=:all: \
-    -r "$base/$req" >> "$root/install.log" 2>&1 || {
-    grep -E '^(ERROR|WARNING)' "$root/install.log" | head -n 20 >&2 || tail -n 20 "$root/install.log" >&2
-    say "pip install failed (full log: $root/install.log); if a wheel is missing, call pip_download again"
+    -r "$base/$req" >> "$base.install.log" 2>&1 || {
+    grep -E '^(ERROR|WARNING)' "$base.install.log" | head -n 20 >&2 || tail -n 20 "$base.install.log" >&2
+    say "pip install failed (full log: $base.install.log); if a wheel is missing, call pip_download again"
     rm -rf "$venv"
     return 1
   }
@@ -395,8 +420,8 @@ case "$label" in
 esac
 set +e
 if [ -n "$quiet" ]; then
-  log="$root/last-run.log"
-  "$@" > "$log" 2>&1
+  log="$copy.last-run.log"
+  "$@" > "$log" 2>&1 9>&-
   rc=$?
   # Without terminal colours, so the tail and any grep of the log stay plain text.
   sed 's/\x1b\[[0-9;]*[A-Za-z]//g' "$log" > "$log.tmp" && mv "$log.tmp" "$log"
@@ -416,7 +441,7 @@ if [ -n "$quiet" ]; then
   say "last 40 of $lines lines (full output: $log):"
   tail -n 40 "$log"
 else
-  "$@"
+  "$@" 9>&-
   rc=$?
 fi
 set -e

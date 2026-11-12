@@ -236,6 +236,7 @@ another.
 | `factory roles` | List roles, their project access, lanes and network tools |
 | `factory role new <name> [like]` | Add a role (copied from `reviewer`, or the role you name) |
 | `factory config init [--force]` | Write the example settings (`config.example/`) into this machine's config folder (`~/.config/ai-code-factory/`, or `$XDG_CONFIG_HOME/ai-code-factory/`) with every value commented out, so the copy changes nothing until you uncomment a line. Writes nothing and exits 1 if any target file (or symlink) already exists; `--force` overwrites |
+| `factory config apply` | Refresh the dispatch bridge's copy of the role tuning overrides (`roles/<role>.conf`), role instructions and project notes, validated as `factory start` validates them, so they apply from the next job. Stops, starts and cancels nothing; turning a role on or off and the lane git identity still need `factory restart`. On a bad value, or while a `factory start` is writing the same files, it changes nothing and exits 1 |
 | `factory docs [--print]` | Open these docs, with guides, as a web page in your browser (offline, works before setup); `--print` writes the HTML to stdout instead |
 | `factory approvals [approve <id> \| decline <id> --reason "..." \| watch]` | List, decide and watch the gateway's approval cards (see "Enabling approvals") |
 | `factory analytics` | Cost, token and performance report from the audit logs (`--json`, `--html`) |

@@ -245,7 +245,7 @@ class RefusalTests(unittest.TestCase):
                 status, out = self.env.post("decide", {"id": card["id"], "fp": card["fp"], "verdict": verdict,
                                                        "reason": "no"})
                 self.assertEqual((status, out["error"]), (403, demo.REFUSED))
-            for action in ("restart", "update", "doctor"):
+            for action in ("restart", "update", "doctor", "apply"):
                 self.assertEqual(self.env.post("prepare", {"action": action})[0], 403)
                 self.assertEqual(self.env.post("run", {"action": action, "confirm": "x"})[0], 403)
         popen.assert_not_called()

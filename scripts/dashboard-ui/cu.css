@@ -298,7 +298,8 @@ button.blank:disabled { cursor: not-allowed; filter: brightness(.75); }
 .tape::placeholder { color: var(--amber-dim); text-shadow: none; opacity: 1; font-style: italic; }
 .tape:focus-visible { outline: 2px solid var(--stripe-2); outline-offset: 2px; }
 .rcell.dirty .tape, .rcell.dirty .stepval { box-shadow: inset 0 2px 5px rgba(0,0,0,.9), inset 0 0 0 1px var(--t-warn), 0 0 0 2px #2b2d30; }
-.rcell.pend .tape, .rcell.pend .stepval { box-shadow: inset 0 2px 5px rgba(0,0,0,.9), inset 0 0 0 1px var(--t-warn), 0 0 0 2px #2b2d30; }
+.rcell.pend .tape, .rcell.pend .stepval { outline: 1px dashed var(--t-warn); outline-offset: 1px; }
+.rcell.pend .tape:focus-visible, .rcell.pend .stepval:focus-visible { outline: 2px solid var(--stripe-2); outline-offset: 2px; }
 .rpend { color: var(--t-warn); font-size: .8em; }
 .rpend[hidden] { display: none; }
 .rwait { margin-left: .8em; color: var(--t-warn); }
