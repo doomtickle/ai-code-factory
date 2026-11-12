@@ -160,7 +160,6 @@ STATIC = {
     "/field.css": ("field.css", "text/css; charset=utf-8"),
     "/field-monitor.css": ("field-monitor.css", "text/css; charset=utf-8"),
     "/field-shown.css": ("field-shown.css", "text/css; charset=utf-8"),
-    "/field-ask.js": ("field-ask.js", "text/javascript; charset=utf-8"),
     "/field-order.js": ("field-order.js", "text/javascript; charset=utf-8"),
     "/field-sky.js": ("field-sky.js", "text/javascript; charset=utf-8"),
     "/field-face.js": ("field-face.js", "text/javascript; charset=utf-8"),

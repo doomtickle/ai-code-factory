@@ -56,7 +56,7 @@ body.holding #t-gold { stroke-width: 2; }
 #legend-k { font: 500 17px var(--f-voice); }
 
 /* the centre line: the voice, then a decision if there is one, then you */
-.mid { position: fixed; left: 0; right: 0; margin-inline: auto; top: calc(var(--rim) + 54px); bottom: 24px; width: min(calc(100vw - 2 * var(--side) - 2 * var(--edge) - 20px), 860px); display: grid; grid-template-rows: minmax(0, 1fr) var(--dh) auto auto auto; pointer-events: none; }
+.mid { position: fixed; left: 0; right: 0; margin-inline: auto; top: calc(var(--rim) + 54px); bottom: 24px; width: min(calc(100vw - 2 * var(--side) - 2 * var(--edge) - 20px), 860px); display: grid; grid-template-rows: minmax(0, 1fr) var(--dh) auto auto; pointer-events: none; }
 .said { grid-row: 1; text-align: center; min-height: 0; }
 .said .txt { font: 500 clamp(21px, 2.85vh, 28px)/1.35 var(--f-voice); text-wrap: balance; min-height: 1.35em; }
 .said .txt.long { font-size: clamp(18px, 2.25vh, 21px); line-height: 1.4; }   /* a line near the say limit (dispatch/server.py MAX_SAY_CHARS) still clears the decision row */
@@ -70,24 +70,24 @@ body.holding #t-gold { stroke-width: 2; }
 .cu-wrap { grid-row: 2; pointer-events: auto; min-height: 0; }
 .cu-frame { display: block; width: 100%; height: 100%; border: 0; background: transparent; color-scheme: dark; }
 .cu-wrap.expanded { position: fixed; inset: 0; z-index: 40; background: linear-gradient(rgba(3, 5, 10, .74), rgba(3, 5, 10, .86)); }   /* the world stays visible round the screens, as round the lane monitor */
-.you-slot { grid-row: 3; pointer-events: auto; min-height: 40px; }
-.line-frame { display: block; width: 100%; height: 50px; border: 0; background: transparent; color-scheme: dark; }
-/* Terminal 0: slides up over the world, always loaded, unreachable while closed */
-.term-panel { position: fixed; z-index: 35; left: 50%; bottom: 0; width: min(1180px, 96vw); height: min(76vh, 820px); transform: translate(-50%, 104%); transition: transform .35s ease; display: grid; grid-template-rows: auto minmax(0, 1fr); background: #070a12; border-radius: 22px 22px 0 0; box-shadow: 0 0 44px 22px #070a12, 0 0 0 100vmax rgba(3,5,10,.8); visibility: hidden; }
-.term-panel.open { transform: translate(-50%, 0); visibility: visible; }
-.term-bar { display: flex; justify-content: space-between; align-items: baseline; padding: 16px 28px 10px; font: 600 20px var(--f-voice); font-variant-numeric: lining-nums; color: #f5f9ff; } .term-bar button { font: 500 15px var(--f-data); color: #f5f9ff; border-bottom: 1px solid rgba(203,218,238,.4); }
+/* Terminal 0: docked low in the world, always there. Opaque inside (the text sits on a plain pool, never the sky); the rim round it is light that
+   takes the power lamp's colour and breathes with the voice (--talk, set by field-hud.js). Clicking into it grows it; Smaller or a click on the world shrinks it. */
+:root { --pane-s: 31vh; --pane-l: 60vh; }
+.term-panel { --lamp: 127, 224, 255; --rimA: .34; position: fixed; z-index: 35; left: 50%; bottom: 0; width: min(1160px, calc(100vw - 2 * var(--edge))); height: var(--pane-s); transform: translateX(-50%); transition: height .55s cubic-bezier(.2, .8, .2, 1); display: grid; grid-template-rows: auto minmax(0, 1fr); background: #070a12; border-radius: 22px 22px 0 0; }
+.term-panel.run { --lamp: 138, 240, 184; --rimA: .62; }
+.term-panel.grown { height: var(--pane-l); }
+.term-rim { position: absolute; inset: -1px -1px 0; border-radius: 23px 23px 0 0; pointer-events: none; box-shadow: 0 0 calc(16px + 30px * var(--talk, 0)) calc(1px + 5px * var(--talk, 0)) rgba(var(--lamp), calc(var(--rimA) + .4 * var(--talk, 0))), inset 0 1px 0 rgba(var(--lamp), calc(var(--rimA) + .2)); transition: box-shadow .4s; }
+.term-bar { position: relative; display: flex; align-items: baseline; gap: 14px; padding: 12px 22px 8px 28px; font: 600 17px var(--f-voice); font-variant-numeric: lining-nums; color: #f5f9ff; }
+.term-bar .term-title { display: flex; align-items: center; gap: 10px; } .term-bar .term-hint { margin-left: auto; font: 400 14px var(--f-data); color: var(--ink-3); }
+.term-bar button { font: 500 15px var(--f-data); color: #f5f9ff; border-bottom: 1px solid rgba(203,218,238,.4); padding: 2px 0; }
 .term-slot { min-height: 0; } .term-frame { display: block; width: 100%; height: 100%; border: 0; background: #070a12; }
+/* Not quite opaque, so the compositor never treats the cross-origin frame as an occluder: Chrome's software compositor (headless shell, and a browser
+   with GPU compositing off) otherwise culls the sky canvas in a frame-sized rectangle at the top of the page. The frame's own background stays opaque. */
+.term-frame { opacity: .999; }
 .textkey { width: auto; padding: 0 14px; border-radius: 19px; display: flex; align-items: center; gap: 8px; font: 500 14.5px var(--f-data); color: var(--ink); text-decoration: none; } .ic { text-decoration: none; } .lamp { width: 7px; height: 7px; border-radius: 50%; background: var(--ink-3); } .lamp.on { background: var(--ok); box-shadow: 0 0 7px var(--ok); }
 .hint-line { font: 500 14.5px var(--f-data); color: var(--ink-2); margin-left: 8px; max-width: 46vw; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #roles, #service-note { margin-top: 12px; font: 400 clamp(14px, 1.6vh, 16px) var(--f-data); color: var(--ink-2); } #service-note { color: var(--amber); }
-/* your line: no box, just a lit edge */
-.you { display: flex; align-items: center; gap: 4px; position: relative; pointer-events: auto; padding: 2px 0 4px; }
-.you::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 1px; background: linear-gradient(90deg, rgba(127,224,255,0), rgba(127,224,255,.75) 18%, rgba(127,224,255,.75) 82%, rgba(127,224,255,0)); transition: box-shadow .25s; }
-.you:focus-within::after { box-shadow: 0 0 12px 1px rgba(127,224,255,.75); height: 1.5px; }
-.you input { flex: 1; min-width: 0; background: none; border: 0; outline: none; padding: 6px 4px; font: 500 clamp(18px, 2.3vh, 21px) var(--f-voice); color: #fff; text-align: center; }
-.you input::placeholder { color: var(--ink-3); opacity: 1; text-overflow: ellipsis; }
-.you .ic { width: 32px; height: 32px; flex: none; } #send { opacity: 0; pointer-events: none; transition: opacity .2s; } .you.has #send { opacity: 1; pointer-events: auto; } #mic[data-on="true"] { color: var(--bg); background: var(--blue); }
-.chips { grid-row: 4; min-height: 22px; margin-top: 14px; display: flex; justify-content: safe center; align-items: baseline; gap: 6px 24px; pointer-events: auto; white-space: nowrap; overflow-x: auto; scrollbar-width: none; }
+.chips { grid-row: 3; min-height: 22px; margin-top: 14px; display: flex; justify-content: safe center; align-items: baseline; gap: 6px 24px; pointer-events: auto; white-space: nowrap; overflow-x: auto; scrollbar-width: none; }
 .chips button { font: 500 clamp(14px, 1.6vh, 15.5px) var(--f-data); color: var(--ink-2); border-bottom: 1px solid rgba(203,218,238,.3); transition: color .2s, border-color .2s; } .chips button:hover { color: #fff; border-bottom-color: var(--blue); }
 #back:not([hidden]) ~ #chip-hint { display: none; } @media (max-width: 2100px) { #chip-hint { display: none; } } @media (max-width: 1400px) { .chips { gap: 6px 16px; } } #back { color: var(--blue); border-bottom-color: rgba(127,224,255,.6); } #chip-hint { font: 400 clamp(14px, 1.6vh, 15.5px) var(--f-data); color: var(--ink-3); }
 
@@ -163,7 +163,7 @@ body.holding #t-gold { stroke-width: 2; }
   .decide { grid-template-columns: 62px minmax(0, 1fr); grid-template-rows: auto auto; column-gap: 14px; row-gap: 2px; align-content: center; } .sun { grid-column: 1; grid-row: 1 / 3; width: 62px; height: 62px; } .sun .core { inset: 18px; } .d-l { grid-column: 2; grid-row: 1; text-align: left; } .d-r { grid-column: 2; grid-row: 2; } #d-facts { display: none; } #hint { display: inline; margin-right: 10px; font-size: 18px; } .d-r .f { display: inline; } #why input { text-align: left; } .said .txt { font-size: clamp(19px, 2.4vh, 24px); } .said .txt.long { font-size: 17px; } .mid:has(.txt.long) .chips { display: none; } }
 @media (prefers-reduced-motion: reduce) { *, *::before { animation-duration: .01ms !important; transition-duration: .01ms !important; } }
 
-.foot { grid-row: 5; margin: 6px 0 0; text-align: center; font: 400 13.5px var(--f-data); color: var(--ink-3); }
+.foot { grid-row: 4; margin: 6px 0 0; text-align: center; font: 400 13.5px var(--f-data); color: var(--ink-3); }
 .legend a { color: var(--blue); }
 .voice-lab { overflow: auto; } .voice-lab main { max-width: 620px; margin: 0 auto; padding: 40px 20px; display: grid; gap: 14px; } .voice-lab h1 { font: 500 36px var(--f-voice); letter-spacing: .3em; margin: 0; color: #fff; } .voice-lab p { margin: 0; color: var(--ink-2); }
 .voice-lab textarea { width: 100%; background: #070c16; color: #fff; border: 0; border-bottom: 1px solid var(--blue); padding: 8px; font: 500 20px/1.25 var(--f-voice); }
@@ -171,3 +171,10 @@ body.holding #t-gold { stroke-width: 2; }
 #vl-sliders { display: grid; gap: 8px; } #vl-sliders label { display: grid; grid-template-columns: 130px 1fr 50px; gap: 12px; align-items: center; color: var(--ink-2); } #vl-sliders input { width: 100%; accent-color: var(--blue); } #vl-sliders output { color: #fff; text-align: right; }
 .vl-note { font-size: 14.5px; color: var(--ink-3); } .vl-note code { color: #fff; }
 @media (max-width: 640px) { .tag.ord { white-space: normal; padding-left: 22px; } .tag.ord b, .tag.ord .wd { display: block; max-width: 118px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .tag.ord .sep { display: none; } .tag.ord i { position: absolute; left: 8px; top: 12px; margin: 0; } .top { flex-wrap: wrap; gap: 2px 10px; padding-bottom: 14px; } .compact { order: 3; width: 100%; margin: 0; white-space: nowrap; font-size: 14px; } .top .r { gap: 4px; } #classic-key, #full, .top .r a.ic { display: none; } .ic { width: 34px; height: 34px; } .textkey { width: auto; } }
+
+body.has-term .mid { top: calc(var(--rim) + 34px); bottom: calc(var(--pane-s) + 14px); } body.has-term .chips { margin-top: 8px; } @media (max-width: 1040px) { body.has-term .mid { top: calc(var(--rim) + 50px); } }   /* field-hud.js below() adds these up */ body.has-term .foot { display: none; } @media (min-width: 1041px) { body.has-term { --dh: 92px; } }
+body.has-term .work, body.has-term .today { bottom: calc(var(--pane-s) + 16px); }
+/* the lists sit higher with the pane docked: one line per job (a waiting one keeps its second line) so they stay under the horizon without hug() pushing them into the caption */
+body.has-term .work h2 { margin-bottom: 6px; } body.has-term #jobs-list { gap: 2px; } body.has-term .job { padding-block: 2px; } body.has-term .job:not(.s-waiting) .s { display: none; }
+@media (prefers-reduced-motion: reduce) { .term-panel, .term-rim { transition: none; } }
+@media (max-width: 760px) { :root { --pane-s: 38vh; --pane-l: 72vh; } .term-panel { width: 100vw; border-radius: 18px 18px 0 0; padding-bottom: env(safe-area-inset-bottom); } .term-bar { padding: 10px 14px 6px 16px; } .term-bar .term-hint { display: none; } }

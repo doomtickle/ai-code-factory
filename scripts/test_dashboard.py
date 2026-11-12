@@ -1576,7 +1576,7 @@ class PageTests(unittest.TestCase):
 
     def test_no_html_sinks(self):
         for name in ("app.js", "floor.js", "sound.js", "radio.js", "lanelabel.js", "look.js", "field-hud.js", "field-order.js", "field-sky.js", "field-face.js",
-                     "field-monitor.js", "field-shown.js", "field-ask.js", "voice.js", "voice-lab.js", "line.js", "cu-field.js"):
+                     "field-monitor.js", "field-shown.js", "voice.js", "voice-lab.js", "cu-field.js"):
             js = (UI / name).read_text()
             for sink in ("innerHTML", "outerHTML", "insertAdjacentHTML", "document.write", "eval(", "new Function"):
                 self.assertNotIn(sink, js, f"{name} uses {sink}")

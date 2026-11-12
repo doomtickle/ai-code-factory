@@ -195,6 +195,15 @@ async function picking(url) {
     await until(`LF.sky.packets().length === 0`, "packets fade out while a question's shape is up");
     await b.ev(`LF.sky.show("home")`);
     await until(`LF.sky.packets().length >= 6`, "and come back");
+    // with no typed line, the keys 1 to 4 are the lenses (the main page has focus), and Escape comes home
+    await b.key("4", "Digit4");
+    await until(`LF.sky.view === "time"`, "key 4 shows the busiest time");
+    await b.key("Escape", "Escape");
+    await until(`LF.sky.view === "home"`, "Escape comes home");
+    await b.key("2", "Digit2");
+    await until(`LF.sky.view === "stuck"`, "key 2 shows what is stuck");
+    await b.ev(`LF.sky.show("home")`);
+    await until(`LF.sky.packets().length >= 6`, "and the packets come back again");
     // no witness outline at all (some odd viewport size): the packets ring a stand-in instead, and nothing throws per frame
     const n = await b.ev(`LF.sky.packets().length`);
     assert.strictEqual(await b.ev(`LF.sky.noOutline(true)`), true, "the stand-in outline is in use");
@@ -362,7 +371,39 @@ async function witness(url, reduced) {
   } finally { await b.close(); }
 }
 
+// Terminal 0 docked (doomtickle/passdesk-ops#213): the demo has none, so /api/state is given a `term` (and a waiting card, so the list has one).
+// At every size, no row of the job list or the day's totals may sit on the caption; the pane is there and small; the Terminal key grows it and,
+// with a real mouse, shrinks it again (its pointerdown must not shrink it first and the click grow it back).
+const TERM = `(() => { const real = window.fetch.bind(window); window.fetch = async (u, o) => { const r = await real(u, o); if (!String(u).startsWith("/api/state")) return r;
+  const j = await r.json(); j.term = { port: 1, running: true }; if (!(j.gate || []).length) j.gate = [{ id: "c1", repo: "example/app", branch: "factory/field-pane", kind: "push" }];
+  return new Response(JSON.stringify(j), { headers: { "Content-Type": "application/json" } }); }; })()`;
+const CLEAR = `(() => { const s = document.getElementById("said").getBoundingClientRect(), out = [];
+  document.querySelectorAll(".work *, .today *").forEach(e => { if (e.children.length) return; const r = e.getBoundingClientRect(); if (!r.width || !r.height) return;
+    if (r.left < s.right && r.right > s.left && r.top < s.bottom && r.bottom > s.top) out.push((e.textContent || e.tagName).trim().slice(0, 40) + " at " + [r.left, r.top, r.right, r.bottom].map(Math.round)); });
+  return { out, said: document.getElementById("txt").textContent.length, pane: !document.getElementById("term-panel").hidden && document.getElementById("term-panel").getBoundingClientRect().height }; })()`;
+async function pane(url) {
+  const b = await launch(url, undefined, ENTERED + TERM);
+  try {
+    await ready(b, 1);
+    for (const [w, h] of SIZES.concat([[1280, 800], [1366, 768]])) {
+      await b.resize(w, h); await b.sleep(900);
+      const a = await b.ev(CLEAR);
+      assert.ok(a.pane > 0 && a.pane < h * .45, `${w}x${h}: the pane is docked and small (${a.pane})`);
+      assert.ok(a.said > 0, `${w}x${h}: a caption is showing`);
+      assert.deepStrictEqual(a.out, [], `${w}x${h}: the lists clear the caption`);
+    }
+    await b.resize(1440, 900); await b.sleep(900);
+    const key = await b.ev(`(() => { const r = document.getElementById("term-key").getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; })()`);
+    const grown = () => b.ev(`document.getElementById("term-panel").classList.contains("grown")`);
+    await b.click(...key); await b.sleep(400);
+    assert.strictEqual(await grown(), true, "the Terminal key grows the pane");
+    await b.click(...key); await b.sleep(400);
+    assert.strictEqual(await grown(), false, "a mouse click on the Terminal key shrinks it again");
+    assert.deepStrictEqual(b.errors, [], "no page errors");
+  } finally { await b.close(); }
+}
+
 const url = process.argv[2];
 const only = process.env.FIELD_ONLY;
-(only === "crystals" ? crystals(url) : only === "picking" ? picking(url) : only === "witness" ? witness(url, 0).then(() => witness(url, 1)) : layouts(url, 0).then(() => layouts(url, 65)).then(() => picking(url)).then(() => crystals(url)).then(() => witness(url, 0)).then(() => witness(url, 1)))
+(only === "pane" ? pane(url) : only === "crystals" ? crystals(url) : only === "picking" ? picking(url) : only === "witness" ? witness(url, 0).then(() => witness(url, 1)) : layouts(url, 0).then(() => layouts(url, 65)).then(() => picking(url)).then(() => crystals(url)).then(() => witness(url, 0)).then(() => witness(url, 1)).then(() => pane(url)))
   .then(() => console.log("field browser checks passed"), e => { console.error(e.stack || e); process.exit(1); });

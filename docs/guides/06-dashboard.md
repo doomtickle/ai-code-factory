@@ -53,10 +53,11 @@ line, a ring of light circles her head; with reduced motion on, the ring stands 
   [Rewind the day](#rewind-the-day).
 - **The caption**, under the horizon, is what LOIS is saying. A smaller detail
   line under it carries names and numbers.
-- **The typed line and the question chips** are under the caption. See
-  [Ask the sky](#ask-the-sky) and
+- **The question chips** are under the caption. See
+  [Ask the sky](#ask-the-sky).
+- **Terminal 0** is docked along the bottom once it runs. See
   [Talk to LOIS](#talk-to-lois).
-- **The decision row** sits above the typed line. With a write waiting, it
+- **The decision row** sits above the chips. With a write waiting, it
   shows that write. With nothing waiting, it shows the service keys. See
   [Decide a held write](#decide-a-held-write).
 - **The work list**, lower left, shows how many jobs are running and how many
@@ -144,7 +145,7 @@ decision row instead.
 
 ## Ask the sky
 
-Press a chip under the typed line, or type a question and press Enter:
+Press a chip, or press `1` to `4` (the page, not the terminal, must have focus):
 
 | Ask | The sky |
 |---|---|
@@ -181,8 +182,7 @@ closes by itself. Closing it is your choice.
   terminal. Control characters are removed, and invisible and direction
   characters appear as `⟨U+XXXX⟩` with a warning above the text.
 - The chip sends nothing to the Coordinator or the terminal. To ask, type
-  "What do you need from me?" on the line, and it goes to the Coordinator like
-  any other question.
+  "What do you need from me?" in Terminal 0.
 - **A known limit:** the panel shows the last list the Coordinator posted, with
   its age. It can't refresh itself, and the Coordinator doesn't see merges you
   make on your own, so an old list may name something already done. Ask again to
@@ -223,21 +223,23 @@ Stands in for: `factory watch`, `factory logs <role>` and `factory packet
 
 ## Talk to LOIS
 
-LOIS is the Coordinator: the face and voice are its own. Type in the line and
-press Enter. Nothing is sent until you do.
+LOIS is the Coordinator: the face and voice are its own. Terminal 0 sits low in
+the world, small by default. Click into it to make it bigger and type; nothing
+is sent until you press Enter in it, exactly as in the classic Terminal page.
 
-- A question the sky can answer stays in the browser.
-- Anything else goes to the Coordinator, exactly as if you had typed it in
-  Terminal 0. The face thinks until it answers.
+- The page never focuses it for you. A state change doesn't steal your keys.
+- While you are in it, the sky dims and draws in. When LOIS speaks (its `say`
+  tool), the sky blooms back. With reduced motion set, it changes brightness
+  with no drift.
+- Press **Smaller** on the pane bar, `t`, or click the world to shrink it. `Esc`
+  inside it goes to the Coordinator, so the pane bar says so.
 - It answers aloud with its `say` tool, in its own words, and the caption shows
-  them. Code, paths and lists stay in the reply in **Terminal**. What is waiting
+  them. Code, paths and lists stay in the reply in the terminal. What is waiting
   on you goes in the pop-up from its `show` tool (see
   [What do you need from me?](#what-do-you-need-from-me)).
-- Send another line while it's speaking and it stops and listens.
 - A line from the factory itself, such as a write going out, waits until it has
   finished.
-- If it is off, your text stays in the line, nothing is sent, and LOIS says so.
-  Open **Terminal** at the top to power it on.
+- If it is off, open **Terminal** at the top to power it on.
 
 The Coordinator reads tickets, files and role reports, and text in them could
 influence what it says. Speech acts on nothing. To approve a write, look at the
@@ -251,43 +253,41 @@ service, so it was dropped. You type.
 
 ### What stays in the browser
 
-Only a short, plain question about the whole day stays in the browser: one
-sentence of at most seven words, starting with what, which, where, how, when or
-show, with no "in", "on", "for", "about", "with", "from" or "to", and containing
-one of these words:
+Nothing you type. There is no typed line on the main page: every word you type
+goes into Terminal 0 and so to the Coordinator, and the page itself sends no
+text anywhere.
 
-| Words | Answer |
+The sky's views are keys and clicks instead:
+
+| Key or click | View |
 |---|---|
-| cost, spend, spent, expensive, money, budget | What cost the most |
-| stuck, wrong, failed, failing, broken, problem, trouble, attention | What's stuck |
-| busy, busiest, quiet, timeline | When it was busiest |
-| doing, actions, blocked, reading, kind of | What they've been doing |
+| `1` | What cost the most |
+| `2` | What's stuck |
+| `3` | What they've been doing |
+| `4` | When it was busiest |
+| Double-click the horizon | When it was busiest |
 
-"Back", "home" or "back to the galaxy" alone also return to the galaxy.
-
-So "What failed?" draws the stuck view, while "Why did the auth job fail?", "What
-failed on the auth job?" and "Back out the auth change" all go to the Coordinator.
-
-Enter goes to whatever Terminal 0 is showing. If the Coordinator is waiting on a
-prompt of its own, your line answers that prompt, so open Terminal 0 when it may be.
+The keys work while the main page has the keyboard, not while you are typing in
+Terminal 0 (click the world first). The questions under the caption do the same.
 
 ### Terminal 0
 
-Press **Terminal** in the top bar, or `t`, to open Terminal 0 as a panel. It is
+Terminal 0 is the pane low in the world (see [Talk to LOIS](#talk-to-lois)).
+Press **Terminal** in the top bar, or `t`, to make it bigger. It is
 the Coordinator's live terminal, with the same POWER ON and RESUME keys, COPY
 prompt and messages as the classic view. See
 [Terminal 0: the Coordinator](#terminal-0-the-coordinator).
 
 It is built to read easily. The text is JetBrains Mono on a solid dark
-background, not the sky, and the world behind the panel dims. The Coordinator
+background, not the sky, and the sky dims while you type in it. The Coordinator
 chooses many of its own colours, so the terminal lifts any text that would be
 hard to read against its background, including dimmed text. Box and block
 drawings keep their colours. To make the text larger, use your browser's zoom
 (Ctrl and +, or ⌘ and + on a Mac).
 
-The panel takes the keyboard when it opens, so `t` and Esc then go to the
-Coordinator. Press **Close** to close it, or click outside it first and press
-`t` or Esc.
+Pressing **Terminal** or `t` gives it the keyboard, so `t` and Esc then go to
+the Coordinator. Press **Smaller** to shrink it, or click the world first and
+press `t` or Esc.
 
 Opening the dashboard brings the Coordinator up once per page load, continuing
 its last session, if it is off and not open in `factory chat`.
@@ -655,15 +655,16 @@ designer = "#d08cff"                    # a role's colour on the floor, its lane
 
 ## Keys
 
-These work when the focus is on the page. Inside the typed line, the decision
-row or Terminal 0, keys go there instead: click the sky first.
+These work when the focus is on the page. Inside the decision row or Terminal 0,
+keys go there instead: click the sky first.
 
 | Where | Key | Does |
 |---|---|---|
-| The page | `t` | Terminal 0 open or closed |
+| The page | `t` | Terminal 0 bigger and focused, or smaller |
+| The page | `1` to `4` | Show what cost the most, what's stuck, what they have been doing, the busiest time |
 | The page | `v` | Sound and voice on or off |
 | The page | `,` | Open Settings |
-| The page | Esc | Close Terminal 0, else back to the galaxy, else close the `?` key |
+| The page | Esc | Shrink Terminal 0, else back to the galaxy, else close the `?` key |
 | The monitor | `[` / `]` | Older / newer job |
 | The monitor | Esc | Close |
 | The gold light | Space, Enter (hold) | Hold to approve |
@@ -1304,8 +1305,7 @@ and stop only the process they started.
 
 Demo mode is display only. It never reads your real state folder: it copies
 the fixture into a fresh temporary folder and deletes it when you press
-Ctrl-C. There is no Terminal 0, so the typed line answers sky questions and sends
-nothing. Approve, Decline, Restart, Update, Diagnose and the notes editor's SAVE
+Ctrl-C. There is no Terminal 0, so the pane is not shown. Approve, Decline, Restart, Update, Diagnose and the notes editor's SAVE
 answer that nothing here acts, Inspect shows the fixture's patch, and Settings
 shows the fixture's configuration (`scripts/dashboard-demo/setup/`), not yours,
 and its PREPARE says "Demo: changes are off". It also ignores your
@@ -1316,11 +1316,10 @@ apply as for a real run. `--demo` can't be combined with `--coordinator`,
 ## Is it safe to leave open?
 
 It is local: it listens only on `127.0.0.1`, refuses any request without this
-run's token, and makes no network connection of its own. Apart from Terminal 0,
-the typed line and the control unit it only reads the factory's state folder.
+run's token, and makes no network connection of its own. Apart from Terminal 0
+and the control unit it only reads the factory's state folder.
 
-- The typed line sends text to the Coordinator only when you press Enter, with
-  control characters removed.
+- The page never types into Terminal 0 and never focuses it without your click.
 - The control unit can write only a decision file (Approve, Decline), its action
   logs and, from Settings, a role's local tuning override or the project's notes
   (each after a diff and a confirm). It can run only `factory doctor`, `factory

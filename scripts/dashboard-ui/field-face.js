@@ -124,10 +124,12 @@
       if (!head || !eyeL || !eyeR || !corneaL || !corneaR || faceMeshes.length !== 2) throw new Error("the model is missing Head, Eye_L, Eye_R, its corneas or its morph targets");
       // frame it: crown near the top, chin near the middle, so the words sit over the chest
       root.updateMatrixWorld(true);
-      const box = new THREE.Box3().setFromObject(head); const crown = box.max.y, chin = crown - .25, span = (crown - chin) / .41;
-      const cy = crown + .05 * span - span / 2; const dist = (span / 2) / Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
+      const box = new THREE.Box3().setFromObject(head); const crown = box.max.y, chin = crown - .25;
       const eyeW = new THREE.Vector3(); eyeL.getWorldPosition(eyeW);
-      camera.position.set(0, cy + .02, eyeW.z + dist); camera.lookAt(0, cy, eyeW.z);
+      // LF.frameFace(k): the chin sits k of the screen's height below the crown (.41, or less with Terminal 0 docked low, so her shoulders still clear the horizon)
+      LF.frameFace = k => { const span = (crown - chin) / k, cy = crown + .05 * span - span / 2, dist = (span / 2) / Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
+        camera.position.set(0, cy + .02, eyeW.z + dist); camera.lookAt(0, cy, eyeW.z); camera.updateMatrixWorld(true); };
+      LF.frameFace(LF.faceK || .41);
       halo.position.set(0, eyeW.y + .02, box.min.z - .05); ring.position.set(0, eyeW.y + .03, eyeW.z - .03);
       W.ready = true; W.eyeY = eyeW.y; W.eyeZ = eyeW.z;
       LF.sky = window.makeSky(scene, camera, new THREE.Vector3(0, eyeW.y, eyeW.z - .08), U, W); LF.camera = camera; LF.onReady && LF.onReady();
@@ -150,7 +152,7 @@
     const s = b.s, dt = Math.min(.25, Math.max(0, (now - (b.lastAt || now)) / 1000)); b.lastAt = now;
     // idle: nothing said, thought, running or waiting for cfg.idleMs. The pointer alone never counts; a key, a click or the owner's focus in a frame does (touch below).
     b.working = !!b.thinking || b.running > 0;
-    if (b.working || b.speaking || b.waiting > 0 || (document.activeElement && document.activeElement.tagName === "IFRAME")) b.busyAt = now;
+    if (b.working || b.speaking || b.waiting > 0) b.busyAt = now;
     const idle = now - b.busyAt > cfg.idleMs; if (b.idle && !idle) b.wakeAt = now; b.idle = idle;
     const waking = now - b.wakeAt < 700;
     s.sleep += ((idle ? 1 : 0) - s.sleep) * (1 - Math.exp(-dt / (idle ? .6 : .15)));
@@ -196,7 +198,8 @@
   LF.drawBeing = drawBeing; let px = innerWidth / 2, py = innerHeight * .4; addEventListener("pointermove", e => { px = e.clientX; py = e.clientY; }); LF.pointer = () => [px, py];
   // the owner at the keys or clicking wakes her; moving the pointer does not
   LF.touch = () => { W.busyAt = performance.now(); };
-  ["keydown", "pointerdown"].forEach(t => addEventListener(t, LF.touch, true));
+  ["keydown", "pointerdown", "focus"].forEach(t => addEventListener(t, LF.touch, true));   // a key or click in the main page, or its window taking focus
+  addEventListener("blur", () => setTimeout(() => { if (document.activeElement && document.activeElement.tagName === "IFRAME") LF.touch(); }, 0));   // a click or key into a frame: the frame takes focus, this page hears only the blur
   // motes: light drifting off the skin
   const mc = document.getElementById("motes"), mx = mc.getContext("2d"); const motes = Array.from({ length: 140 }, () => ({ x: Math.random(), y: Math.random(), s: .3 + Math.random() * 1.4, v: .0002 + Math.random() * .0006, p: Math.random() * 7 }));
   // ---------- voice and chime

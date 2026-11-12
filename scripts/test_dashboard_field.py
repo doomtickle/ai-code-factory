@@ -28,27 +28,6 @@ class Lane:
         self.job = {"id": starts[-1], "status": "done" if ended else "running"} if starts else None   # as watch.Lane keeps it
 
 
-class AskTests(unittest.TestCase):
-    """What stays in the browser. Node runs the one copy both lines use."""
-
-    def view(self, q):
-        code = (f"global.window = {{}}; require({str(UI / 'field-ask.js')!r}); "
-                f"process.stdout.write(JSON.stringify(window.FieldAsk.view({json.dumps(q)})))")
-        return json.loads(subprocess.run(["node", "-e", code], capture_output=True, text=True, check=True).stdout)
-
-    def test_questions_about_the_day_stay(self):
-        for q, v in (("What cost the most?", "spend"), ("What's stuck?", "stuck"), ("What have they been doing?", "kinds"),
-                     ("When was it busiest?", "time"), ("how much did we spend today", "spend"), ("What failed?", "stuck"),
-                     ("back", "home"), ("Back to the galaxy", "home")):
-            self.assertEqual(self.view(q), v, q)
-
-    def test_everything_else_reaches_the_coordinator(self):
-        for q in ("Back out the auth change", "When you finish, start the review", "What failed? Fix it now", "Fix the failing auth test?",
-                  "Why did the auth job fail?", "What do you need from me", "What do you need from me?", "What failed on the auth job?", "Add a budget flag", "How much would it cost to rewrite the broker in rust today?",
-                  "What is blocking the release?", "Show me the spend flag on the page"):
-            self.assertIsNone(self.view(q), q)
-
-
 class FeedTests(unittest.TestCase):
     def build(self, lanes, audit=None, calls=(), now=None):
         now = now or time.mktime((2026, 11, 5, 14, 0, 0, 0, 0, -1))
@@ -134,12 +113,8 @@ class RulesTests(unittest.TestCase):
         for word in ("unsafe", "blob:", "*"):
             self.assertNotIn(word, d.field_csp(9))
 
-    def test_the_line_csp_has_no_inline_style(self):
-        self.assertNotIn("unsafe", dt.line_csp(1, 2))
-        self.assertIn("frame-ancestors http://127.0.0.1:2", dt.line_csp(1, 2))
-
     def test_every_new_page_loads_only_served_files(self):
-        for page, served in (("field.html", d.STATIC), ("voice.html", d.STATIC), ("cu-field.html", dt.STATIC), ("line.html", dt.STATIC), ("term-field.html", dt.STATIC)):
+        for page, served in (("field.html", d.STATIC), ("voice.html", d.STATIC), ("cu-field.html", dt.STATIC), ("term-field.html", dt.STATIC)):
             html = (UI / page).read_text()
             self.assertNotRegex(html, r"<script(?![^>]*\bsrc=)", page)
             self.assertNotIn("<style", html, page)
@@ -247,20 +222,38 @@ class RulesTests(unittest.TestCase):
             self.assertIn(ender, js)
         self.assertIn("HOLD_MS = 2500", js)
 
-    def test_the_line_sends_only_what_was_typed_and_never_powers_on(self):
-        js = (UI / "line.js").read_text()
-        self.assertNotIn('"power"', js)
-        self.assertNotIn("resize", js)
-        self.assertRegex(js, r'typeof ev\.data !== "string"\) return')
-
-    def test_the_whats_waiting_chip_only_shows_the_last_block_and_the_busiest_view_stays_typeable(self):
+    def test_the_whats_waiting_chip_only_shows_the_last_block_and_the_lenses_are_keys_and_a_double_click(self):
         html = (UI / "field.html").read_text()
         chips = html[html.index('id="chips"'):html.index('id="foot"')]
         self.assertIn(">What do you need from me?<", chips)
         self.assertNotIn("data-v=", re.search(r'<button[^>]*id="shown-key"[^>]*>', chips).group(0), "the chip is no sky view and sends nothing")
         self.assertNotIn("When was it busiest", html)
-        self.assertEqual(AskTests().view("When was it busiest?"), "time")
-        self.assertIn("time", re.search(r"ln:\(([^)]*)\)", (UI / "field-hud.js").read_text()).group(1).split("|"))
+        js = (UI / "field-hud.js").read_text()
+        self.assertIn('{ __proto__: null, 1: "spend", 2: "stuck", 3: "kinds", 4: "time" }', js)
+        self.assertIn("LENS_KEYS[k] && !e.ctrlKey && !e.metaKey && !e.altKey) askView(LENS_KEYS[k])", js)
+        self.assertIn('e.target.matches("input,textarea")) return; if (window.FieldMonitor && FieldMonitor.isOpen()) return;', js, "keys are the main page's own, never while the pop-up is open")
+        self.assertIn('world.addEventListener("dblclick", e => { if (Sky && e.target.id === "scrub") askView("time"); })', js)
+
+    def test_the_terminal_pane_is_docked_never_inert_and_never_takes_focus_by_itself(self):
+        html, js = (UI / "field.html").read_text(), (UI / "field-hud.js").read_text()
+        panel = re.search(r'<div class="term-panel"[^>]*>', html).group(0)
+        self.assertNotIn("inert", panel)
+        self.assertNotIn("inert", js)
+        self.assertNotIn("#ask", js)
+        self.assertEqual(len(re.findall(r"\.focus\(\)", js)), 1, "termFrame.focus() is called in one place only")
+        self.assertIn("if (on && focus) termFrame.focus();", js)
+        self.assertIn("setGrown(!grown, !grown)", js, "the pane bar's own button is a user gesture")
+        self.assertIn("focusOnState: false", (UI / "term-field.js").read_text())
+        self.assertIn("running && skin.focusOnState !== false", (UI / "term.js").read_text())
+
+    def test_the_sky_dims_while_you_are_in_the_terminal_and_blooms_back_when_she_speaks(self):
+        hud, sky = (UI / "field-hud.js").read_text(), (UI / "field-sky.js").read_text()
+        self.assertIn("W.attendT = has && lensArmed ? 1 : 0", hud)
+        self.assertIn("lensArmed = false; W.s.flash", hud)
+        self.assertIn("const lens = 1 - .55 * attend; u.uVA.value = vaBase * lens", sky)
+        self.assertIn("W.attend = attend", sky)
+        self.assertIn("attend = still ? want :", sky, "reduced motion changes brightness at once")
+        self.assertIn("drift = still ? 0 :", sky, "and never drifts")
 
     def test_the_pop_up_displays_and_copies_by_click_only(self):
         js = (UI / "field-shown.js").read_text()
@@ -283,9 +276,6 @@ class RulesTests(unittest.TestCase):
         self.assertNotIn("clipboard", (UI / "field.html").read_text().lower(), "no allow attribute on the main page")
         self.assertNotIn("clipboard", d.field_csp(9))
 
-    def test_main_page_takes_only_fixed_words_from_the_line(self):
-        self.assertIn(r"/^ln:(spend|stuck|kinds|time|home|sent|off|noconn)$/", (UI / "field-hud.js").read_text())
-
     def test_the_coordinators_own_lines_are_only_text_and_only_new_ones_are_spoken(self):
         js = (UI / "field-hud.js").read_text()
         self.assertNotIn("innerHTML", js)
@@ -294,7 +284,7 @@ class RulesTests(unittest.TestCase):
         self.assertIn('el.textContent = w;', js)
 
     def test_nothing_on_the_thoughtfield_speaks_of_the_coordinator_as_someone_else(self):
-        for name in ("field-hud.js", "field.html", "line.html", "term-field.html"):
+        for name in ("field-hud.js", "field.html", "term-field.html"):
             code = "\n".join(l for l in (UI / name).read_text().splitlines() if not l.lstrip().startswith("//"))
             self.assertNotIn("Coordinator", code, name)
 
@@ -312,7 +302,7 @@ class RulesTests(unittest.TestCase):
         self.assertEqual(alphas[-1], 1)
 
     def test_no_small_type_in_the_thoughtfield(self):
-        for name in ("field.css", "cu-field.css", "field-monitor.css", "field-shown.css", "line.css"):
+        for name in ("field.css", "cu-field.css", "field-monitor.css", "field-shown.css"):
             css = re.sub(r"/\*.*?\*/", "", (UI / name).read_text(), flags=re.S)
             for px in re.findall(r"(?:font-size: |font: \d+ )(?:clamp\()?(\d+(?:\.\d+)?)px", css):
                 self.assertGreaterEqual(float(px), 13.5, name)
@@ -320,7 +310,7 @@ class RulesTests(unittest.TestCase):
                 self.assertGreaterEqual(float(rem), .82, name)
 
     def test_one_soft_face_outside_the_terminals_grid(self):
-        for name in ("field.css", "cu-field.css", "line.css", "term-field.css"):
+        for name in ("field.css", "cu-field.css", "term-field.css"):
             css = (UI / name).read_text()
             self.assertIn('"Nunito"', css, name)
             for gone in ("Cormorant", "Hanken"):

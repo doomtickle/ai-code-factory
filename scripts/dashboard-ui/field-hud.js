@@ -1,6 +1,6 @@
 // The Thoughtfield's Horizon interface (doomtickle/passdesk-ops#207). LOIS rises behind a dark world whose lit edge is the day.
 // The main page only displays: it polls /api/state and /api/field, draws with textContent, and frames the two pages that can
-// act (the control unit at /cu/field, the typed line and Terminal 0 at /term*), which it can't script. It may also POST fixed
+// act (the control unit at /cu/field and Terminal 0 at /term/field), which it can't script. It may also POST fixed
 // text to the optional local voice: fixed event sentences and the lines the Coordinator gives its say tool (state.said, doomtickle/passdesk-ops#216).
 // Nothing else an agent wrote is spoken: task and branch labels stay in the detail line.
 "use strict";
@@ -20,8 +20,9 @@
   W.skyBlocked = (x, y) => G.R && y > rimAt(x) - 4; W.geo = () => G; W.rimAt = rimAt; W.dayX = dayX; W.dayT0 = () => G.t0;
   function dayWindow() { const n = nowMin(), first = Sky && Sky.firstStart(), t0 = Math.floor(Math.min(first == null ? n : first, n - 60) / 60) * 60, t1 = Math.max(t0 + 420, Math.ceil((n + 60) / 60) * 60); return [Math.max(0, t0), Math.min(1440, t1)]; }
   function layout() {
-    const w = G.w = innerWidth, h = G.h = innerHeight, narrow = w <= 1040; [G.t0, G.t1] = dayWindow(); G.rim = Math.round(h * (narrow ? .52 : .565)); G.sag = Math.min(h * .13, w * .105); G.R = (w * w / 4 + G.sag * G.sag) / (2 * G.sag); G.cx = w / 2; G.cy = G.rim + G.R;
+    const w = G.w = innerWidth, h = G.h = innerHeight, narrow = w <= 1040; [G.t0, G.t1] = dayWindow(); G.rim = Math.round(h * (narrow ? .52 : .565)); if (termFrame) G.rim = Math.round(Math.min(G.rim, Math.max(h * .3, h - paneS(h, w) - below()))); G.sag = Math.min(h * .13, w * .105); G.R = (w * w / 4 + G.sag * G.sag) / (2 * G.sag); G.cx = w / 2; G.cy = G.rim + G.R;
     document.documentElement.style.setProperty("--rim", G.rim + "px");
+    const k = termFrame ? Math.max(.22, Math.min(.41, G.rim / h - .17)) : .41; LF.faceK = k; if (LF.frameFace && k !== G.faceK) { G.faceK = k; LF.frameFace(k); }   // her chin about .12 of the height above the horizon, room for her shoulders
     placeKey = ""; ords.forEach(el => { el._wd = el.offsetWidth; el._ht = el.offsetHeight; });
     const y0 = rimAt(0), arc = `M0 ${y0} A${G.R} ${G.R} 0 0 1 ${w} ${y0}`;
     [atmos, world, $("threads")].forEach(s => s.setAttribute("viewBox", `0 0 ${w} ${h}`));
@@ -45,20 +46,25 @@
   function drawBeads() { const list = ((state && state.events) || []).filter(e => BEAD[e.kind]).slice(-60), key = list.length + "|" + (list.length ? list[list.length - 1].t + list[list.length - 1].kind : "") + "|" + G.w; if (key === beadKey || !G.R) return; beadKey = key; const g = $("beads"); g.textContent = ""; list.forEach(e => { const t = parseT(e.t); if (t == null || t < G.t0 || t > G.t1) return; const X = dayX(t - G.t0), p = onRim(X), lb = onRim(X, 35), r = e.kind === "STAGED" ? 5.5 : 3.6, c = svg("circle", { class: "ev " + BEAD[e.kind] + (e.red && e.kind === "JOB" ? " k-bad" : ""), cx: p.x, cy: p.y, r }); const hit = svg("circle", { class: "hit", cx: p.x, cy: p.y, r: 11 }); hit._ev = e; hit._lbl = svg("text", { class: "lbl", x: lb.x, y: lb.y, "text-anchor": X < 90 ? "start" : X > G.w - 90 ? "end" : "middle", transform: `rotate(${lb.deg} ${lb.x} ${lb.y})` }); hit._lbl.textContent = e.t.slice(0, 5) + "  " + e.text.slice(0, 80); g.append(c, hit, hit._lbl); }); }
   world.addEventListener("pointerover", e => { world.querySelectorAll(".lbl.near").forEach(n => n.classList.remove("near")); if (e.target._lbl) e.target._lbl.classList.add("near"); });
   world.addEventListener("pointerout", e => { if (e.target._lbl) e.target._lbl.classList.remove("near"); });
-  function hug() { [["#jobs-list > *, .work h2", -1], [".today > *", 1]].forEach(([q, side]) => document.querySelectorAll(q).forEach(el => { el.style.transform = ""; const r = el.getBoundingClientRect(); if (!r.height) return; const rr = G.R - 34, half = Math.sqrt(Math.max(0, rr * rr - (G.cy - r.top) ** 2)), need = side < 0 ? (G.cx - half) - r.left : r.right - (G.cx + half); if (need > 0) el.style.transform = `translateX(${side < 0 ? need : -need}px)`; })); }
+  // With Terminal 0 docked, the room the caption, the decision row and the chips need between the horizon and the pane (field.css: body.has-term .mid).
+  const paneS = (h, w) => h * (w <= 760 ? .38 : .31);   // --pane-s
+  function below() { const px = (el, p) => parseFloat(getComputedStyle(el)[p]) || 0, txt = $("txt"), chips = $("chips");
+    return (innerWidth <= 1040 ? 50 : 34) + 2 * px(txt, "fontSize") * 1.35 + $("meta").offsetHeight + px($("meta"), "marginTop") + (parseFloat(getComputedStyle(document.body).getPropertyValue("--dh")) || 92) + chips.offsetHeight + px(chips, "marginTop") + 14; }
+  function hug() { const mid = document.querySelector(".mid").getBoundingClientRect(); [["#jobs-list > *, .work h2", -1], [".today > *", 1]].forEach(([q, side]) => document.querySelectorAll(q).forEach(el => { el.style.transform = ""; const r = el.getBoundingClientRect(); if (!r.height) return; const rr = G.R - 34, half = Math.sqrt(Math.max(0, rr * rr - (G.cy - r.top) ** 2)), need = Math.min(side < 0 ? (G.cx - half) - r.left : r.right - (G.cx + half), side < 0 ? mid.left - 12 - r.right : r.left - mid.right - 12); if (need > 0) el.style.transform = `translateX(${side < 0 ? need : -need}px)`; })); }
 
   // ---------- what LOIS says: these fixed sentences, whose names go in the detail line as text, and the Coordinator's own lines (sayOwn).
   const txt = $("txt"), meta = $("meta"), queue = []; let cur = null, capWords = [], capSent = [], capLen = 0, capT0 = 0, capAll = false, tight = null, on = true;
   function setCaption(text) { txt.textContent = ""; txt.classList.toggle("long", text.length > 110); capWords = []; capAll = false; capT0 = performance.now(); let off = 0; capSent = text.split(/(?<=[.!?])\s+/).map(c => { const r = { start: off, len: c.length }; off += c.length + 1; return r; }); capLen = off; let pos = 0; text.split(/\s+/).forEach(w => { const el = document.createElement("span"); el.className = "w" + (/\d\d:\d\d/.test(w) ? " t" : ""); el.textContent = w; txt.append(el, " "); capWords.push({ el, at: pos, on: false }); pos += w.length + 1; }); tight = null; txt.classList.remove("in"); void txt.offsetWidth; txt.classList.add("in"); }
   function say(text, m, opt = {}) { if (!entered) return; const fixed = queue.filter(q => !q.own); fixed.slice(0, Math.max(0, fixed.length - 2)).forEach(q => queue.splice(queue.indexOf(q), 1)); queue.push(Object.assign({ text, m }, opt)); if (!cur) next(); }
   // Its own words go ahead of any fixed sentence still waiting, in the order it said them. A fixed sentence already being spoken finishes first.
-  function sayOwn(text) { if (!entered) return; ownAt = performance.now(); stopThinking(); const own = queue.filter(q => q.own).length; queue.splice(own, 0, { text, m: "", own: true, ans: true, mood: "calm", fx: () => { W.focus = null; } }); if (own >= OWN_WAITING) queue.shift(); if (!cur) next(); }
+  function sayOwn(text) { if (!entered) return; ownAt = performance.now(); lensArmed = false; W.s.flash = Math.max(W.s.flash, .8); stopThinking(); const own = queue.filter(q => q.own).length; queue.splice(own, 0, { text, m: "", own: true, ans: true, mood: "calm", fx: () => { W.focus = null; } }); if (own >= OWN_WAITING) queue.shift(); if (!cur) next(); }
   // Between your line and its first words the face is thinking, and only that: there is no spoken "one moment", which would be a messenger.
+  let lensArmed = false, hadFocus = false;
   const STILL_MS = 45000, GIVE_UP_MS = 180000, OWN_WAITING = 4, OWN_QUIETS_START_MS = 30000; let ownAt = -Infinity, thinkTimers = [];
   const thinkLine = t => { thinkNote = t; if (!cur) { setCaption(""); meta.textContent = t; } };
   let thinkNote = "";
   function stopThinking() { W.thinking = false; thinkNote = ""; thinkTimers.forEach(clearTimeout); thinkTimers = []; }
-  function startThinking() { stopThinking(); queue.splice(0, queue.length, ...queue.filter(q => !q.own)); if (cur && window.LiveVoice) LiveVoice.stop(); if (cur) { cur = null; W.speaking = false; W.mood = "calm"; } W.focus = null; W.thinking = true; thinkLine("Thinking. My working is in Terminal: press T."); thinkTimers = [setTimeout(() => thinkLine("Still thinking. My working is in Terminal: press T."), STILL_MS), setTimeout(() => { stopThinking(); if (!cur) meta.textContent = ""; }, GIVE_UP_MS)]; if (queue.length) next(); }
+  function startThinking() { stopThinking(); queue.splice(0, queue.length, ...queue.filter(q => !q.own)); if (cur && window.LiveVoice) LiveVoice.stop(); if (cur) { cur = null; W.speaking = false; W.mood = "calm"; } W.focus = null; W.thinking = true; thinkLine("Thinking."); thinkTimers = [setTimeout(() => thinkLine("Still thinking. My working is below."), STILL_MS), setTimeout(() => { stopThinking(); if (!cur) meta.textContent = ""; }, GIVE_UP_MS)]; if (queue.length) next(); }
   function next() { const it = queue.shift(); if (!it) { cur = null; if (thinkNote) thinkLine(thinkNote); return; } cur = it;  setCaption(it.text); meta.textContent = it.m || ""; marks = it.marks || []; if (it.fx) it.fx(); W.speaking = true; W.mood = it.mood || (/failed|Declined|changes|blocked/i.test(it.text) ? "stern" : /^Hi|Approved|approved/i.test(it.text) ? "lit" : "calm");
     const done = () => { if (cur !== it) return; capWords.forEach(w => { w.on = true; w.el.classList.add("on"); }); capAll = true; W.speaking = false; W.mood = "calm"; setTimeout(() => { if (!cur || cur === it) W.focus = null; }, 1500); setTimeout(() => { if (cur === it) next(); }, 900); };
     it.finish = done; const quiet = () => setTimeout(done, 1500 + it.text.length * 60);
@@ -86,29 +92,31 @@
   function greet() { const s = state || {}, n = (s.totals || {}).running || 0, m = (s.gate || []).length; const parts = n ? `${n === 1 ? "One job is" : n + " jobs are"} running` : "Nothing is running"; const wait = m ? ` and ${m === 1 ? "one is" : m + " are"} waiting for you` : ""; const b = s.briefing || {}; say(`Hi. ${parts}${wait}.`, !n && b.prompt ? "Try: " + String(b.prompt).slice(0, 160) : (s.totals ? `Today so far: ${s.totals.jobs} jobs · spend $${s.totals.cost.toFixed(2)}` : ""), { fx: () => { W.focus = null; } }); }
 
   // ---------- the frames that can act. The main page can't script them; they're other origins.
-  let cuFrame = null, cuOrigin = "", termFrame = null, lineFrame = null, termOrigin = "";
+  let cuFrame = null, cuOrigin = "", termFrame = null, termOrigin = "";
   function frame(cls, title, src, allow) { const f = document.createElement("iframe"); f.className = cls; f.title = title; f.setAttribute("sandbox", "allow-scripts allow-same-origin"); f.setAttribute("referrerpolicy", "no-referrer"); if (allow) f.setAttribute("allow", allow); f.src = src; return f; }
   function ensureFrames() { const s = state; if (s.cu && !cuFrame) { cuOrigin = `http://${location.hostname}:${Number(s.cu.port)}`; cuFrame = frame("cu-frame", "Control unit", `${cuOrigin}/cu/field`); cuFrame.addEventListener("load", () => { setCu(false); $("settings-key").disabled = false; }); $("cu-wrap").append(cuFrame); }
-    if (s.term && !termFrame) { termOrigin = `http://${location.hostname}:${Number(s.term.port)}`; termFrame = frame("term-frame", "LOIS's terminal", `${termOrigin}/term/field`, "clipboard-write"); $("term-slot").append(termFrame); lineFrame = frame("line-frame", "Talk to LOIS", `${termOrigin}/term/line`); $("you-slot").textContent = ""; $("you-slot").append(lineFrame); $("term-key").hidden = false; } }
+    if (s.term && !termFrame) { termOrigin = `http://${location.hostname}:${Number(s.term.port)}`; termFrame = frame("term-frame", "LOIS's terminal", `${termOrigin}/term/field`, "clipboard-write"); $("term-slot").append(termFrame); $("term-key").hidden = false; $("term-panel").hidden = false; document.body.classList.add("has-term"); layout(); } }
   function setCu(big) { $("cu-wrap").classList.toggle("expanded", big); }
   function selectCard(id) { if (cuFrame && CARD.test(id)) cuFrame.contentWindow.postMessage({ type: "cu:select", id }, cuOrigin); }
-  function setTerm(open) { const p = $("term-panel"); p.classList.toggle("open", open); p.inert = !open; $("term-key").setAttribute("aria-expanded", String(open)); if (open && termFrame) termFrame.focus(); }
-  addEventListener("message", e => { if (cuFrame && e.source === cuFrame.contentWindow && e.origin === cuOrigin) { if (e.data === "cu:expand") setCu(true); else if (e.data === "cu:collapse") setCu(false); else if (e.data === "cu:reload") location.reload(); return; }
-    if (lineFrame && e.source === lineFrame.contentWindow && e.origin === termOrigin && typeof e.data === "string") { const m = /^ln:(spend|stuck|kinds|time|home|sent|off|noconn)$/.exec(e.data); if (!m) return; const w = m[1]; if (w === "sent") startThinking(); else if (w === "off") answer("I'm switched off. Open Terminal at the top to power me on, then send that again.", ""); else if (w === "noconn") answer("I can't reach Terminal 0 right now. Too many open tabs can do that.", ""); else if (w === "home") { goHome(); answer("Back to the galaxy.", ""); } else askView(w); } });
+  // The pane is always there; "grown" is the owner's own click into it, T, or the Bigger key. Only those ever focus the terminal frame.
+  let grown = false;
+  function setGrown(on, focus) { if (!termFrame) return; grown = on; $("term-panel").classList.toggle("grown", on); $("term-key").setAttribute("aria-expanded", String(on)); $("term-size").textContent = on ? "Smaller" : "Bigger"; if (on && focus) termFrame.focus(); else if (!on && document.activeElement === termFrame) termFrame.blur(); }
+  // Clicking into the frame moves focus there without a message to this page; the window's blur is how this page hears it.
+  addEventListener("blur", () => setTimeout(() => { if (!termFrame) return; if (document.activeElement === termFrame) setGrown(true); else if (cuFrame && document.activeElement === cuFrame) setGrown(false); }, 0));
+  document.addEventListener("pointerdown", e => { if (grown && !(e.target.closest && e.target.closest(".term-panel,#term-key,#monitor-root,.cu-wrap.expanded"))) setGrown(false); });
+  addEventListener("message", e => { if (cuFrame && e.source === cuFrame.contentWindow && e.origin === cuOrigin) { if (e.data === "cu:expand") setCu(true); else if (e.data === "cu:collapse") setCu(false); else if (e.data === "cu:reload") location.reload(); return; } });
   $("settings-key").addEventListener("click", () => { if (cuFrame) cuFrame.contentWindow.postMessage({ type: "cu:open", screen: "settings" }, cuOrigin); });
-  $("term-key").addEventListener("click", () => setTerm(!$("term-panel").classList.contains("open"))); $("term-close").addEventListener("click", () => setTerm(false));
+  $("term-key").addEventListener("click", () => setGrown(!grown, true)); $("term-size").addEventListener("click", () => setGrown(!grown, !grown));
 
   // ---------- questions: the sky answers
   const back = $("back"); let viewIdle = 0;
   function goHome() { if (Sky && Sky.view !== "home") Sky.show("home"); back.hidden = true; }
   function askView(v) { if (!Sky) { answer("This view needs WebGL, so there's no sky to answer with. The classic view still works.", ""); return; } const r = Sky.show(v); if (r.same) return; if (r.none) { answer(r.say, r.meta); return; } back.hidden = v === "home"; viewIdle = performance.now(); W.focus = null; W.hoverFocus = null; answer(r.say, r.meta); }
-  function askUnknown() { answer("I can show you what cost the most, what's stuck, what the agents have been doing, or when the day was busiest.", "For anything else, talk to me in Terminal: press T"); }
   $("chips").addEventListener("click", e => { if (e.target.id === "back") { goHome(); return; } const v = e.target.dataset && e.target.dataset.v; if (v) askView(v); });
-  $("ask").addEventListener("input", () => $("ask").classList.toggle("has", !!$("ask-in").value.trim()));
-  $("ask").addEventListener("submit", e => { e.preventDefault(); const q = $("ask-in").value.trim(); if (!q) return; $("ask-in").value = ""; $("ask").classList.remove("has"); const v = FieldAsk.view(q); if (v === "home") { goHome(); answer("Back to the galaxy.", ""); } else if (v) askView(v); else if (state && state.demo || !termFrame) askUnknown(); else answer(state && state.demo ? "This is the demo, so nothing here acts." : "My terminal isn't attached, so I can't hear that.", ""); });
   // dragging along the horizon rewinds the galaxy to that moment; letting go, it re-forms
   const toT = x => Math.max(0, Math.min(nowMin() - G.t0, (x - G.w * .04) / (G.w * .92) * (G.t1 - G.t0)));
   function doScrub(x) { const t = toT(x), p = onRim(dayX(t)), l = onRim(dayX(t), 35), d = $("scrubdot"), tx = $("scrubl"), at = G.t0 + t; Sky.scrub(at); d.setAttribute("cx", p.x); d.setAttribute("cy", p.y); d.setAttribute("visibility", "visible"); const near = ((state && state.events) || []).filter(e => BEAD[e.kind] && Math.abs((parseT(e.t) || 0) - at) <= 8).sort((a, b) => Math.abs(parseT(a.t) - at) - Math.abs(parseT(b.t) - at))[0]; tx.textContent = hhmm(at) + (near ? "  " + near.text.slice(0, 60) : ""); tx.setAttribute("x", l.x); tx.setAttribute("y", l.y); tx.setAttribute("transform", `rotate(${l.deg} ${l.x} ${l.y})`); tx.setAttribute("visibility", "visible"); }
+  world.addEventListener("dblclick", e => { if (Sky && e.target.id === "scrub") askView("time"); });
   let downAt = null;
   world.addEventListener("pointerdown", e => { if (!Sky || !(e.target.id === "scrub" || e.target._ev)) return; e.preventDefault(); downAt = { x: e.clientX, t: e.target }; goHome(); W.scrubbing = true; doScrub(e.clientX); });
   addEventListener("pointermove", e => { if (W.scrubbing) doScrub(e.clientX); viewIdle = performance.now(); W.overUI = !!(e.target.closest && e.target.closest(".top,.legend,.term-panel,#shown,#monitor-root,.work,.today")); });
@@ -121,7 +129,8 @@
   $("full").addEventListener("click", () => { if (!document.fullscreenElement) document.documentElement.requestFullscreen?.().catch(() => {}); else document.exitFullscreen?.(); });
   document.addEventListener("fullscreenchange", () => $("full").setAttribute("aria-pressed", String(!!document.fullscreenElement)));
   $("legend-k").addEventListener("click", () => { const closed = $("legend").classList.toggle("closed"); $("legend-k").setAttribute("aria-expanded", String(!closed)); });
-  document.addEventListener("keydown", e => { if (e.target.matches && e.target.matches("input,textarea")) return; if (window.FieldMonitor && FieldMonitor.isOpen()) return; const k = e.key.toLowerCase(); if (k === "v") setVoice(!on); else if (k === "t" && termFrame) { e.preventDefault(); setTerm(!$("term-panel").classList.contains("open")); } else if (k === "," ) $("settings-key").click(); else if (k === "escape") { if ($("term-panel").classList.contains("open")) setTerm(false); else if (Sky && Sky.view !== "home") goHome(); else $("legend").classList.add("closed"); } });
+  const LENS_KEYS = { __proto__: null, 1: "spend", 2: "stuck", 3: "kinds", 4: "time" };
+  document.addEventListener("keydown", e => { if (e.target.matches && e.target.matches("input,textarea")) return; if (window.FieldMonitor && FieldMonitor.isOpen()) return; const k = e.key.toLowerCase(); if (k === "v") setVoice(!on); else if (k === "t" && termFrame) { e.preventDefault(); setGrown(!grown, true); } else if (k === "," ) $("settings-key").click(); else if (LENS_KEYS[k] && !e.ctrlKey && !e.metaKey && !e.altKey) askView(LENS_KEYS[k]); else if (k === "escape") { if (grown) setGrown(false); else if (Sky && Sky.view !== "home") goHome(); else $("legend").classList.add("closed"); } });
   function enter(replay) { entered = true; $("gate").hidden = true; $("hud").hidden = false; try { sessionStorage.setItem("lois-entered", "1"); } catch (e) {} const unlock = () => { try { LF.audio(); if (window.LiveVoice) LiveVoice.unlock(); } catch (e) {} }; if (replay) { unlock(); if (Sky) Sky.replay(); } else addEventListener("pointerdown", unlock, { once: true }); layout(); greet(); }
   $("enter").addEventListener("click", () => enter(true));
   LF.fail = text => { $("gate").hidden = true; $("hud").hidden = false; entered = true; setCaption(text + " The classic view still works."); $("meta").textContent = "Open Classic, top right."; };
@@ -146,7 +155,7 @@
     const sv = s.service || {}, note = !s.bridge && !s.demo ? "The dispatch bridge is down" : sv.due === "restart" ? "Restart due · see Service" : sv.due ? "Update due · see Service" : ""; $("service-note").hidden = !note; $("service-note").textContent = note;
     const hint = (s.hints || [])[0]; $("hint-line").hidden = !hint; $("hint-line").textContent = hint ? String(hint.text || "").slice(0, 200) : "";
     $("sum").textContent = running + " running · " + (cards.length ? cards.length + " waiting · " : "") + "$" + cost.toFixed(2); document.title = cards.length ? `(${cards.length}) ${plant()}` : plant();
-    if (s.term) { $("term-lamp").classList.toggle("on", !!s.term.running); } if (s.demo) { $("foot").hidden = false; $("foot").textContent = "Demo: made-up data. Nothing here acts."; }
+    if (s.term) { const on = !!s.term.running; $("term-lamp").classList.toggle("on", on); $("pane-lamp").classList.toggle("on", on); $("term-panel").classList.toggle("run", on); } if (s.demo) { $("foot").hidden = false; $("foot").textContent = "Demo: made-up data. Nothing here acts."; }
     $("plate-project").textContent = String(s.project || ""); $("plate-name").textContent = plant(); $("gate-name").textContent = plant(); if (Sky) $("legend-rate").textContent = "About " + Sky.rate.toLocaleString() + " to the dollar"; G.dirty = true; drawBeads(); tickDay(); }
   const plant = () => { const p = state && state.look && state.look.plant; return typeof p === "string" && p ? p : "LOIS"; };
 
@@ -194,7 +203,9 @@
   if (LF.sky) LF.onReady();
   if (LF.failMsg) LF.fail(LF.failMsg);
   if (window.LiveVoice) LiveVoice.watch(); layout(); addEventListener("resize", layout); pollState(); pollField();
-  let lastSlow = 0;
-  function loop(now) { LF.drawBeing(W, now, ...LF.pointer()); LF.drawMotes(now); atmos.style.opacity = .62 + .38 * ((W.s ? W.s.pres : .75) - .75) * 4 * .6 + (W.speaking ? .1 * Math.min(1, LF.U.uTalk.value * 2) : 0); if (Sky) { if (G.dirty && now - lastSlow > 220) { lastSlow = now; G.dirty = false; hug(); } skyLabels(); threads(now); if (Sky.view !== "home") { if (cur && cur.ans && W.speaking) viewIdle = now; else if (now - viewIdle > 14000) goHome(); } } litCaption(now); requestAnimationFrame(loop); }
+  let lastSlow = 0, talkSet = -1;
+  function loop(now) { const has = !!termFrame && document.activeElement === termFrame && document.hasFocus(); if (has && !hadFocus) lensArmed = true; hadFocus = has; W.attendT = has && lensArmed ? 1 : 0;   // the sky dims while you are in the terminal, and blooms back when LOIS speaks
+    if (termFrame) { const tk = Math.round(Math.min(1, LF.U.uTalk.value * 2) * 25) / 25; if (tk !== talkSet) { talkSet = tk; $("term-panel").style.setProperty("--talk", String(tk)); } }
+    LF.drawBeing(W, now, ...LF.pointer()); LF.drawMotes(now); atmos.style.opacity = .62 + .38 * ((W.s ? W.s.pres : .75) - .75) * 4 * .6 + (W.speaking ? .1 * Math.min(1, LF.U.uTalk.value * 2) : 0); if (Sky) { if (G.dirty && now - lastSlow > 220) { lastSlow = now; G.dirty = false; hug(); } skyLabels(); threads(now); if (Sky.view !== "home") { if (cur && cur.ans && W.speaking) viewIdle = now; else if (now - viewIdle > 14000) goHome(); } } litCaption(now); requestAnimationFrame(loop); }
   requestAnimationFrame(loop);
 })();
