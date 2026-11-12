@@ -666,6 +666,7 @@ const card = (over) => Object.assign({ id: "c1", tool: "git_push", role: "develo
       { name: "p.gone.md", role: "developer", chars: 0, over: false, pending: true, gone: true, running_chars: 40 },
       { name: "p.new.md", role: "reviewer", chars: 10, over: false, pending: true, running_chars: null, read: true },
       { name: "p.same.md", role: "reviewer", chars: 10, over: false, pending: false, running_chars: 10, read: true }] };
+    snap.roles.push(Object.assign(JSON.parse(JSON.stringify(snap.roles[1])), { name: "researcher", optional: true, on: true, running_on: false, on_pending: true }));
     server.config = snap;
     await advance(2000);
     $("svc-setup").click(); await flush();
@@ -679,6 +680,8 @@ const card = (over) => Object.assign({ id: "c1", tool: "git_push", role: "develo
     assert.ok(text().includes("saved 3 · running 1 · next job (after Apply)"), "a knob says what it holds and what runs");
     assert.ok(text().includes("saved 200 · running 80"), "a knob that differs says so");
     assert.ok(text().includes("instructions.md changed, running has 700"), "the instructions line says its running size");
+    assert.ok(text().includes("researcher: saved ON · running OFF"), "the optional-roles tag names its role");
+    assert.deepStrictEqual(walk(rack("developer")).filter(n => n.className === "klab").map(n => n.textContent).filter(t => /^models$/i.test(t)), ["Models"], "the Details label is Title case");
     assert.ok(!text().includes("→ on start") && !text().includes("→ on update"), "the old tags are gone");
     assert.deepStrictEqual(kids().filter(n => n.className === "rwait").map(n => n.textContent), ["3 pending"], "only the role with pending keys carries the row mark");
     assert.deepStrictEqual(walk(rack("developer")).filter(n => n.className === "rpend" && !n.hidden).map(n => n.textContent), ["running 1", "running 80"],
@@ -713,6 +716,8 @@ const card = (over) => Object.assign({ id: "c1", tool: "git_push", role: "develo
     assert.ok(bar(), "Settings opens again after the apply");
     tabBtn("Project notes").click(); await flush();
     assert.ok(text().includes("saved 120 · running 80 characters"), text());
+    assert.ok(!text().includes("(empty)"), "a notes file shows no value, so no '(empty)' beside its size");
+    assert.ok(walk($("con-body")).some(n => n.className === "kval" && n.textContent === "—"), "a dash stands in for the value");
     assert.ok(text().includes("deleted since the start, running has 40 characters"));
     assert.ok(text().includes("new since the start, not running"));
     assert.strictEqual((text().match(/ next job \(after Apply\)/g) || []).length >= 4, true, "every notes file carries the same tag");

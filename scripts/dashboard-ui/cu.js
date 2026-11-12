@@ -648,7 +648,7 @@
   const tag = (cls, text) => span(`kt ${cls}`, text);
   const applyTag = a => tag("k-cmd", `→ ${APPLIES[a] || "?"}`);
   const shown = v => (str(v) === "" ? "empty" : str(v));
-  const savedRunning = (saved, running) => tag("k-warn", `saved ${shown(saved)} · running ${shown(running)}`);
+  const savedRunning = (saved, running, who) => tag("k-warn", `${who ? `${who}: ` : ""}saved ${shown(saved)} · running ${shown(running)}`);
   let setupKey = null;
 
   // One read-only fact: the label in a fixed column, the value and its tags beside it (a grid, never padding).
@@ -690,7 +690,7 @@
       if (local && str(k.repo) !== str(k.value)) tail.push(tag("k-dim", `repo: ${str(k.repo) || "empty"}`));
       if (k.pending) tail.push(savedRunning(k.value, k.running));
       tail.push(applyTag(viaApply(k.applies)));
-      more.push(row(k.key, k.value, ...tail));
+      more.push(row(KEY_LABELS[k.key] || k.key, k.value, ...tail));
     }
     const boundary = boundaryRow(r);
     if (boundary) more.push(boundary);
@@ -717,7 +717,7 @@
     const optional = list(cfg.roles).filter(r => r && r.optional);
     // Optional roles first: whether a role exists at all matters more than how it is tuned.
     const optTail = [tag("k-dim", en.file ? "enabled-roles file" : "no enabled-roles file")];
-    for (const r of optional.filter(x => x.on_pending)) optTail.push(savedRunning(r.on ? "ON" : "OFF", r.running_on ? "ON" : "OFF"));
+    for (const r of optional.filter(x => x.on_pending)) optTail.push(savedRunning(r.on ? "ON" : "OFF", r.running_on ? "ON" : "OFF", str(r.name)));
     out.push(row("Optional roles", optional.length ? optional.map(r => `${str(r.name)} ${r.on ? "on" : "off"}`).join(" · ") : "none", ...optTail, applyTag(en.applies)));
     for (const n of list(en.unknown)) out.push(note("k-err", `✕ ${str(n)} is named in enabled-roles but is not a role: factory start refuses it`));
     const table = el("div", "rtab");
@@ -744,7 +744,7 @@
           : `saved ${num(f.chars)} · running ${num(f.running_chars)} characters`));
       }
       tail.push(applyTag(viaApply(nt.applies)));
-      out.push(row(f.name, "", ...tail));
+      out.push(row(f.name, "—", ...tail));
     }
     if (notes) out.push(notes.openKey());
     return out;
@@ -1035,6 +1035,7 @@
   // token to config-run. The diff, the path and every error are drawn with textContent.
   const TUNE_KEYS = ["LANES", "MODEL", "EFFORT", "MAX_SESSION_TOKENS", "MAX_TURNS", "MAX_JOB_SECONDS"];
   const TUNE_LABELS = { LANES: "Lanes", MODEL: "Model", EFFORT: "Effort", MAX_SESSION_TOKENS: "Session tokens", MAX_TURNS: "Turns", MAX_JOB_SECONDS: "Job seconds" };
+  const KEY_LABELS = { MODELS: "Models" };  // the Details keys that are not tuning knobs
   const TUNE_NUMBERS = ["MAX_SESSION_TOKENS", "MAX_TURNS", "MAX_JOB_SECONDS"];
   const TUNE_HINTS = { MAX_SESSION_TOKENS: "0 = no cap", MAX_TURNS: "0 = no cap", MAX_JOB_SECONDS: "0 = no limit" };
   const EFFORTS = ["low", "medium", "high", "xhigh"];
