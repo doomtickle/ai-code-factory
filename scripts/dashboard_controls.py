@@ -22,9 +22,10 @@ those requests reach:
            One decision per card: a card already decided (it stays pending
            until the gateway acts on it) is a 409 "decided" with the verdict that
            stands.
-  prepare  the confirm step for RESTART, UPDATE or DIAG: what the action would
+  prepare  the confirm step for RESTART, UPDATE, DIAG or APPLY: what the action would
            do (jobs it cancels, held writes it drops; for UPDATE, the output
-           of the read-only `factory update --plan`; DIAG stops nothing) and a
+           of the read-only `factory update --plan`; DIAG stops nothing; APPLY
+           lists the pending SETTINGS changes it applies and stops nothing) and a
            single-use token, valid CONFIRM_TTL seconds, for that one action.
            Runs nothing else.
   run      start the action named by a prepared token. So no single request
@@ -37,7 +38,7 @@ those requests reach:
            checks the change with the factory's own validators, returns its diff and
            a single-use token for action "config" bound to the exact new bytes and
            the digest of the file as it is; config-run writes it, only if the file
-           still has that digest. It applies on the next RESTART.
+           still has that digest. It applies on APPLY (from the next job) or RESTART.
   patch    the held push's patch, for INSPECT: read from the broker's state
            (approvals/patches/<sha256>.patch, named by the card's
            patch_sha256), checked against that digest, parsed and
@@ -45,7 +46,8 @@ those requests reach:
            fingerprint, as decide. The main page never receives it.
 
 An action is one fixed argv, never a shell: [factory, "restart"],
-[factory, "update", "--yes"] or, for DIAG, [factory, "doctor"], with stdin from /dev/null (so a sudo or
+[factory, "update", "--yes"], for DIAG [factory, "doctor"] or, for APPLY,
+[factory, "config", "apply"], with stdin from /dev/null (so a sudo or
 confirm prompt fails rather than hangs), its output in
 FACTORY_STATE/dashboard/actions/<time>-<action>.log (folder 0700, file 0600)
 and its own session, so it survives the dashboard exiting. One at a time.
@@ -53,7 +55,9 @@ RESTART and UPDATE stop the Coordinator's sandbox, so before starting, the
 Coordinator's terminal hangs up (Term.hang_up) and refuses POWER ON until
 the action ends; if it was attached and the action succeeded, it attaches
 again, resuming the session (`--continue`). DIAG (`factory doctor`) changes nothing and leaves the terminal alone;
-it exits 1 when it finds problems.
+it exits 1 when it finds problems. APPLY (`factory config apply`) refreshes only the dispatch bridge's
+snapshot of role tuning and instructions plus notes, from the next job: no job is cancelled, the
+terminal stays attached.
 
 After an update that succeeded, the dashboard's own files are compared with
 a digest taken at start-up: changed server code needs the dashboard
@@ -85,7 +89,7 @@ import patchview
 
 SCRIPTS = Path(__file__).resolve().parent
 FACTORY = SCRIPTS.parent / "bin" / "factory"
-ACTIONS = ("restart", "update", "doctor")
+ACTIONS = ("restart", "update", "doctor", "apply")
 HANGS_UP = ("restart", "update")  # the actions that stop the Coordinator's sandbox
 CONFIRM_TTL = 120      # seconds a prepared confirm token stays valid
 SETUP_TTL = 5          # seconds the SETUP screen's data is reused: it stats and reads the config folder
@@ -108,6 +112,32 @@ class Refused(Exception):
         super().__init__(text)
         self.status = status
         self.extra = extra or {}
+
+
+MAX_CHANGES = 64  # most pending changes an APPLY prepare lists
+
+
+def pending_changes(config: dict | None) -> tuple:
+    """(what APPLY refreshes, what still needs a restart) from the SETTINGS data
+    (dashboard_setup.py, already cleaned to one printable line): the pending tuning
+    keys, instructions and notes files; and the optional roles switched on or off."""
+    changes, later = [], []
+    if not isinstance(config, dict):
+        return changes, later
+    for r in config.get("roles") or []:
+        name = r.get("name", "")
+        for k in r.get("keys") or []:
+            if k.get("pending"):
+                changes.append(f"{name} {k.get('key', '')}: running {k.get('running', '') or 'empty'}, "
+                               f"saved {k.get('value', '') or 'empty'}")
+        if r.get("instructions_pending"):
+            changes.append(f"{name} instructions.md changed")
+        if r.get("on_pending"):
+            later.append(f"{name} switched {'on' if r.get('on') else 'off'}")
+    for f in (config.get("notes") or {}).get("files") or []:
+        if f.get("pending"):
+            changes.append(f"notes {f.get('name', '')}: " + ("deleted" if f.get("gone") else "changed"))
+    return changes[:MAX_CHANGES], later[:MAX_CHANGES]
 
 
 def files_digest(paths) -> str:
@@ -448,13 +478,17 @@ class Controls:
     def api_prepare(self, body: dict) -> tuple:
         action = body.get("action")
         if action not in ACTIONS:
-            raise Refused(400, "action must be restart, update or doctor")
+            raise Refused(400, "action must be restart, update, doctor or apply")
         project = self.bound()
         with self.lock:
             if self.phase == "running":
                 raise Refused(409, f"{self.action} is still running")
-        if action == "restart" and not project:
+        if action in ("restart", "apply") and not project:
             raise Refused(409, "the factory isn't bound to a project: run 'factory start' in one first")
+        changes, later = [], []
+        if action == "apply":
+            self._setup = (0.0, None)  # what is pending now, not a few seconds ago
+            changes, later = pending_changes(self.setup(self.clock()))
         _, raw, running = self.gate(self.clock())
         if action not in HANGS_UP:
             raw, running = {}, []  # it stops nothing: no jobs or held writes to warn about
@@ -475,7 +509,8 @@ class Controls:
                 raise Refused(409, f"{self.action} is still running")
             self.confirm = (token, action, self.clock() + CONFIRM_TTL)  # replaces any earlier token
         return 200, dict({"action": action, "confirm": token, "expires_in": CONFIRM_TTL, "project": project,
-                          "jobs": running, "held": held, "queued": queued, "plan_error": plan_error}, **plan)
+                          "jobs": running, "held": held, "queued": queued, "plan_error": plan_error,
+                          "changes": changes, "later": later}, **plan)
 
     def plan(self) -> tuple:
         """(parsed plan, error or None) from `<factory> update --plan` (fixed argv)."""
@@ -506,7 +541,7 @@ class Controls:
     def api_run(self, body: dict) -> tuple:
         action, given = body.get("action"), body.get("confirm")
         if action not in ACTIONS:
-            raise Refused(400, "action must be restart, update or doctor")
+            raise Refused(400, "action must be restart, update, doctor or apply")
         with self.lock:
             held = self.confirm
             if not isinstance(given, str) or held is None \
@@ -554,7 +589,7 @@ class Controls:
     # --- running an action
     def argv(self, action: str) -> list:
         return {"restart": [self.factory, "restart"], "update": [self.factory, "update", "--yes"],
-                "doctor": [self.factory, "doctor"]}[action]
+                "doctor": [self.factory, "doctor"], "apply": [self.factory, "config", "apply"]}[action]
 
     def open_log(self, action: str) -> tuple:
         folder = self.state / "dashboard" / "actions"
@@ -601,6 +636,11 @@ class Controls:
                     # Reported once: the reload loads these files, so a later
                     # update that changes nothing more reports "none".
                     self.digests = (self.digests[0], page)
+            if action == "apply":
+                self._setup = (0.0, None)  # SETTINGS and the SERVICE DUE lamp show the new snapshot now
+                changed = getattr(self.board, "config_changed", None)
+                if changed is not None:
+                    changed()
             with self.lock:
                 self.proc = None
                 self.exit, self.ended, self.reload = code, self.clock(), reload

@@ -112,6 +112,8 @@ ${B}Usage${N}
   factory config init [--force]
                              Write the commented example settings into
                              $FACTORY_CONFIG; refuses to overwrite files unless --force
+  factory config apply       Apply saved role tuning and project notes from the next job,
+                             without a restart (no job is cancelled)
   factory secret save <name> Store a credential once in this machine's keychain
                              (github, gitlab, jira, gemini, npm-registry,
                              approvals-webhook); every broker start

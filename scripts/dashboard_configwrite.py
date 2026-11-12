@@ -19,7 +19,8 @@ non-blocking and as a regular file only), and a write is a temp file in the same
 (O_CREAT|O_EXCL|O_NOFOLLOW, 0600), fsynced, then os.replace'd over the target.
 
 The bridge reads only the copies `factory start` snapshots into FACTORY_STATE/dispatch/
-(factory/dispatch_start.py _snapshot_roles), so every change applies on the next RESTART.
+(factory/dispatch_start.py _snapshot_roles), so every change applies on the next RESTART, or from the next
+job after APPLY (`factory config apply`, which refreshes that snapshot).
 
 Standard library only; runs on the macOS system Python (3.9).
 """

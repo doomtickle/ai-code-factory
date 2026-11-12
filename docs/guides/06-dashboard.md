@@ -424,17 +424,27 @@ line under the title says what you can do here: most of it is read-only (edit
 the files as [Make it yours](04-customize.md) describes), and two things can be
 changed, a role's tuning ([below](#tuning-a-role-from-settings)) and the
 [project notes](#the-notes-editor). Nothing is live: a change is saved at once
-and runs after **RESTART**.
+and runs after **Apply now** (from each role's next job) or **RESTART**.
 
 When a saved value differs from the running one, its line says **saved X ·
 running Y**, and a bar at the top of the screen counts them: "3 changes saved,
-not yet applied · applies on Restart". The bar is there whenever you open
+not yet applied · applies on Restart · Apply now applies from the next job". The bar is there whenever you open
 Settings and goes away when nothing is waiting, so you can tell whether a
 change has taken effect. It compares tuning keys, which optional roles are on,
 each project notes file (a deleted one counts) and a role's `instructions.md`;
 note text is compared on the host and never sent to the page. The same changes light the RESTART lamp. Only your overrides and notes go through the start's snapshot; the bridge reads the committed `role.conf` live, so a key you haven't overridden runs at its current `role.conf` value. A notes file that is a symlink isn't compared. Before the first
 `factory start` there is nothing running to compare, and the screen says so.
-Each line ends with one of three plain tags: **applies on Restart**, **needs
+Its **Apply now** key applies the saved tuning, notes and instructions
+without a restart: it shows the changes it will apply and those that still
+need a restart (an optional role switched on or off), and once you press
+**CONFIRM** (dark for 2.5 seconds) runs `factory config apply`, which
+refreshes the bridge's copy and nothing else. No job is cancelled: a job that
+is running finishes with what it started with, and each role's next job uses
+the new values. Terminal 0 stays attached, and the bar and the running values
+update on the next refresh. Changing the lane git identity (`[git]` in
+`policy.toml`) still needs a restart.
+Each line ends with one of four plain tags: **next job (after Apply)** (tuning
+keys and notes), **applies on Restart** (which optional roles are on), **needs
 Update** or, for the look, **needs dashboard restart**. The screen has four
 tabs, one section at a time, and refreshes every few seconds while open, except while you are in the
 middle of turning a knob or editing the notes. Switching tabs keeps your
@@ -545,7 +555,9 @@ It appears once the factory is bound to a project.
   minutes expires.
 - **After a save** the editor says "Saved · applies on Restart":
   the new notes reach the roles when the factory next starts, so the Restart
-  key's light comes on. Press it (or run `factory start`).
+  key's light comes on. Press it (or run `factory start`), or press **Apply
+  now** in the Settings bar (or run `factory config apply`) to use them from
+  each role's next job without a restart.
 - **A file that changed meanwhile.** If the file changed on disk between SAVE
   and CONFIRM (you edited it in a terminal, say), nothing is written and the
   editor says so. **RELOAD** reads the file again; **KEEP MY TEXT** goes back

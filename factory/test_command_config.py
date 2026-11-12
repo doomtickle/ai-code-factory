@@ -97,7 +97,7 @@ class ConfigInitTest(CommandTest):
     def test_bad_arguments_are_a_usage_error(self):
         for args in ([], ["init", "--bogus"], ["init", "--force", "x"], ["list"], ["--force"]):
             rc, out, err = self.init(*args)
-            self.assertEqual((rc, out, err), (1, "", "error: usage: factory config init [--force]\n"), args)
+            self.assertEqual((rc, out, err), (1, "", "error: usage: factory config init [--force] | factory config apply\n"), args)
         self.assertFalse(os.path.exists(self.config))
 
     def test_no_example_folder_is_an_error(self):
