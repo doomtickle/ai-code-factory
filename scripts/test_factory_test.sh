@@ -221,7 +221,8 @@ if command -v flock >/dev/null; then
 
   # Same directory: the second run waits for the first, and runs after it.
   ( "$FTEST" -C "$tmp/lane/ca" -- sh -c 'echo first-start; sleep 2; echo first-end' > "$tmp/s1.out" 2> "$tmp/s1.err" ) &
-  sleep 0.5
+  for _ in $(seq 100); do grep -q first-start "$tmp/s1.out" 2>/dev/null && break; sleep 0.1; done
+  grep -q first-start "$tmp/s1.out" 2>/dev/null && ok "same copy: the first run holds the lock" || bad "same copy: the first run didn't start within 10s"
   ( "$FTEST" -C "$tmp/lane/ca" -- sh -c 'echo second' > "$tmp/s2.out" 2> "$tmp/s2.err" ) &
   # A third run, on another directory, doesn't wait.
   start=$SECONDS

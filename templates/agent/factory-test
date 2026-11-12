@@ -103,7 +103,8 @@ for d in "$root"/*; do
   copy="${copy%-host}"
   [[ "${copy##*/}" =~ -[0-9a-f]{12}$ ]] || continue  # yarn-cache, npm-cache
   if [ -f "$copy.src" ]; then
-    from="$(cat "$copy.src")"
+    from="$(cat "$copy.src" 2>/dev/null || true)"  # a concurrent cleanup may have removed it
+    [ -n "$from" ] || continue
     [ ! -d "$from" ] || continue
     why="its source, $from, is gone"
   else
