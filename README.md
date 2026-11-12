@@ -1472,7 +1472,16 @@ hasn't dispatched any jobs yet just shows an empty report.
   `factory start` again.
 - **Tests:** CI (`.github/workflows/ci.yml`) runs all of these on every pull
   request and push to main: on Linux with Python 3.9 and 3.14, on macOS 15 with
-  the system bash and Python, plus shellcheck and an image build. To run them
+  the system bash and Python, plus shellcheck and an image build. On a pull
+  request a `changes` job (`scripts/ci-changes.sh`) skips the steps a change
+  can't affect: image builds unless `templates/`, `kits/`, `broker/` or the
+  build code changed, the broker image tests unless `broker/` did, and all the
+  tests when only prose changed (a README or `docs/` change still runs
+  `scripts/test_docs.py`, `scripts/test_dashboard.py` (it checks the dashboard's help links
+  against the guides), `RealRenderTest` in `factory/test_command_docs.py` and
+  `scripts/test_sbx_reference.sh`). Pushes to main
+  and manual runs run everything, and unsure means run. The required checks
+  always report, as skipped steps rather than skipped jobs. To run the tests
   yourself (use `/usr/bin/python3` on macOS):
   - shell lint: `scripts/lint.sh` (uses a `shellcheck` on PATH that reports exactly the
     pinned version, else downloads the pinned one once). The developer and reviewer
@@ -1482,7 +1491,7 @@ hasn't dispatched any jobs yet just shows an empty report.
   - Python CLI (`factory/`): `python3 -m unittest discover -s factory -t . -p 'test_*.py' -v`
   - host scripts: `python3 -m unittest discover -s scripts -p 'test_*.py' -v`
   - shell tests: `bash scripts/test_factory_update.sh`, and likewise
-    `test_factory_lane.sh`
+    `test_factory_lane.sh` and `test_ci_changes.sh`
   - images, without sbx: `scripts/00-build-templates.sh --build-only`
   - broker: `docker run --rm --network none -v "$PWD/broker:/b:ro" -w /b factory-broker:v3 python3 -B -m unittest discover -s tests -t .`
 - **Docs site:** `.github/workflows/docs.yml` publishes the `factory docs` page
