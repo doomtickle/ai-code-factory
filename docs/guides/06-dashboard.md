@@ -231,6 +231,13 @@ is sent until you press Enter in it, exactly as in the classic Terminal page.
 - While you are in it, the sky dims and draws in. When LOIS speaks (its `say`
   tool), the sky blooms back. With reduced motion set, it changes brightness
   with no drift.
+- When you press Enter in it, LOIS thinks: the ring of light comes up with
+  "Thinking…" and the stars draw in a little. While the terminal is printing, a
+  faint shimmer runs along the pane's edge. When it goes quiet the stars ease
+  back, and the ring stops when LOIS speaks or after a few minutes. With reduced
+  motion set there is no drift and no shimmer, only a steady ring. The terminal
+  tells the page just that Enter was pressed, that output is arriving and that it
+  stopped, never what was typed or printed, or how much.
 - Press **Smaller** on the pane bar, `t`, or click the world to shrink it. `Esc`
   inside it goes to the Coordinator, so the pane bar says so.
 - It answers aloud with its `say` tool, in its own words, and the caption shows
@@ -1320,6 +1327,7 @@ run's token, and makes no network connection of its own. Apart from Terminal 0
 and the control unit it only reads the factory's state folder.
 
 - The page never types into Terminal 0 and never focuses it without your click.
+- Terminal 0 can tell the page only three fixed words (Enter pressed, output arriving, output stopped), and only to make the ring and the stars react.
 - The control unit can write only a decision file (Approve, Decline), its action
   logs and, from Settings, a role's local tuning override or the project's notes
   (each after a diff and a confirm). It can run only `factory doctor`, `factory
