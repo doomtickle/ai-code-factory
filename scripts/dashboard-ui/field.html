@@ -18,6 +18,7 @@
 <script src="/vendor/three/UnrealBloomPass.js" defer></script>
 <script src="/field-ask.js" defer></script>
 <script src="/voice.js" defer></script>
+<script src="/field-order.js" defer></script>
 <script src="/field-sky.js" defer></script>
 <script src="/field-face.js" defer></script>
 <script src="/field-monitor.js" defer></script>
@@ -29,11 +30,11 @@
 <canvas id="motes" aria-hidden="true"></canvas>
 <svg id="atmos" aria-hidden="true"></svg>
 <svg id="world" role="img" aria-label="Today along the edge of the world"><g id="world-base"></g><g id="beads"></g><g id="world-top"></g></svg>
-<svg id="threads" aria-hidden="true"><path id="t-voice"/><path id="t-hover"/><path id="t-gold"/></svg>
+<svg id="threads" aria-hidden="true"><path id="t-voice"/><path id="t-hover"/><path id="t-gold"/><g id="leaders"></g></svg>
 
 <div class="gate" id="gate" hidden>
   <h1 id="gate-name">LOIS</h1>
-  <p>Every crystal is a job your agents ran today, full of the stars of its work. A bright spark inside is a job running now. Anything gold is waiting for you. Ask a question and the sky will answer.</p>
+  <p>Every crystal is a job your agents ran today. Jobs on one branch are an order: the sky names it and says where it stands, and numbers its steps in the order they ran. A mark on each crystal says running, done, approved, changes requested or failed; gold means waiting for you. Ask a question and the sky will answer.</p>
   <button type="button" id="enter">Enter</button>
   <small id="gate-small">Sound starts when you enter. Press V to mute. <a href="/voice" target="factory-voice">Tune the voice</a>. <a href="/classic">Classic view</a></small>
 </div>
@@ -55,15 +56,19 @@
   </header>
   <aside class="legend lens closed" id="legend" aria-label="What is in the sky">
     <span><i class="d pk"></i>Crystal: one job. Bigger is more spend. Click it to open the job</span>
+    <span><i class="d num">1</i>Number: its step in the order, 1 first. A name beside the order says where it stands</span>
+    <span><span class="pip lg p-run"><i class="pm"></i></span>Spinning ring: running</span>
+    <span><span class="pip lg p-done"><i class="pm"></i></span>Tick: finished</span>
+    <span><span class="pip lg p-ok"><i class="pm"></i></span>Green tick: approved</span>
+    <span><span class="pip lg p-rev"><i class="pm"></i></span>!: changes requested</span>
+    <span><span class="pip lg p-bad"><i class="pm"></i></span>Cross, and a dark crystal round a void: failed</span>
+    <span><span class="pip lg p-wait"><i class="pm"></i></span>Gold: waiting for you. Its order stands still</span>
     <span><i class="d star"></i>Star inside: work done. <span id="legend-rate"></span></span>
-    <span><i class="k k0"></i><i class="k k1"></i><i class="k k2"></i><i class="k k3"></i>Reading, editing, commands, requests: its stars and the band round its middle</span>
-    <span><i class="d trail"></i>One colour, joined by a thread: one order. Left is earlier, the inner ring newest</span>
+    <span><i class="d trail"></i>One colour, joined by a thread: one order</span>
     <span><i class="d planet"></i>Bright spark inside: a running job. Brighter is a bigger model</span>
     <span><i class="d moon"></i>Small spark and cool sweep: a review</span>
-    <span><i class="d gold"></i>Gold crystal: waiting for you. Its order stands still</span>
-    <span><i class="d fail"></i>Dark crystal round a void: a failed job</span>
     <span><i class="d ship"></i>Red sparks on its shell: a request the gateway blocked</span>
-    <em>Hover a crystal to see its job, click to open it; a ring marks the one you opened. Drag along the horizon to rewind the day. Jobs on one branch are one order. <a href="/voice" target="factory-voice">Tune the voice</a> · <a href="/classic">Classic view</a> · <a href="/docs/" target="factory-docs">Manual</a></em>
+    <em>Hover a crystal to see its job and its order's history, click to open it; a ring marks the one you opened. Drag along the horizon to rewind the day. Jobs on one branch are one order. <a href="/voice" target="factory-voice">Tune the voice</a> · <a href="/classic">Classic view</a> · <a href="/docs/" target="factory-docs">Manual</a></em>
   </aside>
   <aside class="shown" id="shown" aria-label="What LOIS needs from you" hidden>
     <header><b>Waiting on you</b><span id="shown-age"></span><button type="button" id="shown-copy" disabled>Copy</button><button type="button" id="shown-close" aria-label="Close" title="Close">×</button></header>
@@ -71,6 +76,7 @@
     <p id="shown-warn" hidden>⚠ Hidden or control characters are shown as ⟨U+…⟩. Read them before you paste.</p>
     <textarea id="shown-manual" hidden readonly aria-label="Text to copy" rows="1"></textarea>
   </aside>
+  <div id="pips" aria-hidden="true"></div>
   <div id="tags" aria-hidden="true"></div>
   <div id="vtags" aria-hidden="true"></div>
   <section class="work" id="work" aria-label="Jobs"><h2 id="work-h"></h2><div id="jobs-list"></div></section>

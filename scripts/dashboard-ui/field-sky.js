@@ -2,14 +2,16 @@
 // small spiral of its own stars, and the one thing you hover and click for that job. Packets sit on rings laid out on screen around
 // the witness's own outline (its meshes projected from the camera, above the horizon), so none is ever behind the head or neck at any
 // width. The newest ring is innermost, and along a ring time runs from the left horizon, up round the head, down to the right one.
-// A packet's size is its spend; its stars are its real actions, oldest at the core, in the action kinds' colours, and the band round
-// its waist is its kind mix. Jobs on one branch are one order: one hull colour, side by side, joined by a thread. A running job has a
-// spark at its core and turns; a held write is a gold packet beside its order, which stands still until you decide; a failed job is
-// dark glass round a void. The packet whose monitor is open wears a lock ring, and keeps a faint one once it closes. The same stars
-// pour out into other shapes to answer a question, drawn to scale.
+// A packet's size is its spend; its stars are its real actions, oldest at the core. Jobs on one branch are one order: one hull colour,
+// side by side, joined by a thread, each with its step number and one plain state mark (field-order.js words them; field-hud.js draws
+// the numbers, marks and one label per order). A running job has a spark at its core and turns; a held write is a gold packet beside
+// its order, which stands still until you decide; a failed job is dark glass round a void. The packet whose monitor is open wears a lock
+// ring, and keeps a faint one once it closes. The same stars pour out into other shapes to answer a question, drawn to scale; there
+// they keep the kinds' colours, and at home they quieten (finished jobs most) so the marks are what you read.
 // Every string here came from /api/state or /api/field and is drawn with textContent. Nothing in this file acts.
 "use strict";
 window.makeSky = function (scene, camera, C, U, W) {
+  const FO = window.FieldOrder;
   const MAXSTARS = 62000, MAXORD = 24, MAXJOB = 64, TARGET = 30000, TAU = 6.2832, TILT = 1.1;
   const hhmm = m0 => { const m = ((m0 % 1440) + 1440) % 1440; return String(Math.floor(m / 60)).padStart(2, "0") + ":" + String(Math.floor(m % 60)).padStart(2, "0"); };
   const hsl = (h, s, l) => new THREE.Color().setHSL(((h % 360) + 360) % 360 / 360, s, l);
@@ -27,7 +29,7 @@ window.makeSky = function (scene, camera, C, U, W) {
   const KCSS = KINDS.map(k => "#" + k[1].getHexString());
   const MIX = { developer: [.42, .3, .2, .08, 0], reviewer: [0, 0, 0, 0, 1] };
   const GOLD = new THREE.Color(1, .78, .3), RED = new THREE.Color(1, .3, .36), DARK = new THREE.Color(.02, 0, .02), REVIEW = new THREE.Color(.45, .95, 1), HOVER = new THREE.Color(.92, .97, 1), LOCKC = new THREE.Color(.45, .88, 1);
-  let orders = [], jobs = [], O = new Map(), J = new Map(), RATE = 1600, nStars = 0, first = true, dayKey = null, gasAt = 0; const blockedSeen = new Set();
+  let events = [], orders = [], jobs = [], O = new Map(), J = new Map(), RATE = 1600, nStars = 0, first = true, dayKey = null, gasAt = 0; const blockedSeen = new Set();
   const hashHue = s => { let h = 7; for (const ch of String(s)) h = (h * 31 + ch.charCodeAt(0)) % 360; return h; };
   const bad = j => /failed|cancelled|interrupted/.test(j.status);
 
@@ -49,7 +51,7 @@ window.makeSky = function (scene, camera, C, U, W) {
         vec4 mv = viewMatrix * vec4(q, 1.); gl_Position = projectionMatrix * mv;
         float tw = .86 + .14 * sin(uTime * (1. + aSeed.x * 2.) + aSeed.x * 60.), flash = exp(-age * 1.2), rl = length(aHome);
         gl_PointSize = clamp(aSeed.y * uPx * mix(2.7 / -mv.z, 1.05, uViewAmt) * (1. + flash * 1.5 + fly * .35), 1., 16.);
-        vec3 base = mix(uOrdC[int(o)], uKindC[int(k)], mix(.6, 1., uPure));
+        vec3 base = mix(uOrdC[int(o)], uKindC[int(k)], mix(mix(.18, .6, uViewAmt), 1., uPure));
         float scan = uJob[ji].y * smoothstep(.06, 0., abs(fract(rl * 2.2 - uTime * .55) - .5));
         float thaw = uOrdFx[int(o)].y * smoothstep(.09, 0., abs(rl - (1. - uOrdFx[int(o)].y) * .8));
         vC = base + vec3(1.) * flash * .45 + vec3(.25, .85, 1.) * scan + vec3(1., .82, .4) * thaw * 2.;
@@ -72,32 +74,25 @@ window.makeSky = function (scene, camera, C, U, W) {
   const gGeo = new THREE.BufferGeometry(); gGeo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(gasN * 3), 3)); const gbHome = new THREE.BufferAttribute(gHome, 3), gbMeta = new THREE.BufferAttribute(gMeta, 4); gGeo.setAttribute("aHome", gbHome); gGeo.setAttribute("aMeta", gbMeta); gGeo.setAttribute("aSeed", new THREE.BufferAttribute(gSeed, 2));
   const gas = new THREE.Points(gGeo, new THREE.ShaderMaterial({ defines: { GAS: 1 }, vertexShader: VS, fragmentShader: FS, uniforms: u, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending })); gas.frustumCulled = false; gas.renderOrder = 1; root.add(gas);
 
-  // ---- the packet: a hexagonal crystal capsule of unit size (apexes at ±.92), its hull, edges and a band round the waist
+  // ---- the packet: a hexagonal crystal capsule of unit size (apexes at ±.92), its hull and edges
   const HULL = [[0, .92, 0], [0, -.92, 0]]; for (const y of [.3, -.3]) for (let k = 0; k < 6; k++) HULL.push([.74 * Math.cos(k * Math.PI / 3), y, .74 * Math.sin(k * Math.PI / 3)]);
   const triI = [], edgeI = []; for (let k = 0; k < 6; k++) { const a = 2 + k, b = 2 + (k + 1) % 6, c = 8 + k, d = 8 + (k + 1) % 6; triI.push(0, b, a, a, b, d, a, d, c, 1, c, d); edgeI.push(0, a, a, b, a, c, c, d, 1, c); }
   const polyGeo = idx => { const f = new Float32Array(idx.length * 3); idx.forEach((i, n) => f.set(HULL[i], n * 3)); const g = new THREE.BufferGeometry(); g.setAttribute("position", new THREE.BufferAttribute(f, 3)); return g; };
-  const faceGeo = polyGeo(triI), edgeGeo = polyGeo(edgeI), BANDN = 48;
-  function bandGeo() { const pos = new Float32Array(BANDN * 18), at = q => { const s = Math.floor(q / 8) % 6, t = (q % 8) / 8, a0 = s * Math.PI / 3, a1 = a0 + Math.PI / 3; return [.765 * (Math.cos(a0) * (1 - t) + Math.cos(a1) * t), .765 * (Math.sin(a0) * (1 - t) + Math.sin(a1) * t)]; };
-    for (let s = 0; s < BANDN; s++) { const [x0, z0] = at(s), [x1, z1] = at(s + 1); pos.set([x0, .06, z0, x0, -.06, z0, x1, .06, z1, x1, .06, z1, x0, -.06, z0, x1, -.06, z1], s * 18); }
-    const g = new THREE.BufferGeometry(); g.setAttribute("position", new THREE.BufferAttribute(pos, 3)); g.setAttribute("color", new THREE.BufferAttribute(new Float32Array(BANDN * 18), 3)); return g; }
+  const faceGeo = polyGeo(triI), edgeGeo = polyGeo(edgeI);
   const basic = (o = {}) => Object.assign({ transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }, o);
   const PK = new Map();   // "j<id>" or "c<card id>" -> packet
-  function makePacket(key, o, job, card) { const g = new THREE.Group(), hull = new THREE.Group(), faces = new THREE.Mesh(faceGeo, new THREE.MeshBasicMaterial(basic({ opacity: .08, side: THREE.DoubleSide }))), edges = new THREE.LineSegments(edgeGeo, new THREE.LineBasicMaterial(basic({ opacity: .85 }))), band = new THREE.Mesh(bandGeo(), new THREE.MeshBasicMaterial(basic({ vertexColors: true, opacity: .95, side: THREE.DoubleSide })));
-    faces.renderOrder = 1; edges.renderOrder = 3; band.renderOrder = 3; hull.add(faces, edges, band); hull.rotation.x = .2;
+  function makePacket(key, o, job, card) { const g = new THREE.Group(), hull = new THREE.Group(), faces = new THREE.Mesh(faceGeo, new THREE.MeshBasicMaterial(basic({ opacity: .08, side: THREE.DoubleSide }))), edges = new THREE.LineSegments(edgeGeo, new THREE.LineBasicMaterial(basic({ opacity: .85 })));
+    faces.renderOrder = 1; edges.renderOrder = 3; hull.add(faces, edges); hull.rotation.x = .2;
     const core = sprite(FLARE, new THREE.Color(1, 1, 1), 1, 0), lock = sprite(LOCK, new THREE.Color(.6, .9, 1), 3.1, 0); core.renderOrder = 4; lock.renderOrder = 5; g.add(hull, core, lock); g.visible = false; root.add(g);
-    const pk = { key, order: o, job, card, g, hull, faces, edges, band, core, lock, voidS: null, pos: new THREE.Vector3(), to: new THREE.Vector3(), w: 0, tw: 0, sx: null, sy: null, R: null, yaw0: Math.random() * TAU, placed: false, born: performance.now(), bandN: -1, spin: .3 * Math.random(), hot: 0, lockA: 0 };
+    const pk = { key, order: o, job, card, g, hull, faces, edges, core, lock, voidS: null, pos: new THREE.Vector3(), to: new THREE.Vector3(), w: 0, tw: 0, sx: null, sy: null, R: null, yaw0: Math.random() * TAU, placed: false, born: performance.now(), step: null, dim: 1, spin: .3 * Math.random(), hot: 0, lockA: 0 };
     g.userData = job ? { kind: "job", job } : { kind: "gold", card }; PK.set(key, pk); seqKey = ""; return pk; }
-  function dropPacket(pk) { root.remove(pk.g); [pk.faces, pk.edges, pk.band].forEach(m => m.material.dispose()); pk.band.geometry.dispose(); [pk.core, pk.lock, pk.voidS].forEach(s => s && s.material.dispose()); PK.delete(pk.key); seqKey = ""; }
-  function paintBand(pk) { const j = pk.job, cols = pk.band.geometry.attributes.color, n = [0, 0, 0, 0, 0, 0]; if (j) { j.actions.forEach(a => { n[a[1]]++; }); n[5] = j.blocked || 0; }
-    const tot = n.reduce((a, b) => a + b, 0), base = pk.card ? GOLD : pk.order.color; let s = 0, k = 0, acc = n[0];
-    for (; s < BANDN; s++) { let c = base.clone().multiplyScalar(.35); if (tot) { const f = (s + .5) / BANDN * tot; while (k < 5 && f > acc) acc += n[++k]; c = KINDS[k][1]; } for (let v = 0; v < 6; v++) cols.setXYZ(s * 6 + v, c.r, c.g, c.b); }
-    cols.needsUpdate = true; pk.bandN = j ? j.actions.length + (j.blocked || 0) * 1000 : 0; }
+  function dropPacket(pk) { root.remove(pk.g); [pk.faces, pk.edges].forEach(m => m.material.dispose()); [pk.core, pk.lock, pk.voidS].forEach(s => s && s.material.dispose()); PK.delete(pk.key); seqKey = ""; }
 
   // ---- orders, jobs and stars
   // a job's uniforms sit in slot j.i % MAXJOB; only the newest MAXJOB jobs hold one, so no two share it, and the
   // shader hides the stars of older jobs (aMeta.w is the job's exact index; below uJobLo, no slot of its own)
   const oi = o => o.i % MAXORD, ji = j => j.i % MAXJOB, hasSlot = j => j.i >= u.uJobLo.value;
-  function orderFor(key, label) { let o = O.get(key); if (o) return o; o = { key, label, hue: hashHue(key), i: orders.length, rate: 1, jobs: [], frozen: false }; o.color = hsl(o.hue, .72, .62); o.spark = hsl(o.hue, .6, .82); orders.push(o); O.set(key, o); u.uOrdC.value[oi(o)].copy(hsl(o.hue, .72, .6)); return o; }
+  function orderFor(key, label) { let o = O.get(key); if (o) return o; o = { key, label, hue: (orders.length * 137.508 + hashHue(key) % 40) % 360, i: orders.length, rate: 1, jobs: [], frozen: false }; o.color = hsl(o.hue, .72, .62); o.spark = hsl(o.hue, .6, .82); orders.push(o); O.set(key, o); u.uOrdC.value[oi(o)].copy(hsl(o.hue, .72, .6)); return o; }
   function putStar(j, t, kind, f, hull) { if (nStars >= MAXSTARS) return -1; const i = nStars++;
     if (hull) { const a = Math.random() * TAU, b = Math.acos(2 * Math.random() - 1); aHome[i * 3] = .8 * Math.sin(b) * Math.cos(a); aHome[i * 3 + 1] = .8 * Math.cos(b); aHome[i * 3 + 2] = .8 * Math.sin(b) * Math.sin(a); }
     else { const stray = Math.random() < .1, r = Math.min(.68, Math.max(.05, .08 + .52 * Math.sqrt(f) + gauss() * (stray ? .05 : .016))), th = (i % 2) * Math.PI + 2.4 * Math.log(r / .08) + gauss() * (stray ? .5 : .14 + .015 / r); aHome[i * 3] = r * Math.cos(th); aHome[i * 3 + 1] = gauss() * (stray ? .06 : .022); aHome[i * 3 + 2] = r * Math.sin(th); }
@@ -132,7 +127,11 @@ window.makeSky = function (scene, camera, C, U, W) {
       const outstanding = jobs.reduce((s, j) => s + Math.max(0, targetOf(j) - j.placed), 0); if (RATE > 150 && nStars + outstanding > MAXSTARS - 1500) { layoutAll(field); }   // at the lowest rate there's nothing left to shrink: new stars just stop
       else { const from = nStars; placeBlocked(field.blocked || []); if (nStars > from) markDirty(from); } }
     jobs.forEach(j => { j.scanOn = false; }); jobs.forEach(j => { if (j.status === "running" && j.role === "reviewer") j.order.jobs.forEach(x => { if (x.role !== "reviewer") x.scanOn = true; }); });
-    syncCards((state && state.gate) || []); relayout(); }
+    syncCards((state && state.gate) || []); events = (state && state.events) || []; refreshSteps(); relayout(); }
+  // each order's numbered steps and its state in words; each packet learns its own step. Done once a poll, not each frame.
+  const stagedAt = id => { for (let k = events.length - 1; k >= 0; k--) { const e = events[k]; if (e && e.card_id === id && e.kind === "STAGED") return FO.clockMin(e.t); } return null; };
+  function refreshSteps() { orders.forEach(o => { const cards = []; golds.forEach(g => { if (g.order === o) cards.push(g.card); }); o.steps = FO.number(o.jobs, cards); o.say = FO.orderWord(o.steps); o.name = FO.orderName(o.key, o.label, o.steps); o.newest = Math.max(0, ...o.steps.map(s => s.job ? s.job.start : 0));
+      o.steps.forEach(s => { const pk = PK.get(s.job ? "j" + s.job.id : "c" + s.card.id); if (pk) pk.step = s; }); }); }
   function syncCards(cards) { const live = new Set(); orders.forEach(o => { o.frozen = false; });
     cards.forEach(c => { if (!c || typeof c.id !== "string") return; live.add(c.id); let g = golds.get(c.id); if (!g) { const topic = String(c.branch || "").replace(/^(refs\/heads\/)?factory\//, ""); let o = O.get(topic); if (!o) { const lane = (c.lanes || [])[0]; const j = jobs.slice().reverse().find(x => (lane && x.lane === lane) || x.role === c.role); o = j ? j.order : orders[orders.length - 1]; } if (!o) { o = orderFor("(held writes)", "Held writes"); } g = { card: c, order: o, pk: makePacket("c" + c.id, o, null, c) }; golds.set(c.id, g); } g.card = c; g.pk.card = c; g.pk.g.userData.card = c; g.order.frozen = !c.decided; });
     golds.forEach((g, id) => { if (live.has(id)) return; const yes = g.card.decided === "approve"; flashAt(g.pk.pos, yes ? new THREE.Color(1, .82, .4) : new THREE.Color(1, .3, .3), .5, 1400); if (yes) u.uOrdFx.value[oi(g.order)].y = 1; dropPacket(g.pk); golds.delete(id); W.onCardGone && W.onCardGone(g.card, yes); }); }
@@ -213,12 +212,21 @@ window.makeSky = function (scene, camera, C, U, W) {
   let brush = null, brushAt = null, cardX = 0, cardY = 0, hovered = null, lastPick = 0, selKey = ""; const pickMark = new THREE.Object3D(); root.add(pickMark);
   const card = document.createElement("div"); card.className = "skycard lens"; card.hidden = true; document.body.appendChild(card);
   const mins = m => m < 1 ? "under a minute" : Math.round(m) + " min";
-  const STATE = { __proto__: null, running: ["Running", "#8fd8ff"], done: ["Done", "#cfe6ff"], failed: ["Failed", "#ff8a8a"], cancelled: ["Cancelled", "#ff8a8a"], interrupted: ["Interrupted", "#ff8a8a"] };
-  function cardFor(un) { const rows = [], s = nowMin();
-    if (un.kind === "job" || un.kind === "failed") { const j = un.job, st = j.verdict === "approved" ? ["Approved", "#8af0b8"] : j.verdict === "revise" ? ["Changes requested", "#ffb84d"] : STATE[j.status] || [j.status, "#cfe6ff"]; rows.push(["st", st[0], st[1]], ["b", j.task || j.label], ["", "Job on " + j.lane + (j.model ? " · " + j.model : "")], ["", j.status === "running" ? mins(s - j.start) + " so far" : "Took " + mins((j.end || s) - j.start)], ["", j.cost != null ? "Spend: " + money(j.cost) : "Spend: shown when it ends"], ["", "Click to open this job"]); }
-    else if (un.kind === "gold") { const c = un.card; rows.push(["st", c.decided ? (c.decided === "approve" ? "Approved · going out" : "Declined") : "Waiting for you", "#ffc84d"], ["b", c.title || (c.tool + " " + c.branch)], ["", c.repo + (c.branch ? " · " + c.branch : "")]); if (c.commits != null || c.file_count != null) rows.push(["", (c.commits != null ? plural(c.commits, "commit") : "") + (c.file_count != null ? " · " + plural(c.file_count, "file") : "")]); }
+  const TONE_COL = { __proto__: null, run: "#8fd8ff", done: "#cfe6ff", ok: "#8af0b8", rev: "#ffb84d", bad: "#ff8a8a", wait: "#ffc84d" };
+  const stepOf = un => { const pk = pkOfUn(un); return pk && pk.step ? pk.step : null; };
+  // the hovered step's order, oldest step first: time, lane, what happened; the hovered step marked
+  function historyEl(o, step) { const box = document.createElement("div"); box.className = "hist"; const h = document.createElement("span"); h.className = "hh"; h.textContent = o.name + ", oldest step first"; box.appendChild(h);
+    const hist = FO.history(o.steps, o.steps.indexOf(step), stagedAt); hist.rows.forEach(r => { const row = document.createElement("div"); row.className = "hr" + (r.cur ? " cur" : "") + (r.end ? " end" : ""); const n = document.createElement("i"), t = document.createElement("span"), w = document.createElement("span");
+      n.className = "n"; n.textContent = r.n ? String(r.n) : ""; t.className = "t"; t.textContent = r.t == null ? "" : FO.hhmm(r.t); w.className = "w"; w.textContent = (r.lane ? r.lane + " " : "") + r.what; if (r.tone && TONE_COL[r.tone]) w.style.color = r.end || r.cur ? TONE_COL[r.tone] : ""; row.append(n, t, w); box.appendChild(row); });
+    if (hist.before || hist.after) { const m = document.createElement("span"); m.className = "hh"; m.textContent = [hist.before ? hist.before + " earlier" : "", hist.after ? hist.after + " later" : ""].filter(Boolean).join(", ") + " not shown"; box.appendChild(m); }
+    return box; }
+  function cardFor(un) { const rows = [], s = nowMin(); let hist = null;
+    if (un.kind === "job" || un.kind === "failed" || un.kind === "gold") { const step = stepOf(un), o = un.job ? un.job.order : (pkOfUn(un) || {}).order, N = o && o.steps ? o.steps.length : 0, head = step ? (N > 1 ? "Step " + step.n + " of " + N + " · " : "") + FO.stepWord(step) : "", col = step ? TONE_COL[step.tone] : "#cfe6ff";
+      if (un.kind === "gold") { const c = un.card; rows.push(["st", head || (c.decided ? "Approved · going out" : "Waiting for you"), col], ["b", c.title || (c.tool + " " + c.branch)], ["", c.repo + (c.branch ? " · " + c.branch : "")]); if (c.commits != null || c.file_count != null) rows.push(["", (c.commits != null ? plural(c.commits, "commit") : "") + (c.file_count != null ? " · " + plural(c.file_count, "file") : "")]); }
+      else { const j = un.job; rows.push(["st", head || j.status, col], ["b", j.task || j.label], ["", "Job on " + j.lane + (j.model ? " · " + j.model : "")], ["", j.status === "running" ? mins(s - j.start) + " so far" : "Took " + mins((j.end || s) - j.start)], ["", j.cost != null ? "Spend: " + money(j.cost) : "Spend: shown when it ends"]); }
+      if (o && o.steps && step) hist = historyEl(o, step); if (un.kind !== "gold") rows.push(["", "Click to open this job"]); }
     else if (un.kind === "action") { const i = un.i, j = jobs[aJ[i]], k = aMeta[i * 4 + 1]; rows.push(["st", KINDS[k][0] + " · " + hhmm(aMeta[i * 4]), KCSS[k]], ["b", j.task || j.label], ["", j.lane + (j.model ? " · " + j.model : "")], ["", "Click to open this job"]); }
-    card.textContent = ""; rows.forEach(([k, t, c]) => { const el = document.createElement(k === "b" ? "b" : "span"); el.textContent = t; if (k === "st") { el.className = "st"; el.style.color = c; } card.appendChild(el); }); }
+    card.textContent = ""; rows.forEach(([k, t, c], n) => { if (hist && n === rows.length - (un.kind === "gold" ? 0 : 1)) card.appendChild(hist); const el = document.createElement(k === "b" ? "b" : "span"); el.textContent = t; if (k === "st") { el.className = "st"; el.style.color = c; } card.appendChild(el); }); if (hist && un.kind === "gold") card.appendChild(hist); }
   const unOf = pk => pk.job ? { kind: bad(pk.job) ? "failed" : "job", job: pk.job } : { kind: "gold", card: pk.card };
   function screenOf(pk) { const g = W.geo(); pk.g.getWorldPosition(vp); const d = vp.distanceTo(camera.position); vp.project(camera); return { x: (vp.x * .5 + .5) * g.w, y: (-vp.y * .5 + .5) * g.h, r: pk.g.scale.x / (2 * d * Math.tan(camera.fov * Math.PI / 360) / g.h) }; }
   function pick(px, py) { const g = W.geo(), home = view === "home" || view === "stuck";
@@ -230,10 +238,10 @@ window.makeSky = function (scene, camera, C, U, W) {
   addEventListener("click", e => { if (W.scrubbing || (W.skyBlocked && W.skyBlocked(e.clientX, e.clientY)) || e.target.closest("button,input,textarea,form,a,iframe,.top,.work,.today,.mid,.legend,#monitor-root")) return; const un = pick(e.clientX, e.clientY); if (!un) return; if (un.kind === "gold") { selKey = "c" + un.card.id; W.onPickCard && W.onPickCard(un.card); } else { const j = jobOf(un); if (j) { selKey = "j" + j.id; W.onPickJob && W.onPickJob(j); } } });   // picked again here: packets glide, so the last hover can be stale
 
   // ---- per frame
-  let tEff = nowMin(), scrubT = null, replaySpeed = 0, lastNow = 0;
+  let isRewound = false, tEff = nowMin(), scrubT = null, replaySpeed = 0, lastNow = 0;
   const tether = new THREE.LineSegments(new THREE.BufferGeometry(), new THREE.LineBasicMaterial(basic({ vertexColors: true, opacity: .55 }))); tether.geometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array(256 * 6), 3)); tether.geometry.setAttribute("color", new THREE.BufferAttribute(new Float32Array(256 * 6), 3)); tether.frustumCulled = false; root.add(tether);
   function update(now, px, py) { const s = nowMin(), t = now / 1000, realDt = (now - lastNow) / 1000, dt = Math.min(.1, realDt); lastNow = now; u.uPx.value = Math.min(1.5, devicePixelRatio || 1) * (innerHeight / 900);
-    if (scrubT != null) tEff = scrubT; else if (tEff < s - .001) tEff = replaySpeed ? Math.min(s, tEff + Math.min(1, realDt) * replaySpeed) : s; else tEff = s; if (tEff >= s) replaySpeed = 0; u.uT.value = tEff; const rewinding = tEff < s - .5;
+    if (scrubT != null) tEff = scrubT; else if (tEff < s - .001) tEff = replaySpeed ? Math.min(s, tEff + Math.min(1, realDt) * replaySpeed) : s; else tEff = s; if (tEff >= s) replaySpeed = 0; u.uT.value = tEff; const rewinding = isRewound = tEff < s - .5;
     if (!sil && W.geo().R) relayout(true); else if (sil && sil.standIn && now - silTry > 1000) { silTry = now; const real = outline(); if (real) { relayout(true); } }
     orders.forEach(o => { o.rate += ((o.frozen ? 0 : 1) - o.rate) * Math.min(1, dt * .9); const fx = u.uOrdFx.value[oi(o)]; fx.y = Math.max(0, fx.y - dt * .6); });
     const mp = Math.min(1, (now - morphT0) / morphDur); u.uMorph.value = mp; const tv = view === "home" || view === "stuck" ? 0 : 1; u.uViewAmt.value += (tv - u.uViewAmt.value) * Math.min(1, dt * 1.6); u.uPure.value += ((view === "kinds" ? 1 : view === "spend" || view === "time" ? .35 : 0) - u.uPure.value) * Math.min(1, dt * 1.6); u.uVA.value += ((view === "time" ? .36 : 1) - u.uVA.value) * Math.min(1, dt * 1.6);
@@ -249,16 +257,15 @@ window.makeSky = function (scene, camera, C, U, W) {
       const grow = Math.min(1, (now - pk.born) / 700), dim = view === "stuck" ? (gold || (j && trouble(j)) ? 1.4 : .2) : hovOrder ? (o === hovOrder ? 1.25 : .55) : 1;
       pk.hot += ((isHov ? 1 : 0) - pk.hot) * Math.min(1, dt * 8); pk.g.position.copy(pk.pos); pk.g.scale.setScalar(Math.max(1e-5, pk.w * (1 + .1 * pk.hot) * grow)); pk.g.visible = shown && homeAmt > .02;
       pk.spin += dt * (running ? .55 : gold ? .12 : .06) * o.rate; pk.hull.rotation.y = pk.yaw0 + pk.spin * 1.6;
-      const col = gold ? GOLD : failed ? RED : o.color, a = homeAmt * dim;
+      const col = gold ? GOLD : failed ? RED : o.color, a = homeAmt * dim; pk.dim = Math.min(1, a);
       pk.edges.material.color.copy(col).multiplyScalar(failed ? .55 : 1); pk.edges.material.opacity = Math.min(1, (gold ? .95 + .25 * Math.sin(t * 2.6) : running ? .8 + .2 * Math.sin(t * 3 + pk.spin) : .62) * a + .35 * pk.hot);
       pk.faces.material.blending = failed ? THREE.NormalBlending : THREE.AdditiveBlending; pk.faces.material.color.copy(failed ? DARK : col); pk.faces.material.opacity = (failed ? .82 : gold ? .16 : .07 + .07 * pk.hot) * Math.min(1, a);
-      if (j && pk.bandN !== j.actions.length + (j.blocked || 0) * 1000) paintBand(pk); else if (!j && pk.bandN < 0) paintBand(pk); pk.band.material.opacity = (failed ? .3 : .62) * Math.min(1, a);
       if (failed && !pk.voidS) { pk.voidS = sprite(VOIDT, new THREE.Color(1, 1, 1), 1.25, .95, false); pk.voidS.renderOrder = 3; pk.g.add(pk.voidS); } if (pk.voidS) pk.voidS.material.opacity = .95 * homeAmt;
       const sz = gold ? 1.3 : running ? (j.role === "reviewer" ? .7 : sizeOf(j.model) * 4.2) : 0, pulse = gold ? (pk.card.decided ? .7 : .86 + .22 * Math.sin(t * 2.6)) : .92 + .12 * Math.sin(t * 7 + pk.R); pk.core.material.color.copy(gold ? GOLD : j && j.role === "reviewer" ? REVIEW : o.spark); pk.core.scale.setScalar(sz * pulse + 1e-4); pk.core.material.opacity = sz ? Math.min(1, homeAmt * (view === "stuck" && !(gold || trouble(j)) ? .2 : 1)) : 0; pk.core.visible = sz > 0;
       pk.mark = open ? "open" : isSel ? "last" : isHov ? "hover" : ""; const lockOn = isHov ? .95 : open ? 1 : isSel ? .6 : 0; pk.lockA += (lockOn - pk.lockA) * Math.min(1, dt * 7); pk.lock.material.opacity = pk.lockA * homeAmt; pk.lock.visible = pk.lockA > .01; pk.lock.material.color.copy(gold ? GOLD : isHov && !open ? HOVER : LOCKC); pk.lock.material.rotation = open ? t * .6 : isHov ? t * .25 : isSel ? t * .12 : 0; pk.lock.scale.setScalar(3.1 * (isHov ? 1 + .04 * Math.sin(t * 5) : 1));
       if (j && hasSlot(j)) { const n = Math.max(1, j.stars.length), dens = Math.max(.04, Math.min(1, Math.sqrt(.07 * pk.R * pk.R / n))); u.uJob.value[ji(j)].set(0, j.scanOn ? 1 : 0, pk.spin, dens); u.uJobP.value[ji(j)].set(pk.pos.x, pk.pos.y, pk.pos.z, shown ? pk.g.scale.x : 0); }
       if (running && j.role !== "reviewer" && !rewinding && view === "home" && sil && Math.random() < dt * .25) { const sp = sprite(FLARE, new THREE.Color(.75, .92, 1), .035, .95); sp.renderOrder = 4; sp.position.copy(pk.pos); root.add(sp); tmp.set(pk.sx - sil.cx, -(pk.sy - sil.cy), 0).normalize(); ships.push({ s: sp, from: pk.pos.clone(), dir: tmp.clone(), len: pk.w * 3.2, t0: now, dur: 1200 }); } });
-    jobs.forEach(j => { const tg = view === "stuck" ? (trouble(j) ? 2.1 : .09) : hovOrder ? (j.order === hovOrder ? 1.45 : .62) : bad(j) ? .45 : 1; j.glow = (j.glow == null ? 1 : j.glow) + (tg - (j.glow == null ? 1 : j.glow)) * Math.min(1, dt * 3.2); if (hasSlot(j)) u.uJob.value[ji(j)].x = j.glow; });
+    jobs.forEach(j => { const tg = view === "stuck" ? (trouble(j) ? 2.1 : .09) : hovOrder ? (j.order === hovOrder ? 1.45 : .62) : bad(j) ? (view === "home" ? .3 : .45) : view === "home" && j.status !== "running" ? .5 : 1; j.glow = (j.glow == null ? 1 : j.glow) + (tg - (j.glow == null ? 1 : j.glow)) * Math.min(1, dt * 3.2); if (hasSlot(j)) u.uJob.value[ji(j)].x = j.glow; });
     // one order's packets are joined by a thread, only between neighbours on the same stretch of ring
     const tp = tether.geometry.attributes.position, tc = tether.geometry.attributes.color, lim = (rings ? rings.R * 2.6 : 60) * 2.2; let ns2 = 0;
     for (let k = 1; k < seq.length && ns2 < 256; k++) { const a = seq[k - 1], b = seq[k]; if (a.order !== b.order || !a.g.visible || !b.g.visible || Math.hypot(a.sx - b.sx, a.sy - b.sy) > lim) continue; tmp.subVectors(b.pos, a.pos); const L = tmp.length(); if (L < 1e-6) continue; tmp.multiplyScalar(1 / L); tmp2.copy(a.pos).addScaledVector(tmp, a.g.scale.x * .95); tp.setXYZ(ns2 * 2, tmp2.x, tmp2.y, tmp2.z); tmp2.copy(b.pos).addScaledVector(tmp, -b.g.scale.x * .95); tp.setXYZ(ns2 * 2 + 1, tmp2.x, tmp2.y, tmp2.z); const c = a.order.color, m = homeAmt * (hovOrder === a.order ? 1 : hovOrder ? .3 : .7); tc.setXYZ(ns2 * 2, c.r * m, c.g * m, c.b * m); tc.setXYZ(ns2 * 2 + 1, c.r * m, c.g * m, c.b * m); ns2++; }
@@ -275,9 +282,11 @@ window.makeSky = function (scene, camera, C, U, W) {
     show, rescale() { relayout(true); if (view === "spend" || view === "kinds" || view === "time") { const r = layoutView(view); if (!r.none) { bB.needsUpdate = true; renderTags(r.tags); } } },
     replay() { let earliest = 1e6; for (let i = 0; i < nStars; i += 50) earliest = Math.min(earliest, aMeta[i * 4]); if (earliest < 1e5) { const s = nowMin(); tEff = earliest; replaySpeed = Math.max(1, (s - earliest) / 3.4); } },
     scrub(tm) { scrubT = tm; }, firstStart() { return jobs.length ? Math.min(...jobs.map(j => j.start)) : null; },
-    sparkList() { const out = []; PK.forEach(pk => { if (pk.card) out.push({ id: pk.card.id, name: "Waiting for you", mesh: pk.g, size: pk.w, gold: true }); else if (pk.job.status === "running") out.push({ id: pk.job.id, name: pk.job.label, mesh: pk.g, size: pk.w, gold: false }); }); return out; },
+    // one entry per order that has a packet showing: its name, its state in words, and its packets' keys newest step first (for the labels)
+    orderList() { const out = []; orders.forEach(o => { if (!o.steps || !o.steps.length || !o.say.word) return; const keys = o.steps.slice().reverse().map(s => s.job ? "j" + s.job.id : "c" + s.card.id).filter(k => PK.has(k) && PK.get(k).g.visible); if (keys.length) out.push({ id: o.key, color: o.color.getStyle(), name: o.name, word: o.say.word, tone: o.say.tone, newest: o.newest, keys }); }); return out; },
+    get rewound() { return isRewound; },
     // where every packet is on screen now: for the labels, and for the browser test that checks none is behind the witness
-    packets() { const out = []; PK.forEach(pk => { if (!pk.g.visible) return; const P = screenOf(pk); out.push({ id: pk.card ? pk.card.id : pk.job.id, kind: pk.card ? "gold" : pk.job.status, x: P.x, y: P.y, r: P.r, mark: pk.mark || "" }); }); return out; },
+    packets() { const out = []; PK.forEach(pk => { if (!pk.g.visible) return; const P = screenOf(pk); out.push({ id: pk.card ? pk.card.id : pk.job.id, key: pk.key, order: pk.order.key, n: pk.step ? pk.step.n : 0, tone: pk.step ? pk.step.tone : "", kind: pk.card ? "gold" : pk.job.status, x: P.x, y: P.y, r: P.r, dim: pk.dim, mark: pk.mark || "" }); }); return out; },
     // for the browser test: each star the shader would draw, in the packet whose slot it reads; any landing in another job's packet
     starSlots() { let drawn = 0, hidden = 0; const wrong = []; for (let i = 0; i < nStars; i++) { if (aMeta[i * 4] > 1e5) continue; const j = jobs[aJ[i]]; if (aMeta[i * 4 + 3] < u.uJobLo.value) { hidden++; continue; } drawn++;
       const P = u.uJobP.value[aMeta[i * 4 + 3] % MAXJOB], pk = PK.get("j" + j.id); if (!pk || Math.hypot(P.x - pk.pos.x, P.y - pk.pos.y, P.z - pk.pos.z) > 1e-4) wrong.push(j.id); }
@@ -285,6 +294,7 @@ window.makeSky = function (scene, camera, C, U, W) {
     // for the browser test: pretend the witness has no outline (on), or let it have one again
     noOutline(on) { noOutline = !!on; relayout(true); return sil ? !!sil.standIn : null; },
     overWitness(x, y, pad) { return inOutline(x, y, pad); },
+    center() { return sil ? { x: sil.cx, y: sil.cy } : null; },
     jobMesh(id) { const pk = pkFor(id); return pk ? pk.g : null; }, goldMesh(id) { const g = id ? golds.get(id) : golds.values().next().value; return g ? g.pk.g : null; },
     job: id => J.get(id) || null, brush(un, at) { brush = un; brushAt = at || null; lastPick = 0; }, jobU(id) { const j = J.get(id); return j ? { kind: bad(j) ? "failed" : "job", job: j } : null; },
     hoverInfo() { if (!hovered || card.hidden) return null; const mesh = hovered.kind === "action" ? pickMark : (pkOfUn(hovered) || {}).g; return mesh ? { mesh, x: cardX - 8, y: cardY + 10 } : null; },
