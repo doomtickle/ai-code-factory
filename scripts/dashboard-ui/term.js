@@ -421,7 +421,7 @@
       setTimeout(() => send(enc.encode("\r")), 120);   // the Coordinator's prompt takes a pasted burst, then Enter, as the typed line did
       return "";
     };
-    window.TermMic.attach({ base: `http://127.0.0.1:${voicePort}`, mainOrigin: `${location.protocol}//${location.hostname}:${mainPort}`, type: typed,
+    window.TermMic.attach({ voicePort, mainOrigin: `${location.protocol}//${location.hostname}:${mainPort}`, type: typed,
       strip: $("voice"), mic: $("mic"), auto: $("always"), status: $("voice-status"), pending: $("voice-pending"), pendingText: $("voice-pending-text"), pendingLeft: $("voice-pending-left") });
   }
 

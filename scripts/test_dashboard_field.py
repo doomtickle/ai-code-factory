@@ -322,7 +322,8 @@ class RulesTests(unittest.TestCase):
         term = (UI / "term.js").read_text()
         self.assertIn("if (!ws || ws.readyState !== WebSocket.OPEN || quiet()) return \"noconn\";", term)
         self.assertIn("if (!running) return \"off\";", term)
-        self.assertIn("window.TermMic.attach({ base: `http://127.0.0.1:${voicePort}`", term)
+        self.assertIn("window.TermMic.attach({ voicePort, ", term)
+        self.assertIn("const base = `http://127.0.0.1:${voicePort}`;", code)
         self.assertNotIn('"power"', term[term.index("const typed = "):term.index("window.TermMic.attach")], "talking never powers anything on")
         worklet = (UI / "term-mic-worklet.js").read_text()
         for word in ("fetch", "WebSocket", "XMLHttpRequest", "import"):

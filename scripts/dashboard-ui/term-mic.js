@@ -23,9 +23,10 @@ window.TermMic = (() => {
   const LISTENING = "Always on: listening for “LOIS…”";
   const WORDS = new Set(["tm:hush", "tm:open", "tm:cancel"]);
 
-  function attach({ base, mainOrigin, type, strip, mic, auto, status, pending, pendingText, pendingLeft }) {
+  function attach({ voicePort, mainOrigin, type, strip, mic, auto, status, pending, pendingText, pendingLeft }) {
     let usable = false, blocked = false, held = false, timer = 0, ptt = null, pttPhase = "idle", always = null, speaking = false, hushAt = 0, hushUntil = 0;
     let alwaysOn = false;
+    const base = `http://127.0.0.1:${voicePort}`;   // the local voice on loopback; here, not in term.js, whose plain /term page reaches no network
     try { alwaysOn = localStorage.getItem(STORE) === "1"; } catch (e) {}
 
     // ---------- one line of state
