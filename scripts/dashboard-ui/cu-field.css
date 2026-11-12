@@ -124,6 +124,7 @@ html.svc #svc-back { display: inline; }
 .crt-body p { margin: 0 0 8px; overflow-wrap: anywhere; }
 .crt-body .banner { display: none; }   /* the title already says it; only a result stands out */
 .crt-body .banner.k-ok, .crt-body .banner.k-warn { display: block; margin: 0 0 12px; font: 500 1.45rem/1.2 var(--f-voice); }
+.crt-body #set-pending.banner { margin: 0 0 14px; padding: 7px 12px; border-left: 3px solid var(--amber); background: rgba(255, 190, 60, .08); font: 600 1rem/1.3 var(--f-voice); }
 .crt-body h5 { margin: 20px 0 6px; color: var(--i1); font: 600 1.15rem/1.3 var(--f-voice); }
 .crt-body h5::first-letter { text-transform: uppercase; }
 .crt-body h5 .tag { margin-left: .8em; color: var(--i3); font: 400 .85rem var(--f-data); }
@@ -174,7 +175,7 @@ html.svc #svc-back { display: inline; }
 .rcell.c-model .tape, .rcell.c-num .tape { max-width: 24rem; }
 .rcell.c-effort .seg-row { width: 100%; max-width: 21rem; } .rcell.c-effort .seg { flex: 1 1 auto; }
 @container (min-width: 61rem) {
-  .rhead, .rline { grid-template-columns: 6.5rem 7.5rem minmax(8rem, 1fr) 16.5rem repeat(3, 6.5rem); gap: 0 12px; align-items: center; }
+  .rhead, .rline { grid-template-columns: 7rem 7rem minmax(9.5rem, 1fr) 16.5rem repeat(3, 6rem); gap: 0 12px; align-items: center; }
   .rhead { display: grid; padding: 0 0 6px; color: var(--i3); font-size: .85rem; }
   .rname { grid-column: auto; flex-direction: column; align-items: flex-start; gap: 0; }
   .rcell.c-model, .rcell.c-effort { grid-column: auto; }
@@ -202,7 +203,7 @@ html.svc #svc-back { display: inline; }
 .rcell.pend .tape, .rcell.pend .stepper, .rcell.pend .seg-row { border-style: dashed; border-color: var(--amber); }
 .rpend { color: var(--amber); font-size: .85rem; }
 .rpend[hidden] { display: none; }
-.rwait { margin-left: .6em; padding: 0 .5em; border: 1px dashed var(--amber); border-radius: 999px; color: var(--amber); }
+.rwait { display: block; width: max-content; margin-top: 2px; padding: 0 .5em; border: 1px dashed var(--amber); border-radius: 999px; color: var(--amber); }
 .swatch { display: inline-block; width: 1.6em; height: .9em; margin-right: .6em; vertical-align: middle; border: 1px solid var(--field-line); border-radius: 3px; }
 .rcell.dirty .tape, .rcell.dirty .stepper, .rcell.dirty .seg-row { border-color: var(--blue); background: rgba(124, 196, 255, .12); }
 .rcell.bad .tape { border-color: var(--crit2); background: rgba(255, 154, 165, .1); }

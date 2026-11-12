@@ -1195,7 +1195,7 @@
     const tags = [r.on ? null : "off", r.optional ? "optional" : null, r.override ? "your override" : null].filter(Boolean).join(" · ");
     const waitingKeys = list(r.keys).filter(k => k && typeof k === "object" && k.pending).length + (r.instructions_pending ? 1 : 0);
     const rtags = el("span", "rtags", tags);
-    if (waitingKeys) rtags.append(span("rwait", `${waitingKeys} saved, not running`));
+    if (waitingKeys) rtags.append(span("rwait", `${waitingKeys} pending`));
     who.append(el("span", "rtitle", name), rtags);
     const grid = el("div", "rline");
     grid.append(who, cell("LANES", "c-lanes", lanesCtl), cell("MODEL", "c-model", select), cell("EFFORT", "c-effort", effort));

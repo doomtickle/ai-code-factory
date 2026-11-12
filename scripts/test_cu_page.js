@@ -679,7 +679,7 @@ const card = (over) => Object.assign({ id: "c1", tool: "git_push", role: "develo
     assert.ok(text().includes("saved 200 · running 80"), "a knob that differs says so");
     assert.ok(text().includes("instructions.md changed, running has 700"), "the instructions line says its running size");
     assert.ok(!text().includes("→ on start") && !text().includes("→ on update"), "the old tags are gone");
-    assert.deepStrictEqual(kids().filter(n => n.className === "rwait").map(n => n.textContent), ["3 saved, not running"], "only the role with pending keys carries the row mark");
+    assert.deepStrictEqual(kids().filter(n => n.className === "rwait").map(n => n.textContent), ["3 pending"], "only the role with pending keys carries the row mark");
     assert.deepStrictEqual(walk(rack("developer")).filter(n => n.className === "rpend" && !n.hidden).map(n => n.textContent), ["running 1", "running 80"],
       "a pending cell says what is running, under its control");
     assert.ok(walk(rack("developer")).filter(n => /\bpend\b/.test(n.className || "") && /\brcell\b/.test(n.className)).length === 2, "and is marked");
