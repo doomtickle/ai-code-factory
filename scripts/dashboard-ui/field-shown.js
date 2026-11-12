@@ -4,7 +4,8 @@
 // The main page only displays. This sends nothing anywhere: no request, no message to the Coordinator or the terminal. The text is
 // agent-influenced, so it is drawn with textContent and copied only by a click on COPY (the rule term.js follows for OSC 52): the
 // text on screen and nothing else, never within HOLD_MS of the text changing, with navigator.clipboard.writeText, else a selected
-// textarea and execCommand("copy"). The page never reads the clipboard.
+// textarea and execCommand("copy"). The page never reads the clipboard. A selection the owner makes in the text is copied by the browser's
+// own copy; the page leaves it alone (render() rewrites the text only when it changed).
 "use strict";
 
 (() => {
@@ -28,8 +29,9 @@
 
   function render() {
     const box = $("shown"), text = block ? block.text : EMPTY;
-    $("shown-text").textContent = text;
-    $("shown-text").classList.toggle("none", !block);
+    const pre = $("shown-text");
+    if (pre.textContent !== text) pre.textContent = text;   // rewriting identical text on every poll would drop the owner's selection
+    pre.classList.toggle("none", !block);
     const age = block && block.t != null && now ? Math.max(0, now - block.t) : -1;
     $("shown-age").textContent = block ? ago(age) : "";
     box.classList.toggle("old", age >= OLD_S);

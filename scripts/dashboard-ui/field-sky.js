@@ -235,7 +235,7 @@ window.makeSky = function (scene, camera, C, U, W) {
     if (best < 0) return null; pickMark.position.set(aB[best * 3], aB[best * 3 + 1], aB[best * 3 + 2]); return { kind: "action", i: best }; }
   function jobOf(un) { return un.job || (un.kind === "action" ? jobs[aJ[un.i]] : null); }
   const pkOfUn = un => !un ? null : un.card ? PK.get("c" + un.card.id) : (j => j ? PK.get("j" + j.id) : null)(jobOf(un));
-  addEventListener("click", e => { if (W.scrubbing || (W.skyBlocked && W.skyBlocked(e.clientX, e.clientY)) || e.target.closest("button,input,textarea,form,a,iframe,.top,.work,.today,.mid,.legend,#monitor-root")) return; const un = pick(e.clientX, e.clientY); if (!un) return; if (un.kind === "gold") { selKey = "c" + un.card.id; W.onPickCard && W.onPickCard(un.card); } else { const j = jobOf(un); if (j) { selKey = "j" + j.id; W.onPickJob && W.onPickJob(j); } } });   // picked again here: packets glide, so the last hover can be stale
+  addEventListener("click", e => { if (W.scrubbing || (W.skyBlocked && W.skyBlocked(e.clientX, e.clientY)) || e.target.closest("button,input,textarea,form,a,iframe,.top,.work,.today,.mid,.legend,#shown,#monitor-root")) return; const un = pick(e.clientX, e.clientY); if (!un) return; if (un.kind === "gold") { selKey = "c" + un.card.id; W.onPickCard && W.onPickCard(un.card); } else { const j = jobOf(un); if (j) { selKey = "j" + j.id; W.onPickJob && W.onPickJob(j); } } });   // picked again here: packets glide, so the last hover can be stale
 
   // ---- per frame
   let isRewound = false, tEff = nowMin(), scrubT = null, replaySpeed = 0, lastNow = 0;

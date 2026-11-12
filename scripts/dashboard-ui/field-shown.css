@@ -12,6 +12,7 @@
 .shown header button:disabled { color: var(--ink-3); border-bottom-color: transparent; cursor: default; opacity: .7; }
 .shown header #shown-close { font-size: 20px; line-height: 1; color: var(--ink-2); border-bottom: 0; }
 .shown pre { margin: 0; min-height: 0; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: 400 14px/1.45 ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace; color: var(--ink); user-select: text; }
+.shown pre::selection { background: #2b6cb0; color: #fff; }
 .shown pre.none { font-family: var(--f-data); font-size: 14.5px; color: var(--ink-2); }
 .shown p { margin: 0; font: 600 13.5px/1.4 var(--f-data); color: var(--amber); }
 .shown textarea { position: fixed; left: -9999px; top: 0; width: 1px; height: 1px; opacity: 0; }

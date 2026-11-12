@@ -167,7 +167,9 @@ writes, one short line each, with commands written out so you can copy them. It
 pops up by itself when the Coordinator posts a new list, which it does whenever
 something new is waiting on you or an item is done, and the chip opens it
 again. The panel shows its age ("2 min ago"), **Copy** and a close key, and you
-can select the text by hand. It shrinks and dims after 10 minutes but never
+can select part of the text by hand and copy it with your browser's own copy
+(Ctrl+C or right-click, Copy); a poll never clears your selection unless the text
+itself changes. It shrinks and dims after 10 minutes but never
 closes by itself. Closing it is your choice.
 
 - **Copy** writes the text on screen to the clipboard only when you click it, and
