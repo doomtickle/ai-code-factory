@@ -255,14 +255,44 @@ write and hold the light yourself.
 If it goes quiet without speaking, its answer is still in **Terminal**. The
 bridge's audit log records every line it says.
 
-There is no speech-to-text. Browser speech recognition sends audio to a cloud
-service, so it was dropped. You type.
+### Talking to LOIS
+
+You can also talk. It needs the local voice (`factory voice start`) with
+listening: the strip along the bottom of Terminal 0 has a microphone key and an
+**Always on** switch, both dark (hover for why) while the voice is off. What you
+say goes to the voice on your own machine (`127.0.0.1`), never to a cloud
+service, and the words it hears go where your typing goes: into Terminal 0, the
+text and then Enter, only while the Coordinator runs. Voice approves nothing:
+approving is still the held light.
+
+- **Push to talk.** Hold the microphone key, speak, let go. The words are typed
+  at once. A hold is cut at 60 s; `Esc` during it drops it.
+- **Always on** (off until you switch it on; your browser remembers). The
+  microphone stays open while the tab is visible, and its lamp is red while it
+  listens. Start with her name: "LOIS, run the tests." Each pause of about a
+  second ends what you said, and anything over 30 s is cut there. Only a line
+  that starts with "LOIS" counts (also "Hey LOIS", or the spellings the listener
+  writes for it: Lowis, Loise, Louis). The rest is ignored: it went to the local
+  voice to be heard and nowhere else, and nothing shows.
+- **The 2 s window.** The words after her name wait in the strip for 2 seconds
+  with a countdown, then are typed. Press `Esc` (on the page or in the
+  terminal) or click the line to cancel; nothing is sent. A newer line replaces
+  a waiting one.
+- **While LOIS speaks**, and for 300 ms after, always-on hears nothing ("paused
+  while LOIS speaks"), so she never answers her own voice. Push to talk still
+  works.
+- Pressing either key, or the waiting line, doesn't grow the pane or move your
+  keys into the terminal.
+
+The browser asks for the microphone once for Terminal 0's address. If you
+refuse, the strip says so and both keys stay dark until you allow it in the
+site settings and reload.
 
 ### What stays in the browser
 
-Nothing you type. There is no typed line on the main page: every word you type
-goes into Terminal 0 and so to the Coordinator, and the page itself sends no
-text anywhere.
+Nothing you type or say. There is no typed line on the main page: every word
+you type or say goes into Terminal 0 and so to the Coordinator, and the page
+itself sends no text anywhere.
 
 The sky's views are keys and clicks instead:
 

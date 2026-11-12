@@ -68,6 +68,12 @@ async function launch(url, init, wav) {
       }
       throw new Error("no terminal frame");
     },
+    // With TERM_MIC_SHOTS set, a PNG of the page into that folder (for a person to look at; never committed).
+    async shot(name) {
+      if (!process.env.TERM_MIC_SHOTS) return;
+      const { data } = await s("Page.captureScreenshot", { format: "png" });
+      fs.writeFileSync(path.join(process.env.TERM_MIC_SHOTS, name + ".png"), Buffer.from(data, "base64"));
+    },
     async escape() {
       for (const type of ["rawKeyDown", "keyUp"]) await s("Input.dispatchKeyEvent", { type, key: "Escape", code: "Escape", windowsVirtualKeyCode: 27, nativeVirtualKeyCode: 27 });
     },
@@ -171,6 +177,7 @@ async function granted(url, wav) {
     await b.click(a.x, a.y);
     await until(async () => (await strip(b)).always === "live", 8000, "always on is listening");
     assert.strictEqual((await strip(b)).status, "Always on: listening for “LOIS…”");
+    await b.shot("always-on");
     assert.strictEqual(await b.term(`localStorage.getItem("lois-always-on")`), "1", "remembered in this browser");
     await calm(b, "switching always on");
     let n = await posts();
@@ -182,6 +189,7 @@ async function granted(url, wav) {
     await b.term(`(() => { const el = document.getElementById("voice-pending"); window.__left = []; window.__text = []; new MutationObserver(() => { window.__left.push(document.getElementById("voice-pending-left").textContent); window.__text.push(document.getElementById("voice-pending-text").textContent); }).observe(el, { childList: true, characterData: true, subtree: true }); })()`);
     await say("Lois, run the tests.");
     await until(() => b.term(`window.__text.length > 0`), 8000, "the line waits in the strip");
+    await b.shot("waiting");   // this line is typed anyway, so a slow shot can't spoil the check
     // The countdown starts at 2 s and only goes down until the line goes. Recorded in the frame as it is drawn: on this host the
     // software-rendered sky shares the frame's thread, so its timers run late and a poll from here sees only a few of the steps.
     await until(async () => (await strip(b)).pending === null, 8000, "sent when the window ends");
@@ -268,6 +276,11 @@ async function refused(url, wav) {
     assert.strictEqual((await strip(b)).always, "off");
     assert.strictEqual(await posts(), before, "nothing was posted");
     await calm(b, "a refused microphone");
+    await b.shot("refused");
+    if (process.env.TERM_MIC_SHOTS) {
+      await b.s("Emulation.setDeviceMetricsOverride", { width: 390, height: 844, deviceScaleFactor: 1, mobile: false });
+      await b.sleep(2500); await b.shot("refused-390");
+    }
   } finally {
     await b.close();
   }
