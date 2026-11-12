@@ -124,10 +124,12 @@
       if (!head || !eyeL || !eyeR || !corneaL || !corneaR || faceMeshes.length !== 2) throw new Error("the model is missing Head, Eye_L, Eye_R, its corneas or its morph targets");
       // frame it: crown near the top, chin near the middle, so the words sit over the chest
       root.updateMatrixWorld(true);
-      const box = new THREE.Box3().setFromObject(head); const crown = box.max.y, chin = crown - .25, span = (crown - chin) / .41;
-      const cy = crown + .05 * span - span / 2; const dist = (span / 2) / Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
+      const box = new THREE.Box3().setFromObject(head); const crown = box.max.y, chin = crown - .25;
       const eyeW = new THREE.Vector3(); eyeL.getWorldPosition(eyeW);
-      camera.position.set(0, cy + .02, eyeW.z + dist); camera.lookAt(0, cy, eyeW.z);
+      // LF.frameFace(k): the chin sits k of the screen's height below the crown (.41, or less with Terminal 0 docked low, so her shoulders still clear the horizon)
+      LF.frameFace = k => { const span = (crown - chin) / k, cy = crown + .05 * span - span / 2, dist = (span / 2) / Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
+        camera.position.set(0, cy + .02, eyeW.z + dist); camera.lookAt(0, cy, eyeW.z); camera.updateMatrixWorld(true); };
+      LF.frameFace(LF.faceK || .41);
       halo.position.set(0, eyeW.y + .02, box.min.z - .05); ring.position.set(0, eyeW.y + .03, eyeW.z - .03);
       W.ready = true; W.eyeY = eyeW.y; W.eyeZ = eyeW.z;
       LF.sky = window.makeSky(scene, camera, new THREE.Vector3(0, eyeW.y, eyeW.z - .08), U, W); LF.camera = camera; LF.onReady && LF.onReady();
