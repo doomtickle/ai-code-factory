@@ -81,6 +81,9 @@ body.holding #t-gold { stroke-width: 2; }
 .term-bar .term-title { display: flex; align-items: center; gap: 10px; } .term-bar .term-hint { margin-left: auto; font: 400 14px var(--f-data); color: var(--ink-3); }
 .term-bar button { font: 500 15px var(--f-data); color: #f5f9ff; border-bottom: 1px solid rgba(203,218,238,.4); padding: 2px 0; }
 .term-slot { min-height: 0; } .term-frame { display: block; width: 100%; height: 100%; border: 0; background: #070a12; }
+/* Not quite opaque, so the compositor never treats the cross-origin frame as an occluder: Chrome's software compositor (headless shell, and a browser
+   with GPU compositing off) otherwise culls the sky canvas in a frame-sized rectangle at the top of the page. The frame's own background stays opaque. */
+.term-frame { opacity: .999; }
 .textkey { width: auto; padding: 0 14px; border-radius: 19px; display: flex; align-items: center; gap: 8px; font: 500 14.5px var(--f-data); color: var(--ink); text-decoration: none; } .ic { text-decoration: none; } .lamp { width: 7px; height: 7px; border-radius: 50%; background: var(--ink-3); } .lamp.on { background: var(--ok); box-shadow: 0 0 7px var(--ok); }
 .hint-line { font: 500 14.5px var(--f-data); color: var(--ink-2); margin-left: 8px; max-width: 46vw; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #roles, #service-note { margin-top: 12px; font: 400 clamp(14px, 1.6vh, 16px) var(--f-data); color: var(--ink-2); } #service-note { color: var(--amber); }

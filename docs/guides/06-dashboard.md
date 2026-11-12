@@ -253,43 +253,41 @@ service, so it was dropped. You type.
 
 ### What stays in the browser
 
-Only a short, plain question about the whole day stays in the browser: one
-sentence of at most seven words, starting with what, which, where, how, when or
-show, with no "in", "on", "for", "about", "with", "from" or "to", and containing
-one of these words:
+Nothing you type. There is no typed line on the main page: every word you type
+goes into Terminal 0 and so to the Coordinator, and the page itself sends no
+text anywhere.
 
-| Words | Answer |
+The sky's views are keys and clicks instead:
+
+| Key or click | View |
 |---|---|
-| cost, spend, spent, expensive, money, budget | What cost the most |
-| stuck, wrong, failed, failing, broken, problem, trouble, attention | What's stuck |
-| busy, busiest, quiet, timeline | When it was busiest |
-| doing, actions, blocked, reading, kind of | What they've been doing |
+| `1` | What cost the most |
+| `2` | What's stuck |
+| `3` | What they've been doing |
+| `4` | When it was busiest |
+| Double-click the horizon | When it was busiest |
 
-"Back", "home" or "back to the galaxy" alone also return to the galaxy.
-
-So "What failed?" draws the stuck view, while "Why did the auth job fail?", "What
-failed on the auth job?" and "Back out the auth change" all go to the Coordinator.
-
-Enter goes to whatever Terminal 0 is showing. If the Coordinator is waiting on a
-prompt of its own, what you type answers that prompt.
+The keys work while the main page has the keyboard, not while you are typing in
+Terminal 0 (click the world first). The questions under the caption do the same.
 
 ### Terminal 0
 
-Press **Terminal** in the top bar, or `t`, to open Terminal 0 as a panel. It is
+Terminal 0 is the pane low in the world (see [Talk to LOIS](#talk-to-lois)).
+Press **Terminal** in the top bar, or `t`, to make it bigger. It is
 the Coordinator's live terminal, with the same POWER ON and RESUME keys, COPY
 prompt and messages as the classic view. See
 [Terminal 0: the Coordinator](#terminal-0-the-coordinator).
 
 It is built to read easily. The text is JetBrains Mono on a solid dark
-background, not the sky, and the world behind the panel dims. The Coordinator
+background, not the sky, and the sky dims while you type in it. The Coordinator
 chooses many of its own colours, so the terminal lifts any text that would be
 hard to read against its background, including dimmed text. Box and block
 drawings keep their colours. To make the text larger, use your browser's zoom
 (Ctrl and +, or ⌘ and + on a Mac).
 
-The panel takes the keyboard when it opens, so `t` and Esc then go to the
-Coordinator. Press **Close** to close it, or click outside it first and press
-`t` or Esc.
+Pressing **Terminal** or `t` gives it the keyboard, so `t` and Esc then go to
+the Coordinator. Press **Smaller** to shrink it, or click the world first and
+press `t` or Esc.
 
 Opening the dashboard brings the Coordinator up once per page load, continuing
 its last session, if it is off and not open in `factory chat`.
