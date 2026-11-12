@@ -406,6 +406,25 @@
   window.addEventListener("focus", () => { sendSize(); if ($("off").hidden) term.focus(); else if (!$("power").hidden) $("power").focus(); });
   document.addEventListener("visibilitychange", sendSize);
 
+  // Talking (term-mic.js, loaded only by the Thoughtfield's /term/field): spoken words are typed as the owner types, the text
+  // and then Enter, with no control character, only while the Coordinator runs. "" if sent, else why not ("off", "noconn").
+  const voiceMeta = document.querySelector('meta[name="voice-port"]'), mainMeta = document.querySelector('meta[name="main-port"]');
+  const voicePort = voiceMeta ? Number(voiceMeta.content) : 0, mainPort = mainMeta ? Number(mainMeta.content) : 0;
+  const port = n => Number.isInteger(n) && n > 0 && n < 65536;
+  if (window.TermMic && window.TermVoice && window.top !== window && port(voicePort) && port(mainPort) && $("voice")) {
+    const typed = text => {
+      const line = Array.from(String(text)).filter(c => { const n = c.codePointAt(0); return n >= 0x20 && n !== 0x7f && !(n >= 0x80 && n < 0xa0); }).join("").trim();
+      if (!ws || ws.readyState !== WebSocket.OPEN || quiet()) return "noconn";
+      if (!running) return "off";
+      if (!line) return "";
+      send(enc.encode(line));
+      setTimeout(() => send(enc.encode("\r")), 120);   // the Coordinator's prompt takes a pasted burst, then Enter, as the typed line did
+      return "";
+    };
+    window.TermMic.attach({ base: `http://127.0.0.1:${voicePort}`, mainOrigin: `${location.protocol}//${location.hostname}:${mainPort}`, type: typed,
+      strip: $("voice"), mic: $("mic"), auto: $("always"), status: $("voice-status"), pending: $("voice-pending"), pendingText: $("voice-pending-text"), pendingLeft: $("voice-pending-left") });
+  }
+
   function start() {
     term.open($("term"));
     opened = true;

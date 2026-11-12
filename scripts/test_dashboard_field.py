@@ -28,6 +28,123 @@ class Lane:
         self.job = {"id": starts[-1], "status": "done" if ended else "running"} if starts else None   # as watch.Lane keeps it
 
 
+def node(code):
+    return json.loads(subprocess.run(["node", "-e", code], capture_output=True, text=True, check=True, timeout=60).stdout)
+
+
+VOICE_JS = str(UI / "term-voice.js")
+
+
+class WakeWordTests(unittest.TestCase):
+    """Always-on talking (term-voice.js wake): only a line that starts with LOIS counts, and only what follows it is sent."""
+
+    def wake(self, *texts):
+        return node(f"const V = require({VOICE_JS!r}); process.stdout.write(JSON.stringify({json.dumps(texts)}.map(V.wake)))")
+
+    def test_the_name_as_whisper_writes_it_starts_a_line(self):
+        cases = {"Lois, start the review of the auth branch.": "start the review of the auth branch.",
+                 "LOIS run the tests": "run the tests", "lois. What's stuck?": "What's stuck?", "Lois: stop": "stop",
+                 "Hey Lois, what's waiting for me?": "what's waiting for me?", "OK, Lois, run it": "run it", "Okay Lois run it": "run it",
+                 "Lowis, run the tests.": "run the tests.", "Loïs, run it": "run it", "Loise run it": "run it", "Louis, run it": "run it",
+                 "L.O.I.S. run it": "run it", "Lo-is, run it": "run it", "Lo is, run it": "run it", "L O I S run it": "run it",
+                 "  Lois,   run\n the  tests ": "run the tests", "Lois... run it": "run it", "Lois — run it": "run it"}
+        self.assertEqual(self.wake(*cases), list(cases.values()))
+
+    def test_the_name_alone_is_heard_but_carries_nothing(self):
+        self.assertEqual(self.wake("Lois.", "Lois", "Hey, Lois!"), ["", "", ""])
+
+    def test_anything_else_is_not_for_her(self):
+        texts = ("Start the review, Lois.", "Thank you.", "", "   ", "Loiseau is late", "Lowes has it", "Lewis, run it", "Louise, run it",
+                 "Lo, is it raining?", "Hey there Lois", "Lo", "Hey", "Allow is fine", "Elois run it", "the lois thing")
+        self.assertEqual(self.wake(*texts), [None] * len(texts))
+        self.assertEqual(node(f"const V = require({VOICE_JS!r}); process.stdout.write(JSON.stringify([V.wake(null), V.wake(7), V.wake(undefined)]))"),
+                         [None, None, None])
+
+    def test_the_list_stays_small(self):
+        self.assertEqual(node(f"const V = require({VOICE_JS!r}); process.stdout.write(JSON.stringify([...V.WAKE].sort()))"),
+                         ["lois", "loise", "louis", "lowis"])
+
+
+class CancelWindowTests(unittest.TestCase):
+    """A heard line waits 2 s with a countdown, then goes through send() once; cancel() or a newer line stops it. On a fake clock."""
+
+    def run_window(self, steps):
+        code = f"""const V = require({VOICE_JS!r}); let t = 0, timers = [], id = 0; const log = [];
+const w = V.cancelWindow({{ now: () => t, setTimeout: (f, ms) => {{ timers.push({{ id: ++id, at: t + ms, f }}); return id; }},
+  clearTimeout: k => {{ timers = timers.filter(x => x.id !== k); }}, send: s => log.push(["send", s, t]),
+  tick: (left, s) => log.push(["tick", left, s]), done: (how, s) => log.push(["done", how, s, t]) }});
+function advance(ms) {{ const end = t + ms; for (;;) {{ timers.sort((a, b) => a.at - b.at); const n = timers[0]; if (!n || n.at > end) break; timers.shift(); t = n.at; n.f(); }} t = end; }}
+for (const [op, arg] of {json.dumps(steps)}) {{ if (op === "open") w.open(arg); else if (op === "wait") advance(arg); else if (op === "cancel") log.push(["cancelled?", w.cancel()]); else log.push(["pending", w.pending]); }}
+process.stdout.write(JSON.stringify(log));"""
+        return node(code)
+
+    def test_a_line_is_sent_once_when_the_window_runs_out(self):
+        log = self.run_window([["open", "run the tests"], ["wait", 1900], ["pending", 0], ["wait", 200], ["pending", 0], ["wait", 5000]])
+        sends = [x for x in log if x[0] == "send"]
+        self.assertEqual(sends, [["send", "run the tests", 2000]])
+        self.assertIn(["pending", "run the tests"], log)
+        self.assertEqual(log[-1], ["pending", None])
+        self.assertIn(["done", "sent", "run the tests", 2000], log)
+        ticks = [x[1] for x in log if x[0] == "tick"]
+        self.assertEqual(ticks[0], 2000)
+        self.assertEqual(ticks, sorted(ticks, reverse=True), "the countdown only goes down")
+        self.assertLessEqual(max(a - b for a, b in zip(ticks, ticks[1:])), 100, "and is redrawn at least every 100 ms")
+
+    def test_cancel_sends_nothing(self):
+        log = self.run_window([["open", "drop this"], ["wait", 1500], ["cancel", 0], ["wait", 5000], ["cancel", 0]])
+        self.assertFalse([x for x in log if x[0] == "send"])
+        self.assertIn(["done", "cancelled", "drop this", 1500], log)
+        self.assertEqual([x for x in log if x[0] == "cancelled?"], [["cancelled?", True], ["cancelled?", False]])
+
+    def test_a_newer_line_replaces_the_waiting_one_and_gets_its_own_two_seconds(self):
+        log = self.run_window([["open", "first"], ["wait", 1500], ["open", "second"], ["wait", 1900], ["pending", 0], ["wait", 200]])
+        self.assertEqual([x for x in log if x[0] == "send"], [["send", "second", 3500]])
+        self.assertIn(["done", "replaced", "first", 1500], log)
+        self.assertIn(["pending", "second"], log)
+
+
+class SegmenterTests(unittest.TestCase):
+    """Always-on's voice activity (term-voice.js segmenter): utterances end after 0.8 s of quiet, are cut at 30 s, and keep 300 ms before."""
+
+    def segment(self, plan, chunk=1600):
+        # plan: [[seconds, amplitude], ...] of a 220 Hz tone (amplitude 0 is silence plus faint noise); returns [[seconds, why], ...].
+        code = f"""const V = require({VOICE_JS!r}); const out = []; const seg = V.segmenter((pcm, why) => out.push([pcm.length / 16000, why]));
+let n = 0, seed = 7; const rnd = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648 - .5;
+const all = []; for (const [s, a] of {json.dumps(plan)}) for (let i = 0; i < Math.round(s * 16000); i++, n++) all.push(Math.round(32767 * (a * Math.sin(2 * Math.PI * 220 * n / 16000) + .0006 * rnd())));
+const pcm = Int16Array.from(all); for (let i = 0; i < pcm.length; i += {chunk}) seg.push(pcm.subarray(i, i + {chunk}));
+process.stdout.write(JSON.stringify(out));"""
+        return node(code)
+
+    def test_two_phrases_with_a_pause_are_two_utterances(self):
+        out = self.segment([[1, 0], [1.2, .1], [1.5, 0], [0.8, .1], [1.5, 0]])
+        self.assertEqual([w for _, w in out], ["end", "end"])
+        self.assertAlmostEqual(out[0][0], 0.3 + 1.2 + 0.2, delta=0.1)   # pre-roll + speech + the kept tail
+        self.assertAlmostEqual(out[1][0], 0.3 + 0.8 + 0.2, delta=0.1)
+
+    def test_a_short_pause_does_not_end_it(self):
+        out = self.segment([[1, 0], [1, .1], [0.5, 0], [1, .1], [1.5, 0]])
+        self.assertEqual(len(out), 1)
+        self.assertAlmostEqual(out[0][0], 0.3 + 2.5 + 0.2, delta=0.1)
+
+    def test_quiet_rooms_clicks_and_whispers_are_not_speech(self):
+        self.assertEqual(self.segment([[3, 0], [0.04, .5], [2, 0], [2, .004], [1, 0]]), [])
+
+    def test_an_utterance_is_cut_at_thirty_seconds(self):
+        out = self.segment([[0.5, 0], [45, .1], [1.5, 0]])
+        self.assertEqual(out[0], [30, "cap"])
+        self.assertEqual(len(out), 2, "what follows the cut is the next utterance")
+
+    def test_a_noisy_room_raises_the_bar(self):
+        # A room at -50 dBFS RMS (below the start level) is learnt; then a sound must be about 10 dB over it to count.
+        self.assertEqual(self.segment([[3, .009], [1.2, .02], [1.5, .009]]), [])
+        self.assertEqual(len(self.segment([[3, .009], [1.2, .045], [1.5, .009]])), 1)
+
+    def test_any_chunk_size_gives_the_same_cut(self):
+        plan = [[1, 0], [1.2, .1], [1.5, 0]]
+        self.assertEqual(self.segment(plan, 1600), self.segment(plan, 128))
+        self.assertEqual(self.segment(plan, 1600), self.segment(plan, 4801))
+
+
 class FeedTests(unittest.TestCase):
     def build(self, lanes, audit=None, calls=(), now=None):
         now = now or time.mktime((2026, 11, 5, 14, 0, 0, 0, 0, -1))
@@ -152,7 +269,8 @@ class RulesTests(unittest.TestCase):
         html = (UI / "term-field.html").read_text()
         self.assertNotIn("/term.css", html)
         self.assertLess(html.index("/term-field.js"), html.index("/term.js"), "the skin must be set before term.js reads it")
-        self.assertEqual(re.findall(r'<script src="([^"]+)"', html), ["/vendor/xterm/xterm.js", "/vendor/xterm/addon-fit.js", "/term-field.js", "/term.js"])
+        self.assertEqual(re.findall(r'<script src="([^"]+)"', html), ["/vendor/xterm/xterm.js", "/vendor/xterm/addon-fit.js", "/term-field.js",
+                                                                      "/term-voice.js", "/term-mic.js", "/term.js"])
         css = (UI / "term-field.css").read_text()
         self.assertNotIn("@import", css)
         for old in ("VT323", "--matrix", "scanline"):
@@ -160,6 +278,91 @@ class RulesTests(unittest.TestCase):
         self.assertIn('"calt" 0', css)   # JetBrains Mono's ligatures would redraw code
         self.assertIn("`${termOrigin}/term/field`", (UI / "field-hud.js").read_text())
         self.assertNotIn("term-field", (UI / "term.html").read_text())   # the classic page keeps its tube
+
+    def test_only_the_thoughtfields_terminal_may_use_the_microphone_and_it_talks_only_to_the_voice(self):
+        js = (UI / "field-hud.js").read_text()
+        self.assertEqual(re.findall(r'frame\("([a-z-]+)", [^;]*?, "([a-z; -]+)"\)', js), [("term-frame", "clipboard-write; microphone")])
+        for name in ("field.html", "field-hud.js", "app.js", "voice.js", "field-sky.js", "field-shown.js", "cu.js", "cu-field.js", "term.html", "term-field.js"):
+            text = (UI / name).read_text()
+            for word in ("getUserMedia", "/listen", "audioWorklet", "term-mic"):
+                self.assertNotIn(word, text, f"{name}: {word}")
+        self.assertNotIn("microphone", (UI / "app.js").read_text(), "the classic page has no microphone")
+        self.assertEqual(dt.term_field_csp(5000, 4000), (
+            "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+            f"connect-src ws://127.0.0.1:5000 ws://localhost:5000 http://127.0.0.1:{d.VOICE_PORT} http://localhost:{d.VOICE_PORT}; "
+            "font-src 'self'; frame-ancestors http://127.0.0.1:4000 http://localhost:4000; base-uri 'none'; form-action 'none'"))
+        self.assertEqual(dt.VOICE_PORT, d.VOICE_PORT)
+        self.assertIn("http://127.0.0.1:9 http://localhost:9;", dt.term_field_csp(5000, 4000, 9))
+        for csp in (dt.term_csp(5000, 4000), dt.cu_csp(5000, 4000)):
+            self.assertNotIn(str(d.VOICE_PORT), csp, "the classic terminal and the unit don't talk to the voice")
+
+    def test_spoken_words_go_only_where_typed_words_go(self):
+        mic = (UI / "term-mic.js").read_text()
+        code = "\n".join(l for l in mic.splitlines() if not l.lstrip().startswith("//"))
+        self.assertEqual(len(re.findall(r"fetch\(", code)), 2)
+        self.assertEqual(len(re.findall(r"fetch\(", code)), len(re.findall(r'credentials: "omit"', code)))
+        self.assertIn('fetch(base + "/health"', code)
+        self.assertIn('fetch(base + "/listen", { method: "POST"', code)
+        self.assertIn('"audio/L16; rate=16000; channels=1"', code)
+        self.assertEqual(re.findall(r"[\w.]*postMessage\([^)]*\)", code), ['m.node.port.postMessage("stop")'], "it tells nothing outside the frame")
+        for word in ("WebSocket", "parent.postMessage", "window.top", "term-key", "factory-term", "innerHTML", "insertAdjacentHTML", "location", "approve", "cu:"):
+            self.assertNotIn(word, code, word)
+        self.assertEqual(len(re.findall(r"\btype\(", code)), 1, "the words leave only through term.js's typed()")
+        self.assertIn("const why = type(text.slice(0, LINE_MAX));", code)
+        self.assertEqual(code.count("typeLine("), 3, "push to talk, the end of the cancel window, and the definition")
+        self.assertIn("send: text => typeLine(text)", code)
+        self.assertIn("if (rest === null) return;   // not for LOIS", code)
+        self.assertIn('const WORDS = new Set(["tm:hush", "tm:open", "tm:cancel"]);', code)
+        self.assertIn("e.source !== window.parent || e.origin !== mainOrigin || typeof e.data !== \"string\" || !WORDS.has(e.data)", code)
+        self.assertIn('try { alwaysOn = localStorage.getItem(STORE) === "1"; } catch (e) {}', code, "off unless this browser turned it on")
+        self.assertIn("AFTER_SPEECH_MS = 300", code)
+        self.assertIn('if (e && (e.name === "NotAllowedError" || e.name === "SecurityError")) { blocked = true;', code, "a refusal is said once and not retried")
+        for key in ("mic", "auto", "pending"):
+            self.assertIn(f'{key}.addEventListener("mousedown", e => e.preventDefault());', code, f"a press on {key} never moves focus or grows the pane")
+        term = (UI / "term.js").read_text()
+        self.assertIn("if (!ws || ws.readyState !== WebSocket.OPEN || quiet()) return \"noconn\";", term)
+        self.assertIn("if (!running) return \"off\";", term)
+        self.assertIn("window.TermMic.attach({ base: `http://127.0.0.1:${voicePort}`", term)
+        self.assertNotIn('"power"', term[term.index("const typed = "):term.index("window.TermMic.attach")], "talking never powers anything on")
+        worklet = (UI / "term-mic-worklet.js").read_text()
+        for word in ("fetch", "WebSocket", "XMLHttpRequest", "import"):
+            self.assertNotIn(word, worklet, word)
+        self.assertIn('registerProcessor("term-mic"', worklet)
+        voice = (UI / "term-voice.js").read_text()
+        for word in ("fetch", "WebSocket", "XMLHttpRequest", "document", "postMessage", "localStorage"):
+            self.assertNotIn(word, voice, word)
+
+    def test_the_main_page_tells_the_terminal_only_three_fixed_words(self):
+        js = (UI / "field-hud.js").read_text()
+        self.assertEqual(sorted(set(re.findall(r'"(tm:[a-z]+)"', js))), ["tm:cancel", "tm:hush", "tm:open"])
+        self.assertIn("termFrame.contentWindow.postMessage(w, termOrigin)", js)
+        self.assertEqual(len(re.findall(r"\btell\(", js)), 2, "the speaking signal and Escape")
+        self.assertIn('tell(sp ? "tm:hush" : "tm:open")', js)
+        self.assertIn('tell("tm:cancel")', js)
+
+    def test_the_thoughtfields_terminal_serves_its_microphone_files_under_its_csp(self):
+        from test_dashboard_term import Server
+        srv = Server()
+        self.addCleanup(srv.close)
+        resp, body = srv.get("/term/field")
+        self.assertEqual(resp.status, 200)
+        self.assertEqual(resp.getheader("Content-Security-Policy"), dt.term_field_csp(srv.tport, srv.port))
+        html = body.decode()
+        self.assertIn(f'<meta name="voice-port" content="{d.VOICE_PORT}">', html)
+        self.assertIn(f'<meta name="main-port" content="{srv.port}">', html)
+        self.assertNotIn("__", html)
+        resp, body = srv.get("/term")
+        self.assertEqual(resp.getheader("Content-Security-Policy"), dt.term_csp(srv.tport, srv.port), "the classic terminal is unchanged")
+        self.assertNotIn(b"voice-port", body)
+        for path in ("/term-voice.js", "/term-mic.js", "/term-mic-worklet.js"):
+            resp, body = srv.get(path)
+            self.assertEqual(resp.status, 200, path)
+            self.assertEqual(resp.getheader("Content-Type"), "text/javascript; charset=utf-8", path)
+            self.assertEqual(resp.getheader("X-Content-Type-Options"), "nosniff", path)
+            self.assertEqual(body, (UI / path[1:]).read_bytes(), path)
+            self.assertEqual(srv.get(path, port=srv.port)[0].status, 404, "the main origin doesn't serve them")
+        resp, _ = srv.get("/term/field", headers={"Sec-Fetch-Dest": "document", "Sec-Fetch-Site": "none"})
+        self.assertEqual(resp.status, 403, "never a top-level page")
 
     def test_the_terminal_skin_is_only_data(self):
         js = (UI / "term-field.js").read_text()

@@ -5,15 +5,24 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="term-key" content="__TERM_KEY__">
 <meta name="main-port" content="__CU_MAIN_PORT__">
+<meta name="voice-port" content="__VOICE_PORT__">
 <title>Terminal 0</title>
 <link rel="stylesheet" href="/vendor/xterm/xterm.css">
 <link rel="stylesheet" href="/term-field.css">
 <script src="/vendor/xterm/xterm.js" defer></script>
 <script src="/vendor/xterm/addon-fit.js" defer></script>
 <script src="/term-field.js" defer></script>
+<script src="/term-voice.js" defer></script>
+<script src="/term-mic.js" defer></script>
 <script src="/term.js" defer></script>
 </head>
 <body>
+<div class="voice" id="voice" hidden>
+  <button type="button" class="vkey" id="mic" aria-disabled="true" aria-pressed="false" aria-label="Hold to talk to LOIS"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></svg></button>
+  <button type="button" class="vkey always" id="always" aria-disabled="true" aria-pressed="false"><i class="vlamp" aria-hidden="true"></i>Always on</button>
+  <p class="vstatus" id="voice-status" aria-live="polite"></p>
+  <button type="button" class="vpending" id="voice-pending" hidden><span class="vp-what">To LOIS in <b id="voice-pending-left"></b>:</span> <span class="vp-text" id="voice-pending-text"></span> <span class="vp-how">Esc or click cancels</span></button>
+</div>
 <div id="term" aria-label="LOIS's terminal"></div>
 <div class="copy" id="copy" role="region" aria-label="Copy from LOIS" aria-live="polite" hidden>
   <p class="copy-title" id="copy-title"></p>

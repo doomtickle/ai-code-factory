@@ -14,6 +14,7 @@ button, textarea { font: inherit; color: inherit; }
 
 /* FitAddon subtracts only the padding of .xterm itself: padding on #term would push the last row and column out of the frame. */
 #term { position: absolute; inset: 0; }
+.voice:not([hidden]) ~ #term { bottom: 36px; }
 #term .xterm { height: 100%; padding: 10px 10px 20px 28px; }
 /* JetBrains Mono's ligatures redraw code ("=>", "!="), which must read as what it is, and they nudge glyphs off xterm's grid. */
 #term .xterm, #term .xterm * { font-variant-ligatures: none !important; font-feature-settings: "liga" 0, "clig" 0, "calt" 0 !important; font-kerning: none !important; }
@@ -50,3 +51,27 @@ button, textarea { font: inherit; color: inherit; }
 .copy.done .copy-preview, .copy.large .copy-preview { display: none; }
 .copy.fail { border-top-color: var(--amber); }
 @media (max-width: 600px) { #term .xterm { padding: 8px 4px 12px 14px; } .copy { padding: 14px 16px 16px; } }
+
+/* Talking to LOIS (term-mic.js): a strip under the grid, so it never covers the Coordinator's text. Hold the mic key to talk; Always on
+   listens for "LOIS, ..." and lights its lamp while the microphone is open. A heard line waits in the strip for 2 s with its countdown. */
+.voice { position: absolute; left: 0; right: 0; bottom: 0; height: 36px; z-index: 4; display: flex; align-items: center; gap: 14px; padding: 0 16px 0 22px; border-top: 1px solid rgba(203, 218, 238, .16); background: var(--pool); font: 400 14.5px/1 var(--f-data); }
+.vkey { --lvl: 0; display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 6px; background: none; border: 0; border-radius: 14px; color: var(--i1); cursor: pointer; flex: none; }
+.vkey svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
+.vkey[aria-disabled="true"] { color: var(--i3); opacity: .55; cursor: default; }
+#mic { box-shadow: 0 0 0 calc(var(--lvl) * 6px) rgba(127, 224, 255, .35); }
+.voice[data-ptt="listening"] #mic { color: #7fe0ff; background: rgba(127, 224, 255, .14); }
+.voice[data-ptt="transcribing"] #mic { color: var(--blue); }
+.always { font: 500 14.5px/1 var(--f-data); color: var(--i2); border-bottom: 1px solid var(--hair); border-radius: 0; height: 22px; padding: 0 0 2px; }
+.vlamp { width: 8px; height: 8px; border-radius: 50%; background: var(--i3); opacity: .6; }
+.always[aria-pressed="true"] { color: var(--i1); }
+.voice[data-always="waiting"] .vlamp { background: var(--amber); opacity: 1; }
+.voice[data-always="live"] .vlamp { background: #ff6b6b; opacity: 1; box-shadow: 0 0 calc(5px + var(--lvl) * 9px) #ff6b6b; }
+.voice[data-always="hushed"] .vlamp { background: var(--i2); opacity: 1; }
+.vstatus { flex: 1; min-width: 0; margin: 0; color: var(--i2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.voice[data-always="live"] .vstatus { color: #ffc2c2; }
+.vpending { --left: 1; position: relative; flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 8px; height: 28px; padding: 6px 10px 0; background: rgba(127, 224, 255, .1); border: 0; border-radius: 6px; color: var(--i1); text-align: left; cursor: pointer; white-space: nowrap; overflow: hidden; }
+.vpending::after { content: ""; position: absolute; left: 0; bottom: 0; height: 2px; width: calc(var(--left) * 100%); background: #7fe0ff; }
+.vp-what { flex: none; color: #7fe0ff; } .vp-what b { font-weight: 600; font-variant-numeric: tabular-nums; }
+.vp-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; font-weight: 600; }
+.vp-how { flex: none; color: var(--i3); }
+@media (max-width: 620px) { .voice { gap: 10px; padding: 0 10px; } .vp-how { display: none; } }
