@@ -443,7 +443,65 @@ async function comet(url, reduced) {
   } finally { await b.close(); }
 }
 
+// Terminal 0 tells the page three fixed words (t0:enter, t0:out, t0:still): the page takes them only from the terminal frame's window and exact origin.
+// Enter starts the thinking ring, the "Thinking…" caption and the gentle inward draw of the stars; output runs a shimmer along the pane's rim; still
+// lets the stars and the shimmer go (the ring runs on); the Coordinator's next say line ends the thinking. Reduced motion: a steady ring, no drift, no shimmer.
+// The demo has no Terminal 0, so /api/state is steered to show one (on this page's own origin, so the frame is a 404 page and the messages are
+// dispatched here with that frame as their source).
+const STEER_T0 = `(() => { const real = window.fetch.bind(window); window.__st = { said: [] };
+  window.fetch = async (u, o) => { const r = await real(u, o); if (!String(u).startsWith("/api/state")) return r;
+    const j = await r.json(); j.term = { port: Number(location.port), running: true }; j.said = window.__st.said; j.totals = Object.assign({}, j.totals, { running: 0 }); j.gate = []; j.lanes = [];
+    return new Response(JSON.stringify(j), { status: 200, headers: { "Content-Type": "application/json" } }); }; })()`;
+async function arc(url, reduced) {
+  const b = await launch(url, reduced ? [{ name: "prefers-reduced-motion", value: "reduce" }] : null, ENTERED + STEER_T0);
+  const until = async (expr, what, ms = 30000) => { for (let t = 0; t < ms; t += 100) { if (await b.ev(expr)) return; await b.sleep(100); } throw new Error("never: " + what + " " + await b.ev(`JSON.stringify({ thinking: LF.W.thinking, listenT: LF.W.listenT, listen: LF.W.listen, cls: document.getElementById("term-panel").className })`)); };
+  // post(word, how): a message event the page would get from the terminal frame (default), or from a wrong window, a wrong origin or with other data
+  const post = (data, how = "ok") => b.ev(`(() => { const f = document.querySelector(".term-frame"), o = new URL(f.src).origin;
+    window.dispatchEvent(new MessageEvent("message", { data: ${JSON.stringify(data)}, origin: ${how === "origin" ? '"http://127.0.0.1:1"' : "o"}, source: ${how === "source" ? "window" : "f.contentWindow"} })); })()`);
+  const state = () => b.ev(`({ thinking: LF.W.thinking, listenT: LF.W.listenT, listen: LF.W.listen, out: document.getElementById("term-panel").classList.contains("out"), meta: document.getElementById("meta").textContent })`);
+  try {
+    await until(`!!(window.LF && LF.W.ready && !document.getElementById("hud").hidden && document.querySelector(".term-frame"))`, "the page and the terminal frame are up");
+    await b.sleep(1500);
+    // nothing but the exact three words, from the frame's window and origin
+    for (const [d, how] of [["t0:enter", "origin"], ["t0:enter", "source"], ["t0:Enter"], ["t0:enter "], ["t0:out:12"], ["t0:sent"], ["x t0:still"], ["t0:"], ["ln:sent"], ["cu:expand"], [{ type: "t0:enter" }], [["t0:enter"]], [null]]) {
+      await post(d, how || "ok"); await b.sleep(60);
+      const st = await state(); assert.deepStrictEqual([st.thinking, st.out, !!st.listenT], [false, false, false], "ignored: " + JSON.stringify(d) + " " + how);
+    }
+    assert.strictEqual(await b.ev(`(LF.W.s.work || 0) < .1`), true, "no ring yet");
+    // Enter: the ring, the caption, the stars draw in
+    await post("t0:enter");
+    let st = await state();
+    assert.deepStrictEqual([st.thinking, st.listenT, st.meta], [true, 1, "Thinking…"], "Enter starts thinking");
+    await until(`LF.W.working && LF.W.s.work > .95 && LF.ring.visible`, "the ring is up");
+    if (reduced) { await b.sleep(1500); assert.strictEqual(await b.ev(`LF.W.listen`), 0, "reduced motion: the stars do not drift"); assert.strictEqual(await b.ev(`LF.U.uStill.value`), 1, "reduced motion: a steady ring"); }
+    else { await until(`LF.W.listen > .8`, "the stars draw in"); assert.ok(await b.ev(`LF.W.listen`) <= 1); }
+    // output: the shimmer runs along the rim; ignored under reduced motion
+    await post("t0:out");
+    assert.strictEqual((await state()).out, !reduced, reduced ? "reduced motion: no shimmer" : "the rim shimmers while output arrives");
+    const anim = await b.ev(`getComputedStyle(document.querySelector(".term-rim"), "::after").animationName`);
+    assert.strictEqual(anim, reduced ? "none" : "rim-aurora", "the aurora animation");
+    assert.strictEqual(await b.ev(`getComputedStyle(document.querySelector(".term-rim"), "::after").display`), reduced ? "none" : "block");
+    assert.strictEqual((await state()).thinking, true, "output keeps the ring");
+    // still: the stars and the shimmer let go; the ring runs on
+    await post("t0:still");
+    st = await state();
+    assert.deepStrictEqual([st.thinking, st.out, st.listenT], [true, false, 0], "still releases the stars and the shimmer, not the ring");
+    await until(`LF.W.listen < .05`, "the stars ease back");
+    // Enter again, then the next say line ends it all: the ring stops
+    await post("t0:enter"); await post("t0:out");
+    assert.strictEqual((await state()).thinking, true);
+    await b.ev(`window.__st.said = [{ id: "arc-1", t: "12:00", text: "I am here." }]`);
+    await until(`!LF.W.thinking`, "a say line stops the thinking");
+    st = await state();
+    assert.deepStrictEqual([st.out, st.listenT], [false, 0], "a say line also stops the shimmer and the drift");
+    await until(`!LF.W.working && LF.W.s.work < .02 && !LF.ring.visible`, "the ring fades");
+    await until(`LF.W.listen < .05`, "the stars are back");
+    assert.deepStrictEqual(b.errors, [], "no page errors");
+  } finally { await b.close(); }
+}
+
 const url = process.argv[2];
 const only = process.env.FIELD_ONLY;
-(only === "pane" ? pane(url) : only === "comet" ? comet(url, 0).then(() => comet(url, 1)) : only === "crystals" ? crystals(url) : only === "picking" ? picking(url) : only === "witness" ? witness(url, 0).then(() => witness(url, 1)) : layouts(url, 0).then(() => layouts(url, 65)).then(() => picking(url)).then(() => crystals(url)).then(() => witness(url, 0)).then(() => witness(url, 1)).then(() => pane(url)).then(() => comet(url, 0)).then(() => comet(url, 1)))
+(only === "pane" ? pane(url) : only === "comet" ? comet(url, 0).then(() => comet(url, 1)) : only === "crystals" ? crystals(url) : only === "picking" ? picking(url) : only === "witness" ? witness(url, 0).then(() => witness(url, 1)) : only === "arc" ? arc(url, 0).then(() => arc(url, 1))
+  : layouts(url, 0).then(() => layouts(url, 65)).then(() => picking(url)).then(() => crystals(url)).then(() => witness(url, 0)).then(() => witness(url, 1)).then(() => pane(url)).then(() => comet(url, 0)).then(() => comet(url, 1)).then(() => arc(url, 0)).then(() => arc(url, 1)))
   .then(() => console.log("field browser checks passed"), e => { console.error(e.stack || e); process.exit(1); });

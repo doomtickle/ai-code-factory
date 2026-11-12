@@ -57,14 +57,27 @@
   function setCaption(text) { txt.textContent = ""; txt.classList.toggle("long", text.length > 110); capWords = []; capAll = false; capT0 = performance.now(); let off = 0; capSent = text.split(/(?<=[.!?])\s+/).map(c => { const r = { start: off, len: c.length }; off += c.length + 1; return r; }); capLen = off; let pos = 0; text.split(/\s+/).forEach(w => { const el = document.createElement("span"); el.className = "w" + (/\d\d:\d\d/.test(w) ? " t" : ""); el.textContent = w; txt.append(el, " "); capWords.push({ el, at: pos, on: false }); pos += w.length + 1; }); tight = null; txt.classList.remove("in"); void txt.offsetWidth; txt.classList.add("in"); }
   function say(text, m, opt = {}) { if (!entered) return; const fixed = queue.filter(q => !q.own); fixed.slice(0, Math.max(0, fixed.length - 2)).forEach(q => queue.splice(queue.indexOf(q), 1)); queue.push(Object.assign({ text, m }, opt)); if (!cur) next(); }
   // Its own words go ahead of any fixed sentence still waiting, in the order it said them. A fixed sentence already being spoken finishes first.
-  function sayOwn(text) { if (!entered) return; ownAt = performance.now(); lensArmed = false; W.s.flash = Math.max(W.s.flash, .8); stopThinking(); const own = queue.filter(q => q.own).length; queue.splice(own, 0, { text, m: "", own: true, ans: true, mood: "calm", fx: () => { W.focus = null; } }); if (own >= OWN_WAITING) queue.shift(); if (!cur) next(); }
+  function sayOwn(text) { if (!entered) return; ownAt = performance.now(); lensArmed = false; W.s.flash = Math.max(W.s.flash, .8); stopThinking(); clearTimeout(outTimer); shimmer(false); const own = queue.filter(q => q.own).length; queue.splice(own, 0, { text, m: "", own: true, ans: true, mood: "calm", fx: () => { W.focus = null; } }); if (own >= OWN_WAITING) queue.shift(); if (!cur) next(); }
   // Between your line and its first words the face is thinking, and only that: there is no spoken "one moment", which would be a messenger.
   let lensArmed = false, hadFocus = false;
-  const STILL_MS = 45000, GIVE_UP_MS = 180000, OWN_WAITING = 4, OWN_QUIETS_START_MS = 30000; let ownAt = -Infinity, thinkTimers = [];
+  const LISTEN_MS = 12000, OUT_MS = 5000, STILL_MS = 45000, GIVE_UP_MS = 180000, OWN_WAITING = 4, OWN_QUIETS_START_MS = 30000; let ownAt = -Infinity, thinkTimers = [];
   const thinkLine = t => { thinkNote = t; if (!cur) { setCaption(""); meta.textContent = t; } };
-  let thinkNote = "";
-  function stopThinking() { W.thinking = false; thinkNote = ""; thinkTimers.forEach(clearTimeout); thinkTimers = []; }
-  function startThinking() { stopThinking(); queue.splice(0, queue.length, ...queue.filter(q => !q.own)); if (cur && window.LiveVoice) LiveVoice.stop(); if (cur) { cur = null; W.speaking = false; W.mood = "calm"; } W.focus = null; W.thinking = true; thinkLine("Thinking."); thinkTimers = [setTimeout(() => thinkLine("Still thinking. My working is below."), STILL_MS), setTimeout(() => { stopThinking(); if (!cur) meta.textContent = ""; }, GIVE_UP_MS)]; if (queue.length) next(); }
+  let thinkNote = "", listenTimer = 0, outTimer = 0;
+  // Terminal 0 tells this page three fixed words (t0:enter, t0:out, t0:still) and nothing else: never text, a count or a size. They set the mood and nothing acts on them.
+  // Enter: the ring and the "Thinking…" caption, and the stars draw gently inward ("listening"; W.listenT, eased in field-sky.js). While output keeps arriving a faint shimmer
+  // runs along the pane's rim and the ring's time-out is pushed back. Still: the stars ease back and the shimmer stops; the ring runs on until LOIS says something (sayOwn)
+  // or its time-out. Both effects have their own fallback, in case the frame never says still. Reduced motion: no shimmer here, no drift in field-sky.js, a steady ring.
+  const reducedMotion = () => !!(window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches);
+  const shimmer = on => $("term-panel").classList.toggle("out", on && !reducedMotion());
+  function holdListen() { W.listenT = 1; clearTimeout(listenTimer); listenTimer = setTimeout(() => { W.listenT = 0; }, LISTEN_MS); }
+  function t0(word) { if (!entered) return;
+    if (word === "enter") { startThinking(); return; }
+    if (word === "still") { W.listenT = 0; clearTimeout(listenTimer); clearTimeout(outTimer); shimmer(false); return; }
+    shimmer(true); clearTimeout(outTimer); outTimer = setTimeout(() => shimmer(false), OUT_MS);
+    if (W.thinking) { holdListen(); clearTimeout(thinkTimers[1]); thinkTimers[1] = setTimeout(giveUp, GIVE_UP_MS); } }
+  function giveUp() { stopThinking(); if (!cur) meta.textContent = ""; }
+  function stopThinking() { W.thinking = false; W.listenT = 0; clearTimeout(listenTimer); thinkNote = ""; thinkTimers.forEach(clearTimeout); thinkTimers = []; }
+  function startThinking() { stopThinking(); queue.splice(0, queue.length, ...queue.filter(q => !q.own)); if (cur && window.LiveVoice) LiveVoice.stop(); if (cur) { cur = null; W.speaking = false; W.mood = "calm"; } W.focus = null; W.thinking = true; holdListen(); thinkLine("Thinking…"); thinkTimers = [setTimeout(() => thinkLine("Still thinking. My working is below."), STILL_MS), setTimeout(giveUp, GIVE_UP_MS)]; if (queue.length) next(); }
   function next() { const it = queue.shift(); if (!it) { cur = null; if (thinkNote) thinkLine(thinkNote); return; } cur = it;  setCaption(it.text); meta.textContent = it.m || ""; marks = it.marks || []; if (it.fx) it.fx(); W.speaking = true; W.mood = it.mood || (/failed|Declined|changes|blocked/i.test(it.text) ? "stern" : /^Hi|Approved|approved/i.test(it.text) ? "lit" : "calm");
     const done = () => { if (cur !== it) return; capWords.forEach(w => { w.on = true; w.el.classList.add("on"); }); capAll = true; W.speaking = false; W.mood = "calm"; setTimeout(() => { if (!cur || cur === it) W.focus = null; }, 1500); setTimeout(() => { if (cur === it) next(); }, 900); };
     it.finish = done; const quiet = () => setTimeout(done, 1500 + it.text.length * 60);
@@ -105,7 +118,8 @@
   // Clicking into the frame moves focus there without a message to this page; the window's blur is how this page hears it.
   addEventListener("blur", () => setTimeout(() => { if (!termFrame) return; if (document.activeElement === termFrame) setGrown(true); else if (cuFrame && document.activeElement === cuFrame) setGrown(false); }, 0));
   document.addEventListener("pointerdown", e => { if (grown && !(e.target.closest && e.target.closest(".term-panel,#term-key,#monitor-root,.cu-wrap.expanded"))) setGrown(false); });
-  addEventListener("message", e => { if (cuFrame && e.source === cuFrame.contentWindow && e.origin === cuOrigin) { if (e.data === "cu:expand") setCu(true); else if (e.data === "cu:collapse") setCu(false); else if (e.data === "cu:reload") location.reload(); return; } });
+  addEventListener("message", e => { if (cuFrame && e.source === cuFrame.contentWindow && e.origin === cuOrigin) { if (e.data === "cu:expand") setCu(true); else if (e.data === "cu:collapse") setCu(false); else if (e.data === "cu:reload") location.reload(); return; }
+    if (termFrame && e.source === termFrame.contentWindow && e.origin === termOrigin && typeof e.data === "string") { const m = /^t0:(enter|out|still)$/.exec(e.data); if (m) t0(m[1]); } });
   $("settings-key").addEventListener("click", () => { if (cuFrame) cuFrame.contentWindow.postMessage({ type: "cu:open", screen: "settings" }, cuOrigin); });
   $("term-key").addEventListener("click", () => setGrown(!grown, true)); $("term-size").addEventListener("click", () => setGrown(!grown, !grown));
 
