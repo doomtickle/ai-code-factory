@@ -493,3 +493,14 @@ fixture's `setup/` folder through `setup_source()`), so INSPECT reads
 the fixture's patch through the same `read_patch` path (digest-named, `O_NOFOLLOW`,
 SHA-256 checked) inside the temp folder. Keep it that way: demo code must never add a
 write outside that folder or a way to start a command.
+
+## Wording trimmed from scripts/CLAUDE.md (13 Nov 2026)
+
+Kept here word for word so the 8 KB rulebook can stay short; none of it changes a rule.
+
+- Browser opener: fixed argv, no shell (`rundll32.exe`, `wslview`, else `webbrowser`; never `explorer.exe`, `cmd.exe`, `powershell -Command`).
+- `/docs/` is rendered once at start-up (`build_served()`): no git, no `file://` links.
+- Config write: follow no symlink below `FACTORY_CONFIG` (`O_NOFOLLOW`, regular file by fstat, 0600 `O_EXCL` temp file, `os.replace`). Nothing else there is written.
+- Lane state is read-only display from transcripts; RUN only while the bridge's pid is alive (`watch.py` `Watch.refresh`).
+- Demo mode: no `FACTORY_STATE` or broker state, refuses `--state`, `--project`, `--coordinator`, `--factory`, a fresh 0700 `mkdtemp` copy, and `DemoControls` `decide`, `prepare`, `run`, `config-prepare`, `config-run` raise `Refused(403)` before any decision file, token, config write or host command; `argv()` raises.
+- Host commands: RESTART `<factory> restart`, UPDATE `<factory> update --yes`, DIAG `<factory> doctor`, APPLY `<factory> config apply`.
