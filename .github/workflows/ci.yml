@@ -246,9 +246,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Shard times on a 4-CPU box (the full run, in seconds): layouts 117 + layouts-65 141; picking 29 + crystals 97;
-          # witness 187 + witness-reduced (about the same); pane, nogate, comet and arc about 400 together. The runner is
-          # about 1.3 times slower. Rebalance from the `[field] <section> +<seconds>` lines in a shard's log.
+          # Section times on a 4-CPU box (seconds): layouts 117 + layouts-65 141; picking 29 + crystals 97; witness 187.
+          # On the runner witness took 597 (it waits on the page's frames, which are slow in software), so each witness
+          # variant has a shard of its own. Rebalance from the `[field] <section> +<seconds>` lines in a shard's log.
           - shard: field-layouts
             test: test_field_browser.py
             sections: "layouts,layouts-65"
@@ -257,7 +257,10 @@ jobs:
             sections: "picking,crystals"
           - shard: field-witness
             test: test_field_browser.py
-            sections: "witness,witness-reduced"
+            sections: "witness"
+          - shard: field-witness-reduced
+            test: test_field_browser.py
+            sections: "witness-reduced"
           - shard: field-pane-nogate-comet-arc
             test: test_field_browser.py
             sections: "pane,nogate,comet,comet-reduced,arc,arc-reduced"

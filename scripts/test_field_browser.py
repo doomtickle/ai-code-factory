@@ -20,8 +20,8 @@ from browser_test_support import needs_browser, run_bounded
 
 SCRIPTS = Path(__file__).resolve().parent
 JS = str(SCRIPTS / "test_field_browser.js")
-# A CI shard (FIELD_SECTIONS set) must finish inside its job's 20 minutes, setup included; a whole run on a slow host may take 40.
-TIMEOUT = 2400 if os.environ.get("FIELD_SECTIONS") is None else 840
+# A CI shard (FIELD_SECTIONS set) must finish inside its job's 20 minutes, with about 3 for setup; a whole run on a slow host may take 40.
+TIMEOUT = 2400 if os.environ.get("FIELD_SECTIONS") is None else 1020
 
 
 def all_sections():
