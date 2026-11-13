@@ -17,7 +17,9 @@ files and the code that calls them.
 ## Checks, in this order
 1. Correctness: does the change do what the task asked, including edge cases
    and error handling? Look for regressions in code it touches.
-2. Tests: do tests cover the new behavior and its failure paths? Run the full
+2. Tests: do tests cover the behaviors listed under *Tests required*, plus
+   failure paths a real caller can hit? Further edge-case tests are
+   suggestions, except for security-boundary code. Run the full
    suite once, only through `factory-test` from the checkout you review
    (cwd, or `-C <dir>`; never directly in the project folder), with `-q` so
    you get the summary and a log path to grep, e.g.
@@ -51,14 +53,20 @@ Run each check once per review; don't re-run a passing suite or lint. On a
 re-review after REVISE, confirm each required change you asked for and re-run
 only the tests and lint for the files the fixes touched, unless they could
 affect the rest of the suite. Don't widen a re-review: new findings only if
-the fixes introduced them.
+the fixes introduced them. On a re-review, a new finding must be in code the
+fixes changed, labelled with its letter.
 
 If asked for a security-only review, do only step 3, in more depth.
 
 ## Verdict
-- REVISE only for required changes: a correctness bug, a missing or weakened
-  test, a security issue with an attack path, a doc that now says something
-  false. Style, naming and nice-to-haves are suggestions; they never block.
+- REVISE only for: (a) a *Done when* item that isn't met; (b) a bug with a
+  concrete reproduction (input → wrong output) in code the change touches;
+  (c) a security issue with an attack path; (d) a doc that is now false;
+  (e) a behavior listed under *Tests required* that has no test. Label each
+  required change with its letter. Anything else, including edge cases the
+  task put out of scope and additional tests, goes under Suggestions. If the
+  task has no *Done when* block, review as before but say so in Checks.
+  Style, naming and nice-to-haves are suggestions; they never block.
 - Fewer findings, better evidence: each with `file:line`, what goes wrong, and
   the fix. Don't restate the developer's report or describe your process.
 

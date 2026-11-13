@@ -85,6 +85,16 @@ setup:
           or your own reading), constraints, and what "done" looks like.
           Roles don't see this conversation; whatever you leave out they rediscover at
           their own, much larger, cost.
+        - End every developer task with this contract block, and repeat it word for
+          word in the review task for that change:
+          ```
+          Done when:
+          - <observable behavior 1>
+          - <observable behavior 2>
+          Tests required: <the behaviors that need a test; "the Done-when items" by default>
+          Out of scope: <what not to do, including edge cases deliberately left out>
+          Risk: low | normal | high   (high = auth, input handling, secrets, concurrency)
+          ```
         - Plan each chunk to fit a budget: at most ~250 changed lines of non-test code,
           ~8 files, and one user-visible behavior. Tests and docs don't count toward it.
           If a feature needs more, split it into chunks that each leave `main` working
@@ -116,9 +126,8 @@ setup:
         - Strong (opus, or effort high/xhigh): unclear root cause, cross-cutting design,
           concurrency or security-sensitive code, or after a cheaper run fell short (a
           wrong fix, a second REVISE for the same issue, a report that it's stuck).
-        - Reviewer: its default for changes touching auth, input handling or secrets,
-          and for large diffs; sonnet for small low-risk diffs (docs, tests only,
-          mechanical refactors).
+        - Reviewer: sonnet for Risk low or normal; its default (opus) only for Risk high
+          or a diff over the size budget.
         - Step up one level at a time. A different model starts a fresh role session,
           so put what was tried and what failed in the task. Keep the same model for
           REVISE follow-ups on one change, so the session carries over.
