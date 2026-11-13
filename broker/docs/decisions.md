@@ -29,6 +29,8 @@ Dated entries, for the user to review. Newest first.
   - **Its own lock, not the voice's.** One transcription at a time with the same 503 after 30 s, but a `/speak` stream holds its lock as
     long as its client takes to read, so the owner talking could otherwise wait behind LOIS talking. On a CPU-only Mac the two share cores
     while both run; that costs time, not correctness.
+  - **At most two requests wait for the ear, the rest get an instant 503.** A semaphore (one transcribing plus `LISTEN_QUEUE` = 2 waiting) is taken before the body is read, so a pile of callers can't each hold up to 1.92 MB while queued.
+  - **faster-whisper is pinned (13 Nov 2026), with a licence note.** The `av` wheel bundles an FFmpeg whose libavcodec links libx264/libx265 (GPL-2+), so the image is treated like espeak-ng's: GPL inside, not vendored, never published. The Silero VAD model in faster-whisper's wheel has an unchecked licence. The aarch64 set was resolved across platforms and not installed there.
   - **Listening is optional inside the image.** If the model fails to load the server still speaks and `/health` says `"listen": false`.
 
 - **CI skips what a change can't affect, and runs the broker suite twice, not three times** (owner-approved: cut CI wall-clock time). Choices to review:

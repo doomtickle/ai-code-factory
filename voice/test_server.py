@@ -503,14 +503,14 @@ class ServerTest(unittest.TestCase):
     def test_one_transcription_at_a_time(self):
         self.record["delay"] = 0.05
         results = []
-        threads = [threading.Thread(target=lambda: results.append(self.listen()[0])) for _ in range(4)]
+        threads = [threading.Thread(target=lambda: results.append(self.listen()[0])) for _ in range(3)]
         for t in threads:
             t.start()
         for t in threads:
             t.join(20)
-        self.assertEqual(results, [200] * 4)
+        self.assertEqual(results, [200] * 3)
         self.assertEqual(self.record["ears_peak"], 1)
-        self.assertEqual(len(self.record["heard"]), 4)
+        self.assertEqual(len(self.record["heard"]), 3)
 
     def test_listening_busy_past_the_wait_is_a_503(self):
         self.server.listen_lock.acquire()
@@ -520,6 +520,32 @@ class ServerTest(unittest.TestCase):
         self.addCleanup(setattr, server, "WAIT_FOR_EARS", original)
         self.assertEqual(self.listen()[0], 503)
         self.assertEqual(self.record["heard"], [])
+
+    def test_only_a_few_listeners_wait_for_the_slot_and_the_rest_get_an_instant_503(self):
+        self.server.listen_lock.acquire()
+        released = []
+        def release():
+            if not released:
+                released.append(1)
+                self.server.listen_lock.release()
+        self.addCleanup(release)
+        results = []
+        waiters = [threading.Thread(target=lambda: results.append(self.listen()[0]))
+                   for _ in range(server.LISTEN_QUEUE + 1)]
+        for t in waiters:
+            t.start()
+        deadline = time.monotonic() + 10
+        while self.server.listen_places._value > 0 and time.monotonic() < deadline:
+            time.sleep(0.01)
+        started = time.monotonic()
+        self.assertEqual(self.listen()[0], 503)
+        self.assertLess(time.monotonic() - started, 2)
+        self.assertEqual(self.record["heard"], [])
+        release()
+        for t in waiters:
+            t.join(20)
+        self.assertEqual(results, [200] * (server.LISTEN_QUEUE + 1))
+        self.assertEqual(self.listen()[0], 200)  # The places were given back.
 
     def test_listening_and_speaking_do_not_wait_for_each_other(self):
         with self.server.voice_lock:

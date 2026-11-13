@@ -113,7 +113,7 @@ socket, or host credentials. Full picture: README.md.
   code** (`scripts/dashboard*.py`, `scripts/patchview.py`).
 - The optional local voice (`voice/`, `factory voice`) is not an agent sandbox and carries no agent traffic: a plain pinned Docker
   container on `127.0.0.1:8873` that turns the dashboard's fixed sentences and the Coordinator's `say` lines, which the page sends it, into speech, and
-  (owner decision 12 Nov 2026) transcribes audio a loopback page sends it with a local Whisper model. It keeps no audio and no text, logs neither, and
+  (owner decision 12 Nov 2026) transcribes audio any program or loopback page on this machine sends it with a local Whisper model. It keeps no audio and no text, logs neither, and
   returns only the text to the caller. It needs no network at run time and makes no calls, but is not firewalled. It is a named exception to the
   dashboard being the one listener: it has no key because it acts on nothing (it speaks and transcribes; what is done with a transcript is up to the
   page, as with anything typed), and it sends and receives no cookie. Features must keep working without it, and typing stays.

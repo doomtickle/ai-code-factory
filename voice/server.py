@@ -14,6 +14,7 @@ HTTP side can be tested without them.
 """
 
 import json
+import logging
 import math
 import os
 import re
@@ -47,6 +48,7 @@ LENGTH = re.compile(r"[0-9]{1,7}")
 SOCKET_TIMEOUT = 30  # A client that stops sending or reading is dropped, and so gives up the voice.
 WAIT_FOR_VOICE = 30  # How long a request waits for the one generation slot before a 503.
 WAIT_FOR_EARS = 30  # The same for the one transcription slot.
+LISTEN_QUEUE = 2  # Requests that may wait for that slot; more get a 503 before their audio is read.
 
 
 def say(text):
@@ -284,6 +286,14 @@ class Handler(BaseHTTPRequestHandler):
         listener = self.server.listener
         if listener is None:
             return self.fail(503, "no speech recognition in this image")
+        if not self.server.listen_places.acquire(blocking=False):
+            return self.fail(503, "busy")
+        try:
+            return self.listen_in_place(listener)
+        finally:
+            self.server.listen_places.release()
+
+    def listen_in_place(self, listener):
         pcm = self.read_body(MAX_AUDIO)
         if pcm is None:
             return
@@ -332,6 +342,7 @@ class Server(ThreadingHTTPServer):
         self.listener = listener
         self.voice_lock = threading.Lock()
         self.listen_lock = threading.Lock()
+        self.listen_places = threading.Semaphore(1 + LISTEN_QUEUE)  # One transcribing, LISTEN_QUEUE waiting.
 
     def handle_error(self, request, client_address):
         # The default prints a traceback, whose message could hold the text.
@@ -375,6 +386,7 @@ def load_listener(whisper_dir=WHISPER_DIR, name=WHISPER_MODEL):
     import numpy
     from faster_whisper import WhisperModel
 
+    logging.getLogger("faster_whisper").setLevel(logging.ERROR)
     gpu = ctranslate2.get_cuda_device_count() > 0
     model = WhisperModel(os.path.join(whisper_dir, name), device="cuda" if gpu else "cpu",
                          compute_type="float16" if gpu else "int8", local_files_only=True)

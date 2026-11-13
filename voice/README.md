@@ -73,11 +73,13 @@ start if espeak-ng did not load.
 - The Kokoro weights and the 28 English voices, by Hugging Face commit and sha256, in the
   `Dockerfile`.
 
-Not yet: faster-whisper and its dependencies (CTranslate2, PyAV, onnxruntime) are not in the lock
-files, and the Whisper model (`Systran/faster-whisper-base.en`) is not in the `Dockerfile`. Until
-they are pinned the same way, by version and sha256 and by Hugging Face commit and sha256, an image
-built from this folder answers `/listen` with a 503 and `/health` says `"listen": false`. The server
-loads the model from `/opt/whisper/base.en` (`WHISPER_DIR`, `WHISPER_MODEL`), offline only.
+- faster-whisper 1.2.1 with CTranslate2, PyAV, onnxruntime, flatbuffers and protobuf, in the same
+  lock files. The Whisper model `Systran/faster-whisper-base.en`, by Hugging Face commit
+  (`3d3d5dee26484f91867d81cb899cfcf72b96be6c`) and sha256, in both Dockerfiles. The server loads it
+  from `/opt/whisper/base.en` (`WHISPER_DIR`, `WHISPER_MODEL`), offline only.
+
+The aarch64 set was resolved across platforms, not installed on aarch64. CTranslate2 on the GPU
+with the lock's CUDA 12.8 and cuDNN 9.7 is also unverified; on the CPU it works regardless.
 
 There are no apt packages, so nothing is left unpinned. docopt ships no wheel, so pip builds that
 one hash-checked sdist, using the setuptools and wheel in the pinned base image. To change a
@@ -92,8 +94,14 @@ version, update `requirements.lock` with its new hashes.
 - PyTorch and the NVIDIA libraries in its wheels carry their own licences. The image is local for
   that reason too.
 - Whisper weights (OpenAI) and their CTranslate2 conversion (`Systran/faster-whisper-base.en`): MIT.
-- faster-whisper and CTranslate2: MIT. PyAV, which faster-whisper requires, is BSD-3 and bundles
-  FFmpeg libraries under the LGPL; onnxruntime (for the Silero voice-activity filter) is MIT.
+- faster-whisper: MIT. Its wheel carries the Silero VAD onnx model; that model's licence has not
+  been checked.
+- CTranslate2: MIT. Its wheel bundles GCC's libgomp (GPL-3 with the runtime exception).
+- PyAV: BSD-3, but its wheel bundles FFmpeg 8.1.2 (an LGPLv3 build) whose libavcodec links the
+  bundled libx264 and libx265 (GPL-2 or later). Treated like espeak-ng: GPL code inside the
+  image, not vendored in this repo, and the image is not published. The wheel also bundles
+  opencore-amr, LAME, GnuTLS, nettle, GMP and BSD-licensed codecs.
+- onnxruntime (CPU package): MIT. flatbuffers: Apache-2.0. protobuf: BSD-3.
 
 ## What it can't do
 

@@ -3,7 +3,8 @@
 # without what only the CUDA build needs (the nvidia-* packages and triton). torch is PyPI's aarch64
 # wheel, which is CPU-only. Hashes are every wheel of that version PyPI lists for this platform, from
 # its JSON API, and the spaCy model's as in requirements.lock. docopt has no wheel: as there, the
-# Dockerfile lets pip build that one sdist and nothing else.
+# Dockerfile lets pip build that one sdist and nothing else. The faster-whisper set (POST /listen) was
+# resolved for aarch64 from PyPI's JSON API and has not been installed on aarch64.
 addict==2.4.0 \
     --hash=sha256:249bb56bbfd3cdc2a004ea0ff4c2b6ddc84d53bc2194761636eb314d5cfa5dfc
 annotated-doc==0.0.5 \
@@ -14,6 +15,8 @@ anyio==4.16.0 \
     --hash=sha256:c66ae634e0b8228396b801741beb3294326d4b6102f7bba4041c0dfb58c29026
 attrs==26.1.0 \
     --hash=sha256:c647aa4a12dfbad9333ca4e71fe62ddc36f4e63b2d260a37a8b83d2f043ac309
+av==18.1.0 \
+    --hash=sha256:6fc837cc51adf80331ac850779cd53b5d4c4460b0ebe9057a02a921c6736f19d
 babel==2.18.0 \
     --hash=sha256:e2b422b277c2b9a9630c1d7903c2a00d0830c409c59ac8cae9081c92f1aeba35
 blis==1.3.4 \
@@ -36,6 +39,8 @@ confection==1.3.4 \
     --hash=sha256:6c2e1ae87de7d989a79bdb62977eb9c43c28fb3371f3462492667eb0520e6796
 csvw==4.1.1 \
     --hash=sha256:fce2c461899290771eaec28c770e2fd0f6bc1324edb81d688c89e09cf222fcdb
+ctranslate2==4.9.0 \
+    --hash=sha256:ea9e15a05f0fe2fe33ed7ed79350e96043112f85299d56393134655166911ad3
 curated-tokenizers==0.0.10 \
     --hash=sha256:d6fca956a1dc28092e87731732b5cb21a5706ffc08f192232190dc0239fbe0dd
 curated-transformers==0.1.1 \
@@ -48,8 +53,12 @@ docopt==0.6.2 \
     --hash=sha256:49b3a825280bd66b3aa83585ef59c4a8c82f2c8a522dbe754a8bc8d08c85c491
 espeakng-loader==0.2.4 \
     --hash=sha256:d1e798141b46a050cdb75fcf3c17db969bb2c40394f3f4a48910655d547508b9
+faster-whisper==1.2.1 \
+    --hash=sha256:79a66ad50688c0b794dd501dc340a736992a6342f7f95e5811be60b5224a26a7
 filelock==4.2.4 \
     --hash=sha256:301241438c57936ef93f4243a94f2559022268bfcf9b375a9a72eb0f8db8358e
+flatbuffers==25.12.19 \
+    --hash=sha256:7634f50c427838bb021c2d66a3d1168e9d199b0607e6329399f04846d42e20b4
 fsspec==2026.9.0 \
     --hash=sha256:8dd6e646e99ea382bd85f97a45e6b526a442d79423a7dc673f1e2756d05fcb5f
 h11==0.16.0 \
@@ -98,12 +107,17 @@ num2words==0.5.14 \
     --hash=sha256:1c8e5b00142fc2966fd8d685001e36c4a9911e070d1b120e1beb721fa1edb33d
 numpy==2.4.6 \
     --hash=sha256:0ab0a9c4ffb1a6d95ef519fe4247dba8eb6b18ad93999f76b7f657039acabd47
+onnxruntime==1.31.1 \
+    --hash=sha256:da05378364c44d4407e463982d2bf8d5e4cfea873283757e48beeb41df97b7f3
 packaging==26.3 \
     --hash=sha256:d7193f7c8e4e93f444fde0262bf90af30e16fa0ad0ad44cb553c87339b23cd1c
 phonemizer-fork==3.3.2 \
     --hash=sha256:97305c76f4183b3825dae8f4c032265fe78c9946ce58c47d4b62161349264b74
 preshed==3.0.15 \
     --hash=sha256:0b862be0287ed66a106b5eb772aaf5e5841256d1d8fad1309c7ce42a238e649e
+protobuf==7.36.2 \
+    --hash=sha256:e11e1f0180583a2af89db6a2ecd9e8dc40aa6d2988ca175bfd0e6d12ea72d74e \
+    --hash=sha256:bdb3a345d48db958e6ce1f18e508beb0cc981d64f24088427549c866cd039f1e
 pydantic==2.14.2 \
     --hash=sha256:7efbf7507b937931cd32a5755acb00ea1cf5ccb1d4e8067a5850d5069e382118
 pydantic-core==2.50.2 \

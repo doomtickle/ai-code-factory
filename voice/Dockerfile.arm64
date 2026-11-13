@@ -4,7 +4,8 @@
 # multi-platform index, so it is the same pin. Docker on a Mac can't reach the GPU, so this image has none of the CUDA build.
 #
 # No apt packages: espeak-ng comes from the espeakng-loader wheel (library and data), so there is
-# nothing unpinned to install. Kokoro needs no ffmpeg or git.
+# nothing unpinned to install. Kokoro needs no git. The image does contain FFmpeg: the av wheel (faster-whisper's
+# audio dependency) bundles its own shared libraries, so it is not an apt package either.
 FROM python:3.11.18-slim-trixie@sha256:db20d8506e2f15b6db39b40b6015ca46bae855dec6dd326d462cfe79ae972893
 
 # Runtime is offline and read-only: nothing may reach the Hub, and every cache goes to the /tmp
@@ -31,7 +32,7 @@ RUN pip install --no-cache-dir --disable-pip-version-check --require-hashes \
     && rm -rf /build
 
 # The folders first: ADD would give the parents it makes the files' 644, and no one could enter.
-RUN mkdir -p /opt/kokoro/voices
+RUN mkdir -p /opt/kokoro/voices /opt/whisper/base.en
 # hexgrad/Kokoro-82M at a fixed commit (Apache-2.0): the model and the 28 English voices.
 ADD --checksum=sha256:5abb01e2403b072bf03d04fde160443e209d7a0dad49a423be15196b9b43c17f --chmod=644 https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/config.json /opt/kokoro/config.json
 ADD --checksum=sha256:496dba118d1a58f5f3db2efc88dbdc216e0483fc89fe6e47ee1f2c53f18ad1e4 --chmod=644 https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/kokoro-v1_0.pth /opt/kokoro/kokoro-v1_0.pth
@@ -63,6 +64,12 @@ ADD --checksum=sha256:fc3fce4e9c12ed4dbc8fa9680cfe51ee190a96444ce7c3ad647549a308
 ADD --checksum=sha256:d44935f3135257a9064df99f007fc1342ff1aa767552b4a4fa4c3b2e6e59079c --chmod=644 https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/bm_fable.pt /opt/kokoro/voices/bm_fable.pt
 ADD --checksum=sha256:f1bc812213dc59774769e5c80004b13eeb79bd78130b11b2d7f934542dab811b --chmod=644 https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/bm_george.pt /opt/kokoro/voices/bm_george.pt
 ADD --checksum=sha256:b5204750dcba01029d2ac9cec17aec3b20a6d64073c579d694a23cb40effbd0e --chmod=644 https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/bm_lewis.pt /opt/kokoro/voices/bm_lewis.pt
+
+# Systran/faster-whisper-base.en at a fixed commit (MIT): the speech-to-text model POST /listen loads.
+ADD --checksum=sha256:f3bc3821e9fc76a27bae538e11ae5b677dcdd352b4600429ce7951d398569aeb --chmod=644 https://huggingface.co/Systran/faster-whisper-base.en/resolve/3d3d5dee26484f91867d81cb899cfcf72b96be6c/config.json /opt/whisper/base.en/config.json
+ADD --checksum=sha256:2a166925539a16005f14ff328359f9b9adb9dc4fb631bb3b227526862e93e2ef --chmod=644 https://huggingface.co/Systran/faster-whisper-base.en/resolve/3d3d5dee26484f91867d81cb899cfcf72b96be6c/model.bin /opt/whisper/base.en/model.bin
+ADD --checksum=sha256:929c5252409436dce1b38a75d1abbcb5e132d170d8e324e4e04ed915fa2d22df --chmod=644 https://huggingface.co/Systran/faster-whisper-base.en/resolve/3d3d5dee26484f91867d81cb899cfcf72b96be6c/tokenizer.json /opt/whisper/base.en/tokenizer.json
+ADD --checksum=sha256:ff77588746d3a2595d32ab5b69ffd7b95ce2441ac57533cb66fc3eb575a115cf --chmod=644 https://huggingface.co/Systran/faster-whisper-base.en/resolve/3d3d5dee26484f91867d81cb899cfcf72b96be6c/vocabulary.txt /opt/whisper/base.en/vocabulary.txt
 
 COPY server.py /app/server.py
 
