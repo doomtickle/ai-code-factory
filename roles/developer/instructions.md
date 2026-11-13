@@ -60,6 +60,7 @@ You own a change end to end: implementation, tests and documentation.
   coverage) stay there; copy back any you mean to keep.
 - Docs: update READMEs, docstrings and comments the change affects, and check
   that every command or example you document actually works.
+  Don't add to a `CLAUDE.md` unless the task asks you to or the change creates a new security rule. Decision records and feature notes go in `docs/decisions/<area>.md`.
 - `sbx` isn't installed in your sandbox. If the project has
   `docs/reference/sbx-cli.md`, check any `sbx` command or flag against it before
   you use or document it, and call anything not in it unverified in your report.

@@ -622,5 +622,52 @@ class FixingDeniedTest(unittest.TestCase):
                 self.assertIn(needle, body)
 
 
+class RulebookSizeTests(unittest.TestCase):
+    """Every CLAUDE.md is loaded into agent sessions, so growth must be a deliberate decision.
+
+    Decision records and feature notes belong in docs/decisions/<area>.md, which is not loaded.
+    """
+
+    KB = 1024
+    CAPS = {"CLAUDE.md": 16 * KB, "scripts/CLAUDE.md": 10 * KB}
+    DEFAULT_CAP = 6 * KB  # any other CLAUDE.md (broker/CLAUDE.md is about 3.5 KB)
+    SKIP = {".git", "node_modules", ".factory", "__pycache__"}
+
+    def rulebooks(self):
+        found = []
+        for dirpath, dirnames, filenames in os.walk(REPO):
+            dirnames[:] = [d for d in dirnames if d not in self.SKIP]
+            if "CLAUDE.md" in filenames:
+                found.append(Path(dirpath, "CLAUDE.md"))
+        return sorted(found)
+
+    def test_finds_the_known_rulebooks(self):
+        rels = {p.relative_to(REPO).as_posix() for p in self.rulebooks()}
+        self.assertLessEqual(set(self.CAPS), rels)
+
+    def test_no_claude_md_over_its_cap(self):
+        over = []
+        for path in self.rulebooks():
+            rel = path.relative_to(REPO).as_posix()
+            cap = self.CAPS.get(rel, self.DEFAULT_CAP)
+            size = path.stat().st_size
+            if size > cap:
+                over.append(f"{rel} is {size} bytes, cap {cap}: move decision records and feature notes to "
+                            f"docs/decisions/<area>.md, or raise the cap in {Path(__file__).name} on purpose")
+        self.assertEqual(over, [])
+
+    def test_dashboard_history_lives_in_decisions_not_in_the_rulebook(self):
+        rules = (REPO / "scripts" / "CLAUDE.md").read_text(encoding="utf-8")
+        self.assertIn("docs/decisions/dashboard.md", rules)
+        self.assertTrue((REPO / "docs" / "decisions" / "dashboard.md").is_file())
+
+    def test_ratchet_rule_is_in_root_and_developer_instructions(self):
+        rule = ("Don't add to a `CLAUDE.md` unless the task asks you to or the change creates a new security rule. "
+                "Decision records and feature notes go in `docs/decisions/<area>.md`.")
+        for rel in ("CLAUDE.md", "roles/developer/instructions.md"):
+            with self.subTest(file=rel):
+                self.assertIn(rule, (REPO / rel).read_text(encoding="utf-8"))
+
+
 if __name__ == "__main__":
     unittest.main()

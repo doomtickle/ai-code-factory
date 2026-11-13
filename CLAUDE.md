@@ -198,3 +198,4 @@ socket, or host credentials. Full picture: README.md.
   pins in `scripts/lib/common.sh` or the relevant Dockerfile. In `.github/workflows/`,
   pin actions by full commit SHA (tag in a comment), runners by OS version, and Python
   by exact version. Flag anything that cannot be pinned.
+- Don't add to a `CLAUDE.md` unless the task asks you to or the change creates a new security rule. Decision records and feature notes go in `docs/decisions/<area>.md`.
