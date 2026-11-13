@@ -12,7 +12,7 @@ dashboard in your browser.
 ```
  You ─▶ Coordinator VM ──MCP──▶ dispatch bridge (host) ──sbx exec──▶ role VMs
         (can't edit files)      list_roles · delegate ·              claude -p, one task per lane
-                                wait_for_job · cancel_job            (developer: in git clones)
+                                wait_for_job · wait_for_any · cancel_job (developer: in git clones)
                                       ▲                                    │
           your project ◀── git fetch ─┘ factory/* branches as bundles      │ MCP (per-role tools)
           (refs/remotes/factory-<lane>/)                                   ▼
@@ -1003,10 +1003,11 @@ switch models for that session. To change the default,
 edit that `"model"` value, then run `factory update` to recreate the Coordinator
 with the new setting; recreating it discards its conversation history.
 The same managed settings also set `CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT` to
-660000 (ms), since the Coordinator's `delegate` and `wait_for_job` calls can
-legitimately block up to the dispatch bridge's 600 s maximum wait
-(`MAX_WAIT_SECONDS` in `dispatch/server.py`) and Claude Code's default idle
-abort is shorter than that; changing it needs the same `factory update`.
+660000 (ms). Since the bridge caps every blocking call (`delegate`, `wait_for_job`,
+`wait_for_any`) at `WAIT_SLICE_SECONDS` = 240 s in `dispatch/server.py`, below
+Claude Code's default ~330 s idle abort, the setting is now only a safety margin
+(a Coordinator that is still waiting when a slice ends simply calls the wait again);
+changing it needs the same `factory update`.
 The bridge also answers such a blocking call as a `text/event-stream` with a keepalive every
 15 s when the client's `Accept` allows it, so a proxy's idle timeout doesn't drop it
 ([Troubleshooting](docs/guides/05-troubleshooting.md)); a dropped wait is safe to retry

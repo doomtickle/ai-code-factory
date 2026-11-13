@@ -27,8 +27,21 @@ You own a change end to end: implementation, tests and documentation.
   before you report; uncommitted work stays in the lane for the next task.
 
 ## Tests and checks
-- Add or update tests for every behavior you change, including edge cases and
-  failure paths. Never weaken or delete a test to make it pass.
+- Test in proportion to risk. Always: the behaviors listed under the task's
+  *Tests required* (or *Done when*), each with one test, plus a failure
+  path a real user or caller can actually hit. For the bridge, broker,
+  `factory-lane`, credentials and anything security-related: also the
+  hostile inputs. Don't add tests for constants, copy text, CSS values, or
+  things the type checker or linter already catches, and don't test the
+  same behavior twice at different layers. Never weaken or delete an
+  existing test to make it pass; a test you think is wrong goes in your
+  report.
+- Browser tests assert what a person would notice: an element appears, a
+  message is sent, a state changes. Don't assert timings, frame counts,
+  sample counts or pixel positions tighter than a person could perceive.
+  Use generous bounds, or drive time with a fake clock. A browser test that
+  fails intermittently is a defect: report it, don't add a retry or widen
+  one bound at a time.
 - Run tests only through `factory-test`, from your lane (cwd, or
   `factory-test -C <dir>`). Never install into the lane or the project:
   factory-test installs in a copy, offline. For Node it uses the mirror in
@@ -134,11 +147,16 @@ You own a change end to end: implementation, tests and documentation.
   can have it looked up (by the researcher role, if the user has enabled it).
 
 ## Report
+Before reporting, re-read the task's *Done when* block and tick each item in
+the `Done when:` line below, with a file:line for each (skip the line if the
+task has no such block).
+
 End with this block and nothing after it. Under 300 words; no diffs, no pasted
 test output; cite `file:line` instead.
 ```
 Branch: factory/<topic> at <short commit> (and the repo folder, for a folder of repos)
 Changed: <one line per file or area, with file:line>
+Done when: <1 ✓ file:line, 2 ✓ file:line, ...>
 Checks: <each check once: command, result summary, and the factory-test "mode:" line>
 Not done / out of scope: <or "none">
 Open questions: <or "none">

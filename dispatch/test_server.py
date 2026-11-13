@@ -543,6 +543,10 @@ class RoleOverrideTests(Base):
 
 
 class DelegateTests(Base):
+    def setUp(self):
+        super().setUp()
+        self.fake_jobs = []
+
     def test_delegate_runs_claude_in_the_role_sandbox(self):
         job_id = self.delegate("developer", "add a feature")
         report = json.loads(d.tool_wait_for_job({"job_id": job_id, "timeout_seconds": 30}))
@@ -946,6 +950,142 @@ class DelegateTests(Base):
             d.MIN_WAIT_SECONDS = old
         d.tool_cancel_job({"job_id": job_id})
 
+    def test_a_wait_is_capped_at_the_slice(self):
+        job = d.Job("reviewer", "t", None)
+        d._jobs[job.id] = job
+        self.fake_jobs.append(job)
+        with mock.patch.object(d, "WAIT_SLICE_SECONDS", 1), mock.patch.object(d, "MIN_WAIT_SECONDS", 0):
+            for name, args in (("wait_for_job", {"job_id": job.id, "timeout_seconds": 100000}),
+                               ("wait_for_job", {"job_id": job.id}),
+                               ("wait_for_any", {"job_ids": [job.id]}),
+                               ("wait_for_any", {"job_ids": [job.id], "timeout_seconds": 100000})):
+                with self.subTest(name=name, args=args):
+                    started = time.monotonic()
+                    out = json.loads(d.TOOLS[name][0](args))
+                    self.assertGreaterEqual(time.monotonic() - started, 0.9)
+                    self.assertLess(time.monotonic() - started, 1 + 2)
+                    self.assertEqual((out.get("jobs") or [out])[0]["status"], "running")
+            started = time.monotonic()
+            out = json.loads(d.tool_delegate({"role": "developer", "task": "hang", "wait_seconds": 100000}))
+            self.assertLess(time.monotonic() - started, 1 + 2)
+            self.assertEqual(out["status"], "running")
+            d.tool_cancel_job({"job_id": out["job_id"]})
+
+    def test_the_default_wait_is_the_slice_and_the_floor_is_60(self):
+        self.assertEqual((d.WAIT_SLICE_SECONDS, d.MIN_WAIT_SECONDS), (240, 60))
+        self.assertEqual([d.wait_slice(t) for t in (1, 59, 60, 100, 240, 600, 10**6)],
+                         [60, 60, 60, 100, 240, 240, 240])
+        with mock.patch.object(d, "job_report", return_value="{}") as report:
+            d.tool_wait_for_job({"job_id": self.delegate("developer", "x")})
+        self.assertEqual(report.call_args.args[1], 240)
+
+    def test_a_still_running_reply_says_how_long_it_has_been_quiet(self):
+        job = d.Job("developer", "t", None)
+        d._jobs[job.id] = job
+        self.fake_jobs.append(job)
+        job.started = time.time() - 100
+        log = d.Transcript(job.lane).path
+        log.parent.mkdir(parents=True, exist_ok=True)
+        log.write_text("x\n")
+        os.utime(log, (time.time() - 30, time.time() - 30))
+        job.turns = 7
+        out = json.loads(d.tool_wait_for_job({"job_id": job.id, "timeout_seconds": 0}))
+        self.assertEqual(out["status"], "running")
+        self.assertAlmostEqual(out["elapsed_seconds"], 100, delta=2)
+        self.assertAlmostEqual(out["seconds_since_last_output"], 30, delta=2)
+        self.assertEqual(out["turns_so_far"], 7)
+        # Output older than the job (a previous job's) doesn't count; no turns yet: no key.
+        os.utime(log, (job.started - 500, job.started - 500))
+        job.turns = 0
+        out = json.loads(d.tool_wait_for_job({"job_id": job.id, "timeout_seconds": 0}))
+        self.assertAlmostEqual(out["seconds_since_last_output"], 100, delta=2)
+        self.assertNotIn("turns_so_far", out)
+        log.unlink()
+        out = json.loads(d.tool_wait_for_job({"job_id": job.id, "timeout_seconds": 0}))
+        self.assertAlmostEqual(out["seconds_since_last_output"], 100, delta=2)
+        self.finish_job(job)
+        out = json.loads(d.tool_wait_for_job({"job_id": job.id, "timeout_seconds": 0}))
+        self.assertNotIn("seconds_since_last_output", out)
+
+    def test_turns_are_counted_once_per_message(self):
+        job = d.Job("developer", "t", None)
+        log = d.Transcript(job.lane)
+        log.path.parent.mkdir(parents=True, exist_ok=True)
+        text = {"type": "text", "text": "hi"}
+        for event in ({"type": "assistant", "message": {"id": "m1", "content": [text]}},
+                      {"type": "assistant", "message": {"id": "m1", "content": [text]}},
+                      {"type": "assistant", "message": {"id": "m2", "content": [text]}},
+                      {"type": "assistant", "parent_tool_use_id": "t", "message": {"id": "s1", "content": [text]}},
+                      {"type": "assistant", "message": {"content": [text]}},
+                      {"type": "assistant", "message": {"content": [text]}}):
+            d.render_event(event, log, job)
+        self.assertEqual(job.turns, 4)
+
+    def tearDown(self):
+        for job in self.fake_jobs:  # no process: Base.tearDown would wait 30 s to cancel each
+            self.finish_job(job)
+        super().tearDown()
+
+    def finish_job(self, job):
+        job.status = "done"
+        job.done.set()
+
+    def test_wait_for_any_returns_when_the_first_job_ends(self):
+        jobs = [d.Job("developer", f"t{i}", None) for i in range(3)]
+        for job in jobs:
+            d._jobs[job.id] = job
+            self.fake_jobs.append(job)
+        jobs[1].result = "the second"
+        timer = threading.Timer(0.5, self.finish_job, [jobs[1]])
+        timer.start()
+        self.addCleanup(timer.cancel)
+        started = time.monotonic()
+        out = json.loads(d.tool_wait_for_any({"job_ids": [j.id for j in jobs], "timeout_seconds": 30}))
+        took = time.monotonic() - started
+        self.assertGreaterEqual(took, 0.4)
+        self.assertLess(took, 0.5 + 2)
+        self.assertEqual((out["finished"]["job_id"], out["finished"]["status"]), (jobs[1].id, "done"))
+        self.assertEqual(out["finished"]["report"], "the second")
+        self.assertEqual({o["job_id"]: o["status"] for o in out["others"]},
+                         {jobs[0].id: "running", jobs[2].id: "running"})
+        self.assertTrue(all("seconds_since_last_output" in o for o in out["others"]))
+        self.assertNotIn("note", out)
+
+    def test_wait_for_any_with_a_job_already_done_and_a_zero_timeout(self):
+        done, busy = d.Job("developer", "a", None), d.Job("developer", "b", None)
+        for job in (done, busy):
+            d._jobs[job.id] = job
+            self.fake_jobs.append(job)
+        self.finish_job(done)
+        started = time.monotonic()
+        out = json.loads(d.tool_wait_for_any({"job_ids": [busy.id, done.id]}))
+        self.assertLess(time.monotonic() - started, 1)
+        self.assertEqual(out["finished"]["job_id"], done.id)
+        out = json.loads(d.tool_wait_for_any({"job_ids": [busy.id], "timeout_seconds": 0}))
+        self.assertEqual(out["status"], "running")
+        self.assertIn("call wait_for_any again", out["note"])
+        self.assertEqual(out["jobs"][0]["job_id"], busy.id)
+
+    def test_wait_for_any_validates_its_arguments(self):
+        job = d.Job("developer", "a", None)
+        d._jobs[job.id] = job
+        self.fake_jobs.append(job)
+        for ids, msg in (([], "job_ids must be a list"), ("abc", "job_ids must be a list"),
+                         (["x"] * (d.MAX_WAIT_JOB_IDS + 1), "job_ids must be a list"),
+                         ([job.id, 5], "must be strings"), ([job.id, "nope"], "unknown job 'nope'")):
+            with self.subTest(ids=ids), self.assertRaisesRegex(d.Denied, msg):
+                d.tool_wait_for_any({"job_ids": ids})
+        for bad in (-1, True, "5"):
+            with self.subTest(timeout=bad), self.assertRaises(d.Denied):
+                d.tool_wait_for_any({"job_ids": [job.id], "timeout_seconds": bad})
+        text, err = d.call_tool("wait_for_any", {"job_ids": "abc"})  # type check at the tool boundary
+        self.assertTrue(err)
+        text, err = d.call_tool("wait_for_any", {})
+        self.assertIn("missing required argument 'job_ids'", text)
+        self.assertEqual(d.wait_slice(5), 60)
+        listed = next(t for t in d.tool_list() if t["name"] == "wait_for_any")
+        self.assertEqual(listed["inputSchema"]["required"], ["job_ids"])
+
     def test_bad_wait_seconds_is_refused_before_starting(self):
         for bad in (-1, True):
             with self.assertRaises(d.Denied):
@@ -1155,7 +1295,7 @@ class ProtocolTests(Base):
     def test_tools_list(self):
         res = d.handle_rpc({"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
         self.assertEqual({t["name"] for t in res["result"]["tools"]},
-                         {"list_roles", "delegate", "wait_for_job", "job_status", "cancel_job", "factory_docs", "say", "show"})
+                         {"list_roles", "delegate", "wait_for_job", "job_status", "wait_for_any", "cancel_job", "factory_docs", "say", "show"})
 
     def test_initialize_briefs_the_coordinator_with_live_roles(self):
         res = d.handle_rpc({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})
@@ -1165,6 +1305,9 @@ class ProtocolTests(Base):
         self.assertIn("- builder (edits a private clone, 2 lanes): Builds in parallel", text)
         self.assertIn("factory-<lane>/factory/<topic>", text)
         self.assertNotIn("dev-lane2", text)
+        self.assertIn("A wait returns after at most 4 minutes. `still running` is normal", text)
+        self.assertIn("For parallel jobs, use `wait_for_any`.", text)
+        self.assertNotIn("600 s", text)
         self.assertIn("- reviewer (project read-only): Reviews things", text)
         self.assertNotIn("Bad_Name", text)
         self.assertNotIn("Reserved name", text)
@@ -1184,7 +1327,7 @@ class StreamTests(Base):
         import hashlib
         import http.server
         (d.STATE / "token.sha256").write_text(hashlib.sha256(b"tok").hexdigest())
-        for name, val in (("KEEPALIVE_SECONDS", 0.1), ("MIN_WAIT_SECONDS", 1), ("MAX_WAIT_SECONDS", 5)):
+        for name, val in (("KEEPALIVE_SECONDS", 0.1), ("MIN_WAIT_SECONDS", 1), ("WAIT_SLICE_SECONDS", 5)):
             p = mock.patch.object(d, name, val)
             p.start()
             self.addCleanup(p.stop)
@@ -1306,6 +1449,18 @@ class StreamTests(Base):
                 json.loads(resp.read())
         _, resp = self.call("wait_for_job", {"job_id": self.job.id, "timeout_seconds": True})
         self.assertEqual(resp.getheader("Content-Type"), "application/json")  # denied at once
+
+    def test_wait_for_any_streams_and_may_block(self):
+        def msg(name, args):
+            return {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": name, "arguments": args}}
+        self.assertTrue(d.may_block(msg("wait_for_any", {"job_ids": ["a"]})))
+        self.assertTrue(d.may_block(msg("wait_for_any", {"job_ids": ["a"], "timeout_seconds": 30})))
+        self.assertFalse(d.may_block(msg("wait_for_any", {"job_ids": ["a"], "timeout_seconds": 0})))
+        self.assertFalse(d.may_block(msg("wait_for_any", {"job_ids": ["a"], "timeout_seconds": True})))
+        self.finish_after(0.5)
+        conn, resp = self.call("wait_for_any", {"job_ids": [self.job.id]})
+        self.assertEqual(resp.getheader("Content-Type"), "text/event-stream")
+        self.assertIn(b": keepalive", resp.read())
 
     def test_a_request_without_an_id_is_not_streamed(self):
         import http.client
@@ -2158,9 +2313,21 @@ class ChangeMetricsTests(Base):
             d.render_event({"type": "result", "result": "ok", "num_turns": bad}, log, job)
             self.assertNotIn("turns", job.summary(), bad)
 
+    def test_result_turns_and_live_turns_do_not_clobber_each_other(self):
+        job = d.Job("developer", "t", None)
+        log = d.Transcript(job.lane)
+        log.path.parent.mkdir(parents=True, exist_ok=True)
+        text = {"type": "text", "text": "hi"}
+        d.render_event({"type": "assistant", "message": {"id": "m1", "content": [text]}}, log, job)
+        d.render_event({"type": "assistant", "message": {"id": "m2", "content": [text]}}, log, job)
+        self.assertNotIn("turns", job.summary())
+        d.render_event({"type": "result", "result": "ok", "num_turns": 17}, log, job)
+        self.assertEqual((job.turns, job.summary()["turns"]), (2, 17))
+        self.assertEqual(d.job_from_record(job.record()).summary()["turns"], 17)
+
     def test_change_and_turns_round_trip_through_the_job_index(self):
         job = self.done_job(task="review factory-developer/factory/change-metrics " + "x" * 300)
-        job.turns = 9
+        job.result_turns = 9
         back = d.job_from_record(job.record())
         self.assertEqual(back.summary()["change"], "factory/change-metrics")
         self.assertEqual(back.summary()["turns"], 9)
