@@ -114,6 +114,10 @@ What the fields tell you:
 | `context_tokens` | How large the lane's session has grown; every later turn re-reads it |
 | `branches` | The `factory/*` branches this job created or moved in your project: repo, ref and commit (earlier jobs' branches stay but aren't listed again) |
 | `import_errors` | Anything that could not be brought back |
+| `change` | The `factory/<topic>` branch the job worked on (a reviewer's comes from the branch named in its task), so a change's jobs group together |
+| `verdict` | `APPROVED` or `REVISE`, from the first line of a reviewer's report; absent otherwise |
+| `turns` | How many turns claude took, when it reports it |
+| `diff_lines`, `diff_files` | Lines changed (added plus removed) and files in the developer job's branch |
 | `packet` | Path of the job's review packet (see below) |
 | `session` | Whether the job continued the lane's session or started fresh, and why |
 
@@ -128,7 +132,8 @@ jq -c 'select(.event == "job-end") | {lane, status, cost_usd, context_tokens, br
 ```
 
 `factory analytics` turns the same log into a cost and performance report
-([Analytics](../../README.md#analytics)).
+([Analytics](../../README.md#analytics)); `factory analytics --changes` groups it
+per change: review rounds, first-pass approval, wall time, cost and diff size.
 
 Every job also leaves a **review packet** on your machine, one Markdown file
 with everything you need to judge it: the task, each branch's commits and

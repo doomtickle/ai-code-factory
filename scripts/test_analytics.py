@@ -654,6 +654,124 @@ class MainTests(Base):
 
 
 
+class ChangesTests(Base):
+    """--changes: job-end records grouped by factory/<topic>."""
+
+    NOW = datetime(2026, 11, 13, 12, 0, 0, tzinfo=timezone.utc)
+
+    def rec(self, job_id, role, change, minutes_ago, elapsed=300, cost=1.0, verdict=None, size=None):
+        r = job(role, job_id, cost=cost, elapsed=elapsed, when=self.NOW - timedelta(minutes=minutes_ago))
+        if change:
+            r["change"] = change
+        if verdict:
+            r["verdict"] = verdict
+        if size:
+            r["size"] = size
+        return r
+
+    def fixture(self):
+        size_a = {"files": 3, "lines_added": 90, "lines_removed": 10, "test_lines_added": 30}
+        size_a2 = {"files": 4, "lines_added": 110, "lines_removed": 10, "test_lines_added": 50}
+        size_b = {"files": 1, "lines_added": 20, "lines_removed": 0, "test_lines_added": 0}
+        return [
+            # alpha: developer, REVISE, developer again, APPROVED (one REVISE round)
+            self.rec("a1", "developer", "factory/alpha", 600, cost=2.0, size=size_a),
+            self.rec("a2", "reviewer", "factory/alpha", 500, cost=0.5, verdict="REVISE"),
+            self.rec("a3", "developer", "factory/alpha", 400, cost=1.0, size=size_a2),
+            self.rec("a4", "reviewer", "factory/alpha", 300, cost=0.5, verdict="APPROVED"),
+            # beta: approved first time, from the week before
+            self.rec("b1", "developer", "factory/beta", 60 * 24 * 10, cost=1.0, size=size_b),
+            self.rec("b2", "reviewer", "factory/beta", 60 * 24 * 10 - 20, cost=0.25, verdict="APPROVED"),
+            # an old record without any of the new fields
+            self.rec("old", "developer", None, 700, cost=3.0),
+        ]
+
+    def test_two_changes_one_with_a_revise_round(self):
+        report = a.changes_report(self.fixture(), now=self.NOW)
+        rows = {r["change"]: r for r in report["changes"]}
+        self.assertEqual(set(rows), {"factory/alpha", "factory/beta"})
+        alpha, beta = rows["factory/alpha"], rows["factory/beta"]
+        self.assertEqual((alpha["jobs"], alpha["review_rounds"], alpha["first_pass_approval"]), (4, 1, False))
+        self.assertEqual((beta["jobs"], beta["review_rounds"], beta["first_pass_approval"]), (2, 0, True))
+        # first start: a1 ended 600 min ago after 300 s -> 605 min ago; last end 300 min ago.
+        self.assertEqual(alpha["wall_seconds"], (605 - 300) * 60)
+        self.assertEqual(alpha["cost_usd"], 4.0)
+        # the latest developer diffstat is the whole change, not a sum of the rounds
+        self.assertEqual((alpha["diff_lines"], alpha["diff_files"], alpha["test_lines_share"]), (120, 4, 0.4545))
+        self.assertEqual((beta["diff_lines"], beta["diff_files"], beta["test_lines_share"]), (20, 1, 0.0))
+        self.assertEqual(report["unknown"], {"jobs": 1, "cost_usd": 3.0})
+        self.assertEqual(report["summary"]["first_pass"], {"known": 2, "approved": 1, "rate": 0.5})
+        self.assertEqual(report["summary"]["review_rounds"]["median"], 0.5)
+        self.assertEqual(report["summary"]["jobs"]["p90"], 3.8)
+        self.assertEqual(report["summary"]["cost_usd"]["n"], 2)
+
+    def test_last_7_days_against_the_7_before(self):
+        summary = a.changes_report(self.fixture(), now=self.NOW)["summary"]
+        self.assertEqual(summary["last_7_days"]["changes"], 1)
+        self.assertEqual(summary["last_7_days"]["review_rounds"], 1)
+        self.assertEqual(summary["last_7_days"]["first_pass"]["rate"], 0.0)
+        self.assertEqual(summary["previous_7_days"]["changes"], 1)
+        self.assertEqual(summary["previous_7_days"]["review_rounds"], 0)
+        self.assertEqual(summary["previous_7_days"]["first_pass"]["rate"], 1.0)
+
+    def test_old_records_are_counted_as_unknown_never_dropped(self):
+        jobs = [job("developer", "x1", cost=1.5), job("reviewer", "x2"),
+                self.rec("n1", "developer", "factory/new", 10)]
+        report = a.changes_report(jobs, now=self.NOW)
+        self.assertEqual(report["unknown"], {"jobs": 2, "cost_usd": 1.5})
+        row = report["changes"][0]
+        # a change with no verdict yet and no diffstat is unknown on those, not zero
+        self.assertIsNone(row["first_pass_approval"])
+        self.assertIsNone(row["diff_lines"])
+        self.assertIsNone(row["test_lines_share"])
+        self.assertEqual(report["summary"]["first_pass"], {"known": 0, "approved": 0, "rate": None})
+        self.assertEqual(a.changes_report([], now=self.NOW)["summary"]["jobs"]["median"], None)
+
+    def test_bad_values_are_unknown_not_crashes(self):
+        bad = self.rec("z1", "developer", "factory/bad", 10)
+        bad.update(verdict=["REVISE"], size={"files": "x"}, cost_usd=float("nan"), turns=True)
+        other = self.rec("z2", "developer", ["factory/list"], 5)
+        report = a.changes_report([bad, other], now=self.NOW)
+        self.assertEqual(report["unknown"]["jobs"], 1)
+        self.assertIsNone(report["changes"][0]["cost_usd"])
+        self.assertIsNone(report["changes"][0]["first_pass_approval"])
+
+    def test_main_changes_json_is_strict_json_and_the_table_renders(self):
+        records = self.fixture() + [{"event": "job-end", "job_id": "nan", "role": "developer", "status": "done",
+                                    "change": "factory/alpha", "cost_usd": float("nan"),
+                                    "elapsed_seconds": float("inf"), "turns": float("inf")}]
+        self.write_jsonl("dispatch/audit.jsonl", records)
+
+        def run(*args):
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                self.assertEqual(a.main(["--state", str(self.root), "--changes", *args]), 0)
+            return buf.getvalue()
+
+        def reject(token):
+            raise ValueError(f"non-finite constant in JSON output: {token}")
+
+        out = run("--json")
+        data = json.loads(out, parse_constant=reject)
+        self.assertEqual({r["change"] for r in data["changes"]}, {"factory/alpha", "factory/beta"})
+        self.assertEqual(data["unknown"]["jobs"], 1)
+        table = run()
+        for text in ("factory/alpha", "factory/beta", "First pass", "Unknown change", "p90", "Last 7 days"):
+            self.assertIn(text, table)
+        self.assertNotIn("nan", table.lower())
+
+    def test_changes_and_html_do_not_combine(self):
+        with contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit):
+                a.main(["--state", str(self.root), "--changes", "--html"])
+
+    def test_empty_state_prints_an_empty_changes_report(self):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            self.assertEqual(a.main(["--state", str(self.root), "--changes"]), 0)
+        self.assertIn("No job has a change recorded yet", buf.getvalue())
+
+
 class LaneSessionsTest(unittest.TestCase):
     def test_lane_sessions_fold_into_their_role(self):
         sessions = {"developer": {"context_tokens": 1000},
