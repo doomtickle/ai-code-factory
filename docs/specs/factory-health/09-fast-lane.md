@@ -44,6 +44,23 @@
   test names and their first assertion line only, so you can paste them back
   to the Coordinator.
 
+#### Decision, 13 Nov 2026: the visual browser sections are off the pull-request path
+
+The field test drives the live 3D Thoughtfield, and a CI runner has no GPU, so it is software-rendered and
+slow (the `witness` section alone took 597 s on a runner; a whole-file run passed 20 minutes). The owner
+decided the browser tests are split by what they protect:
+
+- **Fast set, on every pull request and push** (the `browser shard` jobs): the shown and mic tests and the
+  field test's `picking`, `pane` and `nogate` sections, which are behaviour and security checks.
+- **Visual set** (the `visual shard` jobs): the field sections `layouts`, `layouts-65`, `crystals`, `witness`,
+  `witness-reduced`, `comet`, `comet-reduced`, `arc` and `arc-reduced`. They run **nightly**, **on demand**
+  (`workflow_dispatch`) and **on pull requests that touch the Thoughtfield's 3D code** (the `field3d` output of
+  the `changes` job: `field-sky.js`, `field-face.js`, `field-order.js`, `field.html`, `field.css`, `witness/`,
+  `vendor/three/` and the field browser test), not on every pull request.
+- The `browser tests` job requires every fast shard, and every visual shard when they ran; a visual shard
+  skipped because the 3D code didn't change is fine. It never passes with everything skipped while code
+  changed. `scripts/test_ci_shards.py` checks each field section is in exactly one shard of the two sets.
+
 ### 2. Risk tiers decide what the factory tests
 
 Spec 02's contract already has `Risk: low | normal | high`. Add **`trivial`**,
@@ -92,8 +109,12 @@ this spec merges.
 
 ## Acceptance criteria
 
-- On a PR, the `browser tests` job runs and **passes** the three browser
-  tests, which show as passed, not skipped, in the job log. A test removing
+- On a PR, the `browser tests` job runs and **passes** the fast browser set
+  (the shown and mic tests and the field test's picking, pane and nogate
+  sections), which show as passed, not skipped, in the job log. The visual
+  sections (the other field sections) run nightly, on demand and on PRs that
+  touch the Thoughtfield's 3D code, not on every PR (decision of 13 Nov 2026,
+  above); when they run, the job requires them too. A test removing
   Chrome from `PATH` with `FACTORY_REQUIRE_BROWSER=1` set shows the helper
   fails rather than skips.
 - The Chrome pin is read from `templates/developer/Dockerfile`, not copied.

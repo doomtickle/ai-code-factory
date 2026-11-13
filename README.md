@@ -1463,23 +1463,36 @@ lacks them), never dropped. `--changes` does not combine with `--html`.
   `scripts/test_docs.py`, `scripts/test_dashboard.py` (it checks the dashboard's help links
   against the guides), `RealRenderTest` in `factory/test_command_docs.py` and
   `scripts/test_sbx_reference.sh`). Pushes to main
-  and manual runs run everything, and unsure means run. The required checks
-  always report, as skipped steps rather than skipped jobs. The `browser tests`
-  check is green when every `browser shard` job is: the three headless-Chrome tests
-  (`scripts/test_*_browser.py`) run whenever code changed, in parallel shards of
-  20 minutes each (the field test's sections are split with `FIELD_SECTIONS`, and
-  `scripts/test_ci_shards.py` fails if a section is in no shard or in two). Each shard installs the role images' own Chrome for Testing, reading the
+  and manual runs run everything (a push leaves the visual browser set to the nightly run), and unsure means run. The required checks
+  always report, as skipped steps rather than skipped jobs. The headless-Chrome tests
+  (`scripts/test_*_browser.py`) come in two sets, because the Thoughtfield's 3D page is
+  software-rendered on a runner with no GPU and its visual sections are slow.
+  The **fast set** (the `browser shard` jobs: the shown and mic tests, and the field test's `picking`,
+  `pane` and `nogate` sections) runs whenever code changed, on every pull request and push. The
+  **visual set** (the `visual shard` jobs: the field test's `layouts`, `layouts-65`, `crystals`,
+  `witness`, `witness-reduced`, `comet`, `comet-reduced`, `arc` and `arc-reduced` sections) runs
+  nightly (a `schedule:` cron on main), on demand (Actions, "Run workflow") and on pull requests whose
+  files the `changes` job reports as `field3d` (`scripts/ci-changes.sh`: the Thoughtfield's
+  `field-sky.js`, `field-face.js`, `field-order.js`, `field.html`, `field.css`, `witness/` and
+  `vendor/three/` under `scripts/dashboard-ui/`, the field browser test, and the Chrome pin and CI setup it
+  runs on); any other pull request skips those jobs. Each shard takes 20 minutes at most (the field test's
+  sections are split with `FIELD_SECTIONS`, and `scripts/test_ci_shards.py` fails if a section is in no shard or
+  in two, or the shown and mic tests are not in the fast set). The `browser tests` check needs every fast shard to
+  succeed, and every visual shard too whenever they ran (`field3d` changed, or a nightly or manual run); a visual
+  shard skipped because the 3D code didn't change is fine, but it never passes with everything skipped while code
+  changed. Each shard installs the role images' own Chrome for Testing, reading the
   version, SHA-256 and apt libraries from `templates/developer/Dockerfile`
   (`scripts/ci-chrome.sh`; `scripts/test_ci_changes.sh` checks the reviewer's
-  Dockerfile says the same) and Node at the version in the role images, and sets
+  Dockerfile says the same) and Node at the version in the role images (both in
+  `.github/actions/browser-shard`, which the two sets share), and sets
   `FACTORY_REQUIRE_BROWSER=1`. With that variable set, a browser test whose
   `node` or `chrome-headless-shell` is missing fails instead of skipping
   (`scripts/browser_test_support.py`), so CI can't pass by skipping them. A
   failure's step summary lists each failing test with its shard and first error line
   (`scripts/ci_failure_summary.py`). To run them yourself, with Node and
   `chrome-headless-shell` on PATH: `FACTORY_REQUIRE_BROWSER=1 python3 -m unittest
-  discover -s scripts -p 'test_*_browser.py' -v` (the field test takes 15-20 minutes; add
-  `FIELD_SECTIONS=picking,crystals` to run only some of its sections; without the
+  discover -s scripts -p 'test_*_browser.py' -v` (the whole field test takes 15-40 minutes; add
+  `FIELD_SECTIONS=picking,pane,nogate` to run only some of its sections (`node scripts/test_field_browser.js --list` names them); without the
   variable they skip when the tools are missing). To run the tests
   yourself (use `/usr/bin/python3` on macOS):
   - shell lint: `scripts/lint.sh` (uses a `shellcheck` on PATH that reports exactly the
@@ -1559,6 +1572,7 @@ scripts/gen-sbx-reference.sh Saves the installed sbx's help to docs/reference/sb
 voice/                       LOIS's optional voice service: Dockerfile, server, pinned requirements (factory voice)
 docs/reference/sbx-cli.md    Saved sbx CLI reference agents check before using an sbx flag
 .github/workflows/            CI (ci.yml) and the docs site on GitHub Pages (docs.yml)
+.github/actions/browser-shard/ The Chrome, Node and Python setup both sets of browser-test shards share
 ```
 
 ## Upgrading a pin
