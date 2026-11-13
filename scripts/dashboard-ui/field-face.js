@@ -149,6 +149,9 @@
   const reduced = window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)");
   const tmpF = typeof THREE !== "undefined" ? new THREE.Vector3() : null;
   const ease = (a, b, k) => a + (b - a) * k;
+  // Wall-clock easing: k is the per-frame fraction a 60 fps frame moves, so at 60 fps this is k exactly; a longer frame takes the same share of the gap per second (never past the target, k stays in 0..1).
+  const MAX_DT = 2, step = (k, dt) => 1 - Math.pow(1 - k, dt * 60);
+  const frameDt = (now, last) => { const d = (now - last) / 1000; return d > 0 ? Math.min(MAX_DT, d) : 0; };   // seconds since the last frame: never negative or NaN, a hidden tab's long gap capped
   const tmp = typeof THREE !== "undefined" ? new THREE.Vector3() : null;
   function drawBeing(b, now, px, py) {
     if (!renderer) return;
@@ -156,7 +159,7 @@
     if (!b.ready) { composer.render(); return; }
     if (LF.sky) LF.sky.update(now, px, py);
     const fo = b.hoverFocus || b.focus; if (fo) { fo.getWorldPosition(tmpF); tmpF.project(camera); px = (tmpF.x * .5 + .5) * innerWidth; py = (-tmpF.y * .5 + .5) * innerHeight; }
-    const s = b.s, dt = Math.min(.25, Math.max(0, (now - (b.lastAt || now)) / 1000)); b.lastAt = now;
+    const s = b.s, dt = frameDt(now, b.lastAt || now); b.lastAt = now;
     // idle: nothing said, thought, running or waiting for cfg.idleMs. The pointer alone never counts; a key, a click or the owner's focus in a frame does (touch below).
     b.working = !!b.thinking || b.running > 0;
     if (b.working || b.speaking || b.waiting > 0) b.busyAt = now;
@@ -178,22 +181,22 @@
     if (now > b.blinkAt) { b.blinking = now; b.blinkAt = now + 3000 + Math.random() * 6000; }
     const bl = b.blinking ? Math.sin(Math.min(Math.PI, (now - b.blinking) / 230 * Math.PI)) : 0; if (b.blinking && now - b.blinking > 230) b.blinking = 0;
     // speech envelope, kicked by word boundaries
-    b.talkKick *= .8;
+    b.talkKick *= Math.pow(.8, dt * 60);
     const live = window.LiveVoice ? LiveVoice.mouth() : { open: 0, round: 0 }; const env = b.speaking ? live.open : 0;
     const vis = b.speaking && window.LiveVoice ? LiveVoice.visemes() : null;   // phoneme-timed lips; without timing data, the jaw follows loudness as before
     const stern = b.mood === "stern", lit = b.mood === "lit";
     const T = { blink: idle ? 1 : waking ? 0 : bl, lids_wide: lit ? .35 : 0, lids_narrow: stern ? .7 : thinking ? .38 : .22, brow_up: (lit ? .55 : thinking ? .24 : (b.speaking ? .18 * Math.abs(Math.sin(now / 1100)) : 0)) + .3 * Math.max(0, 1 - (now - b.wakeAt) / 900), brow_down: stern ? .65 : 0,
       jaw_open: Math.min(1, env) * (vis ? .22 * (1 - vis.viseme_PP - vis.viseme_FF) : .9), mouth_round: vis ? 0 : Math.min(1, env) * Math.min(1, Math.max(0, (live.round - .55) * 3.2)) * .7, smile: lit ? .35 : .1 };
     VISEMES.forEach(k => { T[k] = vis ? vis[k] : 0; });
-    const kBlink = idle ? 1 - Math.exp(-dt / .5) : waking ? 1 - Math.exp(-dt / .13) : .55;   // ~1.5 s to shut, ~0.4 s to open; a held lid never rests between .25 and .75 (the lid margin clips the cornea there)
-    MORPHS.forEach(k => { b.m[k] = ease(b.m[k], T[k], k === "blink" ? kBlink : k === "jaw_open" || k === "mouth_round" ? .4 : k.startsWith("viseme") ? .7 : .07); faceMeshes.forEach(f => { f.morphTargetInfluences[f.morphTargetDictionary[k]] = b.m[k]; }); });
+    const kBlink = idle ? 1 - Math.exp(-dt / .5) : waking ? 1 - Math.exp(-dt / .13) : step(.55, dt);   // ~1.5 s to shut, ~0.4 s to open; a held lid never rests between .25 and .75 (the lid margin clips the cornea there)
+    MORPHS.forEach(k => { b.m[k] = ease(b.m[k], T[k], k === "blink" ? kBlink : step(k === "jaw_open" || k === "mouth_round" ? .4 : k.startsWith("viseme") ? .7 : .07, dt)); faceMeshes.forEach(f => { f.morphTargetInfluences[f.morphTargetDictionary[k]] = b.m[k]; }); });
     if (idle && b.m.blink > .995) { b.m.blink = 1; faceMeshes.forEach(f => { f.morphTargetInfluences[f.morphTargetDictionary.blink] = 1; }); }
-    s.gx = ease(s.gx, gx, .12); s.gy = ease(s.gy, gy, .12);
-    s.yaw = ease(s.yaw, gx * .32, .035); s.pitch = ease(s.pitch, -gy * .14, .035);
+    s.gx = ease(s.gx, gx, step(.12, dt)); s.gy = ease(s.gy, gy, step(.12, dt));
+    s.yaw = ease(s.yaw, gx * .32, step(.035, dt)); s.pitch = ease(s.pitch, -gy * .14, step(.035, dt));
     head.rotation.y = s.yaw; head.rotation.x = s.pitch + Math.sin(now / 2900) * .012 + .09 * s.sleep; head.rotation.z = Math.sin(now / 4100) * .01 + .03 * s.sleep;
     [eyeL, eyeR, corneaL, corneaR].forEach(e => { e.rotation.y = (s.gx * .55) - s.yaw * .5; e.rotation.x = -s.gy * .38 - s.pitch * .5; });
     const still = reduced && reduced.matches;
-    s.pres = ease(s.pres, b.speaking ? 1 : thinking ? .9 + Math.sin(now / 900) * .07 : b.working ? .82 + (still ? 0 : Math.sin(now / 1100) * .04) : cfg.pres - (cfg.pres - .42) * s.sleep, idle ? .02 : .05); s.flash *= .9;
+    s.pres = ease(s.pres, b.speaking ? 1 : thinking ? .9 + Math.sin(now / 900) * .07 : b.working ? .82 + (still ? 0 : Math.sin(now / 1100) * .04) : cfg.pres - (cfg.pres - .42) * s.sleep, step(idle ? .02 : .05, dt)); s.flash *= Math.pow(.9, dt * 60);
     U.uPres.value = s.pres; U.uFlash.value = s.flash; U.uTalk.value = env;
     U.uWork.value = s.work; U.uStill.value = still ? 1 : 0; U.uPx.value = innerHeight * Math.min(1.5, devicePixelRatio || 1) / (2 * Math.tan(camera.fov * Math.PI / 360));
     ring.visible = s.work > .004; if (!still) ring.spin.rotation.z = -now / 1000 * .6;
@@ -202,7 +205,7 @@
     stars.rotation.y = now / 400000;
     composer.render();
   }
-  LF.drawBeing = drawBeing; let px = innerWidth / 2, py = innerHeight * .4; addEventListener("pointermove", e => { px = e.clientX; py = e.clientY; }); LF.pointer = () => [px, py];
+  LF.drawBeing = drawBeing; LF.step = step; LF.frameDt = frameDt; let px = innerWidth / 2, py = innerHeight * .4; addEventListener("pointermove", e => { px = e.clientX; py = e.clientY; }); LF.pointer = () => [px, py];
   // the owner at the keys or clicking wakes her; moving the pointer does not
   LF.touch = () => { W.busyAt = performance.now(); };
   ["keydown", "pointerdown", "focus"].forEach(t => addEventListener(t, LF.touch, true));   // a key or click in the main page, or its window taking focus
