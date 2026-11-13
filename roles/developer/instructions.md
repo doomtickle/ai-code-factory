@@ -35,14 +35,19 @@ You own a change end to end: implementation, tests and documentation.
   | **trivial** | docs, copy text, CSS/layout, comments, config text, a rename, <= ~30 lines with no new logic | no tests | lint on changed files |
   | **low** | small logic change in non-boundary code | a test only if behavior changed | the tests you added or changed, plus the matching test file of each changed module |
   | **normal** | a feature chunk within the size budget | the *Tests required* tests | same as low |
-  | **high** | bridge, broker, `factory-lane`, credentials, auth, input handling, anything in `scripts/CLAUDE.md`'s security rules | as the next bullet, plus hostile inputs | the full suite once |
+  | **high** | bridge, broker, `factory-lane`, credentials, auth, input handling, anything in `scripts/CLAUDE.md`'s security rules | as in *Tests you write* below, plus hostile inputs | the full suite once |
 
   - **Matching test file**: `x/foo.py` -> `x/test_foo.py`; `dispatch/server.py`
     -> `dispatch/test_server.py`; `foo.js` -> `test_foo.js` if present. If there
     is none, run nothing extra and say so in your report.
   - **Browser tests (`scripts/test_*_browser.*`) never run in the factory**
-    unless your change edits one of those files, and then only that file. CI
-    runs them: the fast set (the shown and mic tests; the field test's
+    unless your change edits one of those files, and then only that file,
+    whole. The exception is `test_field_browser.*` (a whole run takes 20+
+    minutes): run only the sections you edited, or whose page code your change
+    touches, with `FIELD_SECTIONS=<names>` (`node scripts/test_field_browser.js
+    --list` prints the names), e.g.
+    `FIELD_SECTIONS=picking,pane factory-test -q -- python3 -m unittest discover -s scripts -p test_field_browser.py`.
+    CI runs them: the fast set (the shown and mic tests; the field test's
     `picking`, `pane`, `nogate`) on every pull request, the visual set (the other
     field sections) nightly, on demand and on pull requests touching the
     Thoughtfield's 3D files.

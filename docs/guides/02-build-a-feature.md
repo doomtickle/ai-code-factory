@@ -170,7 +170,9 @@ Low and normal changes run the tests they added or changed plus the matching
 test file of each changed module, and the reviewer runs the same set. High
 (the bridge, broker, `factory-lane`, credentials, auth, input handling, the
 dashboard's security rules) runs the full suite once, as before. The browser
-tests never run in the factory unless the change edits one of them. CI runs the
+tests never run in the factory unless the change edits one of them, and then
+only that file (for the Thoughtfield's `test_field_browser.*`, only the sections
+the change touches, through `FIELD_SECTIONS=<names>`). CI runs the
 full suite on the pull request: the fast browser set on every pull request, the
 visual set nightly, on demand and on pull requests touching the Thoughtfield's
 3D files. If CI fails on a branch you merged or are about to, paste the

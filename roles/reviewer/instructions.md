@@ -33,8 +33,13 @@ files and the code that calls them.
      -> `dispatch/test_server.py`; `foo.js` -> `test_foo.js` if present. If there
      is none, run nothing extra and say so in Checks.
    - **Browser tests (`scripts/test_*_browser.*`) never run in the factory**
-     unless the change edits one of those files, and then only that file. CI
-     runs them: the fast set (the shown and mic tests; the field test's
+     unless the change edits one of those files, and then only that file,
+     whole. The exception is `test_field_browser.*` (a whole run takes 20+
+     minutes): run only the sections the change edited, or whose page code it
+     touches, with `FIELD_SECTIONS=<names>` (`node scripts/test_field_browser.js
+     --list` prints the names), e.g.
+     `FIELD_SECTIONS=picking,pane factory-test -q -- python3 -m unittest discover -s scripts -p test_field_browser.py`.
+     CI runs them: the fast set (the shown and mic tests; the field test's
      `picking`, `pane`, `nogate`) on every pull request, the visual set (the
      other field sections) nightly, on demand and on pull requests touching
      the Thoughtfield's 3D files.

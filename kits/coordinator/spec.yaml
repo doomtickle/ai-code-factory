@@ -114,7 +114,13 @@ setup:
           For every tier: the matching test file is `x/foo.py` -> `x/test_foo.py`
           (none: nothing extra runs, and the report says so). Browser tests
           (`scripts/test_*_browser.*`) never run in the factory unless the change
-          edits one of those files, and then only that file. Re-reviews run only the
+          edits one of those files, and then only that file, whole; except
+          `test_field_browser.*`, a whole run of which takes 20+ minutes: run only
+          the sections edited, or whose page code the change touches, with
+          `FIELD_SECTIONS=<names>` (`node scripts/test_field_browser.js --list`
+          prints them), e.g.
+          `FIELD_SECTIONS=picking,pane factory-test -q -- python3 -m unittest discover -s scripts -p test_field_browser.py`.
+          Re-reviews run only the
           tests for files the fixes touched. The `Checks:` line in each report names
           the tier and what was left to CI. The reviewer may say a tier was too low;
           it doesn't run more tests on its own initiative.
