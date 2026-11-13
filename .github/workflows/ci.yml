@@ -9,6 +9,12 @@
 # steps are skipped. Every flag is fail-open: pushes to main and manual runs run
 # everything, and so does a `changes` job that fails (its outputs are then empty,
 # and each step tests for `!= 'false'`).
+#
+# Browser tests come in two sets. The fast set (the `browser shard` jobs: the shown and mic tests and the
+# field test's picking, pane and nogate sections) runs on every pull request and push. The visual set (the
+# `visual shard` jobs: the rest of the field test's sections, which drive the live 3D page in software
+# rendering and take most of an hour of runner time) runs nightly, on demand, and on pull requests whose
+# files `changes` reports as `field3d`. The `browser tests` job gathers both (docs/specs/factory-health/09-fast-lane.md).
 name: CI
 
 on:
@@ -16,6 +22,9 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+  # Nightly, on main: the visual browser set, plus the fast set. Only the browser jobs run for it.
+  schedule:
+    - cron: "23 3 * * *"
 
 permissions:
   contents: read
@@ -36,6 +45,7 @@ jobs:
       broker: ${{ steps.flags.outputs.broker }}
       code: ${{ steps.flags.outputs.code }}
       docs: ${{ steps.flags.outputs.docs }}
+      field3d: ${{ steps.flags.outputs.field3d }}
     steps:
       # Full history, so the diff against the base branch has its merge base.
       # Only pull requests are compared; any other event runs everything.
@@ -54,14 +64,17 @@ jobs:
             scripts/ci-changes.sh "$BASE" "$HEAD" | tee -a "$GITHUB_OUTPUT"
           else
             echo "$EVENT: running everything"
-            printf 'images=true\nbroker=true\ncode=true\ndocs=true\n' | tee -a "$GITHUB_OUTPUT"
+            # The visual browser set is off the path of a push to main (the pull request already ran it if it
+            # touched the 3D code); a nightly or manual run has it.
+            if [ "$EVENT" = push ]; then field3d=false; else field3d=true; fi
+            printf 'images=true\nbroker=true\ncode=true\ndocs=true\nfield3d=%s\n' "$field3d" | tee -a "$GITHUB_OUTPUT"
           fi
 
   lint:
     name: shellcheck
     needs: changes
-    # Not skipped when `changes` fails: required checks must still report.
-    if: ${{ !cancelled() }}
+    # Not skipped when `changes` fails: required checks must still report. The nightly runs only the browser jobs.
+    if: ${{ !cancelled() && github.event_name != 'schedule' }}
     runs-on: ubuntu-24.04
     env:
       RUN: ${{ needs.changes.outputs.code != 'false' }}
@@ -79,7 +92,7 @@ jobs:
     # requires them by name.
     name: tests (Linux, ${{ matrix.label }})
     needs: changes
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && github.event_name != 'schedule' }}
     runs-on: ubuntu-24.04
     env:
       # Tests run unless `changes` found only prose. A docs-only change still
@@ -168,7 +181,7 @@ jobs:
     # (/usr/bin/python3, from the Command Line Tools), not Homebrew's.
     name: tests (macOS, system bash and Python)
     needs: changes
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && github.event_name != 'schedule' }}
     runs-on: macos-15
     env:
       # macOS runs the host suites; the README and docs/ tests are Linux's.
@@ -228,10 +241,130 @@ jobs:
         run: echo "::notice::No code changed; nothing to test."
       # factory-lane runs only inside the Linux sandboxes, so it's tested on Linux.
 
+  browser-shards:
+    # The fast set of headless-Chrome tests (scripts/test_*_browser.py), on every pull request and push: the
+    # behaviour and security checks, in parallel shards so the browser part of a PR is over in about ten
+    # minutes. The shown and mic tests, and the field test's picking, pane and nogate sections (FIELD_SECTIONS
+    # picks which a shard runs). The slow visual sections are the `visual-shards` job below.
+    # scripts/test_ci_shards.py checks the two sets together cover every field section exactly once and every
+    # scripts/test_*_browser.py file. The setup (Python, Node, Chrome) is .github/actions/browser-shard.
+    name: browser shard (${{ matrix.shard }})
+    needs: changes
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - shard: field-core
+            test: test_field_browser.py
+            sections: "picking,pane,nogate"
+          - shard: shown
+            test: test_field_shown_browser.py
+          - shard: mic
+            test: test_term_mic_browser.py
+    env:
+      RUN: ${{ needs.changes.outputs.code != 'false' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - if: env.RUN == 'true'
+        uses: ./.github/actions/browser-shard
+        with:
+          shard: ${{ matrix.shard }}
+          test: ${{ matrix.test }}
+          sections: ${{ matrix.sections }}
+      - name: Nothing to test (only prose changed)
+        if: env.RUN != 'true'
+        run: echo "::notice::Only prose changed; no browser tests to run."
+
+  visual-shards:
+    # The visual set: the field test's sections that drive the live 3D Thoughtfield (layouts, crystals, the
+    # witness, the comet and the arc). Software rendering has no GPU, so these are slow (the witness alone took
+    # 597 s on a runner), and they run off the pull-request path: nightly, on demand (workflow_dispatch), and on
+    # a pull request whose files `changes` reports as `field3d` (scripts/ci-changes.sh). A pull request that
+    # leaves the 3D code alone skips these jobs; the `browser tests` job below requires them when they ran.
+    # `field3d` empty (a failed `changes` job) runs them. Same setup, timeout and fail-fast as the fast set.
+    name: visual shard (${{ matrix.shard }})
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.field3d != 'false' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Section times on a 4-CPU box (seconds): layouts 117 + layouts-65 141; crystals 97; witness 187.
+          # On the runner witness took 597 (it waits on the page's frames, which are slow in software), so each
+          # witness variant has a shard of its own. Rebalance from the `[field] <section> +<seconds>` lines in a shard's log.
+          - shard: field-layouts
+            test: test_field_browser.py
+            sections: "layouts,layouts-65"
+          - shard: field-crystals
+            test: test_field_browser.py
+            sections: "crystals"
+          - shard: field-witness
+            test: test_field_browser.py
+            sections: "witness"
+          - shard: field-witness-reduced
+            test: test_field_browser.py
+            sections: "witness-reduced"
+          - shard: field-comet
+            test: test_field_browser.py
+            sections: "comet,comet-reduced"
+          - shard: field-arc
+            test: test_field_browser.py
+            sections: "arc,arc-reduced"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/browser-shard
+        with:
+          shard: ${{ matrix.shard }}
+          test: ${{ matrix.test }}
+          sections: ${{ matrix.sections }}
+
+  browser:
+    # The one name branch protection asks for. Green when every fast shard is, and, when the visual shards ran
+    # because the 3D code changed (or on a nightly or manual run), when every visual shard is. A fast shard that
+    # did not run (skipped, or cancelled) while code changed is a failure, never a pass; a visual shard that
+    # did not run is a failure unless `field3d` says it needn't.
+    name: browser tests
+    needs: [changes, browser-shards, visual-shards]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      CODE: ${{ needs.changes.outputs.code }}
+      FIELD3D: ${{ needs.changes.outputs.field3d }}
+      FAST: ${{ needs.browser-shards.result }}
+      VISUAL: ${{ needs.visual-shards.result }}
+    steps:
+      - run: |
+          echo "code changed: '$CODE'; 3D code changed: '$FIELD3D'; fast shards: $FAST; visual shards: $VISUAL"
+          status=0
+          case "$FAST" in
+            success) ;;
+            skipped) [ "$CODE" = false ] || { echo "::error::the fast browser shards did not run, but code changed"; status=1; } ;;
+            *) echo "::error::the fast browser shards: $FAST"; status=1 ;;
+          esac
+          if [ "$FIELD3D" = false ]; then
+            case "$VISUAL" in
+              skipped | success) ;;
+              *) echo "::error::the visual browser shards: $VISUAL"; status=1 ;;
+            esac
+          else
+            [ "$VISUAL" = success ] || { echo "::error::the visual browser shards were needed (3D code changed, or a nightly or manual run) and are: $VISUAL"; status=1; }
+          fi
+          exit "$status"
+
   images:
     name: images and broker tests
     needs: changes
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && github.event_name != 'schedule' }}
     runs-on: ubuntu-24.04
     env:
       RUN: ${{ needs.changes.outputs.images != 'false' }}
@@ -277,7 +410,7 @@ jobs:
     # checkout: the rest is the runner's docker CLI.
     name: broker tests
     needs: changes
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && github.event_name != 'schedule' }}
     runs-on: ubuntu-24.04
     env:
       RUN: ${{ needs.changes.outputs.broker != 'false' }}

@@ -1,0 +1,81 @@
+# One shard of the headless-Chrome tests (scripts/test_*_browser.py): Python, Node and Chrome set up, then the shard's test run.
+# The `browser shard` (fast) and `visual shard` jobs of .github/workflows/ci.yml both call this, so the setup and its pins exist once.
+# Needs the repository checked out first. Chrome is the role images' own Chrome for Testing: the version and SHA-256 are read from
+# templates/developer/Dockerfile (scripts/ci-chrome.sh; scripts/test_ci_changes.sh checks the reviewer's Dockerfile says the same),
+# so there is one pin. FACTORY_REQUIRE_BROWSER=1 makes a test fail, not skip, when node or Chrome is missing (scripts/browser_test_support.py).
+name: Browser test shard
+description: Set up Python, Node and Chrome as the role images have them, run one browser test file (or some sections of the field test), and list failures in the step summary.
+inputs:
+  shard:
+    description: The shard's name, shown in the failure list in the step summary.
+    required: true
+  test:
+    description: The test file under scripts/, for example test_field_shown_browser.py.
+    required: true
+  sections:
+    description: For test_field_browser.py only, the FIELD_SECTIONS to run, comma-separated. Empty runs no field sections (the other tests have none).
+    required: false
+    default: ""
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      with:
+        python-version: "3.14.8"
+    - name: Node version of the role images
+      shell: bash
+      # What `node --version` prints in the role images (their pinned base image).
+      run: echo "NODE_VERSION=22.22.1" >> "$GITHUB_ENV"
+    - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      with:
+        node-version: ${{ env.NODE_VERSION }} # 22.22.1, from `node --version` in the role image
+    - name: Chrome's libraries (the list in the developer Dockerfile)
+      shell: bash
+      run: |
+        sudo apt-get update
+        scripts/ci-chrome.sh apt | xargs sudo apt-get install -y --no-install-recommends
+    - name: Chrome for Testing (the role images' pin, checksum-verified)
+      shell: bash
+      run: |
+        version="$(scripts/ci-chrome.sh pin CHROME_VERSION)"
+        sha256="$(scripts/ci-chrome.sh pin CHROME_SHA256_AMD64)"
+        zip="$RUNNER_TEMP/chrome-headless-shell.zip"
+        curl -fsSLo "$zip" "https://storage.googleapis.com/chrome-for-testing-public/${version}/linux64/chrome-headless-shell-linux64.zip"
+        echo "${sha256}  ${zip}" | sha256sum -c -
+        unzip -q "$zip" -d "$RUNNER_TEMP"
+        dir="$RUNNER_TEMP/chrome-headless-shell-linux64"
+        got="$("$dir/chrome-headless-shell" --version | grep -o '[0-9][0-9.]*' | head -n 1)"
+        [ "$got" = "$version" ] || { echo "::error::chrome-headless-shell is '$got', expected the pinned $version"; exit 1; }
+        echo "$dir" >> "$GITHUB_PATH"
+    - name: Versions
+      shell: bash
+      run: |
+        command -v node chrome-headless-shell python3
+        [ "$(node --version)" = "v$NODE_VERSION" ] \
+          || { echo "::error::node is '$(node --version)', expected the pinned v$NODE_VERSION"; exit 1; }
+        chrome-headless-shell --version
+        python3 --version
+        # The sky is rasterised in software, so a page's frame time (and every check that waits on the page) scales with this.
+        echo "CPUs: $(nproc)"
+    - name: Browser test, shard ${{ inputs.shard }} (a skip is a failure)
+      shell: bash
+      env:
+        FACTORY_REQUIRE_BROWSER: "1"
+        SHARD: ${{ inputs.shard }}
+        TEST_FILE: ${{ inputs.test }}
+        # Only the field test reads this; the other shards leave it empty, which is "all" for them (they run no field sections).
+        SECTIONS: ${{ inputs.sections }}
+      run: |
+        set -uo pipefail
+        if [ -n "$SECTIONS" ]; then export FIELD_SECTIONS="$SECTIONS"; fi
+        log="$RUNNER_TEMP/browser-tests.log"
+        status=0
+        python3 -m unittest discover -s scripts -p "$TEST_FILE" -v 2>&1 | tee "$log" || status=$?
+        # Failing tests: the shard, names and each one's first error line, for pasting back to the Coordinator.
+        python3 scripts/ci_failure_summary.py --shard "$SHARD" < "$log" >> "$GITHUB_STEP_SUMMARY"
+        if grep -Eq ' \.\.\. skipped |skipped=' "$log"; then
+          echo "::error::a browser test was skipped; with FACTORY_REQUIRE_BROWSER=1 that must not happen"
+          status=1
+        fi
+        grep -Eq '^Ran [1-9][0-9]* tests? ' "$log" || { echo "::error::no browser tests ran"; status=1; }
+        exit "$status"

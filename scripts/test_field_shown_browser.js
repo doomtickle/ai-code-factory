@@ -12,7 +12,10 @@ const fs = require("node:fs"), os = require("node:os"), path = require("node:pat
 
 async function launch(url, media, init, grantClipboard = true) {
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), "field-shown-test."));
-  const child = spawn(process.env.FACTORY_SHOT_CHROME || "chrome-headless-shell", ["--headless", "--no-sandbox", "--disable-gpu",
+  // WebGL on SwiftShader in Chrome's GPU process, not --disable-gpu: with no GPU process the page's main thread waits for each
+  // software-rasterised frame of the sky (about 0.8 s on a 4-CPU runner), so its timers, input and every DevTools call run
+  // that late, and timing checks (the 2 s countdown, the hover ring, the COPY hold) depend on the host's speed.
+  const child = spawn(process.env.FACTORY_SHOT_CHROME || "chrome-headless-shell", ["--headless", "--no-sandbox", "--use-angle=swiftshader", "--enable-unsafe-swiftshader",
     "--disable-dev-shm-usage", "--hide-scrollbars", "--no-first-run", "--disable-extensions", "--remote-debugging-pipe",
     `--user-data-dir=${profile}`, "--window-size=1280,900", "about:blank"], { stdio: ["ignore", "ignore", "ignore", "pipe", "pipe"] });
   let next = 1, buf = "";
@@ -49,7 +52,13 @@ async function launch(url, media, init, grantClipboard = true) {
   await s("Page.navigate", { url });
   await loaded;
   return {
-    sleep: ms => new Promise(r => setTimeout(r, ms)),
+    // Wait ms, then for the page to draw two frames. A runner's few CPUs draw the software-rendered sky at well over half a
+    // second a frame, and the page's timers, input and reads wait on it, so a check made after a bare sleep can read the page
+    // before it has caught up with what the sleep was for.
+    async sleep(ms) {
+      await new Promise(r => setTimeout(r, ms));
+      await s("Runtime.evaluate", { expression: "new Promise(r => requestAnimationFrame(() => requestAnimationFrame(() => r(0))))", awaitPromise: true });
+    },
     async ev(expr) {
       const r = await s("Runtime.evaluate", { expression: expr, returnByValue: true, awaitPromise: true });
       if (r.exceptionDetails) throw new Error(JSON.stringify(r.exceptionDetails));
@@ -66,7 +75,7 @@ async function launch(url, media, init, grantClipboard = true) {
     },
     async resize(width, height = 900) {
       await s("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile: false });
-      await new Promise(r => setTimeout(r, 300));
+      await this.sleep(300);
     },
     async click(x, y) {
       for (const type of ["mouseMoved", "mousePressed", "mouseReleased"])
@@ -113,6 +122,16 @@ async function main(url, png) {
     const poll = async () => { const n = await b.ev(`window.__polls`); for (let i = 0; i < 40 && (await b.ev(`window.__polls`)) <= n; i++) await b.sleep(250); };
     const rect = id => b.ev(`(() => { const r = document.getElementById(${JSON.stringify(id)}).getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height, b: r.bottom, r: r.right }; })()`);
     const shown = () => b.ev(`!document.getElementById("shown").hidden`);
+    // Swap a new block in at the next poll and click COPY in the same task that darkened it, then report what the click wrote. Done
+    // in the page: a click sent from here lands several frames later, and on a slow host (a runner's few CPUs rasterising the sky)
+    // that can be after the 2.5 s hold, so the check would pass or fail on the host's speed instead of on the hold.
+    const swapThenClick = mut => b.ev(`new Promise((ok, no) => { const k = document.getElementById("shown-copy");
+      if (k.disabled) { no(new Error("COPY was already dark before the swap")); return; }
+      window.__writes.length = 0;
+      const seen = new MutationObserver(() => { if (!k.disabled) return; seen.disconnect(); k.click(); ok({ dark: k.disabled, writes: window.__writes.slice() }); });
+      seen.observe(k, { attributes: true, attributeFilter: ["disabled"] });
+      window.__mut = ${mut};
+      setTimeout(() => { seen.disconnect(); no(new Error("COPY never went dark after the swap")); }, 30000); })`);
     for (let i = 0; i < 40 && !(await b.ev(`window.__polls > 1`)); i++) await b.sleep(250);
 
     await b.sleep(600);
@@ -148,18 +167,16 @@ async function main(url, png) {
     assert.strictEqual(await shown(), false, "the same id on the next polls does not reopen a closed panel");
 
     // A new id pops it up by itself; sixteen lines fit; COPY is dark for 2.5 s.
-    await b.ev(`window.__writes.length = 0; window.__mut = j => { j.shown = { id: "aaaaaaaaaaa1", t: j.now - 5, text: ${JSON.stringify(LINES16)} }; }`);
-    await poll(); await b.sleep(100);
+    const held = await swapThenClick(`j => { j.shown = { id: "aaaaaaaaaaa1", t: j.now - 5, text: ${JSON.stringify(LINES16)} }; }`);
+    assert.strictEqual(held.dark, true, "COPY is dark after the text changes");
+    assert.deepStrictEqual(held.writes, [], "a click in the hold writes nothing");
     assert.strictEqual(await shown(), true, "a new id pops the panel up");
-    assert.strictEqual(await b.ev(`document.getElementById("shown-copy").disabled`), true, "COPY is dark after the text changes");
     assert.strictEqual(await b.ev(`document.getElementById("shown-age").textContent`), "just now");
     const pre = await b.ev(`(() => { const p = document.getElementById("shown-text"); return { sh: p.scrollHeight, ch: p.clientHeight }; })()`);
     assert.ok(pre.sh <= pre.ch + 1, `16 lines fit without scrolling (${pre.sh} > ${pre.ch})`);
     const box = await rect("shown");
     assert.ok(box.y >= 56 && box.b <= 900 * 0.565, `the panel sits in the sky above the horizon (${box.y}..${box.b})`);
     assert.ok(box.x >= 0 && box.r <= 600, "and in the left corner, clear of the face and the decision row");
-    await b.ev(`document.getElementById("shown-copy").click()`);
-    assert.deepStrictEqual(await b.ev(`window.__writes`), [], "a click in the hold writes nothing");
     await b.sleep(2600);
     assert.strictEqual(await b.ev(`document.getElementById("shown-copy").disabled`), false, "COPY lights after the hold");
     await b.ev(`document.getElementById("shown-copy").click()`);
@@ -189,12 +206,11 @@ async function main(url, png) {
     assert.strictEqual(await b.ev(`getSelection().toString()`), dragged, "and a poll keeps it");
 
     // A block swapped in just before a click is never the one written.
-    await b.ev(`window.__writes.length = 0; window.__mut = j => { j.shown = { id: "aaaaaaaaaaa2", t: j.now, text: "second" }; }`);
-    await poll(); await b.sleep(100);
+    const swapped = await swapThenClick(`j => { j.shown = { id: "aaaaaaaaaaa2", t: j.now, text: "second" }; }`);
+    assert.strictEqual(swapped.dark, true, "the swap darkens COPY again");
+    assert.deepStrictEqual(swapped.writes, [], "the swap re-arms the hold");
     assert.strictEqual(await b.ev(`document.getElementById("shown-text").textContent`), "second", "changed text replaces the panel content");
     assert.strictEqual(await b.ev(`getSelection().toString()`), "", "and a selection of the old text is gone with it");
-    await b.ev(`document.getElementById("shown-copy").click()`);
-    assert.deepStrictEqual(await b.ev(`window.__writes`), [], "the swap re-arms the hold");
 
     // Hostile text is text; hidden characters raise the warning.
     const hostile = "<img src=x onerror=window.__pwn=1><script>window.__pwn=1</script>\nrm -rf ~ ⟨U+202E⟩ done";

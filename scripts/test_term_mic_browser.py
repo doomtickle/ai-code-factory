@@ -5,16 +5,14 @@ dashboard runs here with a fake Coordinator (test_dashboard_term's), and a stub 
 port the frame is pointed at through dashboard_term.VOICE_PORT. Checks: a hold of the mic key sends one 16 kHz 16-bit body
 and types its words into the Coordinator's terminal; always on sends any line with words after the 2 s window (a leading "LOIS" taken off, a bare name
 never), nothing after Escape or a click, and nothing while LOIS speaks; the pane neither grows nor takes focus
-for any of it; a refused microphone sends nothing. Skipped when node or chrome-headless-shell is missing.
+for any of it; a refused microphone sends nothing. Skipped when node or chrome-headless-shell is missing, unless FACTORY_REQUIRE_BROWSER=1 (CI), which fails it.
 
   python3 -m unittest discover -s scripts -p 'test_term_mic_browser.py' -v
 """
 
 import json
 import math
-import shutil
 import struct
-import subprocess
 import tempfile
 import threading
 import unittest
@@ -23,6 +21,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest import mock
 
+from browser_test_support import needs_browser, run_bounded
 import dashboard_term as dt
 from test_dashboard import TOKEN
 from test_dashboard_term import Server
@@ -111,7 +110,7 @@ def phrases(path):
         w.writeframes(bytes(out))
 
 
-@unittest.skipUnless(shutil.which("node") and shutil.which("chrome-headless-shell"), "needs node and chrome-headless-shell")
+@needs_browser
 class TermMicBrowserTests(unittest.TestCase):
     def test_push_to_talk_always_on_without_a_wake_word_the_window_and_the_hush(self):
         voice = Voice()
@@ -128,8 +127,7 @@ class TermMicBrowserTests(unittest.TestCase):
         wav = Path(tmp.name) / "phrases.wav"
         phrases(wav)
         url = f"http://127.0.0.1:{srv.port}/?token={TOKEN}"
-        run = subprocess.run(["node", str(SCRIPTS / "test_term_mic_browser.js"), url, str(voice.port), str(wav)],
-                             capture_output=True, text=True, timeout=420, check=False)
+        run = run_bounded(self, ["node", str(SCRIPTS / "test_term_mic_browser.js"), url, str(voice.port), str(wav)], 420)
         self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
         held = json.loads(run.stdout.strip().splitlines()[-1])["held"]
         listens = [p for p in voice.posts if p["path"] == "/listen"]

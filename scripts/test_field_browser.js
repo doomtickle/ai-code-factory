@@ -14,10 +14,15 @@
 const assert = require("node:assert");
 const { spawn } = require("node:child_process");
 const fs = require("node:fs"), os = require("node:os"), path = require("node:path");
+const T0 = Date.now();
+const note = what => console.error(`[field] ${what} +${Math.round((Date.now() - T0) / 1000)}s`);
 
 async function launch(url, media, init) {
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), "field-test."));
-  const child = spawn(process.env.FACTORY_SHOT_CHROME || "chrome-headless-shell", ["--headless", "--no-sandbox", "--disable-gpu",
+  // WebGL on SwiftShader in Chrome's GPU process, not --disable-gpu: with no GPU process the page's main thread waits for each
+  // software-rasterised frame of the sky (about 0.8 s on a 4-CPU runner), so its timers, input and every DevTools call run
+  // that late, and timing checks (the 2 s countdown, the hover ring, the COPY hold) depend on the host's speed.
+  const child = spawn(process.env.FACTORY_SHOT_CHROME || "chrome-headless-shell", ["--headless", "--no-sandbox", "--use-angle=swiftshader", "--enable-unsafe-swiftshader",
     "--disable-dev-shm-usage", "--hide-scrollbars", "--no-first-run", "--disable-extensions", "--remote-debugging-pipe",
     `--user-data-dir=${profile}`, "--window-size=1280,900", "about:blank"], { stdio: ["ignore", "ignore", "ignore", "pipe", "pipe"] });
   let next = 1, buf = "";
@@ -55,7 +60,13 @@ async function launch(url, media, init) {
   return {
     s,   // a raw DevTools call on the page
     errors,   // uncaught exceptions on the page so far
-    sleep: ms => new Promise(r => setTimeout(r, ms)),
+    // Wait ms, then for the page to draw two frames. A runner's few CPUs draw the software-rendered sky at well over half a
+    // second a frame, and the page's timers, input and reads wait on it, so a check made after a bare sleep can read the page
+    // before it has caught up with what the sleep was for.
+    async sleep(ms) {
+      await new Promise(r => setTimeout(r, ms));
+      await s("Runtime.evaluate", { expression: "new Promise(r => requestAnimationFrame(() => requestAnimationFrame(() => r(0))))", awaitPromise: true });
+    },
     async ev(expr) {
       const r = await s("Runtime.evaluate", { expression: expr, returnByValue: true, awaitPromise: true });
       if (r.exceptionDetails) throw new Error(JSON.stringify(r.exceptionDetails));
@@ -72,7 +83,7 @@ async function launch(url, media, init) {
     },
     async resize(width, height = 900) {
       await s("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile: false });
-      await new Promise(r => setTimeout(r, 300));
+      await this.sleep(300);
     },
     async click(x, y) {
       for (const type of ["mouseMoved", "mousePressed", "mouseReleased"])
@@ -137,6 +148,7 @@ async function audit(b, label, expect) {
 }
 
 async function layouts(url, pad) {
+  note(pad ? `layouts ${pad} jobs` : "layouts");
   const b = await launch(url, undefined, (pad ? PAD(pad) : ""));
   try {
     const field = async () => (await b.ev(`fetch("/api/field").then(r => r.json()).then(j => j.jobs.map(x => x.id))`));
@@ -165,9 +177,10 @@ async function layouts(url, pad) {
 }
 
 async function picking(url) {
+  note("picking");
   const b = await launch(url);
   try {
-    await b.resize(1440, 900); await ready(b, 6); await b.sleep(1500);
+    await b.resize(1440, 900); await ready(b, 6); await b.sleep(1500); await settle(b);   // glides advance per frame: on a slow host they take longer than 1.5 s
     const jobs = await b.ev(`LF.sky.packets().filter(p => p.kind !== "gold")`);
     const p = jobs.find(x => x.kind === "done") || jobs[0];
     // hover at the edge of the ring round it, not just the middle
@@ -191,7 +204,7 @@ async function picking(url) {
     // the question views still pour the stars out, and the packets step aside
     const r = await b.ev(`(() => { const r = LF.sky.show("spend"); return r.say; })()`);
     assert.ok(/cost the most/.test(r), r);
-    const until = async (expr, what) => { for (let i = 0; i < 40; i++) { if (await b.ev(expr)) return; await b.sleep(250); } assert.fail(what); };
+    const until = async (expr, what) => { for (let i = 0; i < 40; i++) { if (await b.ev(expr)) return; await b.sleep(250); } assert.fail(what + " " + await b.ev(`JSON.stringify({ view: LF.sky.view, packets: LF.sky.packets().length })`)); };
     await until(`LF.sky.packets().length === 0`, "packets fade out while a question's shape is up");
     await b.ev(`LF.sky.show("home")`);
     await until(`LF.sky.packets().length >= 6`, "and come back");
@@ -246,6 +259,7 @@ const LABELS = `(() => { const Sky = LF.sky, list = Sky.packets(), pk = list.map
     pips: [...document.querySelectorAll("#pips .pip")].map(e => ({ cls: e.className, n: e.querySelector(".pn") ? e.querySelector(".pn").textContent : "", mark: !!e.querySelector(".pm") })),
     packets: list.map(p => ({ key: p.key, order: p.order, n: p.n, tone: p.tone, r: p.r })) }; })()`;
 async function crystals(url) {
+  note("crystals");
   const b = await launch(url, undefined, RICH);
   try {
     await b.resize(1440, 900); await ready(b, 15); await settle(b); await b.sleep(1200);
@@ -317,8 +331,9 @@ const STEER = `(() => { const real = window.fetch.bind(window); window.__st = { 
     const j = await r.json(); j.totals = Object.assign({}, j.totals, { running: window.__st.running }); j.gate = window.__st.gate; j.said = []; j.lanes = [];
     return new Response(JSON.stringify(j), { status: 200, headers: { "Content-Type": "application/json" } }); }; })()`;
 async function witness(url, reduced) {
+  note(reduced ? "witness reduced-motion" : "witness");
   const b = await launch(url, reduced ? [{ name: "prefers-reduced-motion", value: "reduce" }] : null, STEER);
-  const until = async (expr, what, ms = 40000) => { for (let t = 0; t < ms; t += 100) { if (await b.ev(expr)) return; await b.sleep(100); } throw new Error("never: " + what + " (" + await b.ev(`JSON.stringify({ idle: LF.W.idle, working: LF.W.working, run: LF.W.running, wait: LF.W.waiting, speaking: LF.W.speaking, blink: LF.W.m.blink, work: LF.W.s.work })`) + ")"); };
+  const until = async (expr, what, ms = 40000) => { for (let t = 0; t < ms; t += 100) { if (await b.ev(expr)) { note("  " + what); return; } await b.sleep(100); } throw new Error("never: " + what + " (" + await b.ev(`JSON.stringify({ idle: LF.W.idle, working: LF.W.working, run: LF.W.running, wait: LF.W.waiting, speaking: LF.W.speaking, blink: LF.W.m.blink, work: LF.W.s.work, keys: window.__keys })`) + ")"); };
   try {
     await until(`!!(window.LF && LF.W.ready && !document.getElementById("hud").hidden)`, "the page is up");
     // the bust eases by wall-clock time: a 60 fps frame moves each easing exactly its k, a 30 fps frame moves it as far as two 60 fps ones, and a long gap (a hidden tab) lands on the target with no overshoot, NaN or negative step
@@ -376,8 +391,15 @@ async function witness(url, reduced) {
     assert.strictEqual(await b.ev(`LF.W.idle`), false, "she stays awake while a write waits for the owner");
     await b.ev(`window.__st.gate = []`);
     await until(`LF.W.idle && LF.W.m.blink === 1`, "asleep once the write is gone");
+    // The test's 800 ms idle is shorter than two software-rendered frames, so a key's wake could pass between two polls: for this step only, keep her
+    // asleep by age (busyAt long ago) and give the idle time a long run, so that nothing but the key can wake her and she stays awake until the lid has opened.
+    await b.ev(`window.__keys = 0; addEventListener("keydown", () => { window.__keys++; }, true); LF.W.busyAt = -1e9; LF.cfg.idleMs = 600000`);
+    await b.sleep(600);
+    assert.strictEqual(await b.ev(`LF.W.idle && LF.W.m.blink === 1`), true, "still asleep before the key");
     await b.key("a", "KeyA");
     await until(`!LF.W.idle && LF.W.m.blink < .02`, "a key wakes her");
+    assert.strictEqual(await b.ev(`window.__keys`), 1, "the page heard the key");
+    await b.ev(`LF.cfg.idleMs = 800`);
     await until(`LF.W.idle && LF.W.m.blink === 1`, "asleep after the key");
     await b.ev(`LF.W.thinking = true`);
     await until(`LF.W.working && !LF.W.idle && LF.W.s.work > .95`, "thinking wakes her and shows the ring");
@@ -398,6 +420,7 @@ const CLEAR = `(() => { const s = document.getElementById("said").getBoundingCli
     if (r.left < s.right && r.right > s.left && r.top < s.bottom && r.bottom > s.top) out.push((e.textContent || e.tagName).trim().slice(0, 40) + " at " + [r.left, r.top, r.right, r.bottom].map(Math.round)); });
   return { out, said: document.getElementById("txt").textContent.length, pane: !document.getElementById("term-panel").hidden && document.getElementById("term-panel").getBoundingClientRect().height }; })()`;
 async function pane(url) {
+  note("pane");
   const b = await launch(url, undefined, TERM);
   try {
     await ready(b, 1);
@@ -441,6 +464,7 @@ async function pane(url) {
 // caption, and sound stays shut (LF.unlocked() false) until the first click or key in the page or a click into the terminal frame. Sizes: desktop and phone.
 const SOUND_PROBE = `window.__voiceSays = 0; (() => { const t = setInterval(() => { if (window.LiveVoice && !LiveVoice.__w) { LiveVoice.__w = 1; const say = LiveVoice.say; LiveVoice.say = (...a) => { window.__voiceSays++; return say.apply(LiveVoice, a); }; } }, 20); })()`;
 async function nogate(url) {
+  note("nogate");
   for (const [w, h] of [[1440, 900], [390, 844]]) {
     const b = await launch(url, undefined, TERM + ";" + SOUND_PROBE);
     try {
@@ -499,6 +523,7 @@ const STEER_LANE = `(() => { const real = window.fetch.bind(window); window.__la
     const j = await r.json(); j.said = []; j.gate = []; j.lanes = [Object.assign({}, window.__lane)];
     return new Response(JSON.stringify(j), { status: 200, headers: { "Content-Type": "application/json" } }); }; })()`;
 async function comet(url, reduced) {
+  note(reduced ? "comet reduced-motion" : "comet");
   const b = await launch(url, reduced ? [{ name: "prefers-reduced-motion", value: "reduce" }] : null, STEER_LANE);
   const until = async (expr, what, ms = 30000) => { for (let t = 0; t < ms; t += 100) { if (await b.ev(expr)) return; await b.sleep(100); } throw new Error("never: " + what + " " + await b.ev(`JSON.stringify(LF.sky.cometInfo())`)); };
   const info = () => b.ev(`LF.sky.cometInfo()`);
@@ -541,6 +566,7 @@ const STEER_T0 = `(() => { const real = window.fetch.bind(window); window.__st =
     const j = await r.json(); j.term = { port: Number(location.port), running: true }; j.said = window.__st.said; j.totals = Object.assign({}, j.totals, { running: 0 }); j.gate = []; j.lanes = [];
     return new Response(JSON.stringify(j), { status: 200, headers: { "Content-Type": "application/json" } }); }; })()`;
 async function arc(url, reduced) {
+  note(reduced ? "arc reduced-motion" : "arc");
   const b = await launch(url, reduced ? [{ name: "prefers-reduced-motion", value: "reduce" }] : null, STEER_T0);
   const until = async (expr, what, ms = 30000) => { for (let t = 0; t < ms; t += 100) { if (await b.ev(expr)) return; await b.sleep(100); } throw new Error("never: " + what + " " + await b.ev(`JSON.stringify({ thinking: LF.W.thinking, listenT: LF.W.listenT, listen: LF.W.listen, cls: document.getElementById("term-panel").className })`)); };
   // post(word, how): a message event the page would get from the terminal frame (default), or from a wrong window, a wrong origin or with other data
@@ -588,8 +614,27 @@ async function arc(url, reduced) {
   } finally { await b.close(); }
 }
 
+// Every top-level section, in the order a full run takes them. FIELD_SECTIONS="picking,crystals" runs just those (the CI shards in
+// .github/workflows/ci.yml); unset runs all. `node test_field_browser.js --list` prints the names, one per line.
+const SECTIONS = {
+  "layouts": u => layouts(u, 0), "layouts-65": u => layouts(u, 65), "picking": picking, "crystals": crystals,
+  "witness": u => witness(u, 0), "witness-reduced": u => witness(u, 1), "pane": pane, "nogate": nogate,
+  "comet": u => comet(u, 0), "comet-reduced": u => comet(u, 1), "arc": u => arc(u, 0), "arc-reduced": u => arc(u, 1),
+};
+
+function selected(env) {
+  if (env === undefined) return Object.keys(SECTIONS);
+  const names = env.split(",").map(n => n.trim());
+  const bad = names.filter(n => !Object.prototype.hasOwnProperty.call(SECTIONS, n));
+  if (bad.length) throw new Error(`FIELD_SECTIONS names no such section: ${bad.map(n => JSON.stringify(n)).join(", ")} (sections: ${Object.keys(SECTIONS).join(", ")})`);
+  const dup = names.filter((n, i) => names.indexOf(n) !== i);
+  if (dup.length) throw new Error(`FIELD_SECTIONS lists ${dup.join(", ")} more than once`);
+  return names;
+}
+
 const url = process.argv[2];
-const only = process.env.FIELD_ONLY;
-(only === "pane" ? pane(url) : only === "nogate" ? nogate(url) : only === "comet" ? comet(url, 0).then(() => comet(url, 1)) : only === "crystals" ? crystals(url) : only === "picking" ? picking(url) : only === "witness" ? witness(url, 0).then(() => witness(url, 1)) : only === "arc" ? arc(url, 0).then(() => arc(url, 1))
-  : layouts(url, 0).then(() => layouts(url, 65)).then(() => picking(url)).then(() => crystals(url)).then(() => witness(url, 0)).then(() => witness(url, 1)).then(() => pane(url)).then(() => nogate(url)).then(() => comet(url, 0)).then(() => comet(url, 1)).then(() => arc(url, 0)).then(() => arc(url, 1)))
-  .then(() => console.log("field browser checks passed"), e => { console.error(e.stack || e); process.exit(1); });
+if (url === "--list") { console.log(Object.keys(SECTIONS).join("\n")); process.exit(0); }
+let names;
+try { names = selected(process.env.FIELD_SECTIONS); } catch (e) { console.error(e.message); process.exit(2); }
+names.reduce((done, n) => done.then(() => SECTIONS[n](url)), Promise.resolve())
+  .then(() => console.log("field browser checks passed: " + names.join(", ")), e => { console.error(e.stack || e); process.exit(1); });

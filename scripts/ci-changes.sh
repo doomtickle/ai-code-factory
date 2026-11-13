@@ -16,13 +16,16 @@ set -euo pipefail
 #            the real docs and checks the dashboard's help links against docs/guides/06-dashboard.md),
 #            factory/test_command_docs.py's RealRenderTest and scripts/test_sbx_reference.sh read
 #            those, so a docs-only change still runs them
+#   field3d= the Thoughtfield's 3D code, the browser tests of it, or what they run on changed, so the visual
+#            browser shards (the slow ones, software-rendered; see ci.yml's `visual shard` job) run on this
+#            pull request. They also run nightly and on demand, whatever this says.
 #
 # Each is true or false. It is false only when the file list is complete and every file is known to
 # be irrelevant. Anything this can't tell (no range, a git failure, an empty list, a file it has no
 # rule for) gives true: when unsure, run.
 
 all_true() {
-  printf 'images=true\nbroker=true\ncode=true\ndocs=true\n'
+  printf 'images=true\nbroker=true\ncode=true\ndocs=true\nfield3d=true\n'
 }
 
 # Prose that no test, build or page reads.
@@ -63,8 +66,22 @@ is_broker_input() {
   return 1
 }
 
+# The Thoughtfield's 3D page and what draws it, the browser tests that drive it, and the CI setup they run in
+# (Chrome's pin, the shard layout). scripts/test_ci_shards.py checks this list names the files that matter.
+is_field3d_input() {
+  case "$1" in
+    scripts/dashboard-ui/field-sky.js | scripts/dashboard-ui/field-face.js | scripts/dashboard-ui/field-order.js) return 0 ;;
+    scripts/dashboard-ui/field.html | scripts/dashboard-ui/field.css) return 0 ;;
+    scripts/dashboard-ui/witness/* | scripts/dashboard-ui/vendor/three/*) return 0 ;;
+    scripts/test_field_browser.js | scripts/test_field_browser.py | scripts/browser_test_support.py) return 0 ;;
+    scripts/ci-chrome.sh | templates/developer/Dockerfile) return 0 ;;
+    .github/workflows/ci.yml | .github/actions/browser-shard/*) return 0 ;;
+  esac
+  return 1
+}
+
 classify() { # classify < file names
-  local images=false broker=false code=false docs=false seen=0 f
+  local images=false broker=false code=false docs=false field3d=false seen=0 f
   while IFS= read -r f; do
     [ -n "$f" ] || continue
     seen=1
@@ -78,12 +95,13 @@ classify() { # classify < file names
     code=true
     ! is_image_input "$f" || images=true
     ! is_broker_input "$f" || broker=true
+    ! is_field3d_input "$f" || field3d=true
   done
   if [ "$seen" = 0 ]; then
     all_true
     return
   fi
-  printf 'images=%s\nbroker=%s\ncode=%s\ndocs=%s\n' "$images" "$broker" "$code" "$docs"
+  printf 'images=%s\nbroker=%s\ncode=%s\ndocs=%s\nfield3d=%s\n' "$images" "$broker" "$code" "$docs" "$field3d"
 }
 
 case "$#:${1:-}" in

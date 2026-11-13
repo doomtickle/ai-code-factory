@@ -16,7 +16,10 @@ const fs = require("node:fs"), os = require("node:os"), path = require("node:pat
 
 async function launch(url, init, wav) {
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), "term-mic-test."));
-  const child = spawn(process.env.FACTORY_SHOT_CHROME || "chrome-headless-shell", ["--headless", "--no-sandbox", "--disable-gpu",
+  // WebGL on SwiftShader in Chrome's GPU process, not --disable-gpu: with no GPU process the page's main thread waits for each
+  // software-rasterised frame of the sky (about 0.8 s on a 4-CPU runner), so its timers, input and every DevTools call run
+  // that late, and timing checks (the 2 s countdown, the hover ring, the COPY hold) depend on the host's speed.
+  const child = spawn(process.env.FACTORY_SHOT_CHROME || "chrome-headless-shell", ["--headless", "--no-sandbox", "--use-angle=swiftshader", "--enable-unsafe-swiftshader",
     "--disable-dev-shm-usage", "--hide-scrollbars", "--no-first-run", "--disable-extensions", "--remote-debugging-pipe",
     "--use-fake-device-for-media-stream", "--use-fake-ui-for-media-stream", `--use-file-for-fake-audio-capture=${wav}`, "--autoplay-policy=no-user-gesture-required",
     `--user-data-dir=${profile}`, "--window-size=1280,900", "about:blank"], { stdio: ["ignore", "ignore", "ignore", "pipe", "pipe"] });
@@ -56,7 +59,14 @@ async function launch(url, init, wav) {
     return r.result.value;
   };
   return {
-    send, s, sleep: ms => new Promise(r => setTimeout(r, ms)),
+    send, s,
+    // Wait ms, then for the page to draw two frames. A runner's few CPUs draw the software-rendered sky at well over half a
+    // second a frame, and the page's timers, input and reads wait on it, so a check made after a bare sleep can read the page
+    // before it has caught up with what the sleep was for.
+    async sleep(ms) {
+      await new Promise(r => setTimeout(r, ms));
+      await s("Runtime.evaluate", { expression: "new Promise(r => requestAnimationFrame(() => requestAnimationFrame(() => r(0))))", awaitPromise: true });
+    },
     ev: expr => evIn(null, expr),
     // Terminal 0's frame: the terminal origin's context whose page is /term/field (the control unit shares that origin).
     async term(expr) {

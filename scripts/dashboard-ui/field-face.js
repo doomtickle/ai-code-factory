@@ -139,6 +139,8 @@
       LF.frameFace(LF.faceK || .41);
       halo.position.set(0, eyeW.y + .02, box.min.z - .05); ring.position.set(0, eyeW.y + .03, eyeW.z - .03);
       W.ready = true; W.eyeY = eyeW.y; W.eyeZ = eyeW.z;
+      // run fn with the head at each end of its range (yaw +-.32, pitch +-.14, as drawBeing sets it from the pointer), so the sky can keep its packets clear of every pose
+      W.eachPose = fn => { const r = head.rotation, y = r.y, x = r.x; for (const yaw of [-.32, 0, .32]) for (const pitch of [-.14, 0, .14]) { r.y = yaw; r.x = pitch; head.updateMatrixWorld(true); fn(); } r.y = y; r.x = x; head.updateMatrixWorld(true); };
       LF.sky = window.makeSky(scene, camera, new THREE.Vector3(0, eyeW.y, eyeW.z - .08), U, W); LF.camera = camera; LF.onReady && LF.onReady();
     };
     const onFail = err => { W.failed = true; console.error("glb:", err); (LF.failMsg = "The bust did not load."), LF.fail && LF.fail(LF.failMsg); };

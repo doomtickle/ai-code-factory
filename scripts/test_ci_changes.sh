@@ -5,6 +5,8 @@ set -euo pipefail
 # 1. The flags for the kinds of change CI sees (docs only, dashboard only, broker, workflow, mixed).
 # 2. Anything it can't tell runs everything: no range, an empty list, a bad range, an unknown file.
 # 3. A real git range (BASE...HEAD) gives the same answer as the file list.
+# 4. The `browser shard` jobs read Chrome's pin and apt libraries from the developer Dockerfile
+#    (scripts/ci-chrome.sh); the reviewer Dockerfile must carry the same ones.
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
@@ -24,8 +26,10 @@ script="$REPO_ROOT/scripts/ci-changes.sh"
 flags() {
   local out
   out="$(printf '%s\n' "$@" | bash "$script" --stdin)"
-  printf '%s' "$out" | sed 's/^[a-z]*=//' | tr '\n' ' ' | sed 's/ $//'
+  printf '%s' "$out" | head -n 4 | sed 's/^[a-z0-9]*=//' | tr '\n' ' ' | sed 's/ $//'
 }
+# f3d "file1 ..." -> the field3d flag alone (do the visual browser shards run for this change?).
+f3d() { printf '%s\n' "$@" | bash "$script" --stdin | sed -n 's/^field3d=//p'; }
 ALL="true true true true"
 
 assert_eq "README only: docs tests, no code" "$(flags README.md)" "false false false true"
@@ -53,8 +57,25 @@ assert_eq "a file with no rule runs the suites" "$(flags something/new.txt)" "fa
 assert_eq "prose beside code: code wins" "$(flags README.md scripts/dashboard.py)" "false false true true"
 assert_eq "an empty list runs everything" "$(flags)" "$ALL"
 
-assert_eq "no arguments runs everything" "$(bash "$script" | sed 's/^[a-z]*=//' | tr '\n' ' ' | sed 's/ $//')" "$ALL"
+assert_eq "no arguments runs everything" "$(bash "$script" | head -n 4 | sed 's/^[a-z]*=//' | tr '\n' ' ' | sed 's/ $//')" "$ALL"
+assert_eq "no arguments runs the visual browser shards too" "$(bash "$script" | sed -n 's/^field3d=//p')" "true"
+assert_eq "an empty list runs the visual browser shards too" "$(f3d)" "true"
 bash "$script" a b c >/dev/null 2>&1 && bad "three arguments refused" || ok "three arguments refused"
+
+# field3d: the visual browser shards run for the Thoughtfield's 3D code and the tests and CI setup behind it, and for nothing else.
+for f in scripts/dashboard-ui/field-sky.js scripts/dashboard-ui/field-face.js scripts/dashboard-ui/field-order.js \
+  scripts/dashboard-ui/field.html scripts/dashboard-ui/field.css scripts/dashboard-ui/witness/witness.glb \
+  scripts/dashboard-ui/witness/README.md scripts/dashboard-ui/vendor/three/three.min.js \
+  scripts/test_field_browser.js scripts/test_field_browser.py scripts/ci-chrome.sh templates/developer/Dockerfile \
+  .github/workflows/ci.yml .github/actions/browser-shard/action.yml; do
+  assert_eq "field3d: $f" "$(f3d "$f")" "true"
+done
+for f in README.md docs/guides/06-dashboard.md CLAUDE.md scripts/dashboard.py scripts/dashboard-ui/term.js scripts/dashboard-ui/field-monitor.js \
+  scripts/test_field_shown_browser.py scripts/test_term_mic_browser.py factory/repos.py broker/server.py .github/workflows/docs.yml; do
+  assert_eq "no field3d: $f" "$(f3d "$f")" "false"
+done
+assert_eq "field3d beside other files" "$(f3d README.md scripts/dashboard.py scripts/dashboard-ui/field-face.js)" "true"
+assert_eq "a field3d change is a code change" "$(flags scripts/dashboard-ui/field-sky.js)" "false false true false"
 
 # A real range.
 repo="$tmp/repo"
@@ -75,12 +96,33 @@ git init -q "$repo"
   echo f > unrelated.md      # main moves on: not part of either PR (three dots)
   git add -A; git commit -qm drift
 )
-range() { (cd "$repo" && bash "$script" "$1" "$2" | sed 's/^[a-z]*=//' | tr '\n' ' ' | sed 's/ $//'); }
+range() { (cd "$repo" && bash "$script" "$1" "$2" | head -n 4 | sed 's/^[a-z]*=//' | tr '\n' ' ' | sed 's/ $//'); }
 assert_eq "range: a docs PR" "$(range main docs-pr)" "false false false true"
 assert_eq "range: a code PR is judged on its own files, not main's drift" "$(range main code-pr)" "false false true false"
 assert_eq "range: a bad base runs everything" "$(range deadbeefdeadbeefdeadbeefdeadbeefdeadbeef code-pr 2>/dev/null)" "$ALL"
-rename_out="$(cd "$repo" && git switch -qc rename-pr main~1 && mkdir -p docs && git mv scripts/a.py docs/a.py && git commit -qm rename && bash "$script" main~1 rename-pr | sed 's/^[a-z]*=//' | tr '\n' ' ' | sed 's/ $//')"
+assert_eq "range: a bad base runs the visual shards too" "$(cd "$repo" && bash "$script" deadbeefdeadbeefdeadbeefdeadbeefdeadbeef code-pr 2>/dev/null | sed -n 's/^field3d=//p')" "true"
+assert_eq "range: a code PR outside the 3D code skips the visual shards" "$(cd "$repo" && bash "$script" main code-pr | sed -n 's/^field3d=//p')" "false"
+rename_out="$(cd "$repo" && git switch -qc rename-pr main~1 && mkdir -p docs && git mv scripts/a.py docs/a.py && git commit -qm rename && bash "$script" main~1 rename-pr | head -n 4 | sed 's/^[a-z]*=//' | tr '\n' ' ' | sed 's/ $//')"
 assert_eq "range: a rename from scripts/ into docs/ counts both paths" "$rename_out" "false false true true"
+
+# Chrome: CI reads only the developer's Dockerfile, so the reviewer's must match it.
+chrome="$REPO_ROOT/scripts/ci-chrome.sh"
+for name in CHROME_VERSION CHROME_SHA256_AMD64 CHROME_SHA256_ARM64; do
+  dev="$(bash "$chrome" pin "$name" "$REPO_ROOT/templates/developer/Dockerfile")"
+  assert_eq "reviewer $name equals the developer's" "$(bash "$chrome" pin "$name" "$REPO_ROOT/templates/reviewer/Dockerfile")" "$dev"
+done
+assert_eq "reviewer's Chrome apt libraries equal the developer's" \
+  "$(bash "$chrome" apt "$REPO_ROOT/templates/reviewer/Dockerfile" | tr '\n' ' ')" "$(bash "$chrome" apt "$REPO_ROOT/templates/developer/Dockerfile" | tr '\n' ' ')"
+assert_eq "the developer's CHROME_VERSION looks like a version" "$(bash "$chrome" pin CHROME_VERSION | grep -Ec '^[0-9]+(\.[0-9]+){3}$')" "1"
+assert_eq "the developer's SHA-256 pins are 64 hex digits" "$(bash "$chrome" pin CHROME_SHA256_AMD64; bash "$chrome" pin CHROME_SHA256_ARM64)" "$(grep -E '^ARG CHROME_SHA256_(AMD64|ARM64)=[0-9a-f]{64}$' "$REPO_ROOT/templates/developer/Dockerfile" | sed 's/^[^=]*=//')"
+# The reader refuses what it can't read: a duplicated, a missing or a badly named ARG.
+printf 'ARG CHROME_VERSION=1.2.3.4\nARG CHROME_VERSION=5.6.7.8\n' > "$tmp/Dockerfile.dup"
+bash "$chrome" pin CHROME_VERSION "$tmp/Dockerfile.dup" >/dev/null 2>&1 && bad "a duplicated ARG refused" || ok "a duplicated ARG refused"
+bash "$chrome" pin CHROME_SHA256_AMD64 "$tmp/Dockerfile.dup" >/dev/null 2>&1 && bad "a missing ARG refused" || ok "a missing ARG refused"
+bash "$chrome" pin 'a.b' "$tmp/Dockerfile.dup" >/dev/null 2>&1 && bad "a badly named ARG refused" || ok "a badly named ARG refused"
+# A drifted reviewer pin is seen by the same comparison.
+sed 's/^ARG CHROME_VERSION=.*/ARG CHROME_VERSION=1.2.3.4/' "$REPO_ROOT/templates/reviewer/Dockerfile" > "$tmp/Dockerfile.drift"
+[ "$(bash "$chrome" pin CHROME_VERSION "$tmp/Dockerfile.drift")" != "$(bash "$chrome" pin CHROME_VERSION)" ] && ok "a drifted reviewer pin is seen" || bad "a drifted reviewer pin is seen"
 
 printf '%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" = 0 ]
