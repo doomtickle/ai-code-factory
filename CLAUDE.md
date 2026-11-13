@@ -90,7 +90,7 @@ socket, or host credentials. Full picture: README.md.
 - The dispatch bridge stays minimal: no shell, no arbitrary sbx/git commands,
   only allowlisted roles from `roles/`. Its only git commands: the fixed bundle fetch
   above, a `for-each-ref` listing of imported refs (same flags), and for the review
-  packet a read-only `log` + `diff --stat` of each imported branch vs host `HEAD`
+  packet a read-only `log` + `diff --stat` + `diff --numstat` of each imported branch vs host `HEAD`
   (same flags plus `--no-ext-diff --no-textconv`, since `.gitattributes` could name a
   driver), and for the dashboard's DIFF tab a `rev-parse` of the two ends and one
   capped `git diff` between those two commit ids (same flags; written to

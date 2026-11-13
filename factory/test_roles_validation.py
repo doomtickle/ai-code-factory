@@ -48,8 +48,9 @@ BAD = {"MODEL": "MODEL must contain only letters, digits, dots, dashes, undersco
        "LANES": "LANES must be a whole number from 1 to 8 (or empty)",
        "MAX_SESSION_TOKENS": "MAX_SESSION_TOKENS must be a whole number of tokens (or empty)",
        "MAX_TURNS": "MAX_TURNS must be a whole number of turns (or empty)",
-       "MAX_JOB_SECONDS": "MAX_JOB_SECONDS must be a whole number of seconds (or empty)"}
-ALLOWED = "allowed: MODEL MODELS EFFORT LANES MAX_SESSION_TOKENS MAX_TURNS MAX_JOB_SECONDS"
+       "MAX_JOB_SECONDS": "MAX_JOB_SECONDS must be a whole number of seconds (or empty)",
+       "SIZE_BUDGET_LINES": "SIZE_BUDGET_LINES must be a whole number of lines (or empty)"}
+ALLOWED = "allowed: MODEL MODELS EFFORT LANES MAX_SESSION_TOKENS MAX_TURNS MAX_JOB_SECONDS SIZE_BUDGET_LINES"
 
 
 class Fixture(unittest.TestCase):
@@ -164,7 +165,7 @@ class AllowlistTest(Fixture):
             self.assertEqual(
                 self.role_check(),
                 "%s: %s can't be set in a local override (allowed: MODEL MODELS EFFORT LANES MAX_SESSION_TOKENS "
-                "MAX_TURNS MAX_JOB_SECONDS); change it in roles/developer/role.conf" % (self.override_file, key), key)
+                "MAX_TURNS MAX_JOB_SECONDS SIZE_BUDGET_LINES); change it in roles/developer/role.conf" % (self.override_file, key), key)
 
     def test_a_local_override_cannot_set_optional_on_an_optional_role(self):
         self.write(self.enabled, "researcher\n")
@@ -183,7 +184,8 @@ class AllowlistTest(Fixture):
 class ValueTest(Fixture):
     def test_override_values_are_validated_like_role_conf_and_the_error_names_the_override(self):
         for line in ('MODEL="bad model"', 'MODELS="opus bad;model"', 'EFFORT="max"', 'LANES="9"', 'LANES="0"',
-                     'MAX_SESSION_TOKENS="lots"', 'MAX_TURNS="-1"', 'MAX_JOB_SECONDS="1h"'):
+                     'MAX_SESSION_TOKENS="lots"', 'MAX_TURNS="-1"', 'MAX_JOB_SECONDS="1h"',
+                     'SIZE_BUDGET_LINES="big"'):
             self.override(line + "\n")
             self.assertEqual(self.role_check(), self.bad(line.split("=")[0]), line)
 
@@ -191,7 +193,8 @@ class ValueTest(Fixture):
         # Unicode digits, letters and spaces, and ASCII whitespace other than the space: bash refused
         # every one, under C and C.UTF-8 alike, but for MODELS words split at a tab.
         odd = ("٣", "é", "a\u00a0b", "x\u2003", "\u20031", "1\v", "\v1", "1\f", "1\r", "1\t", "\t1")
-        for key in ("MODEL", "MODELS", "EFFORT", "LANES", "MAX_SESSION_TOKENS", "MAX_TURNS", "MAX_JOB_SECONDS"):
+        for key in ("MODEL", "MODELS", "EFFORT", "LANES", "MAX_SESSION_TOKENS", "MAX_TURNS", "MAX_JOB_SECONDS",
+                    "SIZE_BUDGET_LINES"):
             for value in odd:
                 self.override('%s="%s"\n' % (key, value))
                 passes = key == "MODELS" and value in ("1\t", "\t1")

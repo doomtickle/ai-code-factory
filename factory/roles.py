@@ -22,7 +22,7 @@ from factory.context import FactoryError
 # nothing that moves the security boundary. Keep in sync with ROLE_OVERRIDE_KEYS
 # in scripts/lib/roles.sh (a test compares them).
 ROLE_OVERRIDE_KEYS = ("MODEL", "MODELS", "EFFORT", "LANES", "MAX_SESSION_TOKENS", "MAX_TURNS",
-                      "MAX_JOB_SECONDS")
+                      "MAX_JOB_SECONDS", "SIZE_BUDGET_LINES")
 
 # Names no role may take; dispatch/server.py has the same list (_RESERVED_ROLE_NAMES).
 RESERVED_ROLE_NAMES = ("broker", "coordinator", "dispatch")
@@ -297,7 +297,8 @@ def validate_role(paths, role):
     lanes = get("LANES")
     if lanes != "" and re.fullmatch(r"[1-8]", lanes) is None:
         raise FactoryError("role %s: LANES must be a whole number from 1 to 8 (or empty)%s" % (role, note("LANES")))
-    for key, what in (("MAX_SESSION_TOKENS", "tokens"), ("MAX_TURNS", "turns"), ("MAX_JOB_SECONDS", "seconds")):
+    for key, what in (("MAX_SESSION_TOKENS", "tokens"), ("MAX_TURNS", "turns"), ("MAX_JOB_SECONDS", "seconds"),
+                      ("SIZE_BUDGET_LINES", "lines")):
         value = get(key)
         if value != "" and re.fullmatch(r"[0-9]+", value) is None:
             raise FactoryError("role %s: %s must be a whole number of %s (or empty)%s" % (role, key, what, note(key)))

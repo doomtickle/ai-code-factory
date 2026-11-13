@@ -709,6 +709,13 @@ class DelegateTests(Base):
         self.set_conf("developer", 'MAX_JOB_SECONDS="1h"')
         self.assertEqual(d.load_roles()["developer"]["max_job_seconds"], d.DEFAULT_MAX_JOB_SECONDS)
 
+    def test_size_budget_lines_parsing(self):
+        self.assertEqual(d.load_roles()["developer"]["size_budget_lines"], d.DEFAULT_SIZE_BUDGET_LINES)
+        self.set_conf("developer", 'SIZE_BUDGET_LINES="400"')
+        self.assertEqual(d.load_roles()["developer"]["size_budget_lines"], 400)
+        self.set_conf("developer", 'SIZE_BUDGET_LINES="lots"')
+        self.assertEqual(d.load_roles()["developer"]["size_budget_lines"], d.DEFAULT_SIZE_BUDGET_LINES)
+
     def test_a_stuck_claude_is_killed_at_the_time_limit_and_the_lane_freed(self):
         self.set_conf("developer", 'MAX_JOB_SECONDS="1"')
         started = time.time()
@@ -2024,6 +2031,57 @@ class FactoryDocsTest(Base):
         self.assertEqual(d.doc_slug("Getting the developer's work"), "getting-the-developers-work")
         self.assertEqual(d.doc_slug("Enabling approvals (Passdesk Pro)"), "enabling-approvals-passdesk-pro")
         self.assertEqual(d.doc_slug("`factory-test` modes"), "factory-test-modes")
+
+
+class SizeTests(unittest.TestCase):
+    def numstat(self, *rows):
+        return "".join(f"{a}\t{r}\t{path}\0" for a, r, path in rows)
+
+    def job(self, size):
+        job = d.Job("developer", "t", None, "", None)
+        job.size = size
+        return job
+
+    def test_is_test_path(self):
+        for path in ("test_x.py", "pkg/test_x.py", "a/b.test.js", "x.test.ts", "tests/a.py", "pkg/tests/sub/a.sh"):
+            self.assertTrue(d.is_test_path(path), path)
+        for path in ("server.py", "contest.py", "pkg/attests/a.py", "latest/a.py", "tests", "a/testing.py", "mytest_x.py"):
+            self.assertFalse(d.is_test_path(path), path)
+
+    def test_numstat_sums_files_lines_and_test_lines_with_binary_files_counted_as_no_lines(self):
+        size = d.numstat_size(self.numstat((10, 2, "a.py"), (5, 1, "tests/test_a.py"), ("-", "-", "logo.png")))
+        self.assertEqual(size, {"files": 3, "lines_added": 15, "lines_removed": 3, "test_lines_added": 5})
+        self.assertEqual(d.numstat_size(""), dict.fromkeys(d.SIZE_KEYS, 0))
+
+    def test_a_renamed_file_is_tested_by_its_new_path(self):
+        text = "7\t3\t\0src/a.py\0tests/test_a.py\0" + self.numstat((1, 0, "b.py"))
+        self.assertEqual(d.numstat_size(text),
+                         {"files": 2, "lines_added": 8, "lines_removed": 3, "test_lines_added": 7})
+
+    def test_over_budget_counts_only_non_test_added_lines(self):
+        over = d.numstat_size(self.numstat((300, 0, "server.py")))
+        self.assertTrue(self.job(over).over_budget())
+        self.assertTrue(self.job(over).summary()["over_budget"])
+        under = d.numstat_size(self.numstat((200, 0, "server.py"), (400, 0, "tests/test_server.py")))
+        self.assertFalse(self.job(under).over_budget())
+        summary = self.job(under).summary()
+        self.assertEqual(summary["size"]["lines_added"], 600)
+        self.assertNotIn("over_budget", summary)
+        self.assertNotIn("size", d.Job("developer", "t", None, "", None).summary())
+
+    def test_the_budget_is_the_jobs_own(self):
+        job = self.job(d.numstat_size(self.numstat((300, 0, "server.py"))))
+        job.size_budget_lines = 300
+        self.assertFalse(job.over_budget())
+
+    def test_size_round_trips_through_the_job_index_and_a_bad_one_is_dropped(self):
+        job = self.job({"files": 1, "lines_added": 2, "lines_removed": 3, "test_lines_added": 0})
+        job.status = "done"
+        self.assertEqual(d.job_from_record(job.record()).size, job.size)
+        for bad in ({"files": 1}, {**job.size, "files": True}, {**job.size, "files": -1}, "big", [1, 2, 3, 4]):
+            rec = job.record()
+            rec["size"] = bad
+            self.assertIsNone(d.job_from_record(rec).size, bad)
 
 
 class JobIndexTests(Base):

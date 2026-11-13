@@ -12,7 +12,7 @@ for roles defined in roles/*/role.conf, and all it may do to get there is:
   `factory-lane export` streamed out (size-capped) into the host project's
   remote-tracking refs `refs/remotes/factory-<lane>/factory/*`, with hooks and
   fsmonitor forced off, then `git for-each-ref` to report what arrived, and,
-  for the job's review packet, a read-only `git log` and `git diff --stat` of
+  for the job's review packet, a read-only `git log`, `git diff --stat` and `git diff --numstat` of
   each imported branch against the host's HEAD (same flags, external diff and
   textconv off), and for the dashboard's diff view the same range's full patch
   (`git rev-parse` of HEAD and the branch, then `git diff` between those two
@@ -116,6 +116,9 @@ DEFAULT_MAX_SESSION_TOKENS = 100_000
 # Wall-clock limit for one job's claude (role.conf MAX_JOB_SECONDS overrides it;
 # "0" = no limit). A stuck claude otherwise holds its lane until cancel_job.
 DEFAULT_MAX_JOB_SECONDS = 3600
+# Non-test added lines past which a job's result says over_budget (role.conf
+# SIZE_BUDGET_LINES overrides it). Only reported, never enforced.
+DEFAULT_SIZE_BUDGET_LINES = 250
 MAX_INSTRUCTIONS_CHARS = 20_000
 # Fixed environment for every role's claude. Roles keep their context in their
 # saved sessions and in the Coordinator's tasks; auto memory would only add
@@ -265,6 +268,7 @@ def load_roles(include_disabled: bool = False) -> dict:
             "max_session_tokens": parse_session_cap(values.get("MAX_SESSION_TOKENS", "")),
             "max_turns": parse_turns(values.get("MAX_TURNS", "")),
             "max_job_seconds": parse_job_seconds(values.get("MAX_JOB_SECONDS", "")),
+            "size_budget_lines": parse_size_budget(values.get("SIZE_BUDGET_LINES", "")),
             "lanes": parse_lanes(values.get("LANES", "")),
         }
     return roles
@@ -312,6 +316,13 @@ def parse_job_seconds(value: str) -> int:
     invalid means DEFAULT_MAX_JOB_SECONDS, 0 means none."""
     value = value.strip()
     return int(value) if value.isascii() and value.isdigit() else DEFAULT_MAX_JOB_SECONDS
+
+
+def parse_size_budget(value: str) -> int:
+    """role.conf SIZE_BUDGET_LINES: non-test added lines a job may add before its result
+    says over_budget; empty or invalid means DEFAULT_SIZE_BUDGET_LINES."""
+    value = value.strip()
+    return int(value) if value.isascii() and value.isdigit() else DEFAULT_SIZE_BUDGET_LINES
 
 
 def sandbox_name(role: str) -> str:
@@ -390,6 +401,8 @@ class Job:
         self.max_turns = 0  # claude --max-turns, from role.conf MAX_TURNS; 0 = none
         # Wall-clock limit for claude, from role.conf MAX_JOB_SECONDS; 0 = none.
         self.max_job_seconds = DEFAULT_MAX_JOB_SECONDS
+        self.size_budget_lines = DEFAULT_SIZE_BUDGET_LINES  # from role.conf SIZE_BUDGET_LINES
+        self.size: dict | None = None  # rw roles: {files, lines_added, lines_removed, test_lines_added}
         self.instructions = instructions
         self.status = "running"  # running | done | failed | cancelled
         self.started = time.time()
@@ -415,6 +428,10 @@ class Job:
         self.done = threading.Event()
         self.restored = False  # reloaded from the job index: no process, a short report only
 
+    def over_budget(self) -> bool:
+        return (self.size is not None
+                and self.size["lines_added"] - self.size["test_lines_added"] > self.size_budget_lines)
+
     def record(self) -> dict:
         """What the job index keeps: a one-line task, never its full text."""
         s = self.summary()
@@ -427,6 +444,8 @@ class Job:
                "branches": list(self.branches) if self.branches is not None else None,
                "import_errors": list(self.import_errors) if self.import_errors is not None else None,
                "packet": self.packet}
+        if self.size is not None:
+            rec["size"] = dict(self.size)
         if self.status != "running":
             rec["report"] = one_line(self.result, REPORT_SUMMARY_CHARS)
         return rec
@@ -449,6 +468,10 @@ class Job:
             out["branches"] = list(self.branches)
         if self.import_errors is not None:
             out["import_errors"] = list(self.import_errors)
+        if self.size is not None:
+            out["size"] = dict(self.size)
+            if self.over_budget():
+                out["over_budget"] = True
         if self.packet:
             out["packet"] = self.packet
         if with_result and self.status != "running":
@@ -565,6 +588,10 @@ def job_from_record(rec) -> "Job | None":
         job.branches = branches[:50]
         job.import_errors = [e for e in (_text(e, 2000) for e in (
             rec.get("import_errors") if isinstance(rec.get("import_errors"), list) else [])) if e][:20]
+    size = rec.get("size")
+    if (isinstance(size, dict) and set(size) == set(SIZE_KEYS)
+            and all(isinstance(v, int) and not isinstance(v, bool) and v >= 0 for v in size.values())):
+        job.size = dict(size)
     job.result = _text(rec.get("report"), REPORT_SUMMARY_CHARS) or ""
     # The packet path is recomputed, never taken from the file.
     if status != "running" and packet_path(job_id).is_file():
@@ -1080,6 +1107,49 @@ def packet_path(job_id: str) -> Path:
     return STATE / "packets" / f"{job_id}.md"
 
 
+SIZE_KEYS = ("files", "lines_added", "lines_removed", "test_lines_added")
+
+
+def is_test_path(path: str) -> bool:
+    """Whether a repo path is test code: a file name starting with test_ or containing
+    .test., or any folder named tests."""
+    *folders, name = path.split("/")
+    return name.startswith("test_") or ".test." in name or "tests" in folders
+
+
+def branch_size(repo: Path, ref: str) -> dict:
+    """{files, lines_added, lines_removed, test_lines_added} of an imported branch against
+    HEAD, from git diff --numstat (same read-only argv as branch_detail's --stat). A binary
+    file counts as a file with no lines."""
+    full = ref if ref.startswith("refs/") else f"refs/remotes/{ref}"
+    cp = host_git(repo, "diff", "--numstat", "-z", "--no-color", "--no-ext-diff", "--no-textconv",
+                  f"HEAD...{full}")
+    if cp.returncode != 0:
+        raise OSError(f"git diff --numstat failed: {excerpt(cp.stderr, 300)}")
+    return numstat_size(cp.stdout.decode("utf-8", "replace"))
+
+
+def numstat_size(text: str) -> dict:
+    """Size from `git diff --numstat -z` output. A renamed file has an empty path field
+    followed by its old and new paths, so the new path is what is tested."""
+    size = dict.fromkeys(SIZE_KEYS, 0)
+    fields = text.split("\0")
+    i = 0
+    while i < len(fields) and fields[i]:
+        added, _, rest = fields[i].partition("\t")
+        removed, _, path = rest.partition("\t")
+        if not path and i + 2 < len(fields):
+            path, i = fields[i + 2], i + 2
+        i += 1
+        a = int(added) if added.isdigit() else 0
+        size["files"] += 1
+        size["lines_added"] += a
+        size["lines_removed"] += int(removed) if removed.isdigit() else 0
+        if is_test_path(path):
+            size["test_lines_added"] += a
+    return size
+
+
 def branch_detail(repo: Path, ref: str) -> list:
     """Commits and diffstat of an imported branch against the host repo's HEAD.
     Read-only git with a fixed argv: hooks and fsmonitor off (GIT_SAFE), and
@@ -1288,6 +1358,11 @@ def write_packet(job: Job) -> None:
     verdicts = [line.group(1)] if line else _VERDICT.findall(job.result)
     if verdicts:
         rows.append(("Verdict", verdicts[-1]))
+    if job.size is not None:
+        non_test = job.size["lines_added"] - job.size["test_lines_added"]
+        rows.append(("Size", f"{job.size['files']} files, +{job.size['lines_added']}/-{job.size['lines_removed']} lines, "
+                             f"{non_test} non-test added (budget {job.size_budget_lines})"
+                             + (", OVER BUDGET" if job.over_budget() else "")))
     parts = ["\n".join([f"# {job.role} job {job.id}: {job.status}", ""] + [f"- {k}: {v}" for k, v in rows]),
              "## Task\n\n" + sanitize(job.task, 8000).strip()]
     if job.branches is not None:
@@ -1433,6 +1508,18 @@ def run_claude(job: Job, log: Transcript, workdir: str, lane_root: str | None) -
         break
 
 
+def job_size(job: Job) -> dict | None:
+    """The job's imported branches' sizes summed; None when it brought no branch."""
+    if not job.branches:
+        return None
+    total = dict.fromkeys(SIZE_KEYS, 0)
+    for b in job.branches:
+        repo = PROJECT if b["repo"] == "." else PROJECT / b["repo"]
+        for k, v in branch_size(repo, b["ref"]).items():
+            total[k] += v
+    return total
+
+
 def run_job(job: Job) -> None:
     log = Transcript(job.lane)
     log.write("─" * 60)
@@ -1472,6 +1559,10 @@ def run_job(job: Job) -> None:
         except Exception as e:  # noqa: BLE001
             job.import_errors.append(one_line(f"import error: {type(e).__name__}: {e}", 2000))
         job.finished = time.time()
+        try:
+            job.size = job_size(job)
+        except Exception as e:  # noqa: BLE001 - size is only reported
+            log.write(f"   (no size: {one_line(f'{type(e).__name__}: {e}', 300)})")
         try:
             write_packet(job)
             log.write(f"📄 review packet: factory packet {job.id}")
@@ -1634,6 +1725,7 @@ def tool_delegate(args: dict) -> str:
         job.session_mode = mode
         job.max_turns = roles[role]["max_turns"]
         job.max_job_seconds = roles[role]["max_job_seconds"]
+        job.size_budget_lines = roles[role]["size_budget_lines"]
         _jobs[job.id] = job
     save_job_index()
     threading.Thread(target=run_job, args=(job,), daemon=True).start()

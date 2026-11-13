@@ -17,7 +17,7 @@ affected, after listing what each one loses and asking you.
 | You changed | Run |
 |---|---|
 | Per-project notes (`projects/<folder>.md`, `projects/<folder>.<role>.md`), by hand or in the dashboard's Settings notes editor | `factory start` |
-| A role's instructions, `MODEL`, `MODELS`, `EFFORT`, `LANES`, `MAX_SESSION_TOKENS`, `MAX_TURNS`, `MAX_JOB_SECONDS` | `factory start` |
+| A role's instructions, `MODEL`, `MODELS`, `EFFORT`, `LANES`, `MAX_SESSION_TOKENS`, `MAX_TURNS`, `MAX_JOB_SECONDS`, `SIZE_BUDGET_LINES` | `factory start` |
 | A role's `BROKER_TOOLS` (it already had some) | `factory start` |
 | A new role, or a removed one | `factory start` |
 | A role's `TEMPLATE`, `WORKSPACE` or `kit/`, or whether it has any `BROKER_TOOLS` at all | `factory update` |
@@ -122,6 +122,7 @@ and the only ones an override may set:
 | `MAX_SESSION_TOKENS` | A lane whose saved session is larger starts the next task fresh; empty is 100000, `0` is no cap | empty |
 | `MAX_TURNS` | Turns (tool calls and replies) one job may take before it stops as failed, keeping its session; a safety net against a lost job; empty or `0` is no cap | `200` |
 | `MAX_JOB_SECONDS` | Wall-clock seconds one job's `claude` may run before the bridge kills it and marks the job failed (the lane is freed and any partial report is kept); empty is 3600, `0` is no limit | empty |
+| `SIZE_BUDGET_LINES` | Non-test lines a developer job may add before its result and review packet say `over_budget` (reported only, never enforced); empty is 250 | empty |
 
 The developer's `MODEL` and `MODELS` name sonnet and haiku by their full ids,
 `claude-sonnet-5-5` and `claude-haiku-5-5`, not the aliases `sonnet` and

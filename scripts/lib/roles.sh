@@ -72,7 +72,7 @@ role_optional() { [ "$(conf_get "$ROOT/roles/$1/role.conf" OPTIONAL)" = 1 ]; }
 # checks role.conf's.
 # start-dispatch.sh snapshots the overrides for the bridge
 # (DISPATCH_STATE/role-overrides), so changes apply on the next `factory start`.
-readonly ROLE_OVERRIDE_KEYS="MODEL MODELS EFFORT LANES MAX_SESSION_TOKENS MAX_TURNS MAX_JOB_SECONDS"
+readonly ROLE_OVERRIDE_KEYS="MODEL MODELS EFFORT LANES MAX_SESSION_TOKENS MAX_TURNS MAX_JOB_SECONDS SIZE_BUDGET_LINES"
 
 role_override_file() { printf '%s/roles/%s.conf' "$FACTORY_CONFIG" "$1"; }
 

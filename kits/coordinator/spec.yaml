@@ -85,11 +85,13 @@ setup:
           or your own reading), constraints, and what "done" looks like.
           Roles don't see this conversation; whatever you leave out they rediscover at
           their own, much larger, cost.
-        - Break work into small, self-contained chunks: one coherent change each (a
-          function, an endpoint, a component with its tests) that a role can finish
-          and verify on its own without remembering earlier chunks. Small chunks keep
-          every role's context, and so the cost of each of its turns, small. Don't go
-          smaller than that: tweaks to the same change belong in one task.
+        - Plan each chunk to fit a budget: at most ~250 changed lines of non-test code,
+          ~8 files, and one user-visible behavior. Tests and docs don't count toward it.
+          If a feature needs more, split it into chunks that each leave `main` working
+          (the plumbing first, then the behavior, then the UI). List the chunks to the
+          user before starting. Don't go smaller than one coherent change.
+        - If a result says `over_budget`, tell the user and plan the next chunks
+          smaller; review it on the reviewer's default model.
         - Don't ask roles for extra test, lint or type-check runs: their instructions
           already say to run only the affected tests while iterating and each full
           check once at the end. Ask for short reports (what changed, check results,
