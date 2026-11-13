@@ -116,4 +116,28 @@ const job = (id, role, status, verdict, start, end, extra) => Object.assign({ id
   assert.ok(tiny.at.has("w"), "a waiting or running order keeps a label");
   assert.ok(tiny.hidden.includes("x"));
 }
+// Terminal 0's pane: docked -> Bigger -> Full screen -> exit returns to the size before; Full screen is never entered or left by anything else
+{
+  let st = { size: "docked", before: "docked" };
+  const go = act => (st = FO.paneSize(st, act)).size;
+  assert.strictEqual(go("bigger"), "grown");
+  assert.strictEqual(go("full"), "full");
+  assert.strictEqual(go("full"), "grown", "Exit full screen returns to Bigger");
+  assert.strictEqual(go("bigger"), "docked");
+  assert.strictEqual(go("full"), "full");
+  assert.strictEqual(go("full"), "docked", "and to docked when it was docked");
+  go("bigger"); go("full");
+  assert.strictEqual(go("bigger"), "full", "the Bigger key does nothing in Full screen");
+  assert.strictEqual(go("into"), "full", "a click into the frame, or away from it, leaves Full screen alone");
+  assert.strictEqual(go("away"), "full");
+  assert.strictEqual(go("esc"), "grown", "Esc on the page steps out of Full screen first");
+  assert.strictEqual(go("esc"), "docked", "then shrinks");
+  go("bigger"); go("full");
+  assert.strictEqual(go("key"), "grown", "T leaves Full screen for the size before");
+  assert.strictEqual(go("key"), "docked");
+  assert.strictEqual(go("key"), "grown");
+  assert.strictEqual(go("away"), "docked");
+  assert.strictEqual(go("into"), "grown");
+  assert.deepStrictEqual(FO.paneSize({ size: "bogus", before: "full" }, "full"), { size: "full", before: "docked" }, "an unknown size is docked");
+}
 console.log("field order checks passed");

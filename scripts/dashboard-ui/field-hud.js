@@ -123,16 +123,20 @@
   setInterval(() => { const sp = !!(window.LiveVoice && LiveVoice.speaking), now = Date.now(); if (sp !== hushSent || (sp && now - hushAt > 2000)) { hushSent = sp; hushAt = now; tell(sp ? "tm:hush" : "tm:open"); } }, 150);
   function setCu(big) { $("cu-wrap").classList.toggle("expanded", big); }
   function selectCard(id) { if (cuFrame && CARD.test(id)) cuFrame.contentWindow.postMessage({ type: "cu:select", id }, cuOrigin); }
-  // The pane is always there; "grown" is the owner's own click into it, T, or the Bigger key. Only those ever focus the terminal frame.
-  let grown = false;
-  function setGrown(on, focus) { if (!termFrame) return; grown = on; $("term-panel").classList.toggle("grown", on); $("term-key").setAttribute("aria-expanded", String(on)); $("term-size").textContent = on ? "Smaller" : "Bigger"; if (on && focus) termFrame.focus(); else if (!on && document.activeElement === termFrame) termFrame.blur(); }
+  // The pane is always there; it is docked, Bigger ("grown") or Full screen (CSS only, not the browser's Fullscreen API, which would need allow="fullscreen" on the frame).
+  // FieldOrder.paneSize picks the next size. Only the owner's own click into it, T, the Terminal key or the Bigger key ever focus the terminal frame (Full screen never does).
+  let pane = { size: "docked", before: "docked" };
+  function setPane(act, focus) { if (!termFrame) return; pane = FieldOrder.paneSize(pane, act); const sz = pane.size, full = sz === "full", p = $("term-panel");
+    p.classList.toggle("grown", sz === "grown"); p.classList.toggle("full", full); $("term-key").setAttribute("aria-expanded", String(sz !== "docked"));
+    $("term-size").textContent = sz === "grown" ? "Smaller" : "Bigger"; $("term-size").hidden = full; $("term-full").textContent = full ? "Exit full screen" : "Full screen"; $("term-full").setAttribute("aria-pressed", String(full));
+    if (sz !== "docked" && focus) termFrame.focus(); else if (sz === "docked" && document.activeElement === termFrame) termFrame.blur(); }
   // Clicking into the frame moves focus there without a message to this page; the window's blur is how this page hears it.
-  addEventListener("blur", () => setTimeout(() => { if (!termFrame) return; if (document.activeElement === termFrame) { unlock(); setGrown(true); } else if (cuFrame && document.activeElement === cuFrame) setGrown(false); }, 0));
-  document.addEventListener("pointerdown", e => { if (grown && !(e.target.closest && e.target.closest(".term-panel,#term-key,#monitor-root,.cu-wrap.expanded"))) setGrown(false); });
+  addEventListener("blur", () => setTimeout(() => { if (!termFrame) return; if (document.activeElement === termFrame) { unlock(); setPane("into"); } else if (cuFrame && document.activeElement === cuFrame) setPane("away"); }, 0));
+  document.addEventListener("pointerdown", e => { if (pane.size === "grown" && !(e.target.closest && e.target.closest(".term-panel,#term-key,#monitor-root,.cu-wrap.expanded"))) setPane("away"); });
   addEventListener("message", e => { if (cuFrame && e.source === cuFrame.contentWindow && e.origin === cuOrigin) { if (e.data === "cu:expand") setCu(true); else if (e.data === "cu:collapse") setCu(false); else if (e.data === "cu:reload") location.reload(); return; }
     if (termFrame && e.source === termFrame.contentWindow && e.origin === termOrigin && typeof e.data === "string") { const m = /^t0:(enter|out|still)$/.exec(e.data); if (m) t0(m[1]); } });
   $("settings-key").addEventListener("click", () => { if (cuFrame) cuFrame.contentWindow.postMessage({ type: "cu:open", screen: "settings" }, cuOrigin); });
-  $("term-key").addEventListener("click", () => setGrown(!grown, true)); $("term-size").addEventListener("click", () => setGrown(!grown, !grown));
+  $("term-key").addEventListener("click", () => setPane("key", true)); $("term-size").addEventListener("click", () => setPane("bigger", pane.size === "docked")); $("term-full").addEventListener("click", () => setPane("full", false));
 
   // ---------- questions: the sky answers
   const back = $("back"); let viewIdle = 0;
@@ -156,7 +160,7 @@
   document.addEventListener("fullscreenchange", () => $("full").setAttribute("aria-pressed", String(!!document.fullscreenElement)));
   $("legend-k").addEventListener("click", () => { const closed = $("legend").classList.toggle("closed"); $("legend-k").setAttribute("aria-expanded", String(!closed)); });
   const LENS_KEYS = { __proto__: null, 1: "spend", 2: "stuck", 3: "kinds", 4: "time" };
-  document.addEventListener("keydown", e => { if (e.target.matches && e.target.matches("input,textarea")) return; if (window.FieldMonitor && FieldMonitor.isOpen()) return; const k = e.key.toLowerCase(); if (k === "v") setVoice(!on); else if (k === "t" && termFrame) { e.preventDefault(); setGrown(!grown, true); } else if (k === "," ) $("settings-key").click(); else if (LENS_KEYS[k] && !e.ctrlKey && !e.metaKey && !e.altKey) askView(LENS_KEYS[k]); else if (k === "escape") { tell("tm:cancel"); if (grown) setGrown(false); else if (Sky && Sky.view !== "home") goHome(); else $("legend").classList.add("closed"); } });
+  document.addEventListener("keydown", e => { if (e.target.matches && e.target.matches("input,textarea")) return; if (window.FieldMonitor && FieldMonitor.isOpen()) return; const k = e.key.toLowerCase(); if (k === "v") setVoice(!on); else if (k === "t" && termFrame) { e.preventDefault(); setPane("key", true); } else if (k === "," ) $("settings-key").click(); else if (LENS_KEYS[k] && !e.ctrlKey && !e.metaKey && !e.altKey) askView(LENS_KEYS[k]); else if (k === "escape") { tell("tm:cancel"); if (pane.size !== "docked") setPane("esc"); else if (Sky && Sky.view !== "home") goHome(); else $("legend").classList.add("closed"); } });
   LF.fail = text => { setCaption(text + " Try a browser or setting where WebGL is on."); $("meta").textContent = "The job list and the controls still work."; };
 
   // ---------- the work list and today's numbers, from /api/state

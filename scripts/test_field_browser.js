@@ -336,6 +336,13 @@ async function witness(url, reduced) {
   const until = async (expr, what, ms = 40000) => { for (let t = 0; t < ms; t += 100) { if (await b.ev(expr)) return; await b.sleep(100); } throw new Error("never: " + what + " (" + await b.ev(`JSON.stringify({ idle: LF.W.idle, working: LF.W.working, run: LF.W.running, wait: LF.W.waiting, speaking: LF.W.speaking, blink: LF.W.m.blink, work: LF.W.s.work })`) + ")"); };
   try {
     await until(`!!(window.LF && LF.W.ready && !document.getElementById("hud").hidden)`, "the page is up");
+    // the bust eases by wall-clock time: a 60 fps frame moves each easing exactly its k, a 30 fps frame moves it as far as two 60 fps ones, and a long gap (a hidden tab) lands on the target with no overshoot, NaN or negative step
+    const st = await b.ev(`(() => { const S = LF.step, D = LF.frameDt, f = 1 / 60; return { at60: [.55, .4, .12, .07, .035].map(k => Math.abs(S(k, f) - k)), same: Math.abs(S(.12, 2 * f) - (1 - (1 - .12) ** 2)), slow: [S(.12, 4), S(.035, 2), S(.55, 1e9), S(.07, 0)], dt: [D(5000, 1000), D(1000, 5000), D(NaN, 1), D(1000, 1000), D(1016.7, 1000)] }; })()`);
+    assert.ok(st.at60.every(d => d < 1e-12), "a 60 fps frame moves each easing exactly its per-frame fraction");
+    assert.ok(st.same < 1e-12, "a frame twice as long moves as far as two 60 fps frames");
+    assert.ok(st.slow[0] > .99 && st.slow[0] <= 1 && st.slow[1] > .8 && st.slow[1] < 1 && st.slow[2] === 1 && st.slow[3] === 0, "a long frame takes a bigger step, never past the target, and no step for no time");
+    assert.deepStrictEqual(st.dt.slice(0, 4), [2, 0, 0, 0], "dt is capped at 2 s and never negative or NaN");
+    assert.ok(Math.abs(st.dt[4] - .0167) < 1e-9, "a real frame's dt is its elapsed seconds");
     // the eyes sit a hair behind the lids: a near plane of .1 and a 24-bit depth texture on both composer targets (the clone too, after a resize), not three's 16-bit default
     const depth = () => b.ev(`(() => { const c = LF.composer, d = t => t.depthTexture && [t.depthTexture.type, t.depthTexture.image.width, t.depthTexture.image.height]; return { near: LF.camera.near, gl2: LF.renderer.capabilities.isWebGL2, a: d(c.renderTarget1), b: d(c.renderTarget2), w: c.renderTarget1.width, h: c.renderTarget1.height }; })()`);
     let dp = await depth();
