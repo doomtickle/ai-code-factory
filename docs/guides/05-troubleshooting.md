@@ -322,8 +322,10 @@ transcript.
 
 ### A job seems stuck
 
-A job can run for a long time; the Coordinator waits up to 600 seconds per
-call and then waits again. Open it on the dashboard, watch it in
+A job can run for a long time; the Coordinator waits up to 4 minutes per
+call and then waits again. A still-running reply carries `elapsed_seconds` and
+`seconds_since_last_output` (how long since the job last wrote to its transcript),
+which tell a busy job from a stuck one. Open it on the dashboard, watch it in
 `factory watch`, or with `factory logs <role>`, to see whether it's still making
 progress. If it isn't, ask the Coordinator to stop it:
 
@@ -394,12 +396,12 @@ in the repo) before you update.
 MCP server "mcp-gateway" transport dropped mid-call; response for tool "wait_for_job" was lost
 ```
 
-**Cause:** a `delegate` or `wait_for_job` call that blocks for minutes sat on a
-silent HTTP connection between the Coordinator and the dispatch bridge, and
+**Cause:** a `delegate`, `wait_for_job` or `wait_for_any` call that blocks (at most
+4 minutes, `WAIT_SLICE_SECONDS`) sat on a silent HTTP connection between the Coordinator and the dispatch bridge, and
 something on the way (the sbx MCP gateway proxy, most likely) dropped it after
 a few minutes idle. The job is not affected.
 **Fix:** none needed to keep the work: the job keeps running, and calling
-`wait_for_job` again with the same job id (a long wait is safe to retry; use
+`wait_for_job` again with the same job id (a wait is safe to retry; use
 `timeout_seconds: 0` for the status right now) returns its result. The bridge
 now keeps such a call alive: when the client accepts `text/event-stream` (Claude
 Code's HTTP MCP client does) it answers a blocking call as an event stream and
@@ -419,12 +421,15 @@ CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT (ms) globally (0 disables).
 ```
 
 **Cause:** this is Claude Code's own idle-tool abort, not a dispatch bridge
-error. `delegate` and `wait_for_job` can legitimately block up to the bridge's
-600 s maximum wait, which is longer than Claude Code's default silent-tool
-timeout. The Coordinator's kit already raises
+error. The bridge holds `delegate`, `wait_for_job` and `wait_for_any` for at most
+`WAIT_SLICE_SECONDS` (240 s), below Claude Code's default silent-tool timeout
+(~330 s), and the Coordinator's kit also raises
 `CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT` to 660000 ms in its managed settings
-(`kits/coordinator/spec.yaml`) to prevent this; seeing the message anyway means
-the Coordinator's sandbox was created before that setting existed.
+(`kits/coordinator/spec.yaml`) as a safety margin. Seeing the message at about
+330 s means the Coordinator's sandbox was created before that setting existed or
+the bridge is old (`factory restart`); at about 660 s, something between the
+Coordinator and the bridge is swallowing the keepalives. The job keeps running
+either way: call `wait_for_job` with its id.
 **Fix:** run `factory update` to recreate the Coordinator with the current
 kit. This discards the Coordinator's conversation history (role sessions,
 branches already brought back and logs are kept). The Coordinator is read-only,

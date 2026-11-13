@@ -98,12 +98,17 @@ SBX = os.environ.get("DISPATCH_SBX", "sbx")
 MAX_REQUEST_BYTES = 1_000_000
 MAX_TASK_CHARS = 50_000
 MAX_RESULT_CHARS = 30_000
-MAX_WAIT_SECONDS = 600
+# No single blocking call (delegate, wait_for_job, wait_for_any) holds longer than
+# this: shorter than every idle timeout between the Coordinator and the bridge, and
+# under the ~5 minute prompt-cache lifetime, so a "still running" return is cheap.
+WAIT_SLICE_SECONDS = 240
 # A wait shorter than this is stretched to it (a wait still returns the moment the
-# job ends). Every poll is a Coordinator turn that re-reads its whole conversation,
-# and the audit log showed it picking 90-240 s waits and polling jobs several
-# times. 0 is still "the status right now, without waiting".
-MIN_WAIT_SECONDS = 300
+# job ends). Every poll is a Coordinator turn that re-reads its whole conversation.
+# 0 is still "the status right now, without waiting".
+MIN_WAIT_SECONDS = 60
+# wait_for_any: most job ids in one call, and how often it looks for a job that ended.
+MAX_WAIT_JOB_IDS = 20
+WAIT_ANY_POLL_SECONDS = 0.2
 # While a blocking tools/call runs, a client that accepts text/event-stream gets a
 # keepalive this often, so an idle timeout between it and the bridge doesn't drop
 # the connection (the job keeps running either way).
@@ -402,6 +407,8 @@ class Job:
         # Wall-clock limit for claude, from role.conf MAX_JOB_SECONDS; 0 = none.
         self.max_job_seconds = DEFAULT_MAX_JOB_SECONDS
         self.size_budget_lines = DEFAULT_SIZE_BUDGET_LINES  # from role.conf SIZE_BUDGET_LINES
+        self.turns = 0  # assistant messages seen in the stream-json events so far
+        self.last_message_id: str | None = None
         self.size: dict | None = None  # rw roles: {files, lines_added, lines_removed, test_lines_added}
         self.instructions = instructions
         self.status = "running"  # running | done | failed | cancelled
@@ -794,6 +801,12 @@ def render_event(event: dict, log: Transcript, job: Job) -> None:
             log.write(f"   model: {job.model_used}")
     elif etype == "assistant":
         usage = (event.get("message") or {}).get("usage")
+        message_id = (event.get("message") or {}).get("id")
+        if not event.get("parent_tool_use_id"):
+            # One message can arrive as several events (a block each): count it once.
+            if not isinstance(message_id, str) or message_id != job.last_message_id:
+                job.turns += 1
+            job.last_message_id = message_id if isinstance(message_id, str) else None
         # Skip subagent messages: their usage is the subagent's context, not the session's.
         if isinstance(usage, dict) and not event.get("parent_tool_use_id"):
             job.context_tokens = sum(int(usage.get(k) or 0) for k in (
@@ -1652,7 +1665,7 @@ def tool_delegate(args: dict) -> str:
         raise Denied(f"task exceeds {MAX_TASK_CHARS} characters")
     # Waiting is the default: one call per job. wait_seconds: 0 starts the job and
     # returns its id at once, for running several roles in parallel.
-    wait = args.get("wait_seconds", MAX_WAIT_SECONDS)
+    wait = args.get("wait_seconds", WAIT_SLICE_SECONDS)
     if not isinstance(wait, int) or isinstance(wait, bool) or wait < 0:
         raise Denied("wait_seconds must be a non-negative integer")
     lanes = roles[role]["lanes"]
@@ -1734,12 +1747,34 @@ def tool_delegate(args: dict) -> str:
     return f"Started job {job.id} on {lane} ({mode}). Call wait_for_job with this job id to get the report."
 
 
+def wait_slice(timeout: int) -> float:
+    """How long one blocking call may hold: at least MIN_WAIT_SECONDS, never more than
+    WAIT_SLICE_SECONDS (the cap wins if a test patches them the wrong way round)."""
+    return min(max(timeout, MIN_WAIT_SECONDS), WAIT_SLICE_SECONDS)
+
+
+def running_summary(job: "Job", with_result: bool = False) -> dict:
+    """The job's summary; while it runs, also how long since its lane last wrote to the
+    transcript (busy or stuck?) and, if the events gave it, the turns taken so far."""
+    summary = job.summary(with_result=with_result)
+    if not job.done.is_set():
+        now = time.time()
+        try:
+            last = Transcript(job.lane).path.stat().st_mtime
+        except OSError:
+            last = job.started
+        summary["seconds_since_last_output"] = max(0, round(now - max(last, job.started)))
+        if job.turns:
+            summary["turns_so_far"] = job.turns
+    return summary
+
+
 def job_report(job: "Job", timeout: int, **extra) -> str:
     """The job's summary after waiting for it: not at all for timeout 0, else
-    between MIN_WAIT_SECONDS and MAX_WAIT_SECONDS, returning as soon as it ends."""
+    between MIN_WAIT_SECONDS and WAIT_SLICE_SECONDS, returning as soon as it ends."""
     if timeout:
-        job.done.wait(min(max(timeout, MIN_WAIT_SECONDS), MAX_WAIT_SECONDS))
-    summary = {**job.summary(with_result=True), **extra}
+        job.done.wait(wait_slice(timeout))
+    summary = {**running_summary(job, with_result=True), **extra}
     if not job.done.is_set():
         summary["note"] = "still running; call wait_for_job again"
     return json.dumps(summary, ensure_ascii=False)
@@ -1749,10 +1784,45 @@ def tool_wait_for_job(args: dict) -> str:
     job = _jobs.get(args["job_id"])
     if job is None:
         raise Denied(f"unknown job {args['job_id']!r}")
-    timeout = args.get("timeout_seconds", MAX_WAIT_SECONDS)
-    if not isinstance(timeout, int) or timeout < 0:
+    timeout = args.get("timeout_seconds", WAIT_SLICE_SECONDS)
+    if not isinstance(timeout, int) or isinstance(timeout, bool) or timeout < 0:
         raise Denied("timeout_seconds must be a non-negative integer")
     return job_report(job, timeout)
+
+
+def tool_wait_for_any(args: dict) -> str:
+    ids = args["job_ids"]
+    if not isinstance(ids, list) or not 1 <= len(ids) <= MAX_WAIT_JOB_IDS:
+        raise Denied(f"job_ids must be a list of 1 to {MAX_WAIT_JOB_IDS} job ids")
+    if not all(isinstance(i, str) for i in ids):
+        raise Denied("job_ids must be strings")
+    ids = list(dict.fromkeys(ids))
+    jobs = []
+    for job_id in ids:
+        job = _jobs.get(job_id)
+        if job is None:
+            raise Denied(f"unknown job {job_id!r}")
+        jobs.append(job)
+    timeout = args.get("timeout_seconds", WAIT_SLICE_SECONDS)
+    if not isinstance(timeout, int) or isinstance(timeout, bool) or timeout < 0:
+        raise Denied("timeout_seconds must be a non-negative integer")
+    deadline = time.monotonic() + (wait_slice(timeout) if timeout else 0)
+    while True:
+        ended = next((j for j in jobs if j.done.is_set()), None)
+        remaining = deadline - time.monotonic()
+        if ended is not None or remaining <= 0:
+            break
+        time.sleep(min(WAIT_ANY_POLL_SECONDS, remaining))
+    if ended is None:
+        return json.dumps({"status": "running", "note": "none of these jobs has ended yet; "
+                           "call wait_for_any again with the same job_ids",
+                           "jobs": [running_summary(j) for j in jobs]}, ensure_ascii=False)
+    others = [running_summary(j) for j in jobs if j is not ended]
+    out = {"finished": running_summary(ended, with_result=True), "others": others}
+    if any(j.get("status") != "running" for j in others):
+        out["note"] = ("more of these jobs have ended; call wait_for_any again without the ones "
+                       "you have handled, or wait_for_job for one")
+    return json.dumps(out, ensure_ascii=False)
 
 
 def tool_job_status(args: dict) -> str:
@@ -1990,10 +2060,11 @@ TOOLS = {
                    "context size and total cost so far.",
                    {}, []),
     "delegate": (tool_delegate, "Start a task on a role agent in its own sandbox and wait for it: by "
-                 "default it waits up to 600 s (wait_seconds; a shorter value is stretched to at least "
-                 "300 s, and it returns the moment the job ends) and returns the same result as "
-                 "wait_for_job, so one call covers a whole job. wait_seconds: 0 returns the job id at "
-                 "once, to run several roles in parallel and wait_for_job each. The role continues its "
+                 "default it waits up to 240 s (wait_seconds; the most one call holds, and a shorter value "
+                 "is stretched to at least 60 s; it returns the moment the job ends) and returns the "
+                 "same result as wait_for_job. If the job is still running then, that is normal: call "
+                 "wait_for_job with the job id. wait_seconds: 0 returns the job id at "
+                 "once, to run several roles in parallel and wait_for_any or wait_for_job them. The role continues its "
                  "previous session unless fresh_session is true or the "
                  "session is over the role's size cap. Write a self-contained task: roles cannot see your "
                  "conversation. model (optional) runs this task on another of the role's allowed models "
@@ -2011,9 +2082,12 @@ TOOLS = {
                   "lane": {"type": "integer"}},
                  ["role", "task"]),
     "wait_for_job": (tool_wait_for_job, "Wait for a job and return its status and, when finished, the "
-                     "role's report. timeout_seconds defaults to 600 (the maximum); a shorter value is "
-                     "stretched to at least 300, since every call costs you a turn, and the wait returns "
-                     "the moment the job ends anyway; 0 returns the status right now. model is the job "
+                     "role's report. timeout_seconds defaults to 240 (the most one call holds); a shorter "
+                     "value is stretched to at least 60, and the wait returns the moment the job ends "
+                     "anyway; 0 returns the status right now. A job still running comes back with "
+                     "elapsed_seconds, seconds_since_last_output (how long since it last wrote to its "
+                     "transcript: small is busy, large may be stuck) and turns_so_far when known; call "
+                     "wait_for_job again. model is the job "
                      "session's main model (omitted until known; subagents may use others), cost_usd "
                      "is this job's cost (omitted if unknown), session_cost_usd the role session's "
                      "total so far, and context_tokens the approximate context the session now carries. "
@@ -2025,6 +2099,16 @@ TOOLS = {
                      "and diffstat, tests, broker calls, cost, report); the user reads it with "
                      "`factory packet <job_id>`.",
                      {"job_id": {"type": "string"}, "timeout_seconds": {"type": "integer"}}, ["job_id"]),
+    "wait_for_any": (tool_wait_for_any, "Wait for the first of several jobs to end (job_ids: 1 to "
+                     f"{MAX_WAIT_JOB_IDS} job ids), for jobs running in parallel. It returns the moment any "
+                     "ends, with that job's full result under finished (same fields as wait_for_job) and "
+                     "the status of the others under others; if several have ended it returns one and "
+                     "notes the rest. timeout_seconds works as in wait_for_job (default 240, the most "
+                     "one call holds). If none has ended it returns status running with each job's "
+                     "elapsed_seconds and seconds_since_last_output: call it again with the same job_ids. "
+                     "Reads job state only.",
+                     {"job_ids": {"type": "array", "items": {"type": "string"}},
+                      "timeout_seconds": {"type": "integer"}}, ["job_ids"]),
     "job_status": (tool_job_status, "Show the most recent jobs (20 by default; limit up to 200) and their "
                    "status. The list is kept on the user's machine across factory restarts and updates: "
                    "a job that was running when the bridge stopped shows as interrupted (its transcript "
@@ -2056,7 +2140,7 @@ TOOLS = {
              {"text": {"type": "string"}}, ["text"]),
 }
 
-_TYPES = {"string": str, "boolean": bool, "integer": int}
+_TYPES = {"string": str, "boolean": bool, "integer": int, "array": list}
 
 
 def tool_list() -> list:
@@ -2149,6 +2233,9 @@ def server_instructions() -> str:
         + "developer -> reviewer, sending REVISE feedback back to the developer. Pick each task's model and "
         "effort (delegate's optional model and effort) as the cheapest that will do it well, "
         "stepping up after a weaker run falls short. Ask the user before anything irreversible.",
+        "A wait returns after at most 4 minutes. `still running` is normal; call the same wait again "
+        "with no other reply. A wait that errors or drops does not mean the job failed: the job keeps "
+        "running, so call `wait_for_job` with the same id. For parallel jobs, use `wait_for_any`.",
         "",
         "Roles that edit code work in private git clones of the project (its committed state; "
         "the user's uncommitted changes are not visible to them), never in the user's working "
@@ -2172,8 +2259,8 @@ def server_instructions() -> str:
         "copied from a ticket, file or report. Say a held write is waiting; never press them to approve it.",
         "Roles with several lanes run that many tasks at once. Split large work into "
         "independent chunks, each on its own factory/<topic> branch in its own lane "
-        "(delegate with wait_seconds: 0, then wait_for_job each, with the default timeout: "
-        "short polls only cost turns), and send follow-ups for a chunk to the lane that "
+        "(delegate with wait_seconds: 0, then wait_for_any on their job ids and handle each "
+        "job as it ends; the default timeout is right, short polls only cost turns), and send follow-ups for a chunk to the lane that "
         "wrote it (delegate's lane).",
     ]
     return "\n".join(lines)
@@ -2202,18 +2289,19 @@ def handle_rpc(msg: dict) -> dict | None:
 
 
 def may_block(msg: dict) -> bool:
-    """True for a tools/call that can wait minutes: delegate or wait_for_job with a
-    positive wait (their defaults wait)."""
+    """True for a tools/call that can wait minutes: delegate, wait_for_job or
+    wait_for_any with a positive wait (their defaults wait)."""
     params = msg.get("params")
     if msg.get("method") != "tools/call" or not isinstance(params, dict):
         return False
     args = params.get("arguments") or {}
     if not isinstance(args, dict):
         return False
-    key = {"delegate": "wait_seconds", "wait_for_job": "timeout_seconds"}.get(params.get("name"))
+    key = {"delegate": "wait_seconds", "wait_for_job": "timeout_seconds",
+           "wait_for_any": "timeout_seconds"}.get(params.get("name"))
     if key is None:
         return False
-    wait = args.get(key, MAX_WAIT_SECONDS)
+    wait = args.get(key, WAIT_SLICE_SECONDS)
     return isinstance(wait, int) and not isinstance(wait, bool) and wait > 0
 
 
