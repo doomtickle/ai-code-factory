@@ -252,7 +252,10 @@ jobs:
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.14.8"
-      # actions/setup-node (node-version: ${{ env.NODE_VERSION }}) goes here once its release SHA is verified.
+      - if: env.RUN == 'true'
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }} # 22.22.1, from `node --version` in the role image
       - name: Chrome's libraries (the list in the developer Dockerfile)
         if: env.RUN == 'true'
         run: |
