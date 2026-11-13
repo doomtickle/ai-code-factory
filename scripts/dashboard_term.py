@@ -62,12 +62,17 @@ import select
 import signal
 import struct
 import subprocess
+import sys
 import termios
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlsplit
+
+sys.path.append(str(Path(__file__).resolve().parent.parent))  # the factory package
+
+from factory.voice import PORT as VOICE_PORT  # noqa: E402
 
 UI = Path(__file__).resolve().parent / "dashboard-ui"
 NAME = re.compile(r"[a-z0-9][a-z0-9-]*")  # fullmatch
@@ -78,6 +83,7 @@ CLIENT_BACKLOG = 4 * 1024 * 1024  # bytes queued for one page before it is dropp
 WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 PROTOCOL = "factory-term."  # the subprotocol: PROTOCOL + this run's terminal key
 KEY_SLOT = "__TERM_KEY__"   # placeholder in term.html the server fills in
+VOICE_PORT_SLOT = "__VOICE_PORT__"  # placeholder in term-field.html: the local voice port talking posts to
 HTTP_TIMEOUT = 30          # seconds a request on the terminal port may take, before any upgrade
 PING_INTERVAL = 30         # seconds between the server's pings to each page
 PING_TIMEOUT = 60          # seconds without any frame from a page before it is dropped
@@ -110,6 +116,10 @@ STATIC = {
     "/fonts/jetbrains-mono-700.woff2": ("fonts/jetbrains-mono-700.woff2", "font/woff2"),
     "/cu-field.js": ("cu-field.js", "text/javascript; charset=utf-8"),
     "/cu-field.css": ("cu-field.css", "text/css; charset=utf-8"),
+    # Talking to LOIS, in /term/field only: the wake word, segmenter and cancel window, the mic strip, and its AudioWorklet (script-src 'self').
+    "/term-voice.js": ("term-voice.js", "text/javascript; charset=utf-8"),
+    "/term-mic.js": ("term-mic.js", "text/javascript; charset=utf-8"),
+    "/term-mic-worklet.js": ("term-mic-worklet.js", "text/javascript; charset=utf-8"),
     # cu.css imports this (same origin, allowed by style-src 'self').
     "/theme.css": ("theme.css", "text/css; charset=utf-8"),
     "/fonts/barlow-condensed-600.woff2": ("fonts/barlow-condensed-600.woff2", "font/woff2"),
@@ -137,6 +147,14 @@ def term_csp(term_port: int, main_port: int) -> str:
             f"connect-src ws://127.0.0.1:{term_port} ws://localhost:{term_port}; font-src 'self'; "
             f"frame-ancestors http://127.0.0.1:{main_port} http://localhost:{main_port}; "
             "base-uri 'none'; form-action 'none'")
+
+
+def term_field_csp(term_port: int, main_port: int, voice_port: int | None = None) -> str:
+    """The Thoughtfield's terminal page: the terminal's CSP plus fetch() to the local voice's loopback port (VOICE_PORT),
+    where talking sends what the microphone heard. Only this page gets it; its worklet is 'self'."""
+    voice = int(voice_port or VOICE_PORT)
+    return term_csp(term_port, main_port).replace(
+        f"ws://localhost:{term_port};", f"ws://localhost:{term_port} http://127.0.0.1:{voice} http://localhost:{voice};")
 
 
 def cu_csp(term_port: int, main_port: int) -> str:
@@ -850,6 +868,11 @@ def make_handler(term: Term | None, token: str, cookie: str, key: str, port: int
                     return
                 # Only the Thoughtfield's page has the main-port slot: it tells the main page three fixed words, to that exact origin.
                 html = html.replace(KEY_SLOT, key).replace(CU_PORT_SLOT, str(int(main_port)))
+                if path == "/term/field":
+                    voice = int(VOICE_PORT)
+                    self.send(200, html.replace(VOICE_PORT_SLOT, str(voice)).encode("utf-8"), "text/html; charset=utf-8",
+                              page_csp=term_field_csp(port, main_port, voice))
+                    return
                 self.send(200, html.encode("utf-8"), "text/html; charset=utf-8")
             elif path in ("/cu", "/cu/field") and controls is not None:
                 # The control unit carries its own key: the same rule as /term. /cu/field is the same unit and

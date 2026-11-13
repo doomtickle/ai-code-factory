@@ -1156,7 +1156,10 @@ spiral galaxy, above the dark curve of a world whose lit edge is the day:
   it and type to the Coordinator; the sky dims while you are in it and blooms
   back when LOIS speaks. Esc inside it goes to the Coordinator; the pane's
   Smaller button, `T`, or a click on the world shrinks it. There is no typed
-  line and no speech-to-text.
+  line. With the local voice listening you can also talk: hold the strip's
+  microphone key, or switch on Always on and start with "LOIS, ..."; the words
+  wait 2 s (Esc cancels), then are typed into Terminal 0. Audio stays on your
+  machine.
 - **The monitor:** a job's Transcript, Packet and Changes.
 - **The decision row:** the control unit in another skin, with the same keys and
   rules. Holding the gold light for 2.5 seconds presses Approve, and letting go

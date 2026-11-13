@@ -17,6 +17,20 @@ Dated entries, for the user to review. Newest first.
     new layout); output shows a faint aurora on the pane's rim. Still lets the stars and the rim go; the ring runs until LOIS next speaks or its time-out (which output pushes back). Each
     effect has its own fallback timer. Reduced motion: no drift, no shimmer, a steady ring.
 
+- **Talking to LOIS lives in Terminal 0's field frame** (owner decisions 12 Nov 2026: push to talk, then always on with the wake word "LOIS"
+  and a cancel window; the typed line it was built in was removed the same day). Choices to review:
+  - **The microphone moved to `/term/field`, and words are typed into the Coordinator's terminal.** That is where typed words go now, and what
+    the line did with them (the text, then Enter, on the terminal's WebSocket). The main page still sends no text: it tells the frame only
+    `tm:hush`, `tm:open` and `tm:cancel`. Hold-Space-to-talk is gone: in a terminal, Space is the Coordinator's.
+  - **An Enter typed by voice reaches whatever the terminal shows**, as a typed Enter does. If the Coordinator ever showed a yes/no prompt, a
+    spoken line could answer it; the factory's approvals stay on the held light, which voice can't reach.
+  - **Wake word list:** lois, louis, computer (13 Nov 2026, owner: lowis and loise dropped, computer added; letters only, so "L.O.I.S." and "Lo-is" count; an optional hey/hi/ok/okay first). Louis is
+    the commonest mishearing of a short "Lois" and rarely starts a sentence said to a room; the 2 s window covers the rest.
+  - **Voice activity is energy-based**, per 20 ms: start at -40 dBFS RMS and 3x the learnt room level for 80 ms, keep at -46 dBFS, end after
+    0.8 s of quiet, drop under 0.3 s of speech, keep 300 ms before the start, cut at 30 s. The browser's echo cancelling, noise suppression and
+    gain control run first. Silero-style models would be better but are a new dependency.
+  - **A newer heard line replaces a waiting one**, and gets its own 2 s: the newer is what was meant ("LOIS, no, ...").
+
 - **Terminal 0 lives in the world; the typed line is gone** (owner decisions, newest first: the sky reacts to terminal focus; voice and captions from `say` stay; Terminal 0 is shown in the
   world by default; the "Ask LOIS" line is removed). Choices to review:
   - **The line's whole surface went.** `/term/line`, `line_csp`, `line.html/js/css` and `field-ask.js` are deleted, so the main page has no path that sends text and the `ln:<word>` message

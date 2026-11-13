@@ -690,7 +690,8 @@ class WebSocketTests(unittest.TestCase):
         # The Thoughtfield's look of the same terminal: the same key slot, CSP and refusals.
         resp, body = srv.get("/term/field")
         self.assertEqual(resp.status, 200)
-        self.assertEqual(resp.getheader("Content-Security-Policy"), dt.term_csp(srv.tport, srv.port))
+        # ...plus fetch() to the local voice's loopback port, where talking sends what the microphone heard.
+        self.assertEqual(resp.getheader("Content-Security-Policy"), dt.term_field_csp(srv.tport, srv.port))
         self.assertNotIn(dt.KEY_SLOT, body.decode())
         self.assertIn(srv.key, body.decode())
         # It also learns the main page's port, the one origin it may tell (three fixed words, below); the classic page has no such slot.
