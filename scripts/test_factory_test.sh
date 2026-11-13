@@ -149,7 +149,7 @@ assert_eq "failure: a wheel whose hash doesn't match fails the run" "$RC" 1
 assert_lacks "failure: the command doesn't run after a failed install" "$OUT" "should-not-run"
 assert_contains "failure: points at pip_download" "$ERR" "pip_download"
 assert_eq "failure: no half-made venv is left" "$(find "$FACTORY_TEST_ROOT"/bad-* -maxdepth 1 -name '.venv' | wc -l | tr -d ' ')" 0
-assert_eq "failure: the bad project's copy was made" "$(ls -d "$FACTORY_TEST_ROOT"/bad-*/ | wc -l | tr -d ' ')" 1
+assert_eq "failure: the bad project's copy was made" "$(find "$FACTORY_TEST_ROOT" -maxdepth 1 -type d -name 'bad-*' | wc -l | tr -d ' ')" 1
 
 printf 'factorystub==1.0 \\\n    --hash=sha256:%s\n' "$sum" > "$bad_proj/requirements.txt"
 FACTORY_PROJECT="$tmp/nowhere" run "$FTEST" -C "$bad_proj" -- echo should-not-run
