@@ -32,7 +32,10 @@ python3 -m pip --version >/dev/null 2>&1 || { echo "skip - factory-test Python m
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 tmp="$(cd "$tmp" && pwd -P)"
-export HOME="$tmp/home" FACTORY_TEST_ROOT="$tmp/root" FACTORY_PROJECT="$tmp/host"
+# "bad" in the root's name is deliberate: the half-made-venv check must look at
+# the bad project's copy only, never match on the path text (a random temp dir
+# or a 12-hex copy hash can spell "bad" and used to fail it by chance).
+export HOME="$tmp/home" FACTORY_TEST_ROOT="$tmp/root-bad" FACTORY_PROJECT="$tmp/host"
 export PIP_DISABLE_PIP_VERSION_CHECK=1
 mkdir -p "$HOME"
 unset FACTORY_TEST_MODE FACTORY_LANE_ROOT
@@ -145,7 +148,8 @@ run "$FTEST" -C "$bad_proj" -- echo should-not-run
 assert_eq "failure: a wheel whose hash doesn't match fails the run" "$RC" 1
 assert_lacks "failure: the command doesn't run after a failed install" "$OUT" "should-not-run"
 assert_contains "failure: points at pip_download" "$ERR" "pip_download"
-assert_eq "failure: no half-made venv is left" "$(find "$FACTORY_TEST_ROOT" -path '*bad*' -name '.venv' | wc -l | tr -d ' ')" 0
+assert_eq "failure: no half-made venv is left" "$(find "$FACTORY_TEST_ROOT"/bad-* -maxdepth 1 -name '.venv' | wc -l | tr -d ' ')" 0
+assert_eq "failure: the bad project's copy was made" "$(ls -d "$FACTORY_TEST_ROOT"/bad-*/ | wc -l | tr -d ' ')" 1
 
 printf 'factorystub==1.0 \\\n    --hash=sha256:%s\n' "$sum" > "$bad_proj/requirements.txt"
 FACTORY_PROJECT="$tmp/nowhere" run "$FTEST" -C "$bad_proj" -- echo should-not-run
