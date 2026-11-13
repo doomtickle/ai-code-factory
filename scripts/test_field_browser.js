@@ -321,6 +321,15 @@ async function witness(url, reduced) {
   const until = async (expr, what, ms = 40000) => { for (let t = 0; t < ms; t += 100) { if (await b.ev(expr)) return; await b.sleep(100); } throw new Error("never: " + what + " (" + await b.ev(`JSON.stringify({ idle: LF.W.idle, working: LF.W.working, run: LF.W.running, wait: LF.W.waiting, speaking: LF.W.speaking, blink: LF.W.m.blink, work: LF.W.s.work })`) + ")"); };
   try {
     await until(`!!(window.LF && LF.W.ready && !document.getElementById("hud").hidden)`, "the page is up");
+    // the eyes sit a hair behind the lids: a near plane of .1 and a 24-bit depth texture on both composer targets (the clone too, after a resize), not three's 16-bit default
+    const depth = () => b.ev(`(() => { const c = LF.composer, d = t => t.depthTexture && [t.depthTexture.type, t.depthTexture.image.width, t.depthTexture.image.height]; return { near: LF.camera.near, gl2: LF.renderer.capabilities.isWebGL2, a: d(c.renderTarget1), b: d(c.renderTarget2), w: c.renderTarget1.width, h: c.renderTarget1.height }; })()`);
+    let dp = await depth();
+    assert.strictEqual(dp.near, .1, "the camera's near plane");
+    if (dp.gl2) { assert.strictEqual(dp.a[0], 1014, "the composer's target has an UnsignedIntType depth texture"); assert.strictEqual(dp.b[0], 1014, "and so does its clone"); }
+    await b.resize(800, 700);
+    dp = await depth();
+    if (dp.gl2) assert.deepStrictEqual([dp.a.slice(1), dp.b.slice(1)], [[dp.w, dp.h], [dp.w, dp.h]], "the depth textures follow a resize");
+    await b.resize(1280, 900);
     await b.ev(`LF.cfg.idleMs = 800`);
     await until(`LF.W.running === 0 && LF.W.waiting === 0 && !LF.W.speaking && !LF.W.thinking`, "it is quiet");
     await until(`LF.W.idle`, "idle after the quiet");
