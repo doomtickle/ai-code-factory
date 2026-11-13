@@ -366,10 +366,30 @@ class PinsTest(unittest.TestCase):
 
     def test_every_download_has_a_checksum_and_a_fixed_revision(self):
         adds = [l for l in self.read("Dockerfile").splitlines() if l.startswith("ADD ")]
-        self.assertEqual(len(adds), 30)  # config, model, 28 voices.
-        for line in adds:
+        kokoro = [l for l in adds if "/opt/kokoro/" in l]
+        whisper = [l for l in adds if "/opt/whisper/" in l]
+        self.assertEqual(len(kokoro), 30)  # config, model, 28 voices.
+        self.assertEqual(len(whisper), 4)  # config.json, model.bin, tokenizer.json, vocabulary.txt.
+        self.assertEqual(len(adds), 34)
+        for line in kokoro:
             self.assertRegex(line, r"^ADD --checksum=sha256:[0-9a-f]{64} --chmod=644 "
                                    r"https://huggingface\.co/hexgrad/Kokoro-82M/resolve/[0-9a-f]{40}/\S+ /opt/kokoro/\S+$")
+        for line in whisper:
+            self.assertRegex(line, r"^ADD --checksum=sha256:[0-9a-f]{64} --chmod=644 "
+                                   r"https://huggingface\.co/Systran/faster-whisper-base\.en/resolve/[0-9a-f]{40}/(\S+) "
+                                   r"/opt/whisper/base\.en/\1$")
+        self.assertIn("mkdir -p /opt/kokoro/voices /opt/whisper/base.en", self.read("Dockerfile"))
+
+    def test_the_listener_loads_the_model_the_image_bakes(self):
+        self.assertRegex(self.read("server.py"),
+                         r'WHISPER_DIR = os\.environ\.get\("WHISPER_DIR", "/opt/whisper"\)\nWHISPER_MODEL = os\.environ\.get\("WHISPER_MODEL", "base\.en"\)')
+
+    def test_faster_whisper_and_its_runtime_are_in_both_locks(self):
+        for name in ("requirements.lock", "requirements-arm64.lock"):
+            text = self.read(name)
+            for package in ("faster-whisper==1.2.1", "ctranslate2==4.9.0", "av==18.1.0", "onnxruntime==1.31.1",
+                            "flatbuffers==25.12.19", "protobuf==7.36.2"):
+                self.assertIn("\n" + package + " \\\n", text, name)
 
     def test_runs_as_non_root_and_offline(self):
         dockerfile = self.read("Dockerfile")

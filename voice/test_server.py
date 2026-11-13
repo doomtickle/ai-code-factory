@@ -1,4 +1,5 @@
-"""HTTP tests for voice/server.py with a fake pipeline, so neither torch nor kokoro is needed.
+"""HTTP tests for voice/server.py with a fake pipeline and a fake Whisper model, so neither torch,
+kokoro nor faster_whisper is needed.
 Requests go over a raw socket, to send exactly the headers under test."""
 
 import array
@@ -21,6 +22,7 @@ import server  # noqa: E402
 VOICES = ["af_kore", "af_nicole", "bm_daniel", "bm_george", "bf_emma"]
 PACKS = {"af_nicole": 1.0, "af_kore": 2.0, "bm_daniel": 4.0, "bm_george": 8.0, "bf_emma": 16.0}
 GOOD = {"text": "One two. Three four!", "mix": [["af_nicole", 1]], "speed": 1, "lang": "a"}
+L16 = "audio/L16; rate=16000; channels=1"
 
 
 class FakeAudio:
@@ -88,12 +90,56 @@ class FakePipe:
             self.record["active"] -= 1
 
 
+class FakeNumpy:
+    """Enough of numpy for Listener.transcribe: samples as a list of floats."""
+
+    float32 = "float32"
+
+    class Samples(list):
+        def astype(self, kind):
+            return self
+
+        def __truediv__(self, by):
+            return FakeNumpy.Samples(x / by for x in self)
+
+    @classmethod
+    def frombuffer(cls, data, dtype):
+        assert dtype == "<i2"
+        return cls.Samples(x for (x,) in struct.iter_unpack("<h", data))
+
+
+class FakeSegment:
+    def __init__(self, text):
+        self.text = text
+
+
+class FakeWhisper:
+    """Stands in for WhisperModel: records what it was given, answers with fixed segments."""
+
+    def __init__(self, record):
+        self.record = record
+
+    def transcribe(self, audio, **options):
+        self.record["heard"].append({"audio": audio, "options": options})
+        self.record["ears"] += 1
+        self.record["ears_peak"] = max(self.record["ears_peak"], self.record["ears"])
+        try:
+            if self.record.get("delay"):
+                time.sleep(self.record["delay"])
+            if self.record.get("boom"):
+                raise RuntimeError("secret words heard")
+            return iter([FakeSegment(" Hello there."), FakeSegment("  "), FakeSegment(" Ship it. ")]), None
+        finally:
+            self.record["ears"] -= 1
+
+
 class ServerTest(unittest.TestCase):
     def setUp(self):
-        self.record = {"loaded": [], "calls": [], "active": 0, "peak": 0}
+        self.record = {"loaded": [], "calls": [], "active": 0, "peak": 0, "heard": [], "ears": 0, "ears_peak": 0}
         pipes = {lang: FakePipe(self.record) for lang in "ab"}
         engine = server.Engine(pipes, VOICES, "cpu", "/opt/kokoro/voices")
-        self.server = server.Server(("127.0.0.1", 0), engine)
+        listener = server.Listener(FakeWhisper(self.record), "base.en", FakeNumpy)
+        self.server = server.Server(("127.0.0.1", 0), engine, listener)
         self.port = self.server.server_address[1]
         thread = threading.Thread(target=self.server.serve_forever, args=(0.01,), daemon=True)
         thread.start()
@@ -138,6 +184,10 @@ class ServerTest(unittest.TestCase):
         hs = [("Content-Type", "application/json"), ("Content-Length", str(len(body)))] + (headers or [])
         return self.request("POST", "/speak", hs, body)
 
+    def listen(self, pcm=b"\x00\x00" * 1600, kind=L16, headers=None):
+        hs = [("Content-Type", kind), ("Content-Length", str(len(pcm)))] + (headers or [])
+        return self.request("POST", "/listen", hs, pcm)
+
     @staticmethod
     def chunks(body):
         out = []
@@ -162,7 +212,8 @@ class ServerTest(unittest.TestCase):
         for host in ("127.0.0.1:%d" % self.port, "localhost:%d" % self.port):
             status, _, body = self.request(host=host)
             self.assertEqual(status, 200, host)
-            self.assertEqual(json.loads(body), {"ok": True, "device": "cpu", "voices": sorted(VOICES)})
+            self.assertEqual(json.loads(body), {"ok": True, "device": "cpu", "voices": sorted(VOICES),
+                                                "listen": True, "listen_model": "base.en"})
 
     def test_bad_hosts_are_refused(self):
         for host in ("evil.example:%d" % self.port, "127.0.0.1", "localhost", "127.0.0.1:1", "0.0.0.0:%d" % self.port,
@@ -170,6 +221,8 @@ class ServerTest(unittest.TestCase):
             self.assertEqual(self.request(host=host)[0], 403, host)
             self.assertEqual(self.request("POST", "/speak", host=host)[0], 403, host)
             self.assertEqual(self.request("OPTIONS", "/speak", host=host)[0], 403, host)
+            self.assertEqual(self.request("POST", "/listen", [("Content-Type", L16)], host=host)[0], 403, host)
+            self.assertEqual(self.request("OPTIONS", "/listen", host=host)[0], 403, host)
 
     def test_no_host_and_two_hosts_are_refused(self):
         self.assertEqual(self.request(no_host=True)[0], 403)
@@ -180,7 +233,8 @@ class ServerTest(unittest.TestCase):
     def test_a_loopback_origin_gets_the_cors_header_and_never_credentials(self):
         for origin in ("http://127.0.0.1:8874", "http://localhost:1", "http://127.0.0.1:65535"):
             for status, headers, _ in (self.request(headers=[("Origin", origin)]),
-                                       self.speak(headers=[("Origin", origin)])):
+                                       self.speak(headers=[("Origin", origin)]),
+                                       self.listen(headers=[("Origin", origin)])):
                 self.assertEqual(status, 200)
                 self.assertEqual(headers["access-control-allow-origin"], origin)
                 self.assertNotIn("access-control-allow-credentials", headers)
@@ -196,24 +250,28 @@ class ServerTest(unittest.TestCase):
                        "http://user@127.0.0.1:80", "http://127.0.0.2:80", "HTTP://localhost:80", "*"):
             for status, headers, _ in (self.request(headers=[("Origin", origin)]),
                                        self.speak(headers=[("Origin", origin)]),
-                                       self.request("OPTIONS", "/speak", [("Origin", origin)])):
+                                       self.request("OPTIONS", "/speak", [("Origin", origin)]),
+                                       self.listen(headers=[("Origin", origin)]),
+                                       self.request("OPTIONS", "/listen", [("Origin", origin)])):
                 self.assertEqual(status, 403, origin)
                 self.assertNotIn("access-control-allow-origin", headers)
         self.assertEqual(self.record["calls"], [])
+        self.assertEqual(self.record["heard"], [])
 
     def test_two_origins_are_refused(self):
         self.assertEqual(self.request(headers=[("Origin", "http://localhost:1"), ("Origin", "http://evil.example")])[0], 403)
 
     def test_preflight(self):
-        status, headers, body = self.request("OPTIONS", "/speak", [
-            ("Origin", "http://127.0.0.1:8874"), ("Access-Control-Request-Method", "POST"),
-            ("Access-Control-Request-Headers", "content-type")])
-        self.assertEqual(status, 204)
-        self.assertEqual(body, b"")
-        self.assertEqual(headers["access-control-allow-origin"], "http://127.0.0.1:8874")
-        self.assertEqual(headers["access-control-allow-methods"], "POST")
-        self.assertEqual(headers["access-control-allow-headers"], "Content-Type")
-        self.assertNotIn("access-control-allow-credentials", headers)
+        for path in ("/speak", "/listen"):
+            status, headers, body = self.request("OPTIONS", path, [
+                ("Origin", "http://127.0.0.1:8874"), ("Access-Control-Request-Method", "POST"),
+                ("Access-Control-Request-Headers", "content-type")])
+            self.assertEqual(status, 204, path)
+            self.assertEqual(body, b"")
+            self.assertEqual(headers["access-control-allow-origin"], "http://127.0.0.1:8874")
+            self.assertEqual(headers["access-control-allow-methods"], "POST")
+            self.assertEqual(headers["access-control-allow-headers"], "Content-Type")
+            self.assertNotIn("access-control-allow-credentials", headers)
         self.assertEqual(self.request("OPTIONS", "/health", [("Origin", "http://127.0.0.1:8874")])[0], 404)
 
     def test_the_cors_header_does_not_outlive_its_request_on_a_kept_connection(self):
@@ -234,7 +292,7 @@ class ServerTest(unittest.TestCase):
     # Nothing else is served
 
     def test_no_static_files_and_no_other_paths(self):
-        for path in ("/", "/index.html", "/server.py", "/voices", "/../etc/passwd", "/speak"):
+        for path in ("/", "/index.html", "/server.py", "/voices", "/../etc/passwd", "/speak", "/listen"):
             self.assertEqual(self.request(path=path)[0], 404, path)
         self.assertEqual(self.request("POST", "/health", [("Content-Type", "application/json")])[0], 404)
 
@@ -386,6 +444,146 @@ class ServerTest(unittest.TestCase):
     def test_importing_the_server_needs_no_torch(self):
         self.assertNotIn("torch", sys.modules)
         self.assertNotIn("kokoro", sys.modules)
+        self.assertNotIn("faster_whisper", sys.modules)
+        self.assertNotIn("ctranslate2", sys.modules)
+
+    # Listen
+
+    def test_listen_returns_the_text_and_the_time(self):
+        status, headers, body = self.listen(struct.pack("<3h", 0, 16384, -32768))
+        self.assertEqual(status, 200)
+        self.assertEqual(headers["content-type"], "application/json")
+        self.assertEqual(headers["cache-control"], "no-store")
+        reply = json.loads(body)
+        self.assertEqual(set(reply), {"text", "ms"})
+        self.assertEqual(reply["text"], "Hello there. Ship it.")
+        self.assertIsInstance(reply["ms"], int)
+        self.assertGreaterEqual(reply["ms"], 0)
+        heard = self.record["heard"][-1]
+        self.assertEqual(heard["audio"], [0.0, 0.5, -1.0])  # int16 LE scaled to [-1, 1).
+        self.assertEqual(heard["options"]["language"], "en")
+
+    def test_listen_takes_only_16_khz_mono_l16(self):
+        for kind in ("audio/L16; rate=16000; channels=1", "audio/l16;rate=16000;channels=1",
+                     "AUDIO/L16; RATE=16000; CHANNELS=1", "audio/L16; rate=16000", 'audio/L16; rate="16000"; channels=1'):
+            self.assertEqual(self.listen(kind=kind)[0], 200, kind)
+        for kind in ("", "application/json", "application/octet-stream", "audio/wav", "audio/webm",
+                     "audio/L16", "audio/L16; rate=48000; channels=1", "audio/L16; rate=16000; channels=2",
+                     "audio/L16; rate=16000; channels=1; rate=16000", "audio/L16; rate=16000; channels=1; x=y",
+                     "audio/L16; rate", "audio/L24; rate=16000; channels=1", "multipart/form-data"):
+            self.assertEqual(self.listen(kind=kind)[0], 415, kind)
+        self.assertEqual(self.request("POST", "/listen", [("Content-Length", "2")], b"\0\0")[0], 415)
+        self.assertEqual(len(self.record["heard"]), 5)
+
+    def test_listen_limits(self):
+        self.assertEqual(server.MAX_AUDIO, 1920000)
+        self.assertEqual(self.listen(b"\x01\x00" * (server.MAX_AUDIO // 2))[0], 200)
+        self.assertEqual(len(self.record["heard"][-1]["audio"]), 60 * 16000)
+        for n in (str(server.MAX_AUDIO + 1), str(server.MAX_AUDIO + 2), "9999999"):
+            self.assertEqual(self.request("POST", "/listen", [("Content-Type", L16), ("Content-Length", n)])[0], 413, n)
+        for value in ("abc", "-1", "9" * 30, "0x10"):
+            self.assertIn(self.request("POST", "/listen", [("Content-Type", L16), ("Content-Length", value)])[0], (400, 411))
+        self.assertEqual(self.request("POST", "/listen", [("Content-Type", L16), ("Content-Length", "0")])[0], 413)
+        self.assertEqual(self.request("POST", "/listen", [("Content-Type", L16)])[0], 411)
+        self.assertEqual(self.request("POST", "/listen", [("Content-Type", L16), ("Transfer-Encoding", "chunked")], b"0\r\n\r\n")[0], 400)
+        self.assertEqual(self.listen(b"\x00\x00\x00")[0], 400)  # Half a sample.
+        self.assertEqual(len(self.record["heard"]), 1)
+
+    def test_the_speak_limit_does_not_apply_to_listen_nor_the_listen_limit_to_speak(self):
+        self.assertEqual(self.listen(b"\x00" * (server.MAX_BODY + 2))[0], 200)
+        self.assertEqual(self.request("POST", "/speak", [("Content-Type", "application/json"), ("Content-Length", str(server.MAX_BODY + 2))])[0], 413)
+
+    def test_a_short_audio_body_starts_nothing(self):
+        with socket.create_connection(("127.0.0.1", self.port), timeout=10) as s:
+            s.sendall(("POST /listen HTTP/1.1\r\nHost: %s\r\nContent-Type: %s\r\nContent-Length: 100\r\n\r\n\0\0" % (self.host, L16)).encode())
+            s.shutdown(socket.SHUT_WR)
+            self.assertEqual(s.recv(100), b"")
+        self.assertEqual(self.record["heard"], [])
+
+    def test_one_transcription_at_a_time(self):
+        self.record["delay"] = 0.05
+        results = []
+        threads = [threading.Thread(target=lambda: results.append(self.listen()[0])) for _ in range(3)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(20)
+        self.assertEqual(results, [200] * 3)
+        self.assertEqual(self.record["ears_peak"], 1)
+        self.assertEqual(len(self.record["heard"]), 3)
+
+    def test_listening_busy_past_the_wait_is_a_503(self):
+        self.server.listen_lock.acquire()
+        self.addCleanup(self.server.listen_lock.release)
+        original = server.WAIT_FOR_EARS
+        server.WAIT_FOR_EARS = 0.05
+        self.addCleanup(setattr, server, "WAIT_FOR_EARS", original)
+        self.assertEqual(self.listen()[0], 503)
+        self.assertEqual(self.record["heard"], [])
+
+    def test_only_a_few_listeners_wait_for_the_slot_and_the_rest_get_an_instant_503(self):
+        self.server.listen_lock.acquire()
+        released = []
+        def release():
+            if not released:
+                released.append(1)
+                self.server.listen_lock.release()
+        self.addCleanup(release)
+        results = []
+        waiters = [threading.Thread(target=lambda: results.append(self.listen()[0]))
+                   for _ in range(server.LISTEN_QUEUE + 1)]
+        for t in waiters:
+            t.start()
+        deadline = time.monotonic() + 10
+        while self.server.listen_places._value > 0 and time.monotonic() < deadline:
+            time.sleep(0.01)
+        started = time.monotonic()
+        self.assertEqual(self.listen()[0], 503)
+        self.assertLess(time.monotonic() - started, 2)
+        self.assertEqual(self.record["heard"], [])
+        release()
+        for t in waiters:
+            t.join(20)
+        self.assertEqual(results, [200] * (server.LISTEN_QUEUE + 1))
+        self.assertEqual(self.listen()[0], 200)  # The places were given back.
+
+    def test_listening_and_speaking_do_not_wait_for_each_other(self):
+        with self.server.voice_lock:
+            self.assertEqual(self.listen()[0], 200)
+        with self.server.listen_lock:
+            self.assertEqual(self.speak()[0], 200)
+
+    def test_a_failed_transcription_is_a_500_that_logs_no_text_and_frees_the_slot(self):
+        self.record["boom"] = True
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            status, _, body = self.listen()
+        self.assertEqual(status, 500)
+        self.assertNotIn(b"secret", body)
+        self.assertEqual(stderr.getvalue(), "listen failed: RuntimeError\n")
+        self.record["boom"] = False
+        self.assertEqual(self.listen()[0], 200)
+
+    def test_listening_logs_nothing_and_keeps_nothing(self):
+        stderr, stdout = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stderr(stderr), contextlib.redirect_stdout(stdout):
+            self.listen()
+            self.listen(kind="audio/wav")
+            self.request("POST", "/listen", [("Content-Type", L16)], host="evil.example:1")
+        self.assertEqual(stderr.getvalue() + stdout.getvalue(), "")
+        listener = self.server.listener
+        self.assertEqual(sorted(vars(listener)), ["model", "name", "np"])
+
+    def test_without_a_model_listen_is_off(self):
+        self.server.listener = None
+        status, _, body = self.request()
+        self.assertEqual(status, 200)
+        health = json.loads(body)
+        self.assertIs(health["listen"], False)
+        self.assertIsNone(health["listen_model"])
+        self.assertEqual(self.listen()[0], 503)
+        self.assertEqual(self.listen(kind="text/plain")[0], 415)
+        self.assertEqual(self.speak()[0], 200)  # Speech does not need it.
 
 
 class ParseTest(unittest.TestCase):
@@ -400,6 +598,11 @@ class ParseTest(unittest.TestCase):
             server.require_espeak({"a": Pipe()})
         G2P.fallback = object()
         server.require_espeak({"a": Pipe()})
+
+    def test_audio_types(self):
+        self.assertTrue(server.audio_type("audio/L16; rate=16000; channels=1"))
+        self.assertFalse(server.audio_type("audio/L16; channels=1"))
+        self.assertFalse(server.audio_type("audio/L16; rate=16000; channels=01"))
 
     def test_defaults(self):
         engine = server.Engine({"a": None, "b": None}, VOICES, "cpu", "/v")
