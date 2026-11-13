@@ -1,23 +1,23 @@
-// Talking to LOIS, the parts with no browser in them (owner decisions 12 Nov 2026): the wake word, the voice-activity
-// segmenter always-on listening uses, and the 2 s window in which a heard line can still be cancelled. Pure functions and
+// Talking to LOIS, the parts with no browser in them (owner decisions 12 and 13 Nov 2026): the line a heard
+// utterance becomes (no wake word; a leading name is dropped), the voice-activity segmenter always-on listening uses, and the 2 s window in which a heard line can still be cancelled. Pure functions and
 // small state machines, no DOM, no request: term-mic.js uses them in Terminal 0's frame, and test_dashboard_field.py runs
 // them under node. Nothing here sends anything; what to do with a line is the caller's.
 "use strict";
 (function (root) {
   const RATE = 16000;
 
-  // ---------- the wake word. A line counts only if its first word is Lois, Louis or Computer (owner decision 13 Nov 2026), as
-  // the listener (whisper base.en) writes it. Case, accents and punctuation don't matter (Lois, LOIS, "lois.", Loïs). "Louis"
-  // is the commonest mishearing of a short "Lois" and a rare first word for anything said to a room. A spelled-out "L.O.I.S."
-  // or "Lo-is" collapses to "lois" because only letters count. "Computer" is a plain word whisper spells one way; it counts only
-  // as the first word (after an optional "hey", "hi", "ok" or "okay"), never inside a sentence. Everything else is not for LOIS.
-  const WAKE = new Set(["lois", "louis", "computer"]);
+  // ---------- the line. Always on has no wake word (owner decision 13 Nov 2026): everything heard goes to the cancel window. A
+  // leading name is still dropped, so "Lois, do X" is "do X": the first word Lois, Louis or Computer (as the listener, whisper
+  // base.en, writes it; case, accents and punctuation don't matter: Lois, LOIS, "lois.", Loïs), after an optional "hey", "hi",
+  // "ok" or "okay". "Louis" is the commonest mishearing of a short "Lois"; a spelled-out "L.O.I.S." or "Lo-is" collapses to
+  // "lois" because only letters count. "Computer" counts only as the first word, never inside a sentence.
+  const NAMES = new Set(["lois", "louis", "computer"]);
   const LEAD = new Set(["hey", "hi", "ok", "okay"]);
   const fold = w => w.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z]/g, "");
-  // The words after the wake word (trimmed, leading punctuation gone), "" if nothing followed it, or null if it isn't there.
-  function wake(text) {
-    if (typeof text !== "string") return null;
-    const words = text.replace(/\s+/g, " ").trim().split(" ");
+  const WORDY = /[\p{L}\p{N}]/u;
+  // The words after a leading name (trimmed, leading punctuation gone), "" if nothing followed it, or null if there is no name.
+  function afterName(text) {
+    const words = text.split(" ");
     let i = 0;
     if (words.length > 1 && LEAD.has(fold(words[0]))) i = 1;
     // "Lo is" and "L O I S": whisper sometimes splits the name; join at most four short pieces back.
@@ -25,10 +25,20 @@
     for (let n = 1, joined = ""; n <= 4 && i + n <= words.length; n++) {
       if (n > 1 && /[,;:!?]/.test(words[i + n - 2])) break;
       joined += fold(words[i + n - 1]);
-      if (WAKE.has(joined)) return words.slice(i + n).join(" ").replace(/^[\s,.;:!?\-–—…]+/, "").trim();
+      if (NAMES.has(joined)) return words.slice(i + n).join(" ").replace(/^[\s,.;:!?\-–—…]+/, "").trim();
       if (joined.length >= 6) break;
     }
     return null;
+  }
+  // What to send for a heard line: the text with a leading name taken off, "" if there is nothing to send (no text, only
+  // punctuation, or only the name).
+  function line(text) {
+    if (typeof text !== "string") return "";
+    const t = text.replace(/\s+/g, " ").trim();
+    if (!WORDY.test(t)) return "";
+    const rest = afterName(t);
+    const out = rest === null ? t : rest;
+    return WORDY.test(out) ? out : "";
   }
 
   // ---------- voice activity: a speech/silence decision every 20 ms frame from its RMS level (full scale 1.0).
@@ -39,7 +49,7 @@
   // - KEEP_DB -46 dBFS (0.005): once speaking, quieter frames still count (trailing consonants, a breath between words).
   // - START_FRAMES 4 (80 ms) of loud frames in a row begins an utterance: a click or a knock is shorter.
   // - END_MS 800 of quiet ends it (a pause between sentences is shorter); MIN_VOICED_MS 300 of speech in it or it is dropped.
-  // - PRE_MS 300 of audio from before the start is kept, so the first sound of "LOIS" is not clipped.
+  // - PRE_MS 300 of audio from before the start is kept, so the first sound of a sentence is not clipped.
   // - MAX_MS 30,000: an utterance is cut there and goes as it is, so a radio in the background can't hold the line open.
   const VAD = { FRAME: RATE / 50, START: 0.01, KEEP: 0.005, OVER: 3, START_FRAMES: 4, END_MS: 800, MIN_VOICED_MS: 300, PRE_MS: 300, MAX_MS: 30000 };
 
@@ -110,7 +120,7 @@
     return { open, cancel, get pending() { return item ? item.text : null; } };
   }
 
-  const api = { wake, WAKE, segmenter, rms, VAD, cancelWindow, WINDOW_MS, RATE };
+  const api = { line, NAMES, segmenter, rms, VAD, cancelWindow, WINDOW_MS, RATE };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.TermVoice = api;
 })(typeof window !== "undefined" ? window : globalThis);

@@ -3,8 +3,8 @@ a WAV this test writes (short tone bursts that sound like phrases, with pauses),
 dashboard runs here with a fake Coordinator (test_dashboard_term's), and a stub stands in for the local voice service (its
 /health says listen: true; POST /listen answers the words the node side queued for the next utterance, else nothing) on a free
 port the frame is pointed at through dashboard_term.VOICE_PORT. Checks: a hold of the mic key sends one 16 kHz 16-bit body
-and types its words into the Coordinator's terminal; always on sends a "LOIS ..." line after the 2 s window, never a line
-without the wake word, nothing after Escape or a click, and nothing while LOIS speaks; the pane neither grows nor takes focus
+and types its words into the Coordinator's terminal; always on sends any line with words after the 2 s window (a leading "LOIS" taken off, a bare name
+never), nothing after Escape or a click, and nothing while LOIS speaks; the pane neither grows nor takes focus
 for any of it; a refused microphone sends nothing. Skipped when node or chrome-headless-shell is missing.
 
   python3 -m unittest discover -s scripts -p 'test_term_mic_browser.py' -v
@@ -113,7 +113,7 @@ def phrases(path):
 
 @unittest.skipUnless(shutil.which("node") and shutil.which("chrome-headless-shell"), "needs node and chrome-headless-shell")
 class TermMicBrowserTests(unittest.TestCase):
-    def test_push_to_talk_always_on_with_the_wake_word_the_window_and_the_hush(self):
+    def test_push_to_talk_always_on_without_a_wake_word_the_window_and_the_hush(self):
         voice = Voice()
         self.addCleanup(voice.close)
         patch = mock.patch.object(dt, "VOICE_PORT", voice.port)
@@ -154,7 +154,8 @@ class TermMicBrowserTests(unittest.TestCase):
         out = bytes(srv.term.buffer).decode("utf-8", "replace")
         self.assertIn("ECHO:start the review of the auth branch", out, out[-600:])   # held, sent at once
         self.assertIn("ECHO:run the tests.", out, out[-600:])                        # "Lois, run the tests." after the window
-        for never in ("nice weather", "drop this one", "click me away", "while she speaks", "Lois", "Louis"):
+        self.assertIn("ECHO:nice weather today", out, out[-600:])                    # no wake word needed
+        for never in ("drop this one", "click me away", "while she speaks", "Lois", "Louis"):
             self.assertNotIn(never, out, never)
 
 

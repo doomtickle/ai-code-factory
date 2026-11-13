@@ -6,10 +6,11 @@
 // Two ways, both in the strip under the terminal:
 // - Push to talk: hold the mic key. The microphone opens only for the hold; on release the words are typed at once.
 // - Always on (off by default, remembered in this browser): the microphone stays open while the tab is visible,
-//   term-voice.js cuts what it hears into utterances, and each goes to the voice service's /listen. Only a line that starts
-//   with the wake word LOIS counts: the rest is shown for 2 s with a countdown and typed when it runs out, unless Escape (here
-//   or on the main page) or a click on it cancels it. A line without the wake word is dropped without a word: it went
-//   nowhere but /listen. While LOIS speaks (the main page says only "tm:hush" and "tm:open") and for 300 ms after, what the
+//   term-voice.js cuts what it hears into utterances, and each goes to the voice service's /listen. There is no wake word
+//   (owner decision 13 Nov 2026): every utterance with words in it is shown for 2 s with a countdown and typed when it runs
+//   out, unless Escape (here or on the main page) or a click on it cancels it. A leading "LOIS" is dropped; a line that is only
+//   the name, or has no words, is dropped without a word. Background speech reaches the window too: Escape or a click is the
+//   way out. While LOIS speaks (the main page says only "tm:hush" and "tm:open") and for 300 ms after, what the
 //   microphone hears is thrown away, so she never answers herself.
 // Audio goes only to 127.0.0.1's voice service (POST /listen, raw 16 kHz mono 16-bit, no cookie). With the service down or its
 // /health not saying listen: true, both keys are dark with a tooltip and typing is unchanged.
@@ -20,7 +21,7 @@ window.TermMic = (() => {
   const TYPE = "audio/L16; rate=16000; channels=1", LE = new Uint8Array(new Uint16Array([1]).buffer)[0] === 1, STORE = "lois-always-on";
   const OFF = "Talking needs the voice service (factory voice start). Typing works.";
   const BLOCKED = "Microphone blocked. Allow it in site settings, then reload.";
-  const LISTENING = "Always on: listening for “LOIS…”";
+  const LISTENING = "Always on: listening";
   const WORDS = new Set(["tm:hush", "tm:open", "tm:cancel"]);
 
   function attach({ voicePort, mainOrigin, type, strip, mic, auto, status, pending, pendingText, pendingLeft }) {
@@ -38,7 +39,7 @@ window.TermMic = (() => {
       const on = usable && !blocked;
       mic.setAttribute("aria-disabled", String(!on)); mic.title = blocked ? BLOCKED : on ? "Hold to talk" : OFF;
       auto.setAttribute("aria-pressed", String(alwaysOn)); auto.setAttribute("aria-disabled", String(blocked));
-      auto.title = blocked ? BLOCKED : !usable ? OFF : alwaysOn ? "Always on: say “LOIS, …”. Click to stop listening." : "Listen all the time for “LOIS, …”";
+      auto.title = blocked ? BLOCKED : !usable ? OFF : alwaysOn ? "Always on: what you say is typed after 2 s. Click to stop listening." : "Listen all the time";
       strip.dataset.always = alwaysOn && always && always.live ? (hushed() ? "hushed" : "live") : alwaysOn ? "waiting" : "off";
       strip.dataset.ptt = pttPhase;
     }
@@ -134,7 +135,7 @@ window.TermMic = (() => {
       pttPhase = "idle"; setKeys();
       if (out.err) { show(out.err, 6000); return; }
       if (!out.text) { show("I didn't catch any words. Nothing was sent.", 4000); return; }
-      typeLine(out.text);   // push to talk is its own yes: no wake word, no window
+      typeLine(out.text);   // push to talk is its own yes: no window
     }
     mic.addEventListener("mousedown", e => e.preventDefault());   // a press here must not move focus (or grow the pane)
     mic.addEventListener("pointerdown", e => { if (e.button !== 0) return; e.preventDefault(); try { mic.setPointerCapture(e.pointerId); } catch (x) {} pttStart(); });
@@ -159,10 +160,9 @@ window.TermMic = (() => {
         queued--;
         if (!alwaysOn) return;
         if (out.err) { show(out.err, 4000); return; }
-        const rest = V.wake(out.text);
-        if (rest === null) return;   // not for LOIS: dropped, unseen
-        if (!rest) { show("I heard “LOIS”. Say it in one go: “LOIS, …”", 4000); return; }
-        win.open(rest.slice(0, LINE_MAX));
+        const text = V.line(out.text);
+        if (!text) return;   // no words, or only her name: dropped, unseen
+        win.open(text.slice(0, LINE_MAX));
       });
     }
     async function startAlways() {

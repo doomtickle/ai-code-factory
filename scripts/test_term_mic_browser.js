@@ -4,7 +4,7 @@
 // The stub answers each /listen with what this script queued for it (POST /__next), else no words.
 // Checks, with the pane docked: the strip sits in the pane under the grid; holding the mic key listens and types the words
 // (the Python side checks the body and the Coordinator's terminal); Always on lights, a "Lois, ..." line waits 2 s with a
-// countdown and is typed, a line without the wake word shows nothing, Escape on the main page and a click on the line cancel,
+// countdown and is typed, any line waits too (no wake word), a bare name shows nothing, Escape on the main page and a click on the line cancel,
 // and nothing is posted while LOIS speaks. No press grows the pane or moves focus into it; the frame's requests go only to the
 // voice port with no CSP violation; the main page posts no audio and never sees the words. In a second browser getUserMedia
 // refuses: the refusal is said, both keys go dark, nothing is sent.
@@ -175,7 +175,7 @@ async function granted(url, wav) {
     const a = await spot(b, "always");
     await b.click(a.x, a.y);
     await until(async () => (await strip(b)).always === "live", 8000, "always on is listening");
-    assert.strictEqual((await strip(b)).status, "Always on: listening for “LOIS…”");
+    assert.strictEqual((await strip(b)).status, "Always on: listening");
     await b.shot("always-on");
     assert.strictEqual(await b.term(`localStorage.getItem("lois-always-on")`), "1", "remembered in this browser");
     await calm(b, "switching always on");
@@ -196,19 +196,25 @@ async function granted(url, wav) {
     const seen = [...new Set(await b.term(`window.__left`))].map(parseFloat);
     assert.ok(seen.length >= 3 && seen[0] === 2 && seen.every((x, i) => i === 0 || x < seen[i - 1]), `the countdown runs: ${seen}`);
 
-    // Without the wake word: posted to /listen, then nothing shown and nothing typed.
-    n = await posts();
+    // No wake word: a line that does not start with the name waits and is typed whole.
     await say("nice weather today");
+    assert.strictEqual(await waiting(b, 8000), "nice weather today", "a line without LOIS waits too");
+    await until(async () => (await strip(b)).pending === null, 8000, "sent when the window ends");
+    assert.strictEqual((await strip(b)).status, "Always on: listening");
+
+    // Only the name: posted to /listen, then nothing shown and nothing typed.
+    n = await posts();
+    await say("Lois.");
     await until(async () => await posts() >= n + 1, 8000, "the next utterance");
-    for (let i = 0; i < 10; i++) { assert.strictEqual((await strip(b)).pending, null, "a line without LOIS shows nothing"); await b.sleep(100); }
-    assert.strictEqual((await strip(b)).status, "Always on: listening for “LOIS…”");
+    for (let i = 0; i < 10; i++) { assert.strictEqual((await strip(b)).pending, null, "a bare name shows nothing"); await b.sleep(100); }
+    assert.strictEqual((await strip(b)).status, "Always on: listening");
 
     // Escape on the main page cancels a waiting line.
     await say("Louis, drop this one");
     assert.strictEqual(await waiting(b, 8000), "drop this one", "the mishearing counts");
     await b.escape();
     await until(async () => (await strip(b)).pending === null, 1000, "Escape cancels");
-    assert.strictEqual((await strip(b)).status, "Cancelled. Nothing was sent.");
+    assert.strictEqual((await strip(b)).status, "Cancelled. Nothing was sent.", JSON.stringify(await strip(b)));
     await calm(b, "Escape");
 
     // So does a click on it.

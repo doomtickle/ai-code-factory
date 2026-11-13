@@ -270,13 +270,14 @@ approving is still the held light.
   at once. A hold is cut at 60 s; `Esc` during it drops it.
 - **Always on** (off until you switch it on; your browser remembers). The
   microphone stays open while the tab is visible, and its lamp is red while it
-  listens. Start with her name: "LOIS, run the tests." Each pause of about a
-  second ends what you said, and anything over 30 s is cut there. Only a line
-  that starts with "Lois", "Louis" or "Computer" counts (also "Hey Lois"; case
-  and punctuation don't matter, and the word itself is not sent). "Computer"
-  counts only as the first word, never inside a sentence. The rest is ignored: it went to the local
-  voice to be heard and nowhere else, and nothing shows.
-- **The 2 s window.** The words after her name wait in the strip for 2 seconds
+  listens. Just talk, as in a conversation: no wake word. Each pause of about a
+  second ends what you said, and anything over 30 s is cut there. Every line with
+  words in it goes to the 2 s window below. If it starts with "Lois", "Louis" or
+  "Computer" (also "Hey Lois"), that name is not sent: "LOIS, run the tests" types
+  "run the tests". A line that is only her name, or has no words, is ignored and
+  nothing shows. Anything said in the room reaches the window too, so switch it
+  off (or press `Esc`) when you are talking to someone else.
+- **The 2 s window.** What you said waits in the strip for 2 seconds
   with a countdown, then are typed. Press `Esc` (on the page or in the
   terminal) or click the line to cancel; nothing is sent. A newer line replaces
   a waiting one.

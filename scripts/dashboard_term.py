@@ -116,7 +116,7 @@ STATIC = {
     "/fonts/jetbrains-mono-700.woff2": ("fonts/jetbrains-mono-700.woff2", "font/woff2"),
     "/cu-field.js": ("cu-field.js", "text/javascript; charset=utf-8"),
     "/cu-field.css": ("cu-field.css", "text/css; charset=utf-8"),
-    # Talking to LOIS, in /term/field only: the wake word, segmenter and cancel window, the mic strip, and its AudioWorklet (script-src 'self').
+    # Talking to LOIS, in /term/field only: the line, segmenter and cancel window, the mic strip, and its AudioWorklet (script-src 'self').
     "/term-voice.js": ("term-voice.js", "text/javascript; charset=utf-8"),
     "/term-mic.js": ("term-mic.js", "text/javascript; charset=utf-8"),
     "/term-mic-worklet.js": ("term-mic-worklet.js", "text/javascript; charset=utf-8"),
