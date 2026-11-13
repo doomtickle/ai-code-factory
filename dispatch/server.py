@@ -416,7 +416,7 @@ GRADE_SIZE_RATIO_MAX = 100.0
 GRADE_KEYS = ("grade_oracle", "grade_checks", "grade_done_when", "grade_scope", "grade_size_ratio")
 _GRADE_LINE = re.compile(r"[ \t]*(?:\*\*)?GRADE:(?:\*\*)?(?:[ \t]+(.*))?")
 _GRADE_TOKEN = re.compile(r"([a-z_]+)=(\S+)")
-_GRADE_PASSFAIL = re.compile(r"(pass|fail)", re.I)
+_GRADE_PASSFAIL = re.compile(r"(pass|fail)", re.I | re.A)
 _GRADE_SCORE = re.compile(r"[1-5]")
 _GRADE_RATIO = re.compile(r"[0-9]{1,6}(?:\.[0-9]{1,6})?")
 

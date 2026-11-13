@@ -2396,6 +2396,10 @@ class GradeTests(Base):
                     "9" * 100, "1." + "9" * 100):
             self.assertEqual(self.grades(f"GRADE: size_ratio={bad} oracle=fail"), {"grade_oracle": "fail"}, bad)
         self.assertEqual(self.grades("GRADE: oracle=PASS"), {"grade_oracle": "pass"})
+        for bad in ("paſſ", "faıl", "PAſS", "ｐａｓｓ"):  # non-ASCII letters that fold to ASCII under re.I
+            self.assertEqual(self.grades(f"GRADE: oracle={bad} checks={bad} scope=2"), {"grade_scope": 2}, bad)
+        for bad in ("٣", "４", "²"):  # non-ASCII digits
+            self.assertEqual(self.grades(f"GRADE: done_when={bad} size_ratio={bad}.5 scope=2"), {"grade_scope": 2}, bad)
 
     def test_a_huge_size_ratio_is_capped_and_a_huge_value_is_dropped(self):
         self.assertEqual(self.grades("GRADE: size_ratio=999999")["grade_size_ratio"], d.GRADE_SIZE_RATIO_MAX)
