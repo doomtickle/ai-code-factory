@@ -17,7 +17,7 @@ case "${1:-}" in
     case "$name" in *[!A-Z0-9_]*) echo "bad ARG name: $name" >&2; exit 2 ;; esac
     value="$(sed -n "s/^ARG $name=\\([^[:space:]]*\\)\$/\\1/p" "$file")"
     [ -n "$value" ] || { echo "no 'ARG $name=' in $file" >&2; exit 1; }
-    [ "$(printf '%s\n' "$value" | wc -l)" = 1 ] || { echo "more than one 'ARG $name=' in $file" >&2; exit 1; }
+    [ "$(printf '%s\n' "$value" | wc -l | tr -d ' ')" = 1 ] || { echo "more than one 'ARG $name=' in $file" >&2; exit 1; }
     printf '%s\n' "$value"
     ;;
   apt)
