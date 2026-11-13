@@ -142,6 +142,11 @@ EXPORT_TIMEOUT_SECONDS = 600
 GIT_TIMEOUT_SECONDS = 300
 # Saved session ids the bridge resumes (and puts in a pkill pattern).
 _SESSION_ID = re.compile(r"^[A-Za-z0-9-]{1,80}$")
+# An imported branch as the Coordinator names it to a reviewer: factory-<lane>/factory/<topic>.
+# Only the factory/<topic> part is kept, so a developer job's branch and a reviewer's task group together.
+_CHANGE_REF = re.compile(r"factory-[a-z0-9-]+/(factory/[a-z0-9-]+)")
+_CHANGE = re.compile(r"factory/[a-z0-9-]+")
+_FIRST_LINE_VERDICT = re.compile(r"[\s*#>_`]*VERDICT\b[\s*:_`-]*(APPROVED|REVISE)\b")
 # Host git never runs repo-configured hooks or fsmonitor while importing.
 GIT_SAFE = ("-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false")
 # The broker's audit log, for the broker calls a job's role made (review packet).
@@ -391,6 +396,19 @@ def audit(record: dict) -> None:
 # --------------------------------------------------------------------------
 # Jobs
 
+def change_of(text: str) -> str | None:
+    """The factory/<topic> of the first factory-<lane>/factory/<topic> in text, or None."""
+    m = _CHANGE_REF.search(text or "")
+    return m.group(1) if m else None
+
+
+def verdict_of(report: str) -> str | None:
+    """APPROVED or REVISE from the report's first line (a reviewer opens with VERDICT:), else
+    None. The word further down the report does not count."""
+    m = _FIRST_LINE_VERDICT.match((report or "").lstrip().split("\n", 1)[0])
+    return m.group(1) if m else None
+
+
 class Job:
     def __init__(self, role: str, task: str, resume: str | None, model: str = "",
                  start_cost_usd: float | None = 0.0, instructions: str = "", effort: str = "",
@@ -407,7 +425,11 @@ class Job:
         # Wall-clock limit for claude, from role.conf MAX_JOB_SECONDS; 0 = none.
         self.max_job_seconds = DEFAULT_MAX_JOB_SECONDS
         self.size_budget_lines = DEFAULT_SIZE_BUDGET_LINES  # from role.conf SIZE_BUDGET_LINES
-        self.turns = 0  # assistant messages seen in the stream-json events so far
+        # The factory/<topic> a reviewer's task names, read from the full task before it is cut
+        # to a line; a developer job's comes from its branches.
+        self.review_change: str | None = None if rw else change_of(task)
+        self.result_turns: int | None = None  # num_turns of the claude result event (job-end field "turns")
+        self.turns = 0  # assistant messages seen in the stream-json events so far (turns_so_far)
         self.last_message_id: str | None = None
         self.size: dict | None = None  # rw roles: {files, lines_added, lines_removed, test_lines_added}
         self.instructions = instructions
@@ -446,7 +468,7 @@ class Job:
                "task": one_line(self.task, 200), "status": self.status,
                "started": self.started, "finished": self.finished,
                "model": self.model_used or self.model or "", "effort": self.effort,
-               "context_tokens": self.context_tokens,
+               "context_tokens": self.context_tokens, "change": s.get("change"), "turns": self.result_turns,
                "cost_usd": s.get("cost_usd"), "session_cost_usd": s.get("session_cost_usd"),
                "branches": list(self.branches) if self.branches is not None else None,
                "import_errors": list(self.import_errors) if self.import_errors is not None else None,
@@ -456,6 +478,13 @@ class Job:
         if self.status != "running":
             rec["report"] = one_line(self.result, REPORT_SUMMARY_CHARS)
         return rec
+
+    def change(self) -> str | None:
+        for b in self.branches or []:
+            found = change_of(b["ref"])
+            if found:
+                return found
+        return self.review_change
 
     def summary(self, with_result: bool = False) -> dict:
         end = self.finished or time.time()
@@ -471,6 +500,13 @@ class Job:
             out["session_cost_usd"] = round(self.session_cost_usd, 4)
         if self.context_tokens is not None:
             out["context_tokens"] = self.context_tokens
+        if self.change():
+            out["change"] = self.change()
+        verdict = verdict_of(self.result) if self.status != "running" else None
+        if verdict:
+            out["verdict"] = verdict
+        if self.result_turns is not None:
+            out["turns"] = self.result_turns
         if self.branches is not None:
             out["branches"] = list(self.branches)
         if self.import_errors is not None:
@@ -479,6 +515,8 @@ class Job:
             out["size"] = dict(self.size)
             if self.over_budget():
                 out["over_budget"] = True
+            out["diff_files"] = self.size["files"]
+            out["diff_lines"] = self.size["lines_added"] + self.size["lines_removed"]
         if self.packet:
             out["packet"] = self.packet
         if with_result and self.status != "running":
@@ -595,6 +633,10 @@ def job_from_record(rec) -> "Job | None":
         job.branches = branches[:50]
         job.import_errors = [e for e in (_text(e, 2000) for e in (
             rec.get("import_errors") if isinstance(rec.get("import_errors"), list) else [])) if e][:20]
+    change = rec.get("change")
+    job.review_change = change if isinstance(change, str) and _CHANGE.fullmatch(change) and not rw else None
+    turns = rec.get("turns")
+    job.result_turns = turns if isinstance(turns, int) and not isinstance(turns, bool) and turns >= 0 else None
     size = rec.get("size")
     if (isinstance(size, dict) and set(size) == set(SIZE_KEYS)
             and all(isinstance(v, int) and not isinstance(v, bool) and v >= 0 for v in size.values())):
@@ -838,6 +880,9 @@ def render_event(event: dict, log: Transcript, job: Job) -> None:
             job.result = (job.result + "\n" if job.result else "") + (
                 f"[stopped at the role's MAX_TURNS cap of {job.max_turns} turns; the lane keeps its "
                 "session, so a follow-up task on this lane can continue the work]")
+        turns = event.get("num_turns")
+        if isinstance(turns, int) and not isinstance(turns, bool) and turns >= 0:
+            job.result_turns = turns
         total = event.get("total_cost_usd")
         # A non-finite total (claude can report NaN) counts as missing.
         if (isinstance(total, (int, float)) and not isinstance(total, bool)

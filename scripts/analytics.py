@@ -11,6 +11,11 @@ dir (<state>, outside the repo; see FACTORY_STATE in scripts/lib/common.sh):
 (overwriting any previous report there) and opens it with the stdlib `webbrowser`
 module; piped or redirected, it prints the HTML to stdout instead and writes nothing.
 
+`--changes` reports per change instead: job-end records grouped by their `change`
+(the factory/<topic> branch), with review rounds, first-pass approval, wall time,
+cost and diff size, then median/p90 and last 7 days vs the 7 before. Records
+without a change count as unknown. It works with `--json`, not `--html`.
+
 Run directly, or via `factory analytics`.
 
 Standard library only; compatible with the macOS system Python (3.9).
@@ -449,6 +454,147 @@ def build_report(state: Path, top_n: int = 10) -> dict:
 
 
 # --------------------------------------------------------------------------
+# Per-change metrics (--changes): job-end records grouped by the factory/<topic>
+# branch they worked on. Records without a "change" (older ones, or a job that
+# brought no branch) are counted as unknown, never dropped.
+
+_CHANGE_RE = re.compile(r"factory/[a-z0-9-]+")
+_VERDICTS = ("APPROVED", "REVISE")
+CHANGE_METRICS = ("jobs", "review_rounds", "wall_seconds", "cost_usd", "diff_lines", "diff_files",
+                  "test_lines_share")
+
+
+def _int_field(value):
+    v = _num(value)
+    return int(v) if v is not None and v >= 0 else None
+
+
+def _job_span(job: dict):
+    """(start, end) datetimes of a job-end record: its ts is the end, minus its elapsed_seconds."""
+    end = parse_ts(job.get("ts"))
+    if end is None:
+        return None, None
+    elapsed = _num(job.get("elapsed_seconds"))
+    start = end - timedelta(seconds=elapsed) if elapsed is not None and elapsed >= 0 else end
+    return start, end
+
+
+def _diff_of(job: dict):
+    """(lines, files, test share of the added lines) from a record's diffstat, or Nones."""
+    size = job.get("size")
+    if isinstance(size, dict):
+        added, removed, files, tests = (_int_field(size.get(k)) for k in
+                                        ("lines_added", "lines_removed", "files", "test_lines_added"))
+        if None not in (added, removed, files):
+            share = round(tests / added, 4) if tests is not None and added > 0 and tests <= added else None
+            return added + removed, files, share
+    lines, files = _int_field(job.get("diff_lines")), _int_field(job.get("diff_files"))
+    return lines, files, None
+
+
+def change_row(change: str, jobs: list[dict]) -> dict:
+    jobs = sorted(jobs, key=lambda j: parse_ts(j.get("ts")) or datetime.min.replace(tzinfo=timezone.utc))
+    verdicts = [j["verdict"] for j in jobs if j.get("verdict") in _VERDICTS]
+    spans = [sp for sp in (_job_span(j) for j in jobs) if sp[0] is not None]
+    costs = [c for c in (_num(j.get("cost_usd")) for j in jobs) if c is not None]
+    cost = _finite_sum(costs) if costs else None
+    # Each developer record's diffstat is the branch against HEAD, so the latest one is the
+    # whole change so far (summing the rounds would count the same lines again).
+    diff = next((d for d in (_diff_of(j) for j in reversed(jobs)) if d[0] is not None), (None, None, None))
+    turns = [t for t in (_int_field(j.get("turns")) for j in jobs) if t is not None]
+    return {
+        "change": change,
+        "jobs": len(jobs),
+        "review_rounds": verdicts.count("REVISE"),
+        "first_pass_approval": verdicts[0] == "APPROVED" if verdicts else None,
+        "wall_seconds": round((max(e for _, e in spans) - min(s for s, _ in spans)).total_seconds())
+                        if spans else None,
+        "cost_usd": _round(cost) if cost is not None else None,
+        "diff_lines": diff[0], "diff_files": diff[1], "test_lines_share": diff[2],
+        "turns": sum(turns) if turns else None,
+        "last_job_at": ts(max(e for _, e in spans)) if spans else None,
+    }
+
+
+def ts(dt: datetime) -> str:
+    return dt.strftime(TS_FORMAT)
+
+
+def percentile(values: list, q: float):
+    """q-th percentile (0..1) by linear interpolation between ranks; None for no values."""
+    if not values:
+        return None
+    ordered = sorted(values)
+    pos = (len(ordered) - 1) * q
+    lo = int(math.floor(pos))
+    hi = min(lo + 1, len(ordered) - 1)
+    return ordered[lo] + (ordered[hi] - ordered[lo]) * (pos - lo)
+
+
+def _stat(values: list) -> dict:
+    values = [v for v in values if v is not None]
+    if not values:
+        return {"n": 0, "median": None, "p90": None}
+    return {"n": len(values), "median": _round(statistics.median(values)), "p90": _round(percentile(values, 0.9))}
+
+
+def _first_pass_rate(rows: list[dict]):
+    known = [r["first_pass_approval"] for r in rows if r["first_pass_approval"] is not None]
+    return {"known": len(known), "approved": sum(known), "rate": round(sum(known) / len(known), 4)
+            if known else None}
+
+
+def _window_summary(rows: list[dict]) -> dict:
+    return {"changes": len(rows), "first_pass": _first_pass_rate(rows),
+            **{m: _stat([r[m] for r in rows])["median"] for m in CHANGE_METRICS}}
+
+
+def changes_report(jobs: list[dict], now: datetime | None = None) -> dict:
+    now = now or datetime.now(timezone.utc)
+    grouped: dict = defaultdict(list)
+    unknown = []
+    for j in jobs:
+        change = j.get("change")
+        if isinstance(change, str) and _CHANGE_RE.fullmatch(change):
+            grouped[change].append(j)
+        else:
+            unknown.append(j)
+    rows = sorted((change_row(c, js) for c, js in grouped.items()),
+                  key=lambda r: r["last_job_at"] or "", reverse=True)
+    unknown_costs = [c for c in (_num(j.get("cost_usd")) for j in unknown) if c is not None]
+    unknown_cost = _finite_sum(unknown_costs) if unknown_costs else None
+
+    def in_window(row, newer_than, older_than):
+        end = parse_ts(row["last_job_at"])
+        return end is not None and newer_than < end <= older_than
+
+    last = [r for r in rows if in_window(r, now - timedelta(days=7), now)]
+    prev = [r for r in rows if in_window(r, now - timedelta(days=14), now - timedelta(days=7))]
+    return {
+        "changes": rows,
+        "unknown": {"jobs": len(unknown), "cost_usd": _round(unknown_cost) if unknown_cost is not None else None},
+        "summary": {
+            **{m: _stat([r[m] for r in rows]) for m in CHANGE_METRICS},
+            "first_pass": _first_pass_rate(rows),
+            "last_7_days": _window_summary(last),
+            "previous_7_days": _window_summary(prev),
+        },
+    }
+
+
+def build_changes_report(state: Path, now: datetime | None = None) -> dict:
+    dispatch_audit = state / "dispatch" / "audit.jsonl"
+    jobs, malformed = load_jobs(dispatch_audit)
+    warnings = []
+    if not dispatch_audit.exists():
+        warnings.append(f"no dispatch audit log yet ({dispatch_audit})")
+    if malformed:
+        warnings.append(f"skipped {malformed} malformed line(s) in {dispatch_audit}")
+    return {"generated_at": datetime.now(timezone.utc).strftime(TS_FORMAT), "warnings": warnings,
+            **changes_report(jobs, now)}
+
+
+# --------------------------------------------------------------------------
 # Rendering
 
 def _fmt_cost(v) -> str:
@@ -554,6 +700,74 @@ def render_table(report: dict) -> str:
         lines.append("Anomalies:")
         for a in trend["anomalies"]:
             lines.append(f"  ! {_clean(a['role'])} job {_clean(a['job_id'])}: {_clean(a['reason'])}")
+    return "\n".join(lines)
+
+
+def _fmt_secs(v) -> str:
+    if not isinstance(v, (int, float)):
+        return "n/a"
+    v = int(round(v))
+    return f"{v // 3600}h{v % 3600 // 60:02d}m" if v >= 3600 else f"{v // 60}m{v % 60:02d}s"
+
+
+def _fmt_num(v, digits: int = 0) -> str:
+    return f"{v:,.{digits}f}" if isinstance(v, (int, float)) else "n/a"
+
+
+def _fmt_share(v) -> str:
+    return f"{v * 100:.0f}%" if isinstance(v, (int, float)) else "n/a"
+
+
+def _yes_no(v) -> str:
+    return "unknown" if v is None else "yes" if v else "no"
+
+
+# (key, column header, formatter) for a summary line
+_CHANGE_FORMATS = (
+    ("jobs", "Jobs", _fmt_num), ("review_rounds", "Rounds", _fmt_num), ("wall_seconds", "Wall", _fmt_secs),
+    ("cost_usd", "Cost", _fmt_cost), ("diff_lines", "Diff lines", _fmt_num), ("diff_files", "Files", _fmt_num),
+    ("test_lines_share", "Tests", _fmt_share))
+
+
+def render_changes_table(report: dict) -> str:
+    lines = ["AI Code Factory — Analytics: changes", f"Generated {report['generated_at']}"]
+    for w in report["warnings"]:
+        lines.append(f"! {_clean(w)}")
+    lines.append("")
+    lines.append("== Per change ==")
+    if report["changes"]:
+        rows = [[_clean(r["change"]), str(r["jobs"]), str(r["review_rounds"]), _yes_no(r["first_pass_approval"]),
+                 _fmt_secs(r["wall_seconds"]), _fmt_cost(r["cost_usd"]), _fmt_num(r["diff_lines"]),
+                 _fmt_num(r["diff_files"]), _fmt_share(r["test_lines_share"])] for r in report["changes"]]
+        lines.append(_table(["Change", "Jobs", "Rounds", "First pass", "Wall", "Cost", "Diff lines", "Files",
+                             "Tests"], rows))
+    else:
+        lines.append("No job has a change recorded yet.")
+    unknown = report["unknown"]
+    if unknown["jobs"]:
+        lines.append(f"Unknown change (older records, or no branch): {unknown['jobs']} job(s), "
+                     f"{_fmt_cost(unknown['cost_usd'])}")
+    lines.append("")
+
+    summary = report["summary"]
+    fp = summary["first_pass"]
+    lines.append("== Summary ==")
+    lines.append(f"First-pass approval: {_fmt_pct(fp['rate'] * 100 if fp['rate'] is not None else None)} "
+                 f"({fp['approved']}/{fp['known']} changes with a verdict)")
+    rows = [[label, fmt(summary[key]["median"]),
+             fmt(summary[key]["p90"]), str(summary[key]["n"])] for key, label, fmt in _CHANGE_FORMATS]
+    lines.append(_table(["Metric", "Median", "p90", "Changes"], rows))
+    lines.append("")
+    lines.append("== Last 7 days vs previous 7 days (by the change's last job) ==")
+    last, prev = summary["last_7_days"], summary["previous_7_days"]
+
+    def rate(w):
+        return _fmt_pct(w["first_pass"]["rate"] * 100 if w["first_pass"]["rate"] is not None else None)
+
+    rows = [["Changes", str(last["changes"]), str(prev["changes"])],
+            ["First-pass approval", rate(last), rate(prev)]]
+    rows += [[f"Median {label.lower()}", fmt(last[key]), fmt(prev[key])] for key, label, fmt in _CHANGE_FORMATS]
+    lines.append(_table(["", "Last 7 days", "Previous 7 days"], rows))
     return "\n".join(lines)
 
 
@@ -680,6 +894,10 @@ def main(argv=None) -> int:
                              "(default: $XDG_STATE_HOME/ai-code-factory or ~/.local/state/ai-code-factory)")
     parser.add_argument("--top", type=_positive_int, default=10,
                         help="how many top-cost jobs to list (default 10)")
+    parser.add_argument("--changes", action="store_true",
+                        help="report per change (factory/<topic> branch) instead: jobs, review rounds, "
+                             "first-pass approval, wall time, cost and diff size, then median/p90 and "
+                             "last 7 days vs the 7 before; works with --json")
     fmt = parser.add_mutually_exclusive_group()
     fmt.add_argument("--json", action="store_true", help="print the report as JSON")
     fmt.add_argument("--html", action="store_true",
@@ -687,8 +905,14 @@ def main(argv=None) -> int:
                              "a terminal (written to <state>/dispatch/analytics.html first), otherwise "
                              "prints the HTML to stdout (e.g. when piped or redirected to a file)")
     args = parser.parse_args(argv)
+    if args.changes and args.html:
+        parser.error("--changes works with the table and --json, not --html")
 
     state = (args.state or default_state()).resolve()
+    if args.changes:
+        report = build_changes_report(state)
+        print(json.dumps(report, indent=2, ensure_ascii=False) if args.json else render_changes_table(report))
+        return 0
     report = build_report(state, top_n=args.top)
     if args.json:
         print(json.dumps(report, indent=2, ensure_ascii=False))

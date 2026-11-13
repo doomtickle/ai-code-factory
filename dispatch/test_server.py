@@ -2239,6 +2239,116 @@ class SizeTests(unittest.TestCase):
             self.assertIsNone(d.job_from_record(rec).size, bad)
 
 
+class ChangeMetricsTests(Base):
+    """verdict / change / turns / diff_lines / diff_files in the job-end record."""
+
+    def done_job(self, role="reviewer", task="t", report="", branches=None, size=None):
+        job = d.Job(role, task, None, "", None, rw=role == "developer")
+        job.status, job.result = "done", report
+        if branches is not None:
+            job.branches = branches
+        job.size = size
+        return job
+
+    def test_verdict_comes_from_the_first_line_only(self):
+        for report, want in (("VERDICT: APPROVED\nall good", "APPROVED"),
+                             ("VERDICT: REVISE\n1. a bug", "REVISE"),
+                             ("**VERDICT: REVISE**\nx", "REVISE"),
+                             ("\n  VERDICT: APPROVED - small", "APPROVED"),
+                             ("Reviewed the change.\nVERDICT: APPROVED", None),
+                             ("VERDICT: APPROVED?", "APPROVED"),
+                             ("VERDICT: not APPROVED\n", None),
+                             ("Branch: factory/x\nChecks: APPROVED by me", None),
+                             ("VERDICT: maybe\nREVISE", None),
+                             ("", None)):
+            self.assertEqual(d.verdict_of(report), want, report)
+            summary = self.done_job(report=report).summary()
+            self.assertEqual(summary.get("verdict"), want, report)
+            self.assertEqual("verdict" in summary, want is not None)
+
+    def test_the_word_later_in_a_report_does_not_count(self):
+        report = "VERDICT: APPROVED\nNothing to REVISE. VERDICT: REVISE would be wrong here."
+        self.assertEqual(self.done_job(report=report).summary()["verdict"], "APPROVED")
+        self.assertNotIn("verdict", self.done_job(report="Summary first.\nVERDICT: REVISE").summary())
+
+    def test_a_running_job_has_no_verdict(self):
+        job = self.done_job(report="VERDICT: REVISE")
+        job.status = "running"
+        self.assertNotIn("verdict", job.summary())
+
+    def test_change_from_a_reviewer_task_uses_the_full_task_not_the_truncated_one(self):
+        task = ("Review the change. " + "padding " * 60 + "\nbranch: refs/remotes/factory-developer/factory/change-metrics "
+                "and also factory-developer/factory/other")
+        job = self.done_job(task=task)
+        self.assertGreater(task.index("factory-developer"), 200)
+        self.assertNotIn("factory-developer", job.summary()["task"])
+        self.assertEqual(job.summary()["change"], "factory/change-metrics")
+        self.assertEqual(d.change_of("see factory-developer-2/factory/a-b-1 now"), "factory/a-b-1")
+        for text in ("", "no branch here", "factory/just-a-topic", "factory-developer/other/x"):
+            self.assertIsNone(d.change_of(text), text)
+            self.assertNotIn("change", self.done_job(task=text).summary())
+
+    def test_a_developer_jobs_change_comes_from_its_branches_and_matches_the_reviewers(self):
+        branches = [{"repo": ".", "ref": "factory-developer/factory/change-metrics", "commit": "abc1234"}]
+        dev = self.done_job("developer", task="do it, see factory-developer/factory/ignored", branches=branches)
+        review = self.done_job(task="review factory-developer/factory/change-metrics")
+        self.assertEqual(dev.summary()["change"], review.summary()["change"])
+        self.assertNotIn("change", self.done_job("developer", branches=[]).summary())
+
+    def test_diff_totals_from_the_size_already_computed(self):
+        size = {"files": 3, "lines_added": 10, "lines_removed": 4, "test_lines_added": 5}
+        summary = self.done_job("developer", size=size).summary()
+        self.assertEqual((summary["diff_lines"], summary["diff_files"]), (14, 3))
+        summary = self.done_job("developer").summary()
+        self.assertNotIn("diff_lines", summary)
+        self.assertNotIn("diff_files", summary)
+
+    def test_turns_come_from_the_result_event(self):
+        job = d.Job("reviewer", "t", None)
+        log = d.Transcript("reviewer")
+        d.render_event({"type": "result", "result": "ok", "num_turns": 17}, log, job)
+        self.assertEqual(job.summary()["turns"], 17)
+        for bad in (None, "3", True, -1, 2.5):
+            job = d.Job("reviewer", "t", None)
+            d.render_event({"type": "result", "result": "ok", "num_turns": bad}, log, job)
+            self.assertNotIn("turns", job.summary(), bad)
+
+    def test_result_turns_and_live_turns_do_not_clobber_each_other(self):
+        job = d.Job("developer", "t", None)
+        log = d.Transcript(job.lane)
+        log.path.parent.mkdir(parents=True, exist_ok=True)
+        text = {"type": "text", "text": "hi"}
+        d.render_event({"type": "assistant", "message": {"id": "m1", "content": [text]}}, log, job)
+        d.render_event({"type": "assistant", "message": {"id": "m2", "content": [text]}}, log, job)
+        self.assertNotIn("turns", job.summary())
+        d.render_event({"type": "result", "result": "ok", "num_turns": 17}, log, job)
+        self.assertEqual((job.turns, job.summary()["turns"]), (2, 17))
+        self.assertEqual(d.job_from_record(job.record()).summary()["turns"], 17)
+
+    def test_change_and_turns_round_trip_through_the_job_index(self):
+        job = self.done_job(task="review factory-developer/factory/change-metrics " + "x" * 300)
+        job.result_turns = 9
+        back = d.job_from_record(job.record())
+        self.assertEqual(back.summary()["change"], "factory/change-metrics")
+        self.assertEqual(back.summary()["turns"], 9)
+        rec = job.record()
+        rec["change"] = "factory/bad topic"
+        self.assertNotIn("change", d.job_from_record(rec).summary())
+
+    def test_the_audit_record_adds_no_task_text_beyond_the_branch_name(self):
+        job_id = self.delegate("reviewer", "Review factory-developer/factory/change-metrics\nSECRET " + "y" * 400)
+        d.tool_wait_for_job({"job_id": job_id, "timeout_seconds": 30})
+        end = [json.loads(l) for l in (d.STATE / "audit.jsonl").read_text().splitlines()
+               if '"job-end"' in l][-1]
+        self.assertEqual(end["change"], "factory/change-metrics")
+        self.assertLessEqual(len(end["task"]), 200)
+        self.assertNotIn("y" * 201, json.dumps(end))
+        self.assertTrue(set(end) <= {"job_id", "role", "lane", "status", "elapsed_seconds", "task", "model",
+                                     "effort", "cost_usd", "session_cost_usd", "context_tokens", "change",
+                                     "verdict", "turns", "branches", "import_errors", "size", "over_budget",
+                                     "diff_lines", "diff_files", "packet", "ts", "event"}, set(end))
+
+
 class JobIndexTests(Base):
     """STATE/jobs.json: the job list survives a restart of the bridge."""
 
