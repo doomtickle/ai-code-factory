@@ -27,10 +27,10 @@ setup:
     # broker's policy and audit, and their instructions and tool names cost
     # tokens on every turn. The gateway is an sbx MCP server, so it still loads.
     # Also raise Claude Code's own MCP tool idle-abort timeout: delegate and
-    # wait_for_job (dispatch/server.py, MAX_WAIT_SECONDS = 600) can legitimately
-    # block up to 600s, longer than Claude Code's default silent-tool abort
-    # (~330s), which then aborts a normal wait and costs the Coordinator an
-    # extra turn. 660000ms is that 600s maximum plus a margin. The sbx MCP
+    # wait_for_job and wait_for_any (dispatch/server.py, WAIT_SLICE_SECONDS = 240)
+    # now block at most 240s, under Claude Code's default silent-tool abort
+    # (~330s). 660000ms stays as a safety margin (an older bridge held up to
+    # 600s). The sbx MCP
     # gateway is registered with `sbx mcp add` (scripts/start-dispatch.sh), not
     # as a Claude Code mcpServers entry, so there is no per-server "timeout" to
     # set instead; this env var is the global equivalent.
@@ -63,13 +63,19 @@ setup:
         for edits, commands or tests, delegate that work instead of attempting it.
 
         ## Delegating (factory-dispatch tools)
-        - One call per job: `delegate(role, task)` waits for the job (up to 600 s) and
-          returns the role's report; if it is still running, call
-          `wait_for_job(job_id)` with its default timeout. To run jobs in parallel,
-          delegate with `wait_seconds: 0`, then `wait_for_job` each id. Don't poll
+        - One call per job: `delegate(role, task)` waits for the job (up to 4 minutes)
+          and returns the role's report. A wait returns after at most 4 minutes.
+          `still running` is normal; call the same wait again with no other reply
+          (`wait_for_job(job_id)` with its default timeout). A wait that errors or
+          drops does not mean the job failed: the job keeps running, so call
+          `wait_for_job` with the same id. A still-running reply carries
+          `elapsed_seconds` and `seconds_since_last_output`: a small second number is
+          a busy job, a large one may be stuck. For parallel jobs, delegate with
+          `wait_seconds: 0`, then `wait_for_any(job_ids)`: it returns as soon as any
+          one ends, with that job's result and the status of the rest. Don't poll
           with short timeouts: a wait returns the moment the job ends, and every
           extra call is a turn that re-reads this whole conversation (the bridge
-          stretches any wait under 300 s to 300 s for that reason). Call `list_roles`
+          stretches any wait under 60 s to 60 s for that reason). Call `list_roles`
           only to see which roles and lanes are busy or how large their sessions are.
         - A role can run several jobs at once, one per lane (its `LANES`, shown by
           `list_roles`; e.g. developer, developer-lane2, developer-lane3). Each lane
