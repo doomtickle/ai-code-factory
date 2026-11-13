@@ -100,7 +100,6 @@ const PAD = n => `(() => { const real = window.fetch.bind(window);
         actions: Array.from({ length: 3 + k % 11 }, (_, a) => [start + a * .4, rev ? 4 : a % 4]) }); }
     j.blocked = (j.blocked || []).concat([{ t: now - 300, role: "developer" }, { t: now - 200, role: "developer" }]);
     return new Response(JSON.stringify(j), { status: 200, headers: { "Content-Type": "application/json" } }); }; })()`;
-const ENTERED = `try { sessionStorage.setItem("lois-entered", "1"); } catch (e) {}`;
 const SIZES = [[1920, 1080], [1440, 900], [1366, 600], [1280, 720], [1024, 768], [768, 1024], [390, 844], [360, 640]];
 
 // Every packet against every projected vertex of the witness above the horizon; plus the screen, the header, each other.
@@ -138,7 +137,7 @@ async function audit(b, label, expect) {
 }
 
 async function layouts(url, pad) {
-  const b = await launch(url, undefined, ENTERED + (pad ? PAD(pad) : ""));
+  const b = await launch(url, undefined, (pad ? PAD(pad) : ""));
   try {
     const field = async () => (await b.ev(`fetch("/api/field").then(r => r.json()).then(j => j.jobs.map(x => x.id))`));
     const cards = await b.ev(`fetch("/api/state").then(r => r.json()).then(s => (s.gate || []).map(c => c.id))`);
@@ -166,7 +165,7 @@ async function layouts(url, pad) {
 }
 
 async function picking(url) {
-  const b = await launch(url, undefined, ENTERED);
+  const b = await launch(url);
   try {
     await b.resize(1440, 900); await ready(b, 6); await b.sleep(1500);
     const jobs = await b.ev(`LF.sky.packets().filter(p => p.kind !== "gold")`);
@@ -247,7 +246,7 @@ const LABELS = `(() => { const Sky = LF.sky, list = Sky.packets(), pk = list.map
     pips: [...document.querySelectorAll("#pips .pip")].map(e => ({ cls: e.className, n: e.querySelector(".pn") ? e.querySelector(".pn").textContent : "", mark: !!e.querySelector(".pm") })),
     packets: list.map(p => ({ key: p.key, order: p.order, n: p.n, tone: p.tone, r: p.r })) }; })()`;
 async function crystals(url) {
-  const b = await launch(url, undefined, ENTERED + RICH);
+  const b = await launch(url, undefined, RICH);
   try {
     await b.resize(1440, 900); await ready(b, 15); await settle(b); await b.sleep(1200);
     for (const [w, h] of [[1920, 1080], [1440, 900], [1024, 768], [768, 1024], [390, 844]]) {
@@ -318,7 +317,7 @@ const STEER = `(() => { const real = window.fetch.bind(window); window.__st = { 
     const j = await r.json(); j.totals = Object.assign({}, j.totals, { running: window.__st.running }); j.gate = window.__st.gate; j.said = []; j.lanes = [];
     return new Response(JSON.stringify(j), { status: 200, headers: { "Content-Type": "application/json" } }); }; })()`;
 async function witness(url, reduced) {
-  const b = await launch(url, reduced ? [{ name: "prefers-reduced-motion", value: "reduce" }] : null, ENTERED + STEER);
+  const b = await launch(url, reduced ? [{ name: "prefers-reduced-motion", value: "reduce" }] : null, STEER);
   const until = async (expr, what, ms = 40000) => { for (let t = 0; t < ms; t += 100) { if (await b.ev(expr)) return; await b.sleep(100); } throw new Error("never: " + what + " (" + await b.ev(`JSON.stringify({ idle: LF.W.idle, working: LF.W.working, run: LF.W.running, wait: LF.W.waiting, speaking: LF.W.speaking, blink: LF.W.m.blink, work: LF.W.s.work })`) + ")"); };
   try {
     await until(`!!(window.LF && LF.W.ready && !document.getElementById("hud").hidden)`, "the page is up");
@@ -383,7 +382,7 @@ const CLEAR = `(() => { const s = document.getElementById("said").getBoundingCli
     if (r.left < s.right && r.right > s.left && r.top < s.bottom && r.bottom > s.top) out.push((e.textContent || e.tagName).trim().slice(0, 40) + " at " + [r.left, r.top, r.right, r.bottom].map(Math.round)); });
   return { out, said: document.getElementById("txt").textContent.length, pane: !document.getElementById("term-panel").hidden && document.getElementById("term-panel").getBoundingClientRect().height }; })()`;
 async function pane(url) {
-  const b = await launch(url, undefined, ENTERED + TERM);
+  const b = await launch(url, undefined, TERM);
   try {
     await ready(b, 1);
     for (const [w, h] of SIZES.concat([[1280, 800], [1366, 768]])) {
@@ -404,6 +403,50 @@ async function pane(url) {
   } finally { await b.close(); }
 }
 
+// No entry screen (owner decision 13 Nov 2026): with Terminal 0 in /api/state the page opens on the HUD with the pane docked, LOIS's greeting shows as a
+// caption, and sound stays shut (LF.unlocked() false) until the first click or key in the page or a click into the terminal frame. Sizes: desktop and phone.
+const SOUND_PROBE = `window.__voiceSays = 0; (() => { const t = setInterval(() => { if (window.LiveVoice && !LiveVoice.__w) { LiveVoice.__w = 1; const say = LiveVoice.say; LiveVoice.say = (...a) => { window.__voiceSays++; return say.apply(LiveVoice, a); }; } }, 20); })()`;
+async function nogate(url) {
+  for (const [w, h] of [[1440, 900], [390, 844]]) {
+    const b = await launch(url, undefined, TERM + ";" + SOUND_PROBE);
+    try {
+      await b.resize(w, h);
+      await ready(b, 1);
+      await b.sleep(900);
+      const a = await b.ev(`({ gate: !!document.getElementById("gate") || !!document.getElementById("enter"), hud: !document.getElementById("hud").hidden, pane: !document.getElementById("term-panel").hidden && document.getElementById("term-panel").getBoundingClientRect().height,
+        key: !document.getElementById("term-key").hidden, has: document.body.classList.contains("has-term"), frame: !!document.querySelector(".term-frame"), cap: document.getElementById("txt").textContent, unlocked: LF.unlocked(), spoke: window.__voiceSays })`);
+      assert.strictEqual(a.gate, false, `${w}x${h}: there is no entry screen`);
+      assert.ok(a.hud && a.key && a.has && a.frame, `${w}x${h}: the HUD and the Terminal key are up on load ${JSON.stringify(a)}`);
+      assert.ok(a.pane > 0 && a.pane < h * .45, `${w}x${h}: the pane docks on load (${a.pane})`);
+      assert.match(a.cap, /^Hi\./, `${w}x${h}: the greeting shows as a caption`);
+      assert.deepStrictEqual([a.unlocked, a.spoke], [false, 0], `${w}x${h}: no sound, and no speech, before a gesture`);
+      await b.click(w / 2, h * .3); await b.sleep(300);
+      assert.strictEqual(await b.ev(`LF.unlocked()`), true, `${w}x${h}: the first click unlocks sound`);
+      assert.deepStrictEqual(b.errors, [], "no page errors");
+    } finally { await b.close(); }
+  }
+  // A key does it too, and so does a click into the terminal frame (the window's blur, with the frame holding focus).
+  let b = await launch(url, undefined, TERM);
+  try {
+    await ready(b, 1); await b.sleep(600);
+    assert.strictEqual(await b.ev(`LF.unlocked()`), false);
+    await b.key("a", "KeyA", "a"); await b.sleep(300);
+    assert.strictEqual(await b.ev(`LF.unlocked()`), true, "a key unlocks sound");
+  } finally { await b.close(); }
+  b = await launch(url, undefined, STEER_T0);
+  try {
+    await b.resize(1440, 900);
+    for (let i = 0; i < 120 && !(await b.ev(`!!document.querySelector(".term-frame") && LF.W.ready`)); i++) await b.sleep(250);
+    await b.sleep(900);
+    assert.strictEqual(await b.ev(`LF.unlocked()`), false);
+    const at = await b.ev(`(() => { const r = document.querySelector(".term-frame").getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; })()`);
+    await b.click(...at); await b.sleep(600);
+    assert.strictEqual(await b.ev(`document.activeElement === document.querySelector(".term-frame")`), true, "the click landed in the terminal frame");
+    assert.strictEqual(await b.ev(`LF.unlocked()`), true, "a click into the terminal frame unlocks sound");
+    assert.deepStrictEqual(b.errors, [], "no page errors");
+  } finally { await b.close(); }
+}
+
 // The delegation comet: a lane going idle -> running sends one flare from the witness to that job's crystal, running -> done
 // sends one small light back, and under reduced motion nothing flies (a brief glow instead). /api/state's lanes are steered from the page.
 const STEER_LANE = `(() => { const real = window.fetch.bind(window); window.__lane = { name: "steer-lane", job: null, state: "idle", role: "developer" };
@@ -411,7 +454,7 @@ const STEER_LANE = `(() => { const real = window.fetch.bind(window); window.__la
     const j = await r.json(); j.said = []; j.gate = []; j.lanes = [Object.assign({}, window.__lane)];
     return new Response(JSON.stringify(j), { status: 200, headers: { "Content-Type": "application/json" } }); }; })()`;
 async function comet(url, reduced) {
-  const b = await launch(url, reduced ? [{ name: "prefers-reduced-motion", value: "reduce" }] : null, ENTERED + STEER_LANE);
+  const b = await launch(url, reduced ? [{ name: "prefers-reduced-motion", value: "reduce" }] : null, STEER_LANE);
   const until = async (expr, what, ms = 30000) => { for (let t = 0; t < ms; t += 100) { if (await b.ev(expr)) return; await b.sleep(100); } throw new Error("never: " + what + " " + await b.ev(`JSON.stringify(LF.sky.cometInfo())`)); };
   const info = () => b.ev(`LF.sky.cometInfo()`);
   try {
@@ -453,7 +496,7 @@ const STEER_T0 = `(() => { const real = window.fetch.bind(window); window.__st =
     const j = await r.json(); j.term = { port: Number(location.port), running: true }; j.said = window.__st.said; j.totals = Object.assign({}, j.totals, { running: 0 }); j.gate = []; j.lanes = [];
     return new Response(JSON.stringify(j), { status: 200, headers: { "Content-Type": "application/json" } }); }; })()`;
 async function arc(url, reduced) {
-  const b = await launch(url, reduced ? [{ name: "prefers-reduced-motion", value: "reduce" }] : null, ENTERED + STEER_T0);
+  const b = await launch(url, reduced ? [{ name: "prefers-reduced-motion", value: "reduce" }] : null, STEER_T0);
   const until = async (expr, what, ms = 30000) => { for (let t = 0; t < ms; t += 100) { if (await b.ev(expr)) return; await b.sleep(100); } throw new Error("never: " + what + " " + await b.ev(`JSON.stringify({ thinking: LF.W.thinking, listenT: LF.W.listenT, listen: LF.W.listen, cls: document.getElementById("term-panel").className })`)); };
   // post(word, how): a message event the page would get from the terminal frame (default), or from a wrong window, a wrong origin or with other data
   const post = (data, how = "ok") => b.ev(`(() => { const f = document.querySelector(".term-frame"), o = new URL(f.src).origin;
@@ -502,6 +545,6 @@ async function arc(url, reduced) {
 
 const url = process.argv[2];
 const only = process.env.FIELD_ONLY;
-(only === "pane" ? pane(url) : only === "comet" ? comet(url, 0).then(() => comet(url, 1)) : only === "crystals" ? crystals(url) : only === "picking" ? picking(url) : only === "witness" ? witness(url, 0).then(() => witness(url, 1)) : only === "arc" ? arc(url, 0).then(() => arc(url, 1))
-  : layouts(url, 0).then(() => layouts(url, 65)).then(() => picking(url)).then(() => crystals(url)).then(() => witness(url, 0)).then(() => witness(url, 1)).then(() => pane(url)).then(() => comet(url, 0)).then(() => comet(url, 1)).then(() => arc(url, 0)).then(() => arc(url, 1)))
+(only === "pane" ? pane(url) : only === "nogate" ? nogate(url) : only === "comet" ? comet(url, 0).then(() => comet(url, 1)) : only === "crystals" ? crystals(url) : only === "picking" ? picking(url) : only === "witness" ? witness(url, 0).then(() => witness(url, 1)) : only === "arc" ? arc(url, 0).then(() => arc(url, 1))
+  : layouts(url, 0).then(() => layouts(url, 65)).then(() => picking(url)).then(() => crystals(url)).then(() => witness(url, 0)).then(() => witness(url, 1)).then(() => pane(url)).then(() => nogate(url)).then(() => comet(url, 0)).then(() => comet(url, 1)).then(() => arc(url, 0)).then(() => arc(url, 1)))
   .then(() => console.log("field browser checks passed"), e => { console.error(e.stack || e); process.exit(1); });

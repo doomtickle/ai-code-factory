@@ -102,8 +102,8 @@ RESTART", and the Restart key's light blinks. After the login, while the role
 sandboxes aren't created yet, the line says so and Restart keeps blinking. Both
 go away once the roles exist.
 
-1. On the dashboard, press **Enter** on the welcome, then press **Terminal** in
-   the top bar to open the Coordinator's screen (Terminal 0). Press **POWER ON**
+1. On the dashboard, press **Terminal** in the
+   top bar to open the Coordinator's screen (Terminal 0). Press **POWER ON**
    if the screen is off, type `/login` there and sign in with your Claude
    subscription. Press **Close** when you're done.
 2. Press **Restart** under LOIS's caption and then **Confirm**, or run

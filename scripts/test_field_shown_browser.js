@@ -115,8 +115,6 @@ async function main(url, png) {
     const shown = () => b.ev(`!document.getElementById("shown").hidden`);
     for (let i = 0; i < 40 && !(await b.ev(`window.__polls > 1`)); i++) await b.sleep(250);
 
-    // The gate, then the page.
-    await b.ev(`document.getElementById("enter").click()`);
     await b.sleep(600);
     assert.strictEqual(await b.ev(`document.getElementById("hud").hidden`), false, "the HUD is up");
     await b.sleep(2300);

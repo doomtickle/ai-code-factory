@@ -24,9 +24,10 @@ you press Ctrl-C where `factory dashboard` runs. Ctrl-C closes the dashboard,
 not the factory: the agents keep working, and `factory dashboard` brings it
 back. `--no-open` only prints the link; `--port N` picks the port.
 
-The first time in a browser tab you get a short welcome. Press **Enter**. Sound
-starts then, and the day plays back in a few seconds. A reload in the same tab
-skips the welcome.
+The Thoughtfield opens straight onto the sky, with no welcome screen. Until you
+click or press a key in the page (or click into Terminal 0), your browser keeps
+sound shut: LOIS's first lines show as captions only, and she speaks from your
+first click on.
 
 **What it needs.** WebGL, which means WebGL 2 in any current browser. A real
 GPU is strongly recommended: with software rendering it runs at single-digit
