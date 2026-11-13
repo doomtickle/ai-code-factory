@@ -317,6 +317,7 @@
           term.write(bytes, () => { muted = false; });
         } else {
           term.write(bytes);
+          noteOutput();
         }
         return;
       }
@@ -327,6 +328,7 @@
       if (msg.type !== "state") return;
       if (msg.running && !running) { term.reset(); sendSize(); copyShow("none"); }
       running = !!msg.running;
+      if (!running) settle();
       const elsewhere = msg.reason === "elsewhere" || msg.elsewhere === true;
       // During a restart or update the server decides whether the Coordinator
       // comes back (only if it was attached and the action succeeded): no
@@ -349,6 +351,7 @@
     sock.onclose = () => {
       if (ws !== sock) return;
       ws = null; running = false; replayNext = false; muted = false;
+      settle();
       show("lost");
       retry = Math.min(retry + 1, 10);
       setTimeout(connect, 500 * retry);
@@ -358,7 +361,34 @@
   // A hidden tab can't be typing: anything it would send is an automatic
   // reply to a query, which the visible tab already answers.
   const quiet = () => muted || document.hidden;
-  term.onData(d => { if (!quiet()) send(enc.encode(d)); });
+
+  // The Thoughtfield's page learns three fixed words from this frame (skin.tell, and only when the server gave the main page's port): that Enter was
+  // pressed (t0:enter), that live output is arriving (t0:out, at most every OUT_EVERY ms) and that it stopped (t0:still, STILL_AFTER ms after the last
+  // frame). Never text, a count or a size. Neither the muted replay nor a hidden tab says anything, and output within ECHO_MS of a key is the echo.
+  const portMeta = document.querySelector('meta[name="main-port"]'), mainPort = portMeta ? Number(portMeta.getAttribute("content")) : NaN;
+  const tells = skin.tell === true && window.top !== window && Number.isInteger(mainPort) && mainPort >= 1 && mainPort <= 65535;
+  const tellMain = word => { if (tells) window.parent.postMessage("t0:" + word, `${location.protocol}//${location.hostname}:${mainPort}`); };
+  const OUT_EVERY = 500, STILL_AFTER = 2000, ECHO_MS = 300;
+  let lastOutTold = -Infinity, lastKey = -Infinity, stillTimer = 0, outLit = false;
+  function settle() {
+    clearTimeout(stillTimer); stillTimer = 0;
+    if (outLit) { outLit = false; tellMain("still"); }
+  }
+  function noteOutput() {
+    if (!tells || document.hidden) return;
+    const now = Date.now();
+    if (now - lastKey < ECHO_MS) return;
+    if (now - lastOutTold >= OUT_EVERY) { lastOutTold = now; outLit = true; tellMain("out"); }
+    clearTimeout(stillTimer);
+    stillTimer = setTimeout(settle, STILL_AFTER);
+  }
+
+  term.onData(d => {
+    if (quiet()) return;
+    send(enc.encode(d));
+    lastKey = Date.now();
+    if (running && d.includes("\r")) tellMain("enter");
+  });
   term.onBinary(d => { if (quiet()) return; const b = new Uint8Array(d.length); for (let i = 0; i < d.length; i++) b[i] = d.charCodeAt(i) & 0xff; send(b); });
   term.onResize(() => sendSize());
 

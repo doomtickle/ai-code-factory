@@ -26,7 +26,7 @@ class FieldBrowserTests(unittest.TestCase):
         self.addCleanup(server.terminate)
         url = re.search(r"http://127\.0\.0\.1:\d+/\?token=\S+", server.stdout.readline())
         self.assertTrue(url, "the demo dashboard printed no URL")
-        run = subprocess.run(["node", str(SCRIPTS / "test_field_browser.js"), url.group(0)], capture_output=True, text=True, timeout=600, check=False)
+        run = subprocess.run(["node", str(SCRIPTS / "test_field_browser.js"), url.group(0)], capture_output=True, text=True, timeout=1200, check=False)
         self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
 
 

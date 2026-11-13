@@ -77,6 +77,11 @@ body.holding #t-gold { stroke-width: 2; }
 .term-panel.run { --lamp: 138, 240, 184; --rimA: .62; }
 .term-panel.grown { height: var(--pane-l); }
 .term-rim { position: absolute; inset: -1px -1px 0; border-radius: 23px 23px 0 0; pointer-events: none; box-shadow: 0 0 calc(16px + 30px * var(--talk, 0)) calc(1px + 5px * var(--talk, 0)) rgba(var(--lamp), calc(var(--rimA) + .4 * var(--talk, 0))), inset 0 1px 0 rgba(var(--lamp), calc(var(--rimA) + .2)); transition: box-shadow .4s; }
+/* Terminal 0 is putting out text: a faint aurora slides along the rim. Never under reduced motion (field-hud.js does not set the class either). */
+.term-rim::after { content: ""; position: absolute; inset: 0; border-radius: inherit; padding: 2px 2px 0; opacity: 0; transition: opacity .8s; pointer-events: none; background: linear-gradient(100deg, transparent 0%, rgba(var(--lamp), .7) 18%, rgba(190, 160, 255, .6) 34%, transparent 52%, rgba(var(--lamp), .5) 74%, transparent 100%) 0 0 / 300% 100%; -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor; mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0); }
+.term-panel.out .term-rim::after { opacity: .75; animation: rim-aurora 5s linear infinite; }
+@keyframes rim-aurora { to { background-position: 150% 0; } }
+@media (prefers-reduced-motion: reduce) { .term-rim::after { display: none; } }
 .term-bar { position: relative; display: flex; align-items: baseline; gap: 14px; padding: 12px 22px 8px 28px; font: 600 17px var(--f-voice); font-variant-numeric: lining-nums; color: #f5f9ff; }
 .term-bar .term-title { display: flex; align-items: center; gap: 10px; } .term-bar .term-hint { margin-left: auto; font: 400 14px var(--f-data); color: var(--ink-3); }
 .term-bar button { font: 500 15px var(--f-data); color: #f5f9ff; border-bottom: 1px solid rgba(203,218,238,.4); padding: 2px 0; }

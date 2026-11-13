@@ -4,6 +4,19 @@ Dated entries, for the user to review. Newest first.
 
 ## 2026-11-12
 
+- **Terminal 0 may tell the main page three fixed words** (owner decision, later the same day as the entry below, kept subtle): `t0:enter`, `t0:out`, `t0:still`, from the field skin's
+  Terminal 0 frame to the main page, activity kinds only, never text, byte counts or sizes. It gives the removed line's "thinking" ring a caller again and lets the sky answer a little.
+  Choices to review:
+  - **Same pattern as the old line, narrower.** The frame posts to `window.parent` with `targetOrigin` the exact main origin (the port is substituted into `/term/field`'s page, like the
+    control unit's); the main page takes only `/^t0:(enter|out|still)$/` from the frame's window and exact origin. The classic skin has no flag and sends nothing. The CSP is unchanged.
+    This reopens, narrowly, the channel the removed line closed, so the rule in `scripts/CLAUDE.md` says none of the words may ever do more than set a mood.
+  - **Counted by the frame, not guessed by the page.** `t0:enter` is a CR typed while the Coordinator runs (not in a hidden tab or the muted replay); `t0:out` is a live output frame,
+    at most every 500 ms and not within 300 ms of a key (otherwise typing would shimmer the rim with its own echo); `t0:still` comes 2 s after the last frame. Rate and gaps are chosen
+    so the page learns "busy" and "quiet" and nothing finer.
+  - **Subtle, and off under reduced motion.** Enter starts the existing ring and a "Thinking…" caption and eases the crystals 5% toward the face over about a second (no dimming, no
+    new layout); output shows a faint aurora on the pane's rim. Still lets the stars and the rim go; the ring runs until LOIS next speaks or its time-out (which output pushes back). Each
+    effect has its own fallback timer. Reduced motion: no drift, no shimmer, a steady ring.
+
 - **Terminal 0 lives in the world; the typed line is gone** (owner decisions, newest first: the sky reacts to terminal focus; voice and captions from `say` stay; Terminal 0 is shown in the
   world by default; the "Ask LOIS" line is removed). Choices to review:
   - **The line's whole surface went.** `/term/line`, `line_csp`, `line.html/js/css` and `field-ask.js` are deleted, so the main page has no path that sends text and the `ln:<word>` message

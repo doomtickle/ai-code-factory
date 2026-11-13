@@ -693,6 +693,10 @@ class WebSocketTests(unittest.TestCase):
         self.assertEqual(resp.getheader("Content-Security-Policy"), dt.term_csp(srv.tport, srv.port))
         self.assertNotIn(dt.KEY_SLOT, body.decode())
         self.assertIn(srv.key, body.decode())
+        # It also learns the main page's port, the one origin it may tell (three fixed words, below); the classic page has no such slot.
+        self.assertIn(f'<meta name="main-port" content="{srv.port}">', body.decode())
+        self.assertNotIn(dt.CU_PORT_SLOT, body.decode())
+        self.assertNotIn("main-port", srv.get("/term")[1].decode())
         self.assertEqual(srv.get("/term/field", headers={"Cookie": None})[0].status, 403)
         self.assertEqual(srv.get("/term/field", headers={"Host": f"127.0.0.1:{srv.port}"})[0].status, 403)
         self.assertEqual(srv.get("/term/field", method="POST")[0].status, 405)
@@ -890,6 +894,12 @@ class VendorTests(unittest.TestCase):
         self.assertIn("registerOscHandler(52,", js)
         self.assertEqual(js.count(".writeText("), 2)  # the COPY key and the copy-key fallback
         self.assertIn("macOptionClickForcesSelection: true", js)
+        # The only thing it ever posts is "t0:" plus one of three fixed words, to the exact main origin (TermTellTests); the classic skin has no flag.
+        self.assertEqual(js.count("postMessage("), 1)
+        self.assertIn('window.parent.postMessage("t0:" + word, `${location.protocol}//${location.hostname}:${mainPort}`)', js)
+        self.assertEqual(sorted(re.findall(r'tellMain\("(\w+)"\)', js)), ["enter", "out", "still"])
+        self.assertIn("tell: true", (UI / "term-field.js").read_text())
+        self.assertNotIn("tell", (UI / "term.html").read_text())
         html = (UI / "term.html").read_text()
         self.assertIsNone(re.search(r"<script(?![^>]*\bsrc=)", html), "inline script")
         self.assertIsNone(re.search(r"\son[a-z]+=", html), "inline event handler")
@@ -1004,6 +1014,13 @@ class TermScriptTests(unittest.TestCase):
                               "too large: a note, nothing to copy", "dismiss discards",
                               "replay raises no prompt", "preview is visible text", "fallback when writeText is refused",
                               "selection copied trimmed", "copy keys"], platform)
+
+    def test_page_tells_the_main_page_three_fixed_words_or_nothing(self):
+        here = Path(__file__).resolve().parent
+        proc = subprocess.run(["node", str(here / "test_term_tell.js"), str(UI / "term.js")], capture_output=True, text=True, timeout=60)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(json.loads(proc.stdout.strip().splitlines()[-1]),
+                         ["enter", "out and still", "replay says nothing", "hidden and closed", "classic sends nothing"])
 
 
 if __name__ == "__main__":
