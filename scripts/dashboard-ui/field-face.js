@@ -20,7 +20,8 @@
     renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: "high-performance" });
     renderer.setPixelRatio(Math.min(1.5, devicePixelRatio || 1)); renderer.setSize(innerWidth, innerHeight, false);
     scene = new THREE.Scene(); scene.background = new THREE.Color(0x020409);
-    camera = new THREE.PerspectiveCamera(28, innerWidth / innerHeight, .01, 40);
+    // near .1, not .01: the closest thing drawn (the sky's front plane, z .42) is ~.9 from the camera even at the tightest framing (k .41), so nothing clips; .01 wasted depth precision the lids and eyes need (see the depth texture below)
+    camera = new THREE.PerspectiveCamera(28, innerWidth / innerHeight, .1, 40);
     camera.position.set(0, .2, 1.2);
     // lights: a cool key from upper left, a hard cyan rim from behind, a faint uplight
     scene.add(new THREE.HemisphereLight(0x3a6aa8, 0x02040a, .35));
@@ -48,7 +49,13 @@
       fragmentShader: "varying float vA; void main(){ float d = length(gl_PointCoord - .5) * 2.0; float a = clamp(1.0 - d, 0.0, 1.0); a *= a; gl_FragColor = vec4(vec3(.5, .9, 1.0) * 1.4, a * vA); }" }));
     ring.spin.frustumCulled = false; ring.add(ring.spin); scene.add(ring); LF.ring = ring;
     // post: bloom, then gamma (the composer's targets are linear)
-    const bufType = renderer.capabilities.isWebGL2 && renderer.extensions.has("EXT_color_buffer_float") ? THREE.HalfFloatType : THREE.UnsignedByteType; composer = new THREE.EffectComposer(renderer, new THREE.WebGLRenderTarget(innerWidth, innerHeight, { samples: 4, type: bufType })); composer.setPixelRatio(Math.min(1.5, devicePixelRatio || 1)); composer.setSize(innerWidth, innerHeight);
+    const bufType = renderer.capabilities.isWebGL2 && renderer.extensions.has("EXT_color_buffer_float") ? THREE.HalfFloatType : THREE.UnsignedByteType;
+    // A multisampled target with no depth texture gets a 16-bit depth renderbuffer in three r147 (Apple's Metal honours that, so on a Mac the eye orbs z-fight with the lids).
+    // A UnsignedIntType depth texture makes it 24-bit; the composer's clone gets its own and setSize resizes both. WebGL1 keeps the 16-bit default.
+    const rt = new THREE.WebGLRenderTarget(innerWidth, innerHeight, { samples: 4, type: bufType });
+    if (renderer.capabilities.isWebGL2) rt.depthTexture = new THREE.DepthTexture(innerWidth, innerHeight, THREE.UnsignedIntType);
+    composer = new THREE.EffectComposer(renderer, rt);
+    composer.setPixelRatio(Math.min(1.5, devicePixelRatio || 1)); composer.setSize(innerWidth, innerHeight); LF.composer = composer; LF.renderer = renderer;
     composer.addPass(new THREE.RenderPass(scene, camera));
     composer.addPass(new THREE.ShaderPass({ uniforms: { tDiffuse: { value: null } }, vertexShader: THREE.CopyShader.vertexShader, fragmentShader: "uniform sampler2D tDiffuse; varying vec2 vUv; void main(){ gl_FragColor = min(texture2D(tDiffuse, vUv), vec4(1.)); }" }));
     bloom = new THREE.UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), .55, .42, .32); [bloom.renderTargetBright, ...bloom.renderTargetsHorizontal, ...bloom.renderTargetsVertical].forEach(t => { t.texture.type = bufType; }); composer.addPass(bloom);
