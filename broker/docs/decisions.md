@@ -2,6 +2,18 @@
 
 Dated entries, for the user to review. Newest first.
 
+## 2026-11-13
+
+- **Always on no longer needs the wake word** (owner decision): Terminal 0's Always on microphone sends everything it hears to LOIS, so it feels like a conversation. Every
+  utterance with words in it goes into the existing 2 s cancel window and then `typed()`; a leading Lois/Louis/Computer (with an optional hey/hi/ok/okay) is still taken off, a line that
+  is only the name or has no words is dropped quietly. Push to talk, the window, the hush while LOIS speaks, the visible-tab rule, the queue limit and `LINE_MAX` are unchanged; no new
+  request, message or permission, and voice still approves nothing. Choices to review:
+  - **The trade-off:** background speech, a TV, or a conversation with someone else now reaches the cancel window and is typed after 2 s unless cancelled. Escape (here or on the
+    main page) or a click on the waiting line cancels it; switching Always on off stops it. It stays off by default (`lois-always-on`).
+  - **Listener noise gets through too.** whisper sometimes writes "Thank you." or similar for near-silence that cleared the voice-activity gate; that is now a line in the window, not dropped.
+    The window is the only guard.
+  - **A leading "Computer"/"Lois" is still stripped**, so "Computer science is fun" types "science is fun". Kept as the owner asked ("strip it as today"); the lists are unchanged.
+
 ## 2026-11-12
 
 - **Terminal 0 may tell the main page three fixed words** (owner decision, later the same day as the entry below, kept subtle): `t0:enter`, `t0:out`, `t0:still`, from the field skin's
@@ -17,7 +29,7 @@ Dated entries, for the user to review. Newest first.
     new layout); output shows a faint aurora on the pane's rim. Still lets the stars and the rim go; the ring runs until LOIS next speaks or its time-out (which output pushes back). Each
     effect has its own fallback timer. Reduced motion: no drift, no shimmer, a steady ring.
 
-- **Talking to LOIS lives in Terminal 0's field frame** (owner decisions 12 Nov 2026: push to talk, then always on with the wake word "LOIS"
+- **Talking to LOIS lives in Terminal 0's field frame** (owner decisions 12 Nov 2026: push to talk, then always on with the wake word "LOIS" (dropped 13 Nov 2026, see above)
   and a cancel window; the typed line it was built in was removed the same day). Choices to review:
   - **The microphone moved to `/term/field`, and words are typed into the Coordinator's terminal.** That is where typed words go now, and what
     the line did with them (the text, then Enter, on the terminal's WebSocket). The main page still sends no text: it tells the frame only

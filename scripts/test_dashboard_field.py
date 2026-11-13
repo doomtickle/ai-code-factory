@@ -35,13 +35,13 @@ def node(code):
 VOICE_JS = str(UI / "term-voice.js")
 
 
-class WakeWordTests(unittest.TestCase):
-    """Always-on talking (term-voice.js wake): only a line that starts with Lois, Louis or Computer counts, and only what follows it is sent."""
+class LineTests(unittest.TestCase):
+    """Always-on talking (term-voice.js line): no wake word; every line with words is sent, minus a leading Lois, Louis or Computer."""
 
-    def wake(self, *texts):
-        return node(f"const V = require({VOICE_JS!r}); process.stdout.write(JSON.stringify({json.dumps(texts)}.map(V.wake)))")
+    def line(self, *texts):
+        return node(f"const V = require({VOICE_JS!r}); process.stdout.write(JSON.stringify({json.dumps(texts)}.map(V.line)))")
 
-    def test_the_name_as_whisper_writes_it_starts_a_line(self):
+    def test_a_leading_name_is_taken_off(self):
         cases = {"Lois, start the review of the auth branch.": "start the review of the auth branch.",
                  "LOIS run the tests": "run the tests", "lois. What's stuck?": "What's stuck?", "Lois: stop": "stop",
                  "Hey Lois, what's waiting for me?": "what's waiting for me?", "OK, Lois, run it": "run it", "Okay Lois run it": "run it",
@@ -50,22 +50,24 @@ class WakeWordTests(unittest.TestCase):
                  "Okay Computer. What's stuck?": "What's stuck?", "Cómputer, run it": "run it",
                  "L.O.I.S. run it": "run it", "Lo-is, run it": "run it", "Lo is, run it": "run it", "L O I S run it": "run it",
                  "  Lois,   run\n the  tests ": "run the tests", "Lois... run it": "run it", "Lois — run it": "run it"}
-        self.assertEqual(self.wake(*cases), list(cases.values()))
+        self.assertEqual(self.line(*cases), list(cases.values()))
 
-    def test_the_name_alone_is_heard_but_carries_nothing(self):
-        self.assertEqual(self.wake("Lois.", "Lois", "Hey, Lois!", "Computer.", "Hi, computer"), ["", "", "", "", ""])
+    def test_anything_else_is_sent_as_it_was_said(self):
+        cases = {"Start the review, Lois.": "Start the review, Lois.", "Thank you.": "Thank you.", "nice weather today": "nice weather today",
+                 "  What's   waiting\nfor me? ": "What's waiting for me?", "Loiseau is late": "Loiseau is late", "Louise, run it": "Louise, run it",
+                 "Lo, is it raining?": "Lo, is it raining?", "Hey there Lois": "Hey there Lois", "Hey": "Hey", "Lo": "Lo",
+                 "Is the computer on?": "Is the computer on?", "Start the review, computer.": "Start the review, computer.",
+                 "My computer, run it": "My computer, run it", "Lowis, run it": "Lowis, run it", "Run 2 tests": "Run 2 tests"}
+        self.assertEqual(self.line(*cases), list(cases.values()))
 
-    def test_anything_else_is_not_for_her(self):
-        texts = ("Start the review, Lois.", "Thank you.", "", "   ", "Loiseau is late", "Lowes has it", "Lewis, run it", "Louise, run it",
-                 "Lo, is it raining?", "Hey there Lois", "Lo", "Hey", "Allow is fine", "Elois run it", "the lois thing",
-                 "Lowis, run it", "Loise run it", "Is the computer on?", "Turn off the computer", "Start the review, computer.",
-                 "Hey there computer", "Computers are fast", "My computer, run it", "Compute")
-        self.assertEqual(self.wake(*texts), [None] * len(texts))
-        self.assertEqual(node(f"const V = require({VOICE_JS!r}); process.stdout.write(JSON.stringify([V.wake(null), V.wake(7), V.wake(undefined)]))"),
-                         [None, None, None])
+    def test_the_name_alone_or_no_words_carry_nothing(self):
+        self.assertEqual(self.line("Lois.", "Lois", "Hey, Lois!", "Computer.", "Hi, computer", "Lois, ...", "", "   ", "...", " . ,\n— ", "♪"),
+                         [""] * 11)
+        self.assertEqual(node(f"const V = require({VOICE_JS!r}); process.stdout.write(JSON.stringify([V.line(null), V.line(7), V.line(undefined)]))"),
+                         ["", "", ""])
 
-    def test_the_list_stays_small(self):
-        self.assertEqual(node(f"const V = require({VOICE_JS!r}); process.stdout.write(JSON.stringify([...V.WAKE].sort()))"),
+    def test_the_name_list_stays_small(self):
+        self.assertEqual(node(f"const V = require({VOICE_JS!r}); process.stdout.write(JSON.stringify([...V.NAMES].sort()))"),
                          ["computer", "lois", "louis"])
 
 
@@ -315,7 +317,9 @@ class RulesTests(unittest.TestCase):
         self.assertIn("const why = type(text.slice(0, LINE_MAX));", code)
         self.assertEqual(code.count("typeLine("), 3, "push to talk, the end of the cancel window, and the definition")
         self.assertIn("send: text => typeLine(text)", code)
-        self.assertIn("if (rest === null) return;   // not for LOIS", code)
+        self.assertIn("const text = V.line(out.text);\n        if (!text) return;   // no words, or only her name", code)
+        self.assertIn("win.open(text.slice(0, LINE_MAX));", code, "every line with words waits in the cancel window")
+        self.assertNotIn("V.wake", code, "no wake word")
         self.assertIn('const WORDS = new Set(["tm:hush", "tm:open", "tm:cancel"]);', code)
         self.assertIn("e.source !== window.parent || e.origin !== mainOrigin || typeof e.data !== \"string\" || !WORDS.has(e.data)", code)
         self.assertIn('try { alwaysOn = localStorage.getItem(STORE) === "1"; } catch (e) {}', code, "off unless this browser turned it on")
