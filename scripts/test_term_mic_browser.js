@@ -16,7 +16,10 @@ const fs = require("node:fs"), os = require("node:os"), path = require("node:pat
 
 async function launch(url, init, wav) {
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), "term-mic-test."));
-  const child = spawn(process.env.FACTORY_SHOT_CHROME || "chrome-headless-shell", ["--headless", "--no-sandbox", "--disable-gpu",
+  // WebGL on SwiftShader in Chrome's GPU process, not --disable-gpu: with no GPU process the page's main thread waits for each
+  // software-rasterised frame of the sky (about 0.8 s on a 4-CPU runner), so its timers, input and every DevTools call run
+  // that late, and timing checks (the 2 s countdown, the hover ring, the COPY hold) depend on the host's speed.
+  const child = spawn(process.env.FACTORY_SHOT_CHROME || "chrome-headless-shell", ["--headless", "--no-sandbox", "--use-angle=swiftshader", "--enable-unsafe-swiftshader",
     "--disable-dev-shm-usage", "--hide-scrollbars", "--no-first-run", "--disable-extensions", "--remote-debugging-pipe",
     "--use-fake-device-for-media-stream", "--use-fake-ui-for-media-stream", `--use-file-for-fake-audio-capture=${wav}`, "--autoplay-policy=no-user-gesture-required",
     `--user-data-dir=${profile}`, "--window-size=1280,900", "about:blank"], { stdio: ["ignore", "ignore", "ignore", "pipe", "pipe"] });
