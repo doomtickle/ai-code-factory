@@ -270,7 +270,6 @@ PROMPTS = (
     "Find one small function that has no tests, write tests for it on a new branch, get them reviewed, and tell "
     "me which branch to merge.",
 )
-MAX_BRIEF_REPOS = 12
 
 
 def example_prompt(now: float) -> str:
@@ -278,60 +277,11 @@ def example_prompt(now: float) -> str:
     return PROMPTS[int(now // 86400) % len(PROMPTS)]
 
 
-def briefing(config: dict | None, paths, repos: list | None, now: float) -> dict | None:
-    """The STANDBY plate's shift briefing, the subset of `config` (build()) that the main page may show, plus the
-    project's repos. Facts the host derived only: sizes and names of notes files, never their contents; no
-    credential, no [git].repos, no GitLab URL. `repos` is None when the project folder is unknown."""
-    if config is None:
-        return None
-    project = config["project"]
-    usable = usable_project(project)
-    notes = config["notes"]
-    out_roles = []
-    for r in config["roles"]:
-        raw = next((k["value"] for k in r["keys"] if k["key"] == "LANES"), "")
-        try:
-            lanes = min(max(int(raw or "1"), 1), 8)
-        except ValueError:
-            lanes = 1
-        out_roles.append({"name": r["name"], "lanes": lanes, "optional": r["optional"], "on": r["on"]})
-    tools = list(config["approvals"]["tools"])
-    return {
-        "project": project, "usable": usable,
-        "repos": [clean(n, 80) for n in (repos or [])[:MAX_BRIEF_REPOS]],
-        "repos_total": len(repos or []), "repos_known": repos is not None,
-        "notes": {"usable": usable, "limit": NOTES_LIMIT,
-                  "path": clean(os.path.join(paths.config, "projects", project + ".md"), 240) if usable else "",
-                  "files": [{"name": f["name"], "role": f["role"], "chars": f["chars"], "over": f["over"]}
-                            for f in notes["files"] if not f.get("gone")]},
-        "roles": out_roles,
-        "holds": {"on": bool(tools), "tools": tools},
-        "prompt": example_prompt(now),
-    }
-
-
-_COLOR = re.compile(r"#[0-9a-f]{6}")
-_ROLE = re.compile(r"[a-z][a-z0-9-]{1,30}")
-LOOK_UIS = ("field", "classic")
-
-
 def look_values(look) -> dict:
     """What the dashboard is running with from dashboard.toml (dashboard_config.load's result), as plain
-    values for the Look tab: text cleaned to one line, a number or flag or None, and a colour only as a
-    lower-case #rrggbb under a role name that is one."""
+    values for the Look tab: the nameplate cleaned to one line, or None."""
     look = look if isinstance(look, dict) else {}
-    shifts, colors = look.get("shifts"), look.get("colors")
-    crt = look.get("crt")
-    return {
-        "plant": clean(look["plant"], 40) if isinstance(look.get("plant"), str) else None,
-        "shifts": [clean(x, 20) for x in shifts[:3]] if isinstance(shifts, list) else None,
-        "crt": crt if isinstance(crt, int) and not isinstance(crt, bool) and 0 <= crt <= 10 else None,
-        "sound": look["sound"] if isinstance(look.get("sound"), bool) else None,
-        "ui": look["ui"] if look.get("ui") in LOOK_UIS else "field",
-        "colors": {r: c.lower() for r, c in list(colors.items())[:MAX_ITEMS]
-                   if isinstance(r, str) and _ROLE.fullmatch(r) and isinstance(c, str) and _COLOR.fullmatch(c.lower())}
-        if isinstance(colors, dict) else {},
-    }
+    return {"plant": clean(look["plant"], 40) if isinstance(look.get("plant"), str) else None}
 
 
 def setup(paths, project: str, look_problem: str = "", look: dict | None = None) -> dict | None:

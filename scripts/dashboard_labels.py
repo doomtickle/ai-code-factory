@@ -1,18 +1,15 @@
 """The words a lane wears on the dashboard (doomtickle/passdesk-ops#194): the desk placard
-(what the job is about), the developer lane a reviewer is checking, and the branch a developer
-is on. The factory floor and the lane modules and chips read these one derivation, so the two
-views can't disagree. Pure text in, one clean line out; nothing here touches a file or a command.
-The JS half (the "DEV 2" tag) is dashboard-ui/lanelabel.js.
+(what the job is about) and the branch a developer is on. Pure text in, one clean line out;
+nothing here touches a file or a command.
 """
 
 from __future__ import annotations
 
 import re
 
-DESK_MAX = 40      # characters of a lane's desk placard (the floor slides what the glass can't show)
+DESK_MAX = 40      # characters of a lane's desk placard
 BRANCH_MAX = 80    # characters of a branch name on a module header
 TOPIC = re.compile(r"(?:(?<=\.\.)|(?<=\borigin/)|(?<![\w./-]))(?:factory-[A-Za-z0-9-]+/)?factory/([A-Za-z0-9][A-Za-z0-9._-]*)")
-DEV_REF = re.compile(r"(?<![\w-])factory-(developer(?:-lane[0-9]+)?)/factory/")
 TASK_LABEL = re.compile(r"^(?:(?:repo|repository|project)\s*:\s*[^\s;]*[^\s.;][.;]?\s*|(?:task|goal)\s*:\s*)", re.IGNORECASE)
 
 
@@ -47,13 +44,6 @@ def desk_label(brief: str) -> str:
             break
         label = nxt
     return label
-
-
-def reviewed_lane(brief: str) -> str:
-    """The developer lane a task points a reviewer at: the lane in the first
-    factory-<lane>/factory/ ref (the form the bridge imports branches as), else ""."""
-    m = DEV_REF.search(str(brief or ""))
-    return m.group(1) if m else ""
 
 
 def lane_branch(brief: str, branch_lines=()) -> str:

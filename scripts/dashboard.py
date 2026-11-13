@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """factory dashboard: the whole factory on one screen, in the browser.
 
-Serves one page (scripts/dashboard-ui/, the "FC-1984" design) and a JSON
-state endpoint the page polls every two seconds: every lane's live transcript
-tail, job status, model and cost; today's spend by hour and by role; an event
-printer of broker calls and finished jobs; and the writes the gateway is
-holding for approval.
+Serves one page (scripts/dashboard-ui/, the Thoughtfield: "/" and "/field") and a
+JSON state endpoint the page polls every two seconds: every lane's live
+transcript tail, job status, model and cost; today's spend by role; the broker
+calls and finished jobs as events; and the writes the gateway is holding for
+approval.
 
 The state view is read-only. To build it, it reads files under the
 factory state folder and makes no network connection:
@@ -14,7 +14,7 @@ factory state folder and makes no network connection:
 and, for the SERVICE DUE lamp (dashboard_service.py), sandboxes/ and sandbox-parts/ (the
 fingerprints each sandbox was made from), the snapshots `factory start` keeps in dispatch/, and the
 factory config folder (--config) it compares them with; no command is run for it. It reads
-dashboard.toml from that folder once at start (dashboard_config.py), for the page's nameplate, shift names, defaults and role colours.
+dashboard.toml from that folder once at start (dashboard_config.py), for the page's nameplate.
 The FIRST SHIFT banner and start-up hints (dashboard_hints.py) run only `sbx secret ls` and `sbx ls -q`,
 in a background thread every 30 s at most, each cut off after 5 s, never for a request.
 It reuses watch.py's transcript model and approvals.py's card reader rather
@@ -133,8 +133,6 @@ import dashboard_setup
 import dashboard_term as dt
 import docs
 import watch as w
-from factory.context import Paths, bound_project
-from factory.repos import project_repos
 from factory.voice import PORT as VOICE_PORT
 
 UI = Path(__file__).resolve().parent / "dashboard-ui"
@@ -142,19 +140,9 @@ DOCS_ROOT = Path(__file__).resolve().parent.parent  # the factory checkout
 # The only files the server sends: path -> (file under UI, content type). No path
 # from a request is ever joined onto the filesystem.
 STATIC = {
-    "/": ("index.html", "text/html; charset=utf-8"),
-    "/app.css": ("app.css", "text/css; charset=utf-8"),
-    "/theme.css": ("theme.css", "text/css; charset=utf-8"),
-    "/app.js": ("app.js", "text/javascript; charset=utf-8"),
-    "/lanelabel.js": ("lanelabel.js", "text/javascript; charset=utf-8"),
-    "/look.js": ("look.js", "text/javascript; charset=utf-8"),
-    "/floor.css": ("floor.css", "text/css; charset=utf-8"),
-    "/floor.js": ("floor.js", "text/javascript; charset=utf-8"),
-    "/sound.js": ("sound.js", "text/javascript; charset=utf-8"),
-    "/radio.js": ("radio.js", "text/javascript; charset=utf-8"),
-    # The Thoughtfield (the default UI, doomtickle/passdesk-ops#207). "/" is whichever `ui` chose; see ui_pages().
+    "/": ("field.html", "text/html; charset=utf-8"),
+    # The Thoughtfield (doomtickle/passdesk-ops#207) is the dashboard: "/" and "/field" are the same page.
     "/field": ("field.html", "text/html; charset=utf-8"),
-    "/classic": ("index.html", "text/html; charset=utf-8"),
     "/voice": ("voice.html", "text/html; charset=utf-8"),
     "/voice-lab.js": ("voice-lab.js", "text/javascript; charset=utf-8"),
     "/field.css": ("field.css", "text/css; charset=utf-8"),
@@ -234,9 +222,8 @@ SHOWN_MAX_BYTES = 16 * 1024  # dispatch/shown.json: one block of at most 1,200 c
 SHOWN_MAX_TEXT = 1200        # dispatch/server.py MAX_SHOW_CHARS
 SHOWN_MAX_LINES = 16         # dispatch/server.py MAX_SHOW_LINES
 FULL = 1500        # transcript lines per lane in /api/lane
-EVENTS = 80        # event printer lines
+EVENTS = 80        # events kept
 FIELD_TTL = 2      # seconds between rebuilds of the Thoughtfield's day
-BRIEFING_TTL = 5   # seconds between rebuilds of the STANDBY plate's shift briefing
 SERVICE_TTL = 5    # seconds between checks of the SERVICE DUE lamp
 PACKET_MAX = 2_000_000  # bytes of a job's packet /api/lane?job= serves
 WRITES_TTL = 4     # seconds between reads of approvals/done/ for the deferred-write list
@@ -272,7 +259,7 @@ def num(value) -> float | None:
 
 
 # --------------------------------------------------------------------------
-# Broker audit log -> event printer lines
+# Broker audit log -> events
 
 class BrokerAudit(w.Tail):
     """Tool calls from broker/audit.jsonl, newest last."""
@@ -360,7 +347,6 @@ class Dashboard:
         self.paths = paths  # factory.context.Paths for the SERVICE DUE lamp; None (demo): never due
         self.hint_source = hint_source  # dashboard_hints.Hints (its .get(now)); None: no start-up hints
         self._service: tuple = (0.0, {"due": None, "lines": [], "stale": []})
-        self._briefing: tuple = (0.0, None)
         self.watch = w.Watch(state / "dispatch", roles, project)
         self.broker = BrokerAudit(state / "broker" / "audit.jsonl")
         self.verdicts: dict = {}
@@ -453,34 +439,8 @@ class Dashboard:
         return {"due": cached["due"], "lines": list(cached["lines"])}
 
     def config_changed(self) -> None:
-        """The control unit wrote a config file: the SERVICE DUE lamp and the briefing look again next time."""
+        """The control unit wrote a config file: the SERVICE DUE lamp looks again next time."""
         self._service = (0.0, self._service[1])
-        self._briefing = (0.0, self._briefing[1])
-
-    def briefing_source(self) -> tuple:
-        """(factory.context.Paths, the project's folder) the shift briefing reads; paths None when there is none.
-        Demo mode reads the fixture's setup/ folder and the empty repos dashboard_demo.build made there."""
-        if self.demo:
-            base = self.state / demo.SETUP
-            return Paths(str(base / "root"), str(base / "config"), str(self.state)), str(base / "project")
-        if self.paths is None:
-            return None, ""
-        folder = bound_project(self.paths)
-        return self.paths, folder if os.path.basename(folder.rstrip("/")) == self.project else ""
-
-    def briefing(self, now: float) -> dict | None:
-        """The STANDBY plate's shift briefing (dashboard_setup.briefing), rebuilt at most every BRIEFING_TTL
-        seconds. It reads config and lists the project folder, so it runs outside board.lock."""
-        at, cached = self._briefing
-        if now - at >= BRIEFING_TTL or now < at:
-            paths, folder = self.briefing_source()
-            cached = None
-            if paths is not None:
-                config = dashboard_setup.setup(paths, self.project)
-                repos = project_repos(folder) if folder else None
-                cached = dashboard_setup.briefing(config, paths, repos, now)
-            self._briefing = (now, cached)
-        return cached
 
     def hints(self, now: float) -> list:
         """The FIRST SHIFT banner and start-up hints (dashboard_hints.py): [{"code", "text"}]. The
@@ -554,7 +514,7 @@ class Dashboard:
         return {
             "name": lane.name, "role": lane.role, "state": state,
             "job": (job or {}).get("id"), "task": (job or {}).get("task", ""),
-            "desk": labels.desk_label(brief), "reviews": labels.reviewed_lane(brief) if lane.role == "reviewer" else "",
+            "desk": labels.desk_label(brief),
             "branch": labels.lane_branch(job_brief, branches) if lane.role == "developer" else "",
             "model": model.replace("claude-", ""), "effort": rec.get("effort"),
             "elapsed": lane.elapsed(now), "ended": (job or {}).get("ended"),
@@ -576,11 +536,9 @@ class Dashboard:
                 if ts is not None and ts >= midnight:
                     jobs.append((ts, rec))
             jobs.sort(key=lambda j: j[0])
-            hours = collections.OrderedDict((h, 0.0) for h in range(24))
             roles: dict = collections.defaultdict(float)
             for ts, rec in jobs:
                 cost = num(rec.get("cost_usd")) or 0.0
-                hours[time.localtime(ts).tm_hour] += cost
                 roles[str(rec.get("role") or "?")] += cost
 
             events = []
@@ -612,8 +570,7 @@ class Dashboard:
             "totals": {"cost": round(total, 4), "jobs": len(jobs),
                        "running": sum(1 for lane in lanes if lane["state"] in ("running", "held"))},
             "lanes": lanes,
-            "spend": {"hours": [{"hour": h, "cost": round(c, 4)} for h, c in hours.items()],
-                      "roles": [{"role": r, "cost": round(c, 4)} for r, c in sorted(roles.items(), key=lambda x: -x[1])]},
+            "spend": {"roles": [{"role": r, "cost": round(c, 4)} for r, c in sorted(roles.items(), key=lambda x: -x[1])]},
             "events": events,
             "gate": cards,
             "said": self.said(),
@@ -621,7 +578,7 @@ class Dashboard:
             "writes": writes,
             "service": self.service(now),
             "hints": self.hints(now),
-            "briefing": self.briefing(now),
+            "prompt": dashboard_setup.example_prompt(now),
         }
 
     @staticmethod
@@ -803,19 +760,19 @@ def make_handler(board: Dashboard, token: str, port: int, term: dt.Term | None =
                 self.send(204, b"", "text/plain")  # no icon; don't fill the console with 404s
             elif url.path == "/docs":
                 self.send(303, b"", "text/plain", {"Location": "/docs/"})
+            elif url.path == "/classic":
+                self.send(303, b"", "text/plain", {"Location": "/"})   # the old view's bookmarks land on the Thoughtfield
             elif url.path in DOCS:
                 self.manual(url.path)
             elif url.path in STATIC:
                 name, ctype = STATIC[url.path]
-                if url.path == "/" and board.look.get("ui") != "classic":
-                    name = "field.html"
                 try:
                     body = (UI / name).read_bytes()
                 except OSError:
                     self.refuse(500, f"missing {name}")
                     return
-                # The WebGL page's one addition to the CSP is the voice port; the classic page has neither.
-                self.send(200, body, ctype, page_policy=fieldcsp if name == "field.html" or name == "voice.html" else None)
+                # The pages' one addition to the CSP is the voice port.
+                self.send(200, body, ctype, page_policy=fieldcsp if name in ("field.html", "voice.html") else None)
             else:
                 self.refuse(404, "not found")
 
@@ -968,9 +925,11 @@ def _serve(args, term) -> int:
     # Demo mode reads no real config: today's defaults.
     look, look_problem = dcfg.defaults(), ""
     if not args.demo:
-        look, look_problem = dcfg.load(paths.config)
+        look, look_problem, look_notice = dcfg.load(paths.config)
         if look_problem:
             print(f"warning: dashboard.toml ignored, showing the defaults: {look_problem}", file=sys.stderr)
+        if look_notice:
+            print(f"note: {look_notice}", file=sys.stderr)
     board = Dashboard(args.state, args.roles, args.project or "(no project)", demo=args.demo, paths=paths,
                       hint_source=None if args.demo else dh.Hints(paths), look=look, look_problem=look_problem)
     if not board.watch.lanes:

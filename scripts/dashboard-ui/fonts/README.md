@@ -7,9 +7,9 @@ License 1.1; its license text sits beside it. `SHA256SUMS` pins the files, and
 
 | File | Typeface | Used for | License |
 |---|---|---|---|
-| `vt323.woff2` | VT323 | CRT and LCD text | `OFL-VT323.txt` |
-| `barlow-condensed-600.woff2`, `barlow-condensed-700.woff2` | Barlow Condensed | silkscreen labels, keys | `OFL-BarlowCondensed.txt` |
-| `dotgothic16.woff2` | DotGothic16 | event printer | `OFL-DotGothic16.txt` |
+| `vt323.woff2` | VT323 | the docs' theme (`theme.css`) only | `OFL-VT323.txt` |
+| `barlow-condensed-600.woff2`, `barlow-condensed-700.woff2` | Barlow Condensed | the docs' theme (`theme.css`) only | `OFL-BarlowCondensed.txt` |
+| `dotgothic16.woff2` | DotGothic16 | the docs' theme (`theme.css`) only | `OFL-DotGothic16.txt` |
 | `nunito-variable.woff2` | Nunito, variable, `wght` 400 to 700 | the Thoughtfield, except Terminal 0's grid | `OFL-Nunito.txt` |
 | `jetbrains-mono-400.woff2`, `jetbrains-mono-700.woff2` | JetBrains Mono 2.304, regular and bold | the Thoughtfield's Terminal 0 | `OFL-JetBrainsMono.txt` |
 

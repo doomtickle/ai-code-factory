@@ -708,7 +708,7 @@
     roles: "Saved is what the config folder holds; running is what the factory started with. Change a role's knobs here; the rest is read-only.",
     notes: "Notes are added to the roles' instructions. Edit them here; a restart applies a change.",
     gateway: "Read-only: these move the security boundary, so they are never edited from a browser. Change the files in the config folder, then restart.",
-    look: "Read-only: what factory dashboard read when it started. The Bright, Contrast, V-Hold and CRT knobs on the Coordinator's screen are remembered by this browser.",
+    look: "Read-only: what factory dashboard read when it started.",
   };
 
   function rolesSection(cfg) {
@@ -766,39 +766,15 @@
     return out;
   }
 
-  // The values the dashboard started with (the host cleaned them; they are checked again here). Colours reach the
-  // page only as a validated #rrggbb through style.setProperty on the swatch (its size and border are CSS); nothing
-  // becomes a class, attribute or HTML.
-  const HEX = /^#[0-9a-f]{6}$/, ROLE_NAME = /^[a-z][a-z0-9-]{1,30}$/, LOOK_UI = { field: "field", classic: "classic" };
+  // The values the dashboard started with (the host cleaned them; they are checked again here).
   const lookText = (v, cap) => (typeof v === "string" && v.length <= cap && /^[\x20-\x7e]+$/.test(v) ? v : "");
-  function swatch(hex) {
-    const sw = span("swatch", " ");
-    sw.style.setProperty("background-color", hex);
-    return sw;
-  }
   function lookSection(cfg) {
     const lk = cfg.look && typeof cfg.look === "object" ? cfg.look : {};
     const v = lk.values && typeof lk.values === "object" ? lk.values : {};
     const out = [H("Dashboard look", "dashboard.toml")];
     if (lk.problem) out.push(note("k-err", `✕ Ignored, the defaults show: ${str(lk.problem)}`), note("k-dim", `Fix the file, then restart factory dashboard (${APPLIES.LOOK}).`));
     else if (!lk.file) out.push(P("k-dim", "No dashboard.toml in the config folder: the defaults show."));
-    const look = (label, text) => out.push(row(label, text || "default", tag("k-cmd", `→ ${APPLIES.LOOK}`)));
-    look("Nameplate", lookText(v.plant, 40));
-    const shifts = list(v.shifts).map(x => lookText(x, 20));
-    look("Shifts", shifts.length === 3 && shifts.every(Boolean) ? shifts.join(", ") : "");
-    look("CRT", Number.isInteger(v.crt) && v.crt >= 0 && v.crt <= 10 ? String(v.crt) : "");
-    look("Sound", typeof v.sound === "boolean" ? (v.sound ? "on" : "off") : "");
-    look("UI", LOOK_UI[v.ui] || "field");
-    const colors = v.colors && typeof v.colors === "object" ? Object.keys(v.colors).filter(r => ROLE_NAME.test(r) && typeof v.colors[r] === "string" && HEX.test(v.colors[r])).slice(0, 32) : [];
-    if (!colors.length) look("Role colours", "");
-    for (const r of colors) {
-      const p = el("div", "krow");
-      const body = el("span", "kbody");
-      const val = span("kval", v.colors[r]);
-      body.append(swatch(v.colors[r]), val, tag("k-cmd", `→ ${APPLIES.LOOK}`));
-      p.append(span("klab", `Colour ${r}`), body);
-      out.push(p);
-    }
+    out.push(row("Nameplate", lookText(v.plant, 40) || "default", tag("k-cmd", `→ ${APPLIES.LOOK}`)));
     return out;
   }
 

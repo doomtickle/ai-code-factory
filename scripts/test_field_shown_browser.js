@@ -11,7 +11,7 @@ const assert = require("node:assert");
 const fs = require("node:fs"), os = require("node:os"), path = require("node:path");
 
 async function launch(url, media, init, grantClipboard = true) {
-  const profile = fs.mkdtempSync(path.join(os.tmpdir(), "floor-test."));
+  const profile = fs.mkdtempSync(path.join(os.tmpdir(), "field-shown-test."));
   const child = spawn(process.env.FACTORY_SHOT_CHROME || "chrome-headless-shell", ["--headless", "--no-sandbox", "--disable-gpu",
     "--disable-dev-shm-usage", "--hide-scrollbars", "--no-first-run", "--disable-extensions", "--remote-debugging-pipe",
     `--user-data-dir=${profile}`, "--window-size=1280,900", "about:blank"], { stdio: ["ignore", "ignore", "ignore", "pipe", "pipe"] });

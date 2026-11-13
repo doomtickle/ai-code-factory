@@ -251,9 +251,10 @@ Decline, with a reason), or use `factory approvals`
 You don't have to be quick. A held push or PR is **staged**: the agent is told
 "Staged for approval (id X); nothing has been sent yet" and moves on, and the
 gateway makes the write itself, within seconds, when you approve it.
-`factory approvals` and the classic dashboard's write gate mark a staged write,
-and then show what became of it: made (with the PR's address), failed (with
-why, in red) or still running.
+`factory approvals` marks a staged write and then shows what became of it:
+made (with the PR's address), failed (with why) or still running. The
+dashboard shows that a write was made or failed; `factory approvals` has the
+reason.
 
 ## Keep the Coordinator's context small
 

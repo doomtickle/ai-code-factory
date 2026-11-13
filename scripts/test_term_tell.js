@@ -1,6 +1,6 @@
 // Drives term.js under node (fake DOM, Terminal and WebSocket) to check the three fixed words the Thoughtfield's Terminal 0
 // frame may tell the main page (t0:enter, t0:out, t0:still): only with the field skin's `tell` flag and a main-port meta,
-// only to the exact main origin, nothing from the muted replay, a hidden tab or the classic skin, out at most every 500 ms,
+// only to the exact main origin, nothing from the muted replay, a hidden tab or the no skin, out at most every 500 ms,
 // still 2 s after the last frame, and never a word that carries text, a count or a size.
 // Run by test_dashboard_term.py (TermTellTests):  node scripts/test_term_tell.js scripts/dashboard-ui/term.js
 "use strict";
@@ -90,13 +90,13 @@ const MAIN = "http://127.0.0.1:8765";
   assert.deepStrictEqual(p.words(), ["t0:out", "t0:still"], "the Coordinator going off settles");
   done.push("hidden and closed");
 
-  // Nothing without the skin flag (the classic page), without the port meta, or with a bad one.
-  for (const [name, opt] of [["classic skin", { skin: null, port: 8765 }], ["no flag", { skin: { focusOnState: false }, port: 8765 }],
+  // Nothing without the skin flag (a page with no skin), without the port meta, or with a bad one.
+  for (const [name, opt] of [["no skin", { skin: null, port: 8765 }], ["no flag", { skin: { focusOnState: false }, port: 8765 }],
                               ["no port", { skin: FIELD, port: null }], ["bad port", { skin: FIELD, port: 0 }], ["text port", { skin: FIELD, port: "x" }]]) {
     p = await load(opt);
     p.state(true); p.type("\r"); p.tick(1000); p.frame(); p.advance(5000);
     assert.deepStrictEqual(p.posts, [], name + " sends nothing");
   }
-  done.push("classic sends nothing");
+  done.push("no skin sends nothing");
   console.log(JSON.stringify(done));
 })().catch(e => { console.error(e.stack || e); process.exit(1); });

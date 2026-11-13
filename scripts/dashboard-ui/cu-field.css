@@ -1,5 +1,5 @@
-/* The control unit in the Thoughtfield (doomtickle/passdesk-ops#207, #208). The same unit and the same cu.js on the same second
-   origin, and this is its whole look: cu.css is not loaded here. The deck is the decision row on the horizon. Every other screen
+/* The control unit in the Thoughtfield (doomtickle/passdesk-ops#207, #208). The unit and cu.js on the second origin, and this
+   is its whole look. The deck is the decision row on the horizon. Every other screen
    (Settings, Project notes, Diagnose, Restart, Update, a log, Inspect) is a soft dark pool over the world, as the lane monitor is:
    no boxes, order from size and light, plain words, and gold only for decisions. No inline styles (the CSP has no 'unsafe-inline'). */
 @font-face { font-family: "Nunito"; font-weight: 400 700; font-display: swap; src: url("/fonts/nunito-variable.woff2") format("woff2"); }
@@ -36,10 +36,10 @@ html:not(.expanded) #scr-deck { padding: 0; height: 100vh; }
 #scr-deck .dec-l { position: relative; min-width: 0; text-align: right; max-height: 106px; overflow: hidden; }
 #scr-deck .deck-lcd { display: block; margin: 0; max-height: 106px; color: var(--i2); position: relative; overflow: hidden; }
 #scr-deck .deck-body { max-height: 106px; overflow-y: auto; scrollbar-width: none; }
-#scr-deck .deck-body .ln { color: var(--i2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }   /* one row each, as on the classic deck: an agent-written title can never push the real target out of view */
+#scr-deck .deck-body .ln { color: var(--i2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }   /* one row each: an agent-written title can never push the real target out of view */
 #scr-deck .deck-body .ln.big { font: 600 20px/1.25 var(--f-voice); color: #fff; }
 #scr-deck .deck-body .ln.big.st-ok { color: var(--ok); } #scr-deck .deck-body .ln.big.st-no, #scr-deck .deck-body .ln.big.fault { color: var(--crit2); }
-#scr-deck .deck-body .ln.idle, #scr-deck .deck-body .ln.warn, #scr-deck .deck-body .ln.lane, #scr-deck .deck-body .ln.files, #scr-deck .deck-body .ln.dim:not(.st-ok), #scr-deck .deck-body .ln.wr { display: none; }   /* the whole card and the deferred-writes list are on INSPECT and the classic view */
+#scr-deck .deck-body .ln.idle, #scr-deck .deck-body .ln.warn, #scr-deck .deck-body .ln.lane, #scr-deck .deck-body .ln.files, #scr-deck .deck-body .ln.dim:not(.st-ok), #scr-deck .deck-body .ln.wr { display: none; }   /* the whole card and the deferred-writes list are on INSPECT */
 #scr-deck .flash { position: absolute; left: 0; right: 0; bottom: 0; display: block; background: #03060d; color: #fff; font: 500 14.5px/1.35 var(--f-data); text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #scr-deck .flash.err { color: var(--crit2); }
 #scr-deck .flash.ask { top: 0; white-space: normal; display: flex; align-items: center; justify-content: flex-end; }
@@ -204,7 +204,6 @@ html.svc #svc-back { display: inline; }
 .rpend { color: var(--amber); font-size: .85rem; }
 .rpend[hidden] { display: none; }
 .rwait { display: block; width: max-content; margin-top: 2px; padding: 0 .5em; border: 1px dashed var(--amber); border-radius: 999px; color: var(--amber); }
-.swatch { display: inline-block; width: 1.6em; height: .9em; margin-right: .6em; vertical-align: middle; border: 1px solid var(--field-line); border-radius: 3px; }
 .rcell.dirty .tape, .rcell.dirty .stepper, .rcell.dirty .seg-row { border-color: var(--blue); background: rgba(124, 196, 255, .12); }
 .rcell.bad .tape { border-color: var(--crit2); background: rgba(255, 154, 165, .1); }
 .tape { width: 100%; min-height: 36px; padding: 5px 10px; color: var(--i1); font-size: 1rem; }
@@ -229,7 +228,7 @@ select.tape option { background: #0b1020; color: var(--i1); }
 .crt-body .nedit:disabled { opacity: .6; }
 .crt-body .ngauge { display: flex; flex-wrap: wrap; align-items: center; column-gap: 12px; margin-bottom: 2px; font-size: .92rem; font-variant-numeric: tabular-nums; }
 .crt-body .ngauge > span:first-child { flex: 0 0 7rem; }
-.crt-body .nbar { flex: 0 1 14rem; height: 3px; min-width: 4rem; overflow: hidden; border-radius: 2px; font-size: 0; background: linear-gradient(90deg, currentColor calc(var(--fill, 0) * 100%), rgba(203, 218, 238, .2) 0); }   /* cu-notes.js keeps the block-character bar in the text, for the classic look and for screen readers */
+.crt-body .nbar { flex: 0 1 14rem; height: 3px; min-width: 4rem; overflow: hidden; border-radius: 2px; font-size: 0; background: linear-gradient(90deg, currentColor calc(var(--fill, 0) * 100%), rgba(203, 218, 238, .2) 0); }   /* cu-notes.js keeps the block-character bar in the text, for screen readers */
 .n0 { --fill: 0; } .n1 { --fill: .1; } .n2 { --fill: .2; } .n3 { --fill: .3; } .n4 { --fill: .4; } .n5 { --fill: .5; } .n6 { --fill: .6; } .n7 { --fill: .7; } .n8 { --fill: .8; } .n9 { --fill: .9; } .n10 { --fill: 1; }
 .crt-body .nstatus { margin-top: 8px; }
 .crt-body .nask { margin: 6px 0 8px; color: var(--crit2); font-weight: 600; }

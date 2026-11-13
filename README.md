@@ -230,7 +230,7 @@ another.
 | `factory status` | Project, broker, dispatch bridge, login, roles (with their lanes), sandbox status, and pending approvals and the oldest one's age |
 | `factory logs <role>` | Follow a role's transcripts, all its lanes (`factory logs developer-lane2` for one lane); `factory logs broker` / `dispatch` for audit logs |
 | `factory watch` | Live terminal view of the lanes: one pane per active lane (a job running, or finished in the last ten minutes) with the job's status, elapsed time, model and cost in its title and the transcript rendered for reading (tool calls condensed, results dimmed, text wrapped); idle lanes take one status line each. A digit focuses one lane, `a` shows every lane, `p` shows a lane's latest review packet, `q` quits. `--once` prints one plain-text frame |
-| `factory dashboard [--no-open] [--port N] [--demo]` | The whole factory on one screen in your browser (see "Dashboard"). It opens on the Thoughtfield: today's jobs as a galaxy you can question and rewind, the Coordinator's live terminal, each job's transcript, packet and changes, and the control unit, which approves and declines held writes and diagnoses, restarts or updates the factory (each after a confirm screen). `/classic` is the FC-1984 view, with lane modules, the factory floor, the event printer and the shift budget. Local. `--demo` shows made-up data with no factory running, for a screenshot or a first look (display only; see the dashboard guide). `factory gui` is the same command |
+| `factory dashboard [--no-open] [--port N] [--demo]` | The whole factory on one screen in your browser (see "Dashboard"). It opens on the Thoughtfield: today's jobs as a galaxy you can question and rewind, the Coordinator's live terminal, each job's transcript, packet and changes, and the control unit, which approves and declines held writes and diagnoses, restarts or updates the factory (each after a confirm screen). Local. `--demo` shows made-up data with no factory running, for a screenshot or a first look (display only; see the dashboard guide). `factory gui` is the same command |
 | `factory voice <start [--build] \| stop \| status \| build \| test>` | LOIS's optional local voice: one Docker container on `127.0.0.1:8873`, needing no network at run time. `build` once (several GB), then `start`. Without it the dashboard shows captions. See `voice/README.md` |
 | `factory packet [<job-id> \| latest \| <lane> \| --list]` | A job's review packet: the task, each branch's commits and diffstat against your checked-out branch, the `factory-test` modes it reported, the broker calls its role made, cost, and the role's report with its APPROVED / REVISE verdict. Written after every job; `--list` shows recent ones |
 | `factory roles` | List roles, their project access, lanes and network tools |
@@ -314,11 +314,10 @@ factory update
 - `enabled-roles` names the optional roles (today: the researcher) to switch on
   on this machine, one per line (Roles, "Optional roles"). It only turns a role
   on or off; it can't grant tools. Applied on `factory start`. No rebuild.
-- `dashboard.toml` sets how `factory dashboard` looks: the view it opens on
-  (`ui`, `"field"` or `"classic"`), the nameplate and floor
-  plate (`plant`), the three shift names (`shifts`), the CRT knob's and the
-  SOUND key's starting values (`crt`, `sound`) and a colour per role
-  (`[roles.colors]`, `designer = "#d08cff"`). The dashboard reads it once when it
+- `dashboard.toml` sets how `factory dashboard` looks: the nameplate (`plant`).
+  The keys of the retired classic view (`ui`, `shifts`, `crt`, `sound`,
+  `[roles.colors]`) are accepted and ignored, with a one-line notice. The
+  dashboard reads it once when it
   starts, so restart it to see a change. It is display only and strict: an
   unknown key or a bad value makes it ignore the whole file, show the defaults
   and say why in its log and on SETTINGS. It needs no rebuild and grants nothing
@@ -1133,13 +1132,14 @@ the troubleshooting guide, *"DENIED by broker policy"*.
 ## Dashboard
 
 `factory dashboard` (or `factory gui`) serves the factory on one screen and
-tries to open it in your browser. It opens on **The Thoughtfield**, at `/` and
-`/field`. The FC-1984 view is always at `/classic`, one click away. `ui =
-"classic"` in `dashboard.toml` makes it the one that opens. The
+tries to open it in your browser. It is **The Thoughtfield**, at `/` and
+`/field`, the dashboard's only view (the older FC-1984 control panel was retired
+in November 2026; see [the history](docs/history/classic-view/README.md)). The
 [dashboard guide](docs/guides/06-dashboard.md) goes through every part and key.
 
 The Thoughtfield needs WebGL, and a real GPU is strongly recommended. Without
-WebGL it says so and points to Classic. It shows LOIS's bust in front of a
+WebGL its caption says so, and the job list, the decision row and Terminal 0
+still work. It shows LOIS's bust in front of a
 spiral galaxy, above the dark curve of a world whose lit edge is the day:
 
 - **The galaxy** is today's jobs, from `GET /api/field`
@@ -1176,117 +1176,71 @@ spiral galaxy, above the dark curve of a world whose lit edge is the day:
   numbers, times and lane names filled in, never anything an agent wrote. Without
   the service the page shows captions.
 
-The classic view keeps features the Thoughtfield doesn't have: the factory floor,
-the shift budget, notifications, the radio, the full event printer and the
-deferred-writes list. It is styled as a 1984 rack-mounted control unit, and it
-shows:
+The rest of what the page does is the control unit's, in the decision row and
+Terminal 0:
 
-- **Terminal 0:** the Coordinator itself, live, on the left-hand screen. Type
-  to it as you would in any terminal; every tab you open shows the same session (the
-  last tab you resize or focus sets its size). Opening the page
-  resumes the Coordinator once per load (the last session continued); after
-  that, RESUME resumes and POWER ON starts a fresh session. A RESTART or UPDATE
-  from the control unit re-attaches with a resume too. If the Coordinator is already open in
-  `factory chat`, the screen says so instead: close it there, then
-  press POWER ON again. A tab opened later replays the recent output, with
-  its keyboard muted while it does, so the terminal's answers to old
-  queries in that output aren't typed into the Coordinator a second time.
-  When the session ends the set powers off; POWER ON starts it again. Ctrl-C
-  on `factory dashboard` hangs up on it, like closing a terminal.
-- **Lanes:** one module per active lane (a job running, or finished in the
-  last ten minutes, as in `factory watch`), sized to share the bay, with a
-  status LED, the live tail of its transcript on an LCD (tool calls, errors,
-  branches and held writes in their own colors), and its model, cost, context
-  size and elapsed time. Idle lanes are chips in a strip under the modules,
-  and with nothing running the bay shows STANDBY, a shift briefing (project,
-  repos, notes, roles, holds, an example task). A lane powers on into the
-  bay and down into the strip (no motion with the system's reduced-motion
-  setting), and keeps its number in both forms: a digit key (or a click)
-  opens the lane's full transcript and its latest review packet.
-- **Factory floor:** FLOOR (or `f`) redraws the Lanes bay as one more module
-  of the rack: a brushed panel with an amber tube, and inside it one loop
-  track with a program seated at a console per lane, its identity disc showing
-  the lane's state. Work visibly flows round the loop: work orders ride from
-  the Coordinator's dispatch console to a developer, branch crates ride on to
-  a reviewer (a light bridge joins the pair), approved work rides through the
-  gate and out of the OUT portal, and broker calls are crates at the gate
-  (allowed ones out, denied ones stamped CONFISCATED into the derez field,
-  held writes waiting in front of it). The tube follows Terminal 0's CRT knob.
-  It only displays, from the same state as the rest of the page.
-- **Write gate:** the pushes and pull requests the gateway is holding for you.
+- **Terminal 0 keeps one session.** Every tab you open shows the same session
+  (the last tab you resize or focus sets its size). Opening the page resumes
+  the Coordinator once per load (the last session continued); after that,
+  Resume resumes and Power on starts a fresh session. A Restart or Update
+  re-attaches with a resume too. If the Coordinator is already open in
+  `factory chat`, the pane says so instead: close it there, then press Power
+  on again. A tab opened later replays the recent output, with its keyboard
+  muted while it does, so the terminal's answers to old queries in that output
+  aren't typed into the Coordinator a second time. When the session ends the
+  pane says it is off; Power on starts it again. Ctrl-C on `factory dashboard`
+  hangs up on it, like closing a terminal.
+- **Held writes:** the pushes and pull requests the gateway is holding for you.
   A held write names the role, not the lane, and marks no lane as held: the
-  agent has moved on once the write is staged. Under its display is the **control unit**:
-  - the selected card in full (tool, role and lanes, repo, branch or head to
-    base, PR title, commits and files, time left; ◀ ▶ step through several),
-    a reason field, and DECLINE and APPROVE keys. One press decides, exactly
-    as `factory approvals approve <id>` does (the same decision file);
-    declining needs a reason, which the recorded outcome keeps. Every held
-    write is staged (the agent has moved on) and marked STAGED; once decided
-    it reads "APPROVED, the gateway writes it within seconds" or "DECLINED"
-    with who decided and when, and both keys dark (one decision per card)
-    until the gateway acts on it, and the unit lists
-    the recent deferred writes under it (FAILED in red with the reason, RUNNING,
-    MADE with the first line of the result): display only, with no keys. An expired card shows EXPIRED with its
-    keys dark. If the card expired, was decided elsewhere, or a new one
-    replaced it meanwhile, the unit says so in words and decides nothing.
-  - INSPECT, on a held push whose patch the gateway stored (a Passdesk
-    broker that records patches): the unit fills the window with the push's
-    commits (`git log -p --stat --cc`, oldest first) on a green screen,
-    commits and files with their +/- counts on the left, the changes on the
-    right. `j`/`k` or ↓/↑ step through files, `n`/`p` through hunks, Esc
-    closes. Characters that could hide what code does (bidi controls,
-    zero-width and other invisible characters, control characters) are shown
-    as `⟨U+202E⟩`-style tokens and the file gets a badge (BIDI, INVIS, CTRL;
-    LONG for lines over 2000 characters, which are cut; CRLF; BAD for a part
-    that couldn't be read). A big patch shows "TRUNCATED · showing X of Y
-    files" (the gateway caps what it stores, 256 KiB by default), names the
-    files it doesn't show ("NOT SHOWN: …") and ends with "✂ CUT HERE". APPROVE
-    and DECLINE work from there too, for the patch on the screen: if a new
-    card replaces it, the viewer reads the new patch and holds the keys for a
-    moment; if the write goes, the viewer closes and says so. APPROVE on a
-    truncated push, here or on the deck, asks once more ("Approve without
-    seeing N files?") and only CONFIRM APPROVE, which lights after a second,
-    decides.
-  - RESTART (`factory restart`) and UPDATE (`factory update --yes`). Neither
-    starts on the first press: the unit fills the window with what it would
-    do (the running jobs it cancels, the held writes it drops, and for UPDATE
-    the incoming commits and the sandboxes it recreates and what each loses,
-    from `factory update --plan`), and only CONFIRM there starts it. Its
-    output then scrolls on the same screen, and is kept in
-    `dashboard/actions/` in the state folder. The Coordinator's terminal hangs
-    up while it runs (POWER ON waits) and, if it was attached and the command
-    succeeded, attaches again afterwards. After an update that
-    changed the dashboard itself, the unit asks you to reload the page, or to
-    restart `factory dashboard` if its server code changed. The command keeps
-    running if you close the dashboard. It runs without a terminal, so
-    anything that would ask for a password (say, `sudo` while installing
-    tools) fails instead of waiting: run `factory update` in a terminal then.
-  - DIAG (`factory doctor`), after the same confirm screen. It changes
-    nothing, so it cancels no jobs, drops no held writes and leaves the
-    Coordinator's terminal attached; its report scrolls on the same screen
-    and ends with NO PROBLEMS FOUND or PROBLEMS FOUND (each with its fix
-    indented under it). It runs one at a time with RESTART and UPDATE.
-  - a plate marked Settings, which opens the same screen as the header's SETTINGS key.
-- **Spend:** today's cost per hour and per role, from `dispatch/audit.jsonl`.
-- **Event printer:** today's broker calls (allowed, denied, staged, decided) and
-  finished jobs, with STAGED, WRITTEN and FAILED lines for the gateway's
-  staged writes.
-- **Front-panel knobs** under the Coordinator's screen: BRIGHT and CONTRAST
-  adjust it; V-HOLD, turned off centre, makes the picture roll like an old
-  set; and CRT goes from 0, a flat screen, to 10, a full tube (scanlines,
-  aperture grille, colour fringe, beam softness, phosphor glow, rolling band
-  and flicker); it starts at 3. All four apply to the live terminal too (drag,
-  scroll or use the arrow keys; double-click resets; remembered in your
-  browser).
-- **Lamps:** whether the page can reach the dashboard, whether the dispatch
-  bridge is running, and whether anything is held.
-- **MANUAL** (on the header plate) opens these docs in a tab of their own,
-  and the **?** on each module opens its part of the
-  dashboard guide. The dashboard renders them
-  from the factory checkout once, when it starts: restart `factory dashboard`
-  to see edits.
+  agent has moved on once the write is staged. The decision row shows the
+  selected card in full (tool, role, repo, branch or head to base, PR title,
+  commits and files, time left; ◀ ▶ step through several), a reason field, and
+  the gold light and Decline. Holding the light for 2.5 seconds decides exactly
+  as `factory approvals approve <id>` does (the same decision file); declining
+  needs a reason, which the recorded outcome keeps. Every held write is staged
+  (the agent has moved on); once decided the card says who decided and when,
+  and the keys go dark (one decision per card) until the gateway acts on it. An
+  expired card shows as expired with its keys dark. If the card expired, was
+  decided elsewhere, or a new one replaced it meanwhile, the row says so in
+  words and decides nothing.
+- **Inspect**, on a held push whose patch the gateway stored (a Passdesk broker
+  that records patches): the page fills the window with the push's commits
+  (`git log -p --stat --cc`, oldest first), commits and files with their +/-
+  counts on the left, the changes on the right. `j`/`k` or ↓/↑ step through
+  files, `n`/`p` through hunks, Esc closes. Characters that could hide what code
+  does (bidi controls, zero-width and other invisible characters, control
+  characters) are shown as `⟨U+202E⟩`-style tokens and the file gets a badge
+  (BIDI, INVIS, CTRL; LONG for lines over 2000 characters, which are cut; CRLF;
+  BAD for a part that couldn't be read). A big patch shows "Cut short" (the
+  gateway caps what it stores, 256 KiB by default), names the files it doesn't
+  show and ends with "✂ Cut here". Approving and declining work from there too,
+  for the patch on the screen: if a new card replaces it, the viewer reads the
+  new patch and keeps the light dark for a moment. Approving a truncated push
+  asks once more ("Approve without seeing N files?") and only a second hold
+  decides.
+- **Restart** (`factory restart`) and **Update** (`factory update --yes`).
+  Neither starts on the first press: the unit fills the window with what it
+  would do (the running jobs it cancels, the held writes it drops, and for
+  Update the incoming commits and the sandboxes it recreates and what each
+  loses, from `factory update --plan`), and only Confirm there starts it. Its
+  output then scrolls on the same screen, and is kept in `dashboard/actions/`
+  in the state folder. The Coordinator's terminal hangs up while it runs and, if
+  it was attached and the command succeeded, attaches again afterwards. After an
+  update that changed the dashboard itself, the unit asks you to reload the
+  page, or to restart `factory dashboard` if its server code changed. The
+  command keeps running if you close the dashboard. It runs without a terminal,
+  so anything that would ask for a password (say, `sudo` while installing
+  tools) fails instead of waiting: run `factory update` in a terminal then.
+- **Diagnose** (`factory doctor`), after the same confirm screen. It changes
+  nothing, so it cancels no jobs, drops no held writes and leaves the
+  Coordinator's terminal attached; its report scrolls on the same screen and
+  ends with "no problems found" or "problems found" (each with its fix
+  indented under it). It runs one at a time with Restart and Update.
+- **The book** (top bar) opens these docs in a tab of their own. The dashboard
+  renders them from the factory checkout once, when it starts: restart
+  `factory dashboard` to see edits.
 
-Both views are local. Apart from the terminal and the control unit, they only read the
+The dashboard is local. Apart from the terminal and the control unit, it only reads the
 state folder (lane transcripts, both audit logs, review packets, approval
 cards, and for INSPECT the stored patch), and at start-up the factory's docs,
 and makes no network connection. The
@@ -1414,7 +1368,7 @@ lacks them), never dropped. `--changes` does not combine with `--html`.
   - `dispatch/packets/<job-id>.md`: the job's review packet (`factory packet`)
   - `dispatch/packets/<job-id>.diff.json`: the full patch of each branch the job
     brought back, cut at about 1 MB and 20,000 lines, for the dashboard's
-    monitor (the Changes tab, DIFF in the classic view)
+    monitor (the Changes tab)
   - `dispatch/jobs.json`: the job list (last 200 jobs, short records), written
     at every status change and reloaded when the bridge starts, so
     `job_status`, `wait_for_job` and `factory packet` still know old ids after

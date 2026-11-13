@@ -150,7 +150,6 @@ per job, above a dark world whose lit edge is the day.
 - **The work list and Today** (lower left and right): what's running, what's
   waiting for you, and today's spend.
 
-**Classic** in the top bar opens the older FC-1984 control panel.
 [Use the dashboard](06-dashboard.md) goes through every part and key, and
 which `factory` command each one stands in for.
 

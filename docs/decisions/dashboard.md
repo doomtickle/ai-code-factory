@@ -11,6 +11,36 @@ sentences therefore also appear, shortened to an imperative, in `scripts/CLAUDE.
 in wording, this text is the longer original. Cross-references such as "below" and "above" refer to the
 sections here. Decision records and feature notes for the dashboard go in this file.
 
+## 13 Nov 2026: the classic view and the factory floor are removed
+
+Owner decision: the Thoughtfield is the direction, and the classic FC-1984 view (with its factory floor) was
+dead weight: a second page to keep in step with every change to the first. The Thoughtfield (`field.html`) is
+now the only view, at `/` and `/field`. Screenshots of what went are kept in
+[`docs/history/classic-view/`](../history/classic-view/README.md); the code is in git history.
+
+- **Gone with it, and ported to nothing:** the factory floor and its `factory-floor:` events, the shift budget,
+  browser notifications and sound cues (ATTENTION), the factory radio, the full event printer and spend per hour,
+  the list of the gateway's deferred writes, the lane modules with their transcript tails and digit keys, the shift
+  briefing on STANDBY, the header lamps and the front-panel knobs (BRIGHT, CONTRAST, V-HOLD, CRT). The Thoughtfield
+  keeps what it already had: the galaxy, the horizon's beads, the work list, the monitor (Transcript, Packet,
+  Changes), the decision row, Inspect, the service keys, Settings, Terminal 0 and the voice.
+- **Routes:** `/classic` answers 303 to `/` (after the same token, cookie and `Host` checks as any page). The
+  classic page's files (`index.html`, `app.js`, `app.css`, `floor.js`, `floor.css`, `sound.js`, `radio.js`,
+  `lanelabel.js`, `look.js`) are no longer in the main origin's allowlist and answer 404. On the second origin the
+  classic `/term` and `/cu` pages and their `term.css` and `cu.css` are gone; `/term/field` and `/cu/field`, the
+  Thoughtfield's two pages, are unchanged, and so is every rule about them.
+- **State:** `/api/state` no longer carries `briefing` (a plain `prompt`, one example task, replaces it), the spend
+  per hour (`spend.hours`) or a lane's `reviews`. `/api/lane`, `/api/diff` and `/api/field` are unchanged.
+- **Config:** `dashboard.toml` reads only `plant`. `ui`, `shifts`, `crt`, `sound` and `[roles.colors]` are still
+  accepted so an older file starts the dashboard, but their values are not read or checked; the dashboard prints
+  one line naming them. A refused file still shows the defaults and the reason. Settings' Dashboard look tab shows
+  the nameplate and offers no view to choose.
+- **Security:** no endpoint was added and no rule changed. Removing a page narrows the surface; the main page is
+  still GET-only and display-only, and `scripts/CLAUDE.md` still holds every rule the Thoughtfield needs.
+- Sections below that describe the classic page (ATTENTION, SHIFT BUDGET, DASHBOARD LOOK's colours and shifts, LANE
+  LABELS, EVENT PRINTER, SHIFT BRIEFING and the classic skin in THE THOUGHTFIELD) are history and carry a
+  "superseded" note. The FIRST SHIFT banner is a different thing (the first-login hint) and stays.
+
 ## Scope
 
 These rules cover the dashboard: `scripts/dashboard.py`, `scripts/dashboard_controls.py`,
@@ -299,6 +329,8 @@ sends.
 
 ### ATTENTION
 
+*(Superseded 13 Nov 2026: the classic view, `app.js` and `sound.js` are gone. The Thoughtfield keeps its chime and the waiting count in the tab title; it has no notifications or favicon badge.)*
+
 ATTENTION (doomtickle/passdesk-ops#192, `app.js`, with the cues in `sound.js`) is display only and adds no
 endpoint: the title and favicon badge, the cues and the optional notifications come from `/api/state`
 diffs the page already polls. Only counts, a fixed tool list and the lane-name pattern ever reach the
@@ -308,12 +340,16 @@ key's click, never on load.
 
 ### SHIFT BUDGET
 
+*(Superseded 13 Nov 2026: removed with the classic view; nothing replaces it.)*
+
 SHIFT BUDGET (doomtickle/passdesk-ops#195, `app.js` `renderBudget`) is display only and adds no endpoint or `/api/state` field:
 a dollars-a-day figure typed on the spend module and kept in this browser (`localStorage`, in the knobs' `fc1984-knobs` entry,
 validated as a finite number from 0 to 100000, otherwise ignored; 0 or empty is no budget) that tints the header's spend readout
 (a class from a fixed pair, amber past the figure, red past twice it) and fills a meter. It sends nothing and stops nothing.
 
 ### DASHBOARD LOOK
+
+*(Superseded 13 Nov 2026: only the nameplate (`plant`) is read now. `look.js` is gone, and the shift names, CRT, sound, `ui` and role colours are accepted and ignored with a one-line notice.)*
 
 DASHBOARD LOOK (doomtickle/passdesk-ops#196, `scripts/dashboard_config.py`, `dashboard-ui/look.js`) is
 `FACTORY_CONFIG/dashboard.toml` (the dashboard's `--config`): a nameplate and floor plate, three shift names, the CRT
@@ -328,6 +364,8 @@ the file becomes a class name, attribute or HTML. `crt` and `sound` only start t
 browser has a choice of its own.
 
 ### LANE LABELS
+
+*(Superseded 13 Nov 2026: the lane modules, chips and `lanelabel.js` are gone, and a lane's `reviews` field with them; `branch` and `desk` remain in each lane of `/api/state`.)*
 
 LANE LABELS (doomtickle/passdesk-ops#194, `scripts/dashboard_labels.py`, `dashboard-ui/lanelabel.js`) put a developer's
 branch and the lane a reviewer is checking on the lane modules and chips, as the floor already did: `branch`, `desk` and
@@ -364,6 +402,8 @@ answer again after 8 s, since the file lands at job end), draws everything with 
 
 ### EVENT PRINTER
 
+*(Superseded 13 Nov 2026: the printer is gone with the classic view. The Thoughtfield's beads on the horizon show the same events.)*
+
 EVENT PRINTER (doomtickle/passdesk-ops#190, `app.js` `renderPaper`) lines are buttons. They add no endpoint:
 `/api/state` events carry `job_id` and `lane` on a JOB line (only when they match `JOB_ID` and the lane pattern) and
 `card_id` on approval lines (only when it fullmatches `approvals.CARD_ID`). A JOB line opens the lane monitor through the
@@ -385,6 +425,8 @@ SERVICE DUE cache (files only). Keychain checks are left out. Demo mode has no s
 
 ### SHIFT BRIEFING
 
+*(Superseded 13 Nov 2026: the STANDBY briefing is gone; `/api/state` carries only a `prompt`, one example task.)*
+
 SHIFT BRIEFING (doomtickle/passdesk-ops#182, `dashboard_setup.briefing`, `app.js` `renderBriefing`) turns the STANDBY plate
 into a briefing: `briefing` in `/api/state`, the subset of the SETUP `config` (one builder, `dashboard_setup.setup`, not a second
 parser) plus the project's repos from `factory/repos.py` `project_repos` on the bound project folder (read from
@@ -398,7 +440,7 @@ mode reads the fixture's `setup/` folder and the empty `.git` folders `dashboard
 ### THE THOUGHTFIELD
 
 THE THOUGHTFIELD (doomtickle/passdesk-ops#207, owner decision 5 Nov 2026) is the default view: `field.html` at `/` and `/field`, unless
-`ui = "classic"` in `dashboard.toml`; the FC-1984 page is always at `/classic`. Both are in `STATIC` and meet every rule above. The page is
+`ui = "classic"` in `dashboard.toml`; the FC-1984 page is always at `/classic` *(superseded 13 Nov 2026: it is the only view, and `/classic` redirects to `/`)*. Both are in `STATIC` and meet every rule above. The page is
 the same main page: GET-only, display only, no key, no inline script or style, agent-written strings by `textContent` only (SVG labels too:
 the world's geometry is built with `createElementNS`, never `innerHTML`). Its CSP is the main page's plus one thing, `connect-src` to
 `http://127.0.0.1:<factory.voice.PORT>` (below); `img-src` gets no `blob:`, which is why `witness/witness.glb` has its embedded images stripped

@@ -1119,7 +1119,7 @@ main:focus { outline: none; }
 .img-alt { font-style: italic; color: var(--muted); }
 
 /* LED dots for the doctor's and the status words' ok / warn / fail marks
-   (render_code's _mark_line_html), as the dashboard's lamps (app.css .led). */
+   (render_code's _mark_line_html), as the dashboard's lamps. */
 .mk { display: inline-block; width: .62em; height: .62em; margin-right: .5em; border-radius: 50%;
       vertical-align: -.03em; background: var(--led-off);
       box-shadow: inset 0 -1px 2px rgba(0, 0, 0, .45), 0 0 0 1px rgba(0, 0, 0, .5); }
@@ -1181,7 +1181,7 @@ main:focus { outline: none; }
                                      background: color-mix(in srgb, var(--code-bg) 88%, black); }
 .code.bare > .copy { position: absolute; top: 8px; right: 8px; }
 .code.bare pre { padding-right: 44px; }
-/* The copy button is a keycap (as app.css's .keycap / cu.css's .svckey);
+/* The copy button is a keycap;
    --key/--key-lo/--key-ink are physical constants, the same cream plastic
    in both themes. */
 .copy {

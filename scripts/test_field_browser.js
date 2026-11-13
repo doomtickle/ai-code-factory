@@ -463,6 +463,17 @@ async function nogate(url) {
     assert.strictEqual(await b.ev(`LF.unlocked()`), true, "a click into the terminal frame unlocks sound");
     assert.deepStrictEqual(b.errors, [], "no page errors");
   } finally { await b.close(); }
+  // With nothing running and nothing waiting, the greeting suggests the example prompt /api/state carries as `prompt`.
+  b = await launch(url, undefined, `(() => { const real = window.fetch.bind(window); window.fetch = async (u, o) => { const r = await real(u, o); if (!String(u).startsWith("/api/state")) return r;
+    const j = await r.json(); j.totals = Object.assign({}, j.totals, { running: 0 }); j.gate = []; j.said = []; j.prompt = "Show me what changed today"; j.term = { port: 1, running: true };
+    return new Response(JSON.stringify(j), { headers: { "Content-Type": "application/json" } }); }; })()`);
+  try {
+    await ready(b, 1);
+    let meta = "";
+    for (let i = 0; i < 40 && !/Try:/.test(meta); i++) { await b.sleep(250); meta = await b.ev(`document.getElementById("meta").textContent`); }
+    assert.match(meta, /Try: Show me what changed today/, "the idle greeting shows the example prompt");
+    assert.deepStrictEqual(b.errors, [], "no page errors");
+  } finally { await b.close(); }
 }
 
 // The delegation comet: a lane going idle -> running sends one flare from the witness to that job's crystal, running -> done

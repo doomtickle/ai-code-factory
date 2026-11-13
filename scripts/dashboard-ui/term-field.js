@@ -9,7 +9,7 @@
 // - lineHeight 1: JetBrains Mono's own line is already 1.32em, which is roomy, and box-drawing lines still meet from row to row.
 "use strict";
 window.TermSkin = {
-  // In the Thoughtfield the Coordinator is LOIS (doomtickle/passdesk-ops#216). The classic page keeps its own words.
+  // In the Thoughtfield the Coordinator is LOIS (doomtickle/passdesk-ops#216).
   who: "LOIS",
   // The pane is always on screen beside the page, so a state message must never move the keys into the Coordinator: only a click does.
   focusOnState: false,

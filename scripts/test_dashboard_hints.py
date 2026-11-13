@@ -225,11 +225,11 @@ class CacheAndBoundsTests(HintsBase):
 
 class PageTests(unittest.TestCase):
     def test_the_page_draws_the_banner_as_text_and_the_unit_blinks_restart(self):
-        app = (UI / "app.js").read_text()
-        self.assertIn("state.hints", app)
-        self.assertIn('$("crt-shift")', app)
-        self.assertNotIn("innerHTML", app[app.index("function renderShift"):app.index("function renderTerm")])
-        self.assertIn('id="crt-shift"', (UI / "index.html").read_text())
+        hud = (UI / "field-hud.js").read_text()
+        self.assertIn("s.hints", hud)
+        self.assertIn('$("hint-line").textContent = hint ?', hud)
+        self.assertNotIn("innerHTML", hud)
+        self.assertIn('id="hint-line"', (UI / "field.html").read_text())
         cu = (UI / "cu.js").read_text()
         self.assertIn("st.first_shift", cu)
         self.assertIn('run || first ? " a blink" : due === "restart"', cu)

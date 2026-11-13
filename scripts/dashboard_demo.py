@@ -17,8 +17,8 @@ the gateway stores them, so INSPECT reads one through the same code as a real on
 Nothing in demo mode acts. DemoControls refuses APPROVE, DECLINE, RESTART,
 UPDATE and DIAG (the control unit's decide, prepare and run) before they reach
 a decision file or a host command; there is no Terminal 0. A small ticker
-appends a broker call to the temp folder's audit log every so often, so the
-floor has crates to move for a GIF.
+appends a broker call to the temp folder's audit log every so often, so a
+GIF has something moving.
 
 Standard library only; runs on the macOS system Python (3.9).
 """
@@ -41,9 +41,8 @@ PROJECT = "DEMO"
 REFUSED = "demo mode: this dashboard shows made-up data and nothing here acts"
 TOKEN = re.compile(r"\{\{(clock|iso|epoch|patch_sha256):([^{}]*)\}\}")
 PATCHES = ("broker", "approvals", "patches")
-DEMO_REPOS = ("app", "docs")  # empty repos made under setup/project/ for the shift briefing
 SETUP = "setup"  # the fixture's factory checkout (root/) and config folder (config/), for the SETUP screen
-# What the ticker appends (cycled): the printer's ALLOW and DENY lines, and the floor's crates.
+# What the ticker appends (cycled): the ALLOW and DENY events.
 TICKS = (
     {"role": "developer", "tool": "web_fetch", "decision": "deny", "args": {"url": "https://paste.example.net/raw/x2"},
      "reason": "host not on the allow list"},
@@ -96,9 +95,6 @@ def build(dest: Path, now: float | None = None, fixture: Path = FIXTURE) -> None
     (dest / "broker").mkdir(parents=True, exist_ok=True)
     (dest / "dispatch" / "pid").write_text(f"{os.getpid()}\n", encoding="utf-8")
     (dest / "broker" / "project").write_text(PROJECT + "\n", encoding="utf-8")
-    # The shift briefing lists the project's repos with the real lister, which wants a .git in each.
-    for repo in DEMO_REPOS:
-        (dest / SETUP / "project" / repo / ".git").mkdir(parents=True, exist_ok=True)
 
 
 def start_ticker(dest: Path, interval: float = 20.0, first: float = 8.0) -> threading.Event:

@@ -3,18 +3,17 @@
 Read once when `factory dashboard` starts and served to the page in /api/state as `look`. Display
 only: nothing here is executed, reaches a command or moves a security boundary.
 
-    plant = "LOIS WORKS"       # the nameplate and the floor's plate
-    shifts = ["day", "swing", "night"]
-    crt = 3                    # the CRT knob's default, 0-10, until the browser remembers its own
-    sound = false              # the SOUND key's default, until the browser remembers its own
-    [roles.colors]
-    designer = "#d08cff"       # a role's hue on the floor and the modules
+    plant = "LOIS WORKS"       # the nameplate
 
-The reader is strict: an unknown key or table, a bad value, a repeated key, a symlink, a file that
-is not a regular one, one over MAX_BYTES, or text that is not UTF-8 refuses the whole file, and the
-dashboard then shows today's defaults and says why (its log, and the SETUP screen). Strings are one
-line of printable ASCII, "basic" without escapes or 'literal', read by factory.policy.toml_string.
-Values are one line each (the shifts array too). A colour is `#rrggbb` and is passed on in lower case.
+The keys of the retired classic view (shifts, crt, sound, ui, and the [roles.colors] table) are still
+accepted, so an old file starts the dashboard, but their values are not read and do nothing; load()
+names them in a one-line notice.
+
+The reader is strict about the rest: an unknown key or table, a bad `plant`, a repeated key, a
+symlink, a file that is not a regular one, one over MAX_BYTES, or text that is not UTF-8 refuses the
+whole file, and the dashboard then shows today's defaults and says why (its log, and the SETUP
+screen). Strings are one line of printable ASCII, "basic" without escapes or 'literal', read by
+factory.policy.toml_string.
 
 Standard library only; runs on the macOS system Python (3.9).
 """
@@ -29,26 +28,18 @@ from pathlib import Path
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))  # the factory package
 
-from factory import policy, roles  # noqa: E402
+from factory import policy  # noqa: E402
 
 FILE = "dashboard.toml"
 MAX_BYTES = 16 * 1024
 MAX_PLANT = 24
-MAX_SHIFT = 16
-SHIFTS = 3
-MAX_COLORS = 32
-CRT_RANGE = (0, 10)
-TOP_KEYS = ("plant", "shifts", "crt", "sound", "ui")
-UIS = ("field", "classic")  # what the dashboard opens on; both are always served, at /field and /classic
-COLORS_TABLE = "roles.colors"
+RETIRED_KEYS = ("shifts", "crt", "sound", "ui")   # read by the classic view only: accepted, ignored
+TOP_KEYS = ("plant",) + RETIRED_KEYS
+RETIRED_TABLE = "roles.colors"                    # ditto, and everything under it
 
 _PRINTABLE = re.compile(r"[\x20-\x7e]*")
 _HEADER = re.compile(r"\[([^\]]*)\](.*)")
 _KEY_LINE = re.compile(r"([A-Za-z0-9_-]+)[ \t]*=[ \t]*(.*)")
-_INT = re.compile(r"(0|[1-9][0-9]*)[ \t]*(#.*)?")
-_BOOL = re.compile(r"(true|false)[ \t]*(#.*)?")
-_STRING_ITEM = re.compile(r"(\"[^\"\\\\]*\"|'[^']*')")
-_COLOR = re.compile(r"#[0-9a-fA-F]{6}")
 
 
 class Refused(ValueError):
@@ -57,7 +48,7 @@ class Refused(ValueError):
 
 def defaults() -> dict:
     """What the page shows when the file is absent or refused: nothing set, so its own defaults."""
-    return {"plant": None, "shifts": None, "crt": None, "sound": None, "ui": "field", "colors": {}}
+    return {"plant": None}
 
 
 def _text(raw: str, key: str, cap: int) -> str:
@@ -70,60 +61,10 @@ def _text(raw: str, key: str, cap: int) -> str:
     return value
 
 
-def _shifts(raw: str) -> list:
-    shape = 'shifts must be a one-line array of three strings, like ["day", "swing", "night"]'
-    if raw[:1] != "[":
-        raise Refused(shape)
-    rest, items = raw[1:], []
-    while True:
-        rest = rest.lstrip(" \t")
-        if rest[:1] == "]":
-            rest = rest[1:]
-            break
-        item = _STRING_ITEM.match(rest)
-        if item is None:
-            raise Refused(shape)
-        items.append(_text(item.group(1), "shifts", MAX_SHIFT))
-        rest = rest[item.end():].lstrip(" \t")
-        if rest[:1] == ",":
-            rest = rest[1:]
-        elif rest[:1] != "]":
-            raise Refused(shape)
-    if rest.strip(" \t") and not rest.lstrip(" \t").startswith("#"):
-        raise Refused(shape)
-    if len(items) != SHIFTS:
-        raise Refused(f"shifts must name exactly {SHIFTS} shifts (day, swing, night), not {len(items)}")
-    return items
-
-
-def _crt(raw: str) -> int:
-    m = _INT.fullmatch(raw)
-    if m is None or not CRT_RANGE[0] <= int(m.group(1)) <= CRT_RANGE[1]:
-        raise Refused(f"crt must be a whole number from {CRT_RANGE[0]} to {CRT_RANGE[1]}")
-    return int(m.group(1))
-
-
-def _sound(raw: str) -> bool:
-    m = _BOOL.fullmatch(raw)
-    if m is None:
-        raise Refused("sound must be true or false")
-    return m.group(1) == "true"
-
-
-def _color(raw: str, role: str) -> str:
-    try:
-        value = policy.toml_string(raw)
-    except ValueError:
-        raise Refused(f'the colour of {role} must be a quoted "#rrggbb" string') from None
-    if _COLOR.fullmatch(value) is None:
-        raise Refused(f'the colour of {role} must be "#rrggbb" (three hex pairs), not "{value[:20]}"')
-    return value.lower()
-
-
-def parse(text: str) -> dict:
-    """The settings in dashboard.toml's TEXT as defaults() fills them; Refused (with the line number
-    and the key) for anything the file may not say."""
-    out, table, seen = defaults(), "", set()
+def parse(text: str) -> tuple:
+    """(the settings in dashboard.toml's TEXT as defaults() fills them, the retired keys it set);
+    Refused (with the line number and the key) for anything the file may not say."""
+    out, table, seen, retired = defaults(), "", set(), []
     for number, line in enumerate(text.split("\n"), 1):
         line = line.rstrip("\r")
         stripped = line.strip(" \t")
@@ -138,11 +79,12 @@ def parse(text: str) -> dict:
             if m and m.group(2).strip(" \t") and not m.group(2).lstrip(" \t").startswith("#"):
                 m = None
             name = m.group(1).strip(" \t") if m else ""
-            if name != COLORS_TABLE:
-                refuse(f"unknown table {('[' + name + ']') if m else stripped[:20]} (the only table is [{COLORS_TABLE}])")
+            if name != RETIRED_TABLE:
+                refuse(f"unknown table {('[' + name + ']') if m else stripped[:20]} (no tables are read any more)")
             if table:
-                refuse(f"[{COLORS_TABLE}] appears twice")
+                refuse(f"[{RETIRED_TABLE}] appears twice")
             table = name
+            retired.append(f"[{name}]")
             continue
         m = _KEY_LINE.fullmatch(stripped)
         if m is None:
@@ -152,33 +94,18 @@ def parse(text: str) -> dict:
         if where in seen:
             refuse(f"{key} is set twice")
         seen.add(where)
-        try:
-            if table == COLORS_TABLE:
-                if not roles.valid_role_name(key):
-                    refuse(f'"{key}" under [{COLORS_TABLE}] is not a role name '
-                           "(lowercase letters, digits and dashes, 2 to 31 characters, starting with a letter)")
-                if len(out["colors"]) >= MAX_COLORS:
-                    refuse(f"more than {MAX_COLORS} role colours")
-                out["colors"][key] = _color(raw, key)
-            elif key == "plant":
+        if table == RETIRED_TABLE:
+            continue
+        if key == "plant":
+            try:
                 out["plant"] = _text(raw, key, MAX_PLANT)
-            elif key == "shifts":
-                out["shifts"] = _shifts(raw)
-            elif key == "crt":
-                out["crt"] = _crt(raw)
-            elif key == "sound":
-                out["sound"] = _sound(raw)
-            elif key == "ui":
-                if raw not in ('"field"', '"classic"'):
-                    refuse('ui must be "field" or "classic"')
-                out["ui"] = raw.strip('"')
-            else:
-                refuse(f'unknown key "{key}" (known: {", ".join(TOP_KEYS)}, and [{COLORS_TABLE}])')
-        except Refused as e:
-            if str(e).startswith("line "):
-                raise
-            refuse(str(e))
-    return out
+            except Refused as e:
+                refuse(str(e))
+        elif key in RETIRED_KEYS:
+            retired.append(key)
+        else:
+            refuse(f'unknown key "{key}" (known: {", ".join(TOP_KEYS)})')
+    return out, retired
 
 
 def _read(path: str) -> str | None:
@@ -218,13 +145,19 @@ def _read(path: str) -> str | None:
 
 
 def load(config_dir) -> tuple:
-    """(settings, problem) from CONFIG_DIR/dashboard.toml. An absent file, or no folder (None), is
-    today's defaults and no problem; a refused file is the defaults and a one-line problem naming it."""
+    """(settings, problem, notice) from CONFIG_DIR/dashboard.toml. An absent file, or no folder (None), is
+    today's defaults and no problem; a refused file is the defaults and a one-line problem naming it.
+    The notice is one line naming any retired keys the file still sets (they do nothing), else ''."""
     if not config_dir:
-        return defaults(), ""
+        return defaults(), "", ""
     path = os.path.join(str(config_dir), FILE)
     try:
         text = _read(path)
-        return (defaults() if text is None else parse(text)), ""
+        if text is None:
+            return defaults(), "", ""
+        out, retired = parse(text)
     except Refused as e:
-        return defaults(), f"{path}: {e}"
+        return defaults(), f"{path}: {e}", ""
+    notice = (f"{path}: {', '.join(retired)} no longer do anything (the Thoughtfield is the only view); "
+              "you can delete them") if retired else ""
+    return out, "", notice

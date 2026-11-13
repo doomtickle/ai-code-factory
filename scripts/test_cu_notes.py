@@ -44,9 +44,9 @@ class AllowlistTests(unittest.TestCase):
         self.assertEqual(e.get("/cu-notes.js.map", **script)[0].status, 404)
 
     def test_page_loads_it_before_cu_js_with_no_inline_script(self):
-        html = (UI / "cu.html").read_text(encoding="utf-8")
+        html = (UI / "cu-field.html").read_text(encoding="utf-8")
         tags = re.findall(r'<script\b[^>]*>', html)
-        self.assertEqual(tags, ['<script src="/cu-notes.js" defer>', '<script src="/cu.js" defer>'])
+        self.assertEqual(tags, ['<script src="/cu-notes.js" defer>', '<script src="/cu.js" defer>', '<script src="/cu-field.js" defer>'])
         self.assertIsNone(re.search(r"<script(?![^>]*\bsrc=)", html), "inline script")
 
 
@@ -83,12 +83,10 @@ class CodeTests(unittest.TestCase):
         self.assertIn('d.api("config-prepare", { kind: "notes", role, text: sent })', JS)
         self.assertIn('d.api("config-read", { kind: "notes", role: t })', JS)
 
-    def test_css_block_is_last_and_inline_free(self):
-        css = (UI / "cu.css").read_text(encoding="utf-8")
-        marker = "/* ---------- NOTES editor on SETUP"
-        self.assertEqual(css.count(marker), 1)
-        block = css[css.index(marker):]
-        self.assertIsNone(re.search(r"https?://|url\(|@import", block))
+    def test_css_loads_nothing_from_the_network(self):
+        css = (UI / "cu-field.css").read_text(encoding="utf-8")
+        self.assertIsNone(re.search(r"https?://|@import", css))
+        self.assertEqual(sorted(set(re.findall(r'url\("([^"]+)"\)', css))), ["/fonts/nunito-variable.woff2"])
 
 
 HAVE_NODE = shutil.which("node") is not None

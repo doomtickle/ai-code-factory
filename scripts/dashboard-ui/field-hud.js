@@ -108,7 +108,7 @@
   W.onCardGone = (c, yes) => { prev.cards.delete(c.id); if (c.decided === "approve") say("Approved. It goes out within seconds.", ""); else if (c.decided) say("Declined. The agent will read your reason.", ""); else if (c.seconds_left != null && c.seconds_left <= 5) say("A held write expired without a decision.", ""); else say("A held write was settled.", ""); };
   W.onPickJob = j => { if (LANE.test(j.lane) && JOB.test(j.id) && window.FieldMonitor) FieldMonitor.open(j.lane, j.id); };
   W.onPickCard = c => selectCard(c.id);
-  function greet() { const s = state || {}, n = (s.totals || {}).running || 0, m = (s.gate || []).length; const parts = n ? `${n === 1 ? "One job is" : n + " jobs are"} running` : "Nothing is running"; const wait = m ? ` and ${m === 1 ? "one is" : m + " are"} waiting for you` : ""; const b = s.briefing || {}; say(`Hi. ${parts}${wait}.`, !n && b.prompt ? "Try: " + String(b.prompt).slice(0, 160) : (s.totals ? `Today so far: ${s.totals.jobs} jobs · spend $${s.totals.cost.toFixed(2)}` : ""), { fx: () => { W.focus = null; } }); }
+  function greet() { const s = state || {}, n = (s.totals || {}).running || 0, m = (s.gate || []).length; const parts = n ? `${n === 1 ? "One job is" : n + " jobs are"} running` : "Nothing is running"; const wait = m ? ` and ${m === 1 ? "one is" : m + " are"} waiting for you` : ""; say(`Hi. ${parts}${wait}.`, !n && s.prompt ? "Try: " + String(s.prompt).slice(0, 160) : (s.totals ? `Today so far: ${s.totals.jobs} jobs · spend $${s.totals.cost.toFixed(2)}` : ""), { fx: () => { W.focus = null; } }); }
 
   // ---------- the frames that can act. The main page can't script them; they're other origins.
   // Only Terminal 0 may use the microphone (talking: Terminal 0's strip): what is said stays in that frame, as what is typed does.
@@ -137,7 +137,7 @@
   // ---------- questions: the sky answers
   const back = $("back"); let viewIdle = 0;
   function goHome() { if (Sky && Sky.view !== "home") Sky.show("home"); back.hidden = true; }
-  function askView(v) { if (!Sky) { answer("This view needs WebGL, so there's no sky to answer with. The classic view still works.", ""); return; } const r = Sky.show(v); if (r.same) return; if (r.none) { answer(r.say, r.meta); return; } back.hidden = v === "home"; viewIdle = performance.now(); W.focus = null; W.hoverFocus = null; answer(r.say, r.meta); }
+  function askView(v) { if (!Sky) { answer("This view needs WebGL, so there's no sky to answer with. Try a browser or setting where WebGL is on.", ""); return; } const r = Sky.show(v); if (r.same) return; if (r.none) { answer(r.say, r.meta); return; } back.hidden = v === "home"; viewIdle = performance.now(); W.focus = null; W.hoverFocus = null; answer(r.say, r.meta); }
   $("chips").addEventListener("click", e => { if (e.target.id === "back") { goHome(); return; } const v = e.target.dataset && e.target.dataset.v; if (v) askView(v); });
   // dragging along the horizon rewinds the galaxy to that moment; letting go, it re-forms
   const toT = x => Math.max(0, Math.min(nowMin() - G.t0, (x - G.w * .04) / (G.w * .92) * (G.t1 - G.t0)));
@@ -157,7 +157,7 @@
   $("legend-k").addEventListener("click", () => { const closed = $("legend").classList.toggle("closed"); $("legend-k").setAttribute("aria-expanded", String(!closed)); });
   const LENS_KEYS = { __proto__: null, 1: "spend", 2: "stuck", 3: "kinds", 4: "time" };
   document.addEventListener("keydown", e => { if (e.target.matches && e.target.matches("input,textarea")) return; if (window.FieldMonitor && FieldMonitor.isOpen()) return; const k = e.key.toLowerCase(); if (k === "v") setVoice(!on); else if (k === "t" && termFrame) { e.preventDefault(); setGrown(!grown, true); } else if (k === "," ) $("settings-key").click(); else if (LENS_KEYS[k] && !e.ctrlKey && !e.metaKey && !e.altKey) askView(LENS_KEYS[k]); else if (k === "escape") { tell("tm:cancel"); if (grown) setGrown(false); else if (Sky && Sky.view !== "home") goHome(); else $("legend").classList.add("closed"); } });
-  LF.fail = text => { setCaption(text + " The classic view still works."); $("meta").textContent = "Open Classic, top right."; };
+  LF.fail = text => { setCaption(text + " Try a browser or setting where WebGL is on."); $("meta").textContent = "The job list and the controls still work."; };
 
   // ---------- the work list and today's numbers, from /api/state
   const list = $("jobs-list"), rows = new Map(); let lastSpend = null, spT = 0;
