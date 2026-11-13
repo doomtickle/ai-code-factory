@@ -72,8 +72,8 @@ lane's state:
 ## Watch each lane
 
 The dashboard's work list shows the active jobs, and each one opens its lane's
-transcript. Its classic view shows every lane as its own module. `factory watch`
-does the same in any terminal: it follows every lane of every role at once, with each
+transcript. `factory watch`
+shows every lane in any terminal: it follows every lane of every role at once, with each
 active lane in its own pane (a job running, or finished in the last ten
 minutes; idle lanes take one status line each), tool calls condensed to one
 line and the job's status, elapsed time, model and cost in the pane's title:

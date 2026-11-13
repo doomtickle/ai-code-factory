@@ -37,7 +37,6 @@ running and which of the two commands applies it: see
 > The dashboard shows the same: the Update key's light comes on, and a note
 > appears under Today. The Restart key's light comes on when a role override,
 > `enabled-roles` or the project notes changed since the last `factory start`.
-> The classic view's **SERVICE** lamp names the sandboxes and why, on hover.
 
 ## Per-project notes
 
@@ -300,10 +299,10 @@ It only turns a role on or off; tools and workspace stay in the committed
 `projects/<project-folder-name>.md` there holds notes for one project (its test
 command, say), added to every role's instructions on `factory start`.
 
-`dashboard.toml` there sets the view the dashboard opens on (`ui`), its
-nameplate and, for the classic view, its shift names, CRT and sound defaults and
-role colours; the example is all comments. The dashboard reads it
-once when it starts, and a mistake makes it ignore the file and say why. See
+`dashboard.toml` there sets the dashboard's nameplate (`plant`); the example is
+all comments. Keys the retired classic view read (`ui`, `shifts`, `crt`, `sound`,
+`[roles.colors]`) are ignored. The dashboard reads it once when it starts, and a
+mistake makes it ignore the file and say why. See
 [Use the dashboard](06-dashboard.md#your-own-look-dashboardtoml). It changes how
 the page looks and nothing else, so it needs neither `factory update` nor a
 restart of the factory, only of `factory dashboard`.

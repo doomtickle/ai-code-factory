@@ -29,7 +29,7 @@ Read before changing `scripts/dashboard*.py`, `patchview.py` or `dashboard-ui/`.
 
 ## Files the dashboard reads
 - Open files under `FACTORY_STATE` or broker state as regular files with `O_NOFOLLOW`, size-capped, parsed as untrusted; match an id against its pattern (`JOB_ID`, card id, lane name) before joining it onto a path.
-- `sbx` runs only as `sbx secret ls` and `sbx ls -q` (`Probe` refuses any other argv). The briefing holds host-derived facts only: no credential, `[git].repos`, GitLab URL or notes contents.
+- `sbx` runs only as `sbx secret ls` and `sbx ls -q` (`Probe` refuses any other argv). What the page is given holds host-derived facts only: no credential, `[git].repos`, GitLab URL or notes contents.
 
 ## Invariants
 - Anything new that lets a page act needs: one fixed argv with no shell, a key in a request header (not just the cookie) on a POST or WebSocket with its `Origin` checked, kept out of reach of the page that shows agent-written content, and a confirm step before any host command.
