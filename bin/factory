@@ -130,7 +130,8 @@ ${B}Usage${N}
                              LOIS's local voice (Kokoro in Docker, loopback only);
                              the first build is several GB
   factory analytics          Cost, token and performance report from the audit logs
-                             (--changes: per change, with review rounds and first-pass approval)
+                             (--changes: per change, with review rounds and first-pass approval;
+                             --bench [label ...]: benchmark runs by task and label)
   factory approvals          Pushes and PRs the gateway is holding for you:
                              list, show <id>, approve <id>, decline <id> --reason ..., watch
   factory reset              Remove the agent sandboxes to switch projects

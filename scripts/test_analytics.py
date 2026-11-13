@@ -772,6 +772,172 @@ class ChangesTests(Base):
         self.assertIn("No job has a change recorded yet", buf.getvalue())
 
 
+class BenchTests(Base):
+    """--bench: factory/bench-<task>-<label>-<n> changes by task and label."""
+
+    NOW = datetime(2026, 11, 13, 12, 0, 0, tzinfo=timezone.utc)
+    TASKS = ["shown", "shown-select", "factory-test-logs"]
+
+    def run_jobs(self, task, label, n, wall, cost, rounds=0, grade=None, turns=20):
+        """A developer job, a reviewer job (`rounds` REVISE verdicts, then APPROVED), a grading job."""
+        change = f"factory/bench-{task}-{label}-{n}"
+        start = self.NOW - timedelta(days=1)
+        jobs = []
+        dev = job("developer", f"{change}-dev", cost=cost, elapsed=wall - 300, when=start + timedelta(seconds=wall - 300))
+        dev.update(change=change, turns=turns)
+        jobs.append(dev)
+        for i, verdict in enumerate(["REVISE"] * rounds + ["APPROVED"]):
+            rev = job("reviewer", f"{change}-rev{i}", cost=0.0, elapsed=60,
+                      when=start + timedelta(seconds=wall - 60 * (rounds - i)))
+            rev.update(change=change, verdict=verdict)
+            jobs.append(rev)
+        if grade is not None:
+            g = job("reviewer", f"{change}-grade", cost=0.0, elapsed=30, when=start + timedelta(seconds=wall))
+            g.update(change=change, **grade)
+            jobs.append(g)
+        return jobs
+
+    def grade(self, oracle="pass", done_when=4, scope=4, size_ratio=1.0):
+        g = {"grade_oracle": oracle, "grade_checks": "pass", "grade_done_when": done_when,
+             "grade_scope": scope, "grade_size_ratio": size_ratio}
+        return {k: v for k, v in g.items() if v is not None}
+
+    def fixture(self):
+        """shown-select x baseline and analyst-0003, 3 runs each. Cost ranges don't overlap
+        ($1.0-1.4 vs $2.0-2.4); every other metric's ranges do. baseline's third run lacks
+        done_when and size_ratio, analyst-0003's third lacks the oracle result."""
+        jobs = []
+        base = [(1200, 1.0, 0, self.grade("pass", 4, 4, 1.0), 20),
+                (1500, 1.2, 1, self.grade("pass", 5, 3, 1.5), 25),
+                (1800, 1.4, 0, self.grade("fail", None, 4, None), 30)]
+        new = [(1500, 2.0, 0, self.grade("pass", 5, 4, 1.2), 22),
+               (1800, 2.2, 0, self.grade("pass", 5, 5, 1.4), 28),
+               (2400, 2.4, 1, self.grade(None, 4, 5, 1.6), 35)]
+        for n, (wall, cost, rounds, grade, turns) in enumerate(base, 1):
+            jobs += self.run_jobs("shown-select", "baseline", n, wall, cost, rounds, grade, turns)
+        for n, (wall, cost, rounds, grade, turns) in enumerate(new, 1):
+            jobs += self.run_jobs("shown-select", "analyst-0003", n, wall, cost, rounds, grade, turns)
+        return jobs
+
+    def test_splits_hyphenated_task_names_and_labels_with_the_longest_task_winning(self):
+        split = a.split_bench_change
+        self.assertEqual(split("factory/bench-shown-select-analyst-0003-2", self.TASKS),
+                         ("shown-select", "analyst-0003", 2))
+        self.assertEqual(split("factory/bench-shown-baseline-1", self.TASKS), ("shown", "baseline", 1))
+        self.assertEqual(split("factory/bench-factory-test-logs-baseline-3", self.TASKS),
+                         ("factory-test-logs", "baseline", 3))
+        self.assertIsNone(split("factory/bench-unknown-baseline-1", self.TASKS))
+        self.assertIsNone(split("factory/bench-shown-1", self.TASKS))
+        self.assertIsNone(split("factory/not-bench-shown-baseline-1", self.TASKS))
+
+    def test_medians_per_label_and_task_treat_missing_grades_as_no_data(self):
+        report = a.bench_report(self.fixture(), self.TASKS)
+        self.assertEqual([lab["label"] for lab in report["labels"]], ["analyst-0003", "baseline"])
+        new, base = report["labels"]
+        self.assertEqual([t["task"] for t in base["tasks"]], ["shown-select"])
+        m = base["metrics"]
+        self.assertEqual((m["cost_usd"]["value"], m["wall_seconds"]["value"], m["turns"]["value"]), (1.2, 1500, 25))
+        self.assertEqual(m["review_rounds"]["value"], 0)
+        self.assertAlmostEqual(m["oracle_pass"]["value"], 0.6667, places=4)
+        # two runs have done_when (4, 5): the third is not a 0 that drags the median down
+        self.assertEqual((m["grade_done_when"]["n"], m["grade_done_when"]["value"]), (2, 4.5))
+        self.assertEqual(m["grade_scope"]["value"], 4)
+        self.assertEqual((m["grade_size_ratio"]["n"], m["grade_size_ratio"]["value"]), (2, 1.25))
+        self.assertEqual(base["tasks"][0]["metrics"], m)  # one task: the label row is the task row
+        self.assertEqual(new["metrics"]["oracle_pass"]["value"], 1.0)
+        self.assertEqual(new["metrics"]["oracle_pass"]["n"], 2)
+        self.assertEqual(new["metrics"]["review_rounds"]["value"], 0)
+        self.assertEqual(new["metrics"]["wall_seconds"]["value"], 1800)
+
+    def test_a_run_without_any_grade_job_has_no_grade_data_but_keeps_its_other_metrics(self):
+        jobs = self.run_jobs("shown", "baseline", 1, 900, 1.0, grade=None)
+        run = a.bench_report(jobs, self.TASKS)["labels"][0]["tasks"][0]["runs"][0]
+        for key in ("oracle_pass", "grade_done_when", "grade_scope", "grade_size_ratio"):
+            self.assertIsNone(run[key])
+        self.assertEqual((run["wall_seconds"], run["cost_usd"], run["review_rounds"]), (900, 1.0, 0))
+        junk = self.run_jobs("shown", "baseline", 2, 900, 1.0,
+                             grade={"grade_oracle": "maybe", "grade_done_when": 9, "grade_scope": "5",
+                                    "grade_size_ratio": float("nan")})
+        run = a.bench_report(junk, self.TASKS)["labels"][0]["tasks"][0]["runs"][0]
+        self.assertEqual([run[k] for k in ("oracle_pass", "grade_done_when", "grade_scope", "grade_size_ratio")],
+                         [None] * 4)
+
+    def test_two_labels_flag_only_the_metric_whose_ranges_do_not_overlap(self):
+        report = a.bench_report(self.fixture(), self.TASKS, labels=["baseline", "analyst-0003"])
+        cmp = report["comparison"]
+        self.assertEqual((cmp["first"], cmp["second"]), ("baseline", "analyst-0003"))
+        for rows in (cmp["tasks"][0]["metrics"], cmp["all_tasks"]["metrics"]):
+            by = {r["metric"]: r for r in rows}
+            self.assertEqual({k for k, r in by.items() if r["separated"]}, {"cost_usd"})
+            self.assertAlmostEqual(by["cost_usd"]["diff"], 1.0)
+            self.assertEqual(by["wall_seconds"]["diff"], 300)
+            # done_when and size_ratio have 2 runs with data per side: never flagged
+            self.assertFalse(by["grade_done_when"]["enough_runs"])
+            self.assertEqual(by["grade_done_when"]["diff"], 0.5)
+        text = a.render_bench_table({"generated_at": "now", **report})
+        self.assertEqual(text.count("REAL DIFFERENCE"), 2)  # the task and the all-tasks table, cost only
+        self.assertIn("don't overlap", text)
+        self.assertIn("+$1.00", text)
+        self.assertIn("not enough runs", text)
+
+    def test_ranges_that_only_touch_count_as_overlapping(self):
+        jobs = []
+        for label, costs in (("a", (1.0, 1.1, 1.2)), ("b", (1.2, 1.3, 1.4))):
+            for n, cost in enumerate(costs, 1):
+                jobs += self.run_jobs("shown", label, n, 600, cost, grade=self.grade())
+        by = {r["metric"]: r for r in a.bench_report(jobs, self.TASKS)["comparison"]["tasks"][0]["metrics"]}
+        self.assertFalse(by["cost_usd"]["separated"])
+
+    def test_fewer_than_three_runs_warns_and_is_never_flagged(self):
+        jobs = []
+        for label, cost in (("baseline", 1.0), ("new", 3.0)):
+            for n in (1, 2):
+                jobs += self.run_jobs("shown", label, n, 600, cost, grade=self.grade())
+        report = a.bench_report(jobs, self.TASKS)
+        self.assertEqual(sum("2 run(s), fewer than 3" in w for w in report["warnings"]), 2)
+        self.assertFalse(any(r["separated"] for r in report["comparison"]["tasks"][0]["metrics"]))
+        self.assertIn("! shown / baseline: 2 run(s)", a.render_bench_table({"generated_at": "now", **report}))
+
+    def test_label_filter_and_unmatched_branches(self):
+        jobs = self.fixture() + self.run_jobs("mystery", "baseline", 1, 600, 1.0)
+        report = a.bench_report(jobs, self.TASKS, labels=["baseline", "ghost"])
+        self.assertEqual([lab["label"] for lab in report["labels"]], ["baseline"])
+        self.assertIsNone(report["comparison"])
+        self.assertTrue(any("ghost" in w for w in report["warnings"]))
+        self.assertTrue(any("factory/bench-mystery-baseline-1" in w for w in report["warnings"]))
+        # a change that isn't a bench branch is ignored
+        other = job("developer", "x", cost=1.0)
+        other["change"] = "factory/alpha"
+        self.assertEqual(a.bench_report([other], self.TASKS)["labels"], [])
+
+    def test_main_bench_prints_json_and_table_and_needs_the_task_directory(self):
+        self.write_jsonl("dispatch/audit.jsonl", self.fixture())
+        tasks = self.root / "tasks"
+        tasks.mkdir()
+        for name in self.TASKS:
+            (tasks / f"{name}.md").write_text("---\n---\n")
+
+        def run(*args):
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                self.assertEqual(a.main(["--state", str(self.root), "--bench-tasks", str(tasks), *args]), 0)
+            return buf.getvalue()
+
+        table = run("--bench")
+        for text in ("Label analyst-0003", "Label baseline", "shown-select", "Oracle", "Size ratio", "REAL DIFFERENCE"):
+            self.assertIn(text, table)
+        data = json.loads(run("--bench", "baseline", "--json"))
+        self.assertEqual([lab["label"] for lab in data["labels"]], ["baseline"])
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(a.main(["--state", str(self.root), "--bench",
+                                     "--bench-tasks", str(self.root / "nope")]), 1)
+        self.assertIn("no benchmark tasks", err.getvalue())
+        with contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit):
+                a.main(["--state", str(self.root), "--bench", "--changes"])
+
+
 class LaneSessionsTest(unittest.TestCase):
     def test_lane_sessions_fold_into_their_role(self):
         sessions = {"developer": {"context_tokens": 1000},

@@ -16,6 +16,11 @@ module; piped or redirected, it prints the HTML to stdout instead and writes not
 cost and diff size, then median/p90 and last 7 days vs the 7 before. Records
 without a change count as unknown. It works with `--json`, not `--html`.
 
+`--bench [label ...]` reports the benchmark runs (`factory/bench-<task>-<label>-<n>`
+changes) per label and per task: medians across the runs, and with two labels the
+difference, flagging only metrics whose [min, max] ranges across runs don't overlap.
+Task names come from bench/tasks/*.md. A missing grade field is no data, never 0.
+
 Run directly, or via `factory analytics`.
 
 Standard library only; compatible with the macOS system Python (3.9).
@@ -595,6 +600,172 @@ def build_changes_report(state: Path, now: datetime | None = None) -> dict:
 
 
 # --------------------------------------------------------------------------
+# Benchmark (--bench): the factory/bench-<task>-<label>-<n> changes, grouped by task and
+# label. Task names and labels both contain hyphens, so the branch is split with the known
+# task names (the stems of bench/tasks/*.md), the longest one that fits winning.
+
+_BENCH_RE = re.compile(r"factory/bench-([a-z0-9-]+)-([0-9]+)")
+BENCH_MIN_RUNS = 3
+# (key, column header, how the runs combine). "rate" is the share of passing runs; the rest
+# are medians. A run with no data for a metric is left out of it, never counted as 0.
+BENCH_METRICS = (("oracle_pass", "Oracle", "rate"), ("review_rounds", "Rounds", "median"),
+                 ("wall_seconds", "Wall", "median"), ("cost_usd", "Cost", "median"),
+                 ("turns", "Turns", "median"), ("grade_done_when", "Done when", "median"),
+                 ("grade_scope", "Scope", "median"), ("grade_size_ratio", "Size ratio", "median"))
+
+
+def default_bench_tasks_dir() -> Path:
+    return Path(__file__).resolve().parent.parent / "bench" / "tasks"
+
+
+def bench_task_names(tasks_dir: Path) -> list[str]:
+    return sorted(p.stem for p in tasks_dir.glob("*.md"))
+
+
+def split_bench_change(change: str, task_names: list[str]):
+    """(task, label, run number) of a bench branch, or None if no known task fits."""
+    m = _BENCH_RE.fullmatch(change)
+    if not m:
+        return None
+    rest = m.group(1)
+    for task in sorted(task_names, key=len, reverse=True):
+        if rest.startswith(task + "-") and len(rest) > len(task) + 1:
+            return task, rest[len(task) + 1:], int(m.group(2))
+    return None
+
+
+def _latest_grade(jobs: list[dict], key: str, valid):
+    """The newest valid value of a grade field across a change's jobs, or None."""
+    ordered = sorted(jobs, key=lambda j: parse_ts(j.get("ts")) or datetime.min.replace(tzinfo=timezone.utc))
+    for j in reversed(ordered):
+        v = valid(j.get(key))
+        if v is not None:
+            return v
+    return None
+
+
+def _grade_score(value):
+    v = _num(value)
+    return v if v is not None and not isinstance(v, float) and 1 <= v <= 5 else None
+
+
+def _grade_ratio(value):
+    v = _num(value)
+    return v if v is not None and v >= 0 else None
+
+
+def bench_run(change: str, jobs: list[dict]) -> dict:
+    row = change_row(change, jobs)
+    oracle = _latest_grade(jobs, "grade_oracle", lambda v: v if v in ("pass", "fail") else None)
+    return {
+        "change": change,
+        "oracle_pass": None if oracle is None else 1.0 if oracle == "pass" else 0.0,
+        # no reviewer verdict means no data, not a clean pass
+        "review_rounds": row["review_rounds"] if row["first_pass_approval"] is not None else None,
+        "wall_seconds": row["wall_seconds"], "cost_usd": row["cost_usd"], "turns": row["turns"],
+        "grade_done_when": _latest_grade(jobs, "grade_done_when", _grade_score),
+        "grade_scope": _latest_grade(jobs, "grade_scope", _grade_score),
+        "grade_size_ratio": _latest_grade(jobs, "grade_size_ratio", _grade_ratio),
+    }
+
+
+def _bench_stats(runs: list[dict]) -> dict:
+    out = {}
+    for key, _, how in BENCH_METRICS:
+        values = [r[key] for r in runs if r[key] is not None]
+        if not values:
+            out[key] = {"n": 0, "value": None, "min": None, "max": None}
+            continue
+        value = sum(values) / len(values) if how == "rate" else statistics.median(values)
+        out[key] = {"n": len(values), "value": _round(value), "min": _round(min(values)),
+                    "max": _round(max(values))}
+    return out
+
+
+def _bench_compare(first: dict, second: dict) -> list[dict]:
+    """Per metric, second minus first, flagged `separated` only when both sides have at least
+    BENCH_MIN_RUNS runs with data and their [min, max] ranges don't overlap."""
+    rows = []
+    for key, _, _ in BENCH_METRICS:
+        a, b = first[key], second[key]
+        diff = _round(b["value"] - a["value"]) if a["n"] and b["n"] else None
+        enough = a["n"] >= BENCH_MIN_RUNS and b["n"] >= BENCH_MIN_RUNS
+        rows.append({"metric": key, "first": a["value"], "second": b["value"], "diff": diff,
+                     "enough_runs": enough,
+                     "separated": enough and (a["max"] < b["min"] or b["max"] < a["min"])})
+    return rows
+
+
+def bench_report(jobs: list[dict], task_names: list[str], labels: list[str] | None = None) -> dict:
+    grouped: dict = defaultdict(list)
+    for j in jobs:
+        change = j.get("change")
+        if isinstance(change, str) and change.startswith("factory/bench-"):
+            grouped[change].append(j)
+    warnings = []
+    by_label: dict = defaultdict(lambda: defaultdict(list))
+    for change in sorted(grouped):
+        parts = split_bench_change(change, task_names)
+        if parts is None:
+            warnings.append(f"{change} matches no task in bench/tasks; skipped")
+            continue
+        task, label, number = parts
+        if labels and label not in labels:
+            continue
+        by_label[label][task].append({"run": number, **bench_run(change, grouped[change])})
+    for label in labels or []:
+        if label not in by_label:
+            warnings.append(f"no bench runs found for label {label!r}")
+
+    out_labels = []
+    for label in (list(dict.fromkeys(labels)) if labels else sorted(by_label)):
+        if label not in by_label:
+            continue
+        tasks = []
+        for task in sorted(by_label[label]):
+            runs = sorted(by_label[label][task], key=lambda r: r["run"])
+            if len(runs) < BENCH_MIN_RUNS:
+                warnings.append(f"{task} / {label}: {len(runs)} run(s), fewer than {BENCH_MIN_RUNS}; "
+                                f"don't read anything into it")
+            tasks.append({"task": task, "runs": runs, "metrics": _bench_stats(runs)})
+        all_runs = [r for t in tasks for r in t["runs"]]
+        out_labels.append({"label": label, "tasks": tasks, "run_count": len(all_runs),
+                           "metrics": _bench_stats(all_runs)})
+
+    comparison = None
+    if len(out_labels) == 2:
+        first, second = out_labels
+        by_task = {lab["label"]: {t["task"]: t for t in lab["tasks"]} for lab in out_labels}
+        common = sorted(set(by_task[first["label"]]) & set(by_task[second["label"]]))
+        if {t["task"] for t in first["tasks"]} != {t["task"] for t in second["tasks"]}:
+            warnings.append(f"{first['label']} and {second['label']} ran different tasks; "
+                            f"the all-tasks comparison covers only the {len(common)} they share")
+        pooled = [_bench_stats([r for t in common for r in by_task[lab["label"]][t]["runs"]])
+                  for lab in out_labels]
+        comparison = {
+            "first": first["label"], "second": second["label"],
+            "all_tasks": {"tasks": common, "metrics": _bench_compare(*pooled)},
+            "tasks": [{"task": t, "metrics": _bench_compare(by_task[first["label"]][t]["metrics"],
+                                                            by_task[second["label"]][t]["metrics"])}
+                      for t in common],
+        }
+    return {"min_runs": BENCH_MIN_RUNS, "warnings": warnings, "labels": out_labels, "comparison": comparison}
+
+
+def build_bench_report(state: Path, tasks_dir: Path, labels: list[str] | None = None) -> dict:
+    dispatch_audit = state / "dispatch" / "audit.jsonl"
+    jobs, malformed = load_jobs(dispatch_audit)
+    warnings = []
+    if not dispatch_audit.exists():
+        warnings.append(f"no dispatch audit log yet ({dispatch_audit})")
+    if malformed:
+        warnings.append(f"skipped {malformed} malformed line(s) in {dispatch_audit}")
+    report = bench_report(jobs, bench_task_names(tasks_dir), labels)
+    return {"generated_at": datetime.now(timezone.utc).strftime(TS_FORMAT),
+            **report, "warnings": warnings + report["warnings"]}
+
+
+# --------------------------------------------------------------------------
 # Rendering
 
 def _fmt_cost(v) -> str:
@@ -771,6 +942,69 @@ def render_changes_table(report: dict) -> str:
     return "\n".join(lines)
 
 
+def _fmt_bench(key: str, v) -> str:
+    if v is None:
+        return "n/a"
+    return {"oracle_pass": lambda: _fmt_pct(v * 100), "wall_seconds": lambda: _fmt_secs(v),
+            "cost_usd": lambda: _fmt_cost(v), "review_rounds": lambda: _fmt_num(v, 1),
+            "turns": lambda: _fmt_num(v, 1), "grade_size_ratio": lambda: _fmt_num(v, 2)
+            }.get(key, lambda: _fmt_num(v, 1))()
+
+
+def _fmt_bench_diff(key: str, v) -> str:
+    if v is None:
+        return "n/a"
+    sign = "+" if v > 0 else "-" if v < 0 else ""
+    return sign + _fmt_bench(key, abs(v))
+
+
+def _bench_cells(metrics: dict) -> list[str]:
+    return [_fmt_bench(key, metrics[key]["value"]) for key, _, _ in BENCH_METRICS]
+
+
+def _bench_comparison_table(rows: list[dict]) -> str:
+    labels = {key: header for key, header, _ in BENCH_METRICS}
+    body = []
+    for r in rows:
+        verdict = "REAL DIFFERENCE (ranges don't overlap)" if r["separated"] else \
+            f"not enough runs (< {BENCH_MIN_RUNS} with data)" if not r["enough_runs"] else "within the spread"
+        body.append([labels[r["metric"]], _fmt_bench(r["metric"], r["first"]),
+                     _fmt_bench(r["metric"], r["second"]), _fmt_bench_diff(r["metric"], r["diff"]), verdict])
+    return _table(["Metric", "First", "Second", "Diff", "Verdict"], body)
+
+
+def render_bench_table(report: dict) -> str:
+    lines = ["AI Code Factory — Analytics: benchmark", f"Generated {report['generated_at']}"]
+    for w in report["warnings"]:
+        lines.append(f"! {_clean(w)}")
+    lines.append("")
+    if not report["labels"]:
+        lines.append("No factory/bench-* changes found.")
+        return "\n".join(lines)
+    headers = ["Task", "Runs"] + [h for _, h, _ in BENCH_METRICS]
+    for lab in report["labels"]:
+        lines.append(f"== Label {_clean(lab['label'])}: medians across runs (oracle: share of runs passing) ==")
+        rows = [[_clean(t["task"]), str(len(t["runs"]))] + _bench_cells(t["metrics"]) for t in lab["tasks"]]
+        rows.append(["all tasks", str(lab["run_count"])] + _bench_cells(lab["metrics"]))
+        lines.append(_table(headers, rows))
+        lines.append("")
+    cmp = report["comparison"]
+    if cmp:
+        first, second = _clean(cmp["first"]), _clean(cmp["second"])
+        lines.append(f"== {first} (First) vs {second} (Second): Diff is Second minus First ==")
+        lines.append(f"Only metrics whose [min, max] ranges across runs don't overlap are real differences; "
+                     f"the rest is run-to-run noise. Per task is the fair comparison; all tasks pools the "
+                     f"runs of {len(cmp['all_tasks']['tasks'])} shared task(s).")
+        lines.append("")
+        for t in cmp["tasks"]:
+            lines.append(f"-- {_clean(t['task'])} --")
+            lines.append(_bench_comparison_table(t["metrics"]))
+            lines.append("")
+        lines.append("-- all tasks --")
+        lines.append(_bench_comparison_table(cmp["all_tasks"]["metrics"]))
+    return "\n".join(lines).rstrip()
+
+
 def _html_table(headers: list[str], rows: list[list]) -> str:
     head = "".join(f"<th>{html.escape(str(h))}</th>" for h in headers)
     body = "".join("<tr>" + "".join(f"<td>{html.escape(str(c))}</td>" for c in row) + "</tr>" for row in rows)
@@ -898,6 +1132,14 @@ def main(argv=None) -> int:
                         help="report per change (factory/<topic> branch) instead: jobs, review rounds, "
                              "first-pass approval, wall time, cost and diff size, then median/p90 and "
                              "last 7 days vs the 7 before; works with --json")
+    parser.add_argument("--bench", nargs="*", default=None, metavar="LABEL",
+                        help="report the factory/bench-<task>-<label>-<n> changes by task and label: medians "
+                             "across runs (oracle pass rate, rounds, wall time, cost, turns, grades, size "
+                             "ratio); with two labels, also the difference and which metrics' ranges don't "
+                             "overlap. No label: every label found; works with --json")
+    parser.add_argument("--bench-tasks", type=Path, default=None, metavar="DIR",
+                        help="directory of benchmark task files, whose names split the branch names "
+                             "(default: bench/tasks in this checkout)")
     fmt = parser.add_mutually_exclusive_group()
     fmt.add_argument("--json", action="store_true", help="print the report as JSON")
     fmt.add_argument("--html", action="store_true",
@@ -907,8 +1149,19 @@ def main(argv=None) -> int:
     args = parser.parse_args(argv)
     if args.changes and args.html:
         parser.error("--changes works with the table and --json, not --html")
+    if args.bench is not None and (args.html or args.changes):
+        parser.error("--bench works with the table and --json, not --html or --changes")
 
     state = (args.state or default_state()).resolve()
+    if args.bench is not None:
+        tasks_dir = args.bench_tasks or default_bench_tasks_dir()
+        if not tasks_dir.is_dir():
+            print(f"factory analytics: no benchmark tasks at {tasks_dir}; the task names split the "
+                  f"branch names, so --bench needs them (--bench-tasks DIR to point elsewhere)", file=sys.stderr)
+            return 1
+        report = build_bench_report(state, tasks_dir, args.bench)
+        print(json.dumps(report, indent=2, ensure_ascii=False) if args.json else render_bench_table(report))
+        return 0
     if args.changes:
         report = build_changes_report(state)
         print(json.dumps(report, indent=2, ensure_ascii=False) if args.json else render_changes_table(report))

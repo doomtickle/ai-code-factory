@@ -1322,6 +1322,7 @@ factory analytics --html         # writes dispatch/analytics.html in the state f
 factory analytics --html > report.html   # not a terminal: prints the HTML page instead
 factory analytics --top 20       # list the 20 most expensive jobs instead of 10
 factory analytics --changes      # one row per change (factory/<topic> branch) instead; also with --json
+factory analytics --bench [label ...]   # benchmark runs (factory/bench-*) by task and label; also with --json
 ```
 
 The report covers: total and per-role cost, average cost and duration per job,
@@ -1355,6 +1356,22 @@ Then it prints the median and p90 (linear interpolation) of each, and the last
 these fields, such as ones written before they existed, are counted as
 `unknown` (jobs and cost, and `unknown` first-pass or diff for a change that
 lacks them), never dropped. `--changes` does not combine with `--html`.
+
+`--bench [label ...]` scores the benchmark runs: the changes on
+`factory/bench-<task>-<label>-<n>` branches (n is the run number). Task names and
+labels both contain hyphens, so the branch is split with the task names in
+`bench/tasks/*.md` (the longest match wins); it stops with a message if that
+directory is missing (`--bench-tasks DIR` points elsewhere). With no label it
+reports every label found. Per label, and per task within it, it prints the median
+across the runs of review rounds, wall time, cost, turns, the `done_when` and `scope`
+grades and the size ratio, and the share of runs whose oracle passed. A missing
+grade field is no data and is left out, never counted as 0. With two labels it
+also prints the difference (second minus first) per metric and flags only the
+metrics whose [min, max] ranges across the runs don't overlap: those are the real
+differences. A metric needs at least 3 runs with data on each side to be flagged,
+and a task and label with fewer than 3 runs gets a warning. The all-tasks
+comparison pools the runs of the tasks both labels ran; compare per task when the
+tasks differ much in size. `--bench` does not combine with `--html` or `--changes`.
 
 ## Operating
 
