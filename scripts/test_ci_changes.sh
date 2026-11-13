@@ -5,6 +5,8 @@ set -euo pipefail
 # 1. The flags for the kinds of change CI sees (docs only, dashboard only, broker, workflow, mixed).
 # 2. Anything it can't tell runs everything: no range, an empty list, a bad range, an unknown file.
 # 3. A real git range (BASE...HEAD) gives the same answer as the file list.
+# 4. The `browser tests` job reads Chrome's pin and apt libraries from the developer Dockerfile
+#    (scripts/ci-chrome.sh); the reviewer Dockerfile must carry the same ones.
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
@@ -81,6 +83,25 @@ assert_eq "range: a code PR is judged on its own files, not main's drift" "$(ran
 assert_eq "range: a bad base runs everything" "$(range deadbeefdeadbeefdeadbeefdeadbeefdeadbeef code-pr 2>/dev/null)" "$ALL"
 rename_out="$(cd "$repo" && git switch -qc rename-pr main~1 && mkdir -p docs && git mv scripts/a.py docs/a.py && git commit -qm rename && bash "$script" main~1 rename-pr | sed 's/^[a-z]*=//' | tr '\n' ' ' | sed 's/ $//')"
 assert_eq "range: a rename from scripts/ into docs/ counts both paths" "$rename_out" "false false true true"
+
+# Chrome: CI reads only the developer's Dockerfile, so the reviewer's must match it.
+chrome="$REPO_ROOT/scripts/ci-chrome.sh"
+for name in CHROME_VERSION CHROME_SHA256_AMD64 CHROME_SHA256_ARM64; do
+  dev="$(bash "$chrome" pin "$name" "$REPO_ROOT/templates/developer/Dockerfile")"
+  assert_eq "reviewer $name equals the developer's" "$(bash "$chrome" pin "$name" "$REPO_ROOT/templates/reviewer/Dockerfile")" "$dev"
+done
+assert_eq "reviewer's Chrome apt libraries equal the developer's" \
+  "$(bash "$chrome" apt "$REPO_ROOT/templates/reviewer/Dockerfile" | tr '\n' ' ')" "$(bash "$chrome" apt "$REPO_ROOT/templates/developer/Dockerfile" | tr '\n' ' ')"
+assert_eq "the developer's CHROME_VERSION looks like a version" "$(bash "$chrome" pin CHROME_VERSION | grep -Ec '^[0-9]+(\.[0-9]+){3}$')" "1"
+assert_eq "the developer's SHA-256 pins are 64 hex digits" "$(bash "$chrome" pin CHROME_SHA256_AMD64; bash "$chrome" pin CHROME_SHA256_ARM64)" "$(grep -E '^ARG CHROME_SHA256_(AMD64|ARM64)=[0-9a-f]{64}$' "$REPO_ROOT/templates/developer/Dockerfile" | sed 's/^[^=]*=//')"
+# The reader refuses what it can't read: a duplicated, a missing or a badly named ARG.
+printf 'ARG CHROME_VERSION=1.2.3.4\nARG CHROME_VERSION=5.6.7.8\n' > "$tmp/Dockerfile.dup"
+bash "$chrome" pin CHROME_VERSION "$tmp/Dockerfile.dup" >/dev/null 2>&1 && bad "a duplicated ARG refused" || ok "a duplicated ARG refused"
+bash "$chrome" pin CHROME_SHA256_AMD64 "$tmp/Dockerfile.dup" >/dev/null 2>&1 && bad "a missing ARG refused" || ok "a missing ARG refused"
+bash "$chrome" pin 'a.b' "$tmp/Dockerfile.dup" >/dev/null 2>&1 && bad "a badly named ARG refused" || ok "a badly named ARG refused"
+# A drifted reviewer pin is seen by the same comparison.
+sed 's/^ARG CHROME_VERSION=.*/ARG CHROME_VERSION=1.2.3.4/' "$REPO_ROOT/templates/reviewer/Dockerfile" > "$tmp/Dockerfile.drift"
+[ "$(bash "$chrome" pin CHROME_VERSION "$tmp/Dockerfile.drift")" != "$(bash "$chrome" pin CHROME_VERSION)" ] && ok "a drifted reviewer pin is seen" || bad "a drifted reviewer pin is seen"
 
 printf '%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" = 0 ]

@@ -228,6 +228,78 @@ jobs:
         run: echo "::notice::No code changed; nothing to test."
       # factory-lane runs only inside the Linux sandboxes, so it's tested on Linux.
 
+  browser:
+    # The headless-Chrome tests (scripts/test_*_browser.py). The factory's sandboxes no longer have to run
+    # them, so CI does, with the role images' own Chrome for Testing: the version and SHA-256 are read from
+    # templates/developer/Dockerfile (scripts/ci-chrome.sh; scripts/test_ci_changes.sh checks the reviewer's
+    # Dockerfile says the same), so there is one pin. FACTORY_REQUIRE_BROWSER=1 makes a test fail, not skip,
+    # when node or Chrome is missing (scripts/browser_test_support.py).
+    name: browser tests
+    needs: changes
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    # Each test scripts a whole page session (10-14 minutes in a role sandbox; faster here).
+    timeout-minutes: 45
+    env:
+      RUN: ${{ needs.changes.outputs.code != 'false' }}
+      # What `node --version` prints in the role images (their pinned base image).
+      NODE_VERSION: "22.22.1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - if: env.RUN == 'true'
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14.8"
+      # actions/setup-node (node-version: ${{ env.NODE_VERSION }}) goes here once its release SHA is verified.
+      - name: Chrome's libraries (the list in the developer Dockerfile)
+        if: env.RUN == 'true'
+        run: |
+          sudo apt-get update
+          scripts/ci-chrome.sh apt | xargs sudo apt-get install -y --no-install-recommends
+      - name: Chrome for Testing (the role images' pin, checksum-verified)
+        if: env.RUN == 'true'
+        run: |
+          version="$(scripts/ci-chrome.sh pin CHROME_VERSION)"
+          sha256="$(scripts/ci-chrome.sh pin CHROME_SHA256_AMD64)"
+          zip="$RUNNER_TEMP/chrome-headless-shell.zip"
+          curl -fsSLo "$zip" "https://storage.googleapis.com/chrome-for-testing-public/${version}/linux64/chrome-headless-shell-linux64.zip"
+          echo "${sha256}  ${zip}" | sha256sum -c -
+          unzip -q "$zip" -d "$RUNNER_TEMP"
+          dir="$RUNNER_TEMP/chrome-headless-shell-linux64"
+          got="$("$dir/chrome-headless-shell" --version | grep -o '[0-9][0-9.]*' | head -n 1)"
+          [ "$got" = "$version" ] || { echo "::error::chrome-headless-shell is '$got', expected the pinned $version"; exit 1; }
+          echo "$dir" >> "$GITHUB_PATH"
+      - name: Versions
+        if: env.RUN == 'true'
+        run: |
+          command -v node chrome-headless-shell python3
+          [ "$(node --version)" = "v$NODE_VERSION" ] \
+            || { echo "::error::node is '$(node --version)', expected the pinned v$NODE_VERSION"; exit 1; }
+          chrome-headless-shell --version
+          python3 --version
+      - name: The three browser tests (a skip is a failure)
+        if: env.RUN == 'true'
+        env:
+          FACTORY_REQUIRE_BROWSER: "1"
+        run: |
+          set -uo pipefail
+          log="$RUNNER_TEMP/browser-tests.log"
+          status=0
+          python3 -m unittest discover -s scripts -p 'test_*_browser.py' -v 2>&1 | tee "$log" || status=$?
+          # Failing tests: names and each one's first error line, for pasting back to the Coordinator.
+          python3 scripts/ci_failure_summary.py < "$log" >> "$GITHUB_STEP_SUMMARY"
+          if grep -Eq ' \.\.\. skipped |skipped=' "$log"; then
+            echo "::error::a browser test was skipped; with FACTORY_REQUIRE_BROWSER=1 that must not happen"
+            status=1
+          fi
+          grep -Eq '^Ran [1-9][0-9]* tests? ' "$log" || { echo "::error::no browser tests ran"; status=1; }
+          exit "$status"
+      - name: Nothing to test (only prose changed)
+        if: env.RUN != 'true'
+        run: echo "::notice::Only prose changed; no browser tests to run."
+
   images:
     name: images and broker tests
     needs: changes

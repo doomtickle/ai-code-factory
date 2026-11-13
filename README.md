@@ -1454,7 +1454,8 @@ lacks them), never dropped. `--changes` does not combine with `--html`.
   `factory start` again.
 - **Tests:** CI (`.github/workflows/ci.yml`) runs all of these on every pull
   request and push to main: on Linux with Python 3.9 and 3.14, on macOS 15 with
-  the system bash and Python, plus shellcheck and an image build. On a pull
+  the system bash and Python, plus shellcheck, an image build and a `browser tests`
+  job (below). On a pull
   request a `changes` job (`scripts/ci-changes.sh`) skips the steps a change
   can't affect: image builds unless `templates/`, `kits/`, `broker/` or the
   build code changed, the broker image tests unless `broker/` did, and all the
@@ -1463,7 +1464,20 @@ lacks them), never dropped. `--changes` does not combine with `--html`.
   against the guides), `RealRenderTest` in `factory/test_command_docs.py` and
   `scripts/test_sbx_reference.sh`). Pushes to main
   and manual runs run everything, and unsure means run. The required checks
-  always report, as skipped steps rather than skipped jobs. To run the tests
+  always report, as skipped steps rather than skipped jobs. The `browser tests`
+  job runs the three headless-Chrome tests (`scripts/test_*_browser.py`) whenever
+  code changed. It installs the role images' own Chrome for Testing, reading the
+  version, SHA-256 and apt libraries from `templates/developer/Dockerfile`
+  (`scripts/ci-chrome.sh`; `scripts/test_ci_changes.sh` checks the reviewer's
+  Dockerfile says the same) and Node at the version in the role images, and sets
+  `FACTORY_REQUIRE_BROWSER=1`. With that variable set, a browser test whose
+  `node` or `chrome-headless-shell` is missing fails instead of skipping
+  (`scripts/browser_test_support.py`), so CI can't pass by skipping them. A
+  failure's step summary lists each failing test and its first error line
+  (`scripts/ci_failure_summary.py`). To run them yourself, with Node and
+  `chrome-headless-shell` on PATH: `FACTORY_REQUIRE_BROWSER=1 python3 -m unittest
+  discover -s scripts -p 'test_*_browser.py' -v` (each takes several minutes; without the
+  variable they skip when the tools are missing). To run the tests
   yourself (use `/usr/bin/python3` on macOS):
   - shell lint: `scripts/lint.sh` (uses a `shellcheck` on PATH that reports exactly the
     pinned version, else downloads the pinned one once). The developer and reviewer

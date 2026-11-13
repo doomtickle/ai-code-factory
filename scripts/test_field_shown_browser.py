@@ -1,20 +1,21 @@
 """The Thoughtfield's "What do you need from me?" chip and pop-up in a real browser (headless Chrome) against
-`factory dashboard --demo`: the steps are in test_field_shown_browser.js. Skipped when node or chrome-headless-shell is missing.
+`factory dashboard --demo`: the steps are in test_field_shown_browser.js. Skipped when node or chrome-headless-shell is missing, unless FACTORY_REQUIRE_BROWSER=1 (CI), which fails it.
 
   python3 -m unittest discover -s scripts -p 'test_field_shown_browser.py' -v
 """
 
 import re
-import shutil
 import subprocess
 import sys
 import unittest
 from pathlib import Path
 
+from browser_test_support import needs_browser
+
 SCRIPTS = Path(__file__).resolve().parent
 
 
-@unittest.skipUnless(shutil.which("node") and shutil.which("chrome-headless-shell"), "needs node and chrome-headless-shell")
+@needs_browser
 class FieldShownBrowserTests(unittest.TestCase):
     def test_chip_popup_copy_hold_and_display_only(self):
         server = subprocess.Popen([sys.executable, str(SCRIPTS / "dashboard.py"), "--roles", str(SCRIPTS.parent / "roles"), "--demo", "--no-open"],
