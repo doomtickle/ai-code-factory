@@ -17,7 +17,20 @@ change instructions, docs and reporting.
 | 05 | Paranoid tests | Developer instructions say to test "every behavior you change, including edge cases and failure paths", with no sense of proportion. Test lines run 1.4 to 4x code lines on UI changes, and browser tests assert exact audio lengths (`aa23986`). |
 | 06 | **The one you didn't list** | `scripts/CLAUDE.md` has grown from 11 KB to **50 KB** since 25 Oct, and it grew **+26% today** across 16 commits. Every dashboard job loads about 12k tokens of rules, and each rule is one more thing a reviewer can cite. This is my best guess for why today felt worse. |
 
-## Order
+## Round 2 (13 Nov): the factory grades and improves itself
+
+Specs 01 to 06 are merged and their tests pass on `main` as of `2660e8a`.
+
+| # | What | Depends on |
+|---|------|------------|
+| 07 | Replay benchmark: 8 past changes as tasks (smoke, full and holdout tiers), a grading job that runs the reference PR's tests as a hidden oracle, and `factory analytics --bench` comparing medians over 3 runs | 03 phase 1 (merged) |
+| 08 | Analyst role: read-only, runs weekly at minimum or whenever you ask. The bridge writes an evidence pack to its scratch folder. It labels root causes from a fixed list, proposes one change per run, and the benchmark decides whether it's kept | 07 |
+
+| 09 | Fast lane: a `trivial` risk tier, tests run by risk tier, browser tests left to CI. Includes making CI able to run the browser tests: today they silently skip there | nothing; CI chunk first |
+
+Run 09 first (it speeds up everything after it), then 07, then the smoke benchmark labelled `baseline`, then 08.
+
+## Order (round 1, done)
 
 1. **03 phase 1 first** (record verdicts and per-change metrics), so the
    other fixes can be measured. It's small.
