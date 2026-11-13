@@ -399,6 +399,24 @@ async function pane(url) {
     assert.strictEqual(await grown(), true, "the Terminal key grows the pane");
     await b.click(...key); await b.sleep(400);
     assert.strictEqual(await grown(), false, "a mouse click on the Terminal key shrinks it again");
+    // An open control-unit screen (Settings, a log, ...) sits above the pane at both pane sizes and as the narrow bottom sheet: the top element at the
+    // pane's centre and near its bottom-right corner is the unit while expanded, and the pane when collapsed. (The unit's own frame isn't loaded here:
+    // the test toggles the class that setCu toggles.)
+    const topAt = `(() => { const r = document.getElementById("term-panel").getBoundingClientRect(), out = [];
+      for (const [x, y] of [[r.left + r.width / 2, r.top + r.height / 2], [r.right - 12, r.bottom - 12], [r.left + 12, r.top + 40]]) { const e = document.elementFromPoint(x, y); out.push(e && e.closest(".cu-wrap.expanded") ? "unit" : e && e.closest("#term-panel") ? "pane" : e ? e.tagName + "." + e.className : "none"); }
+      return out; })()`;
+    for (const [w, h] of [[1440, 900], [1280, 800], [390, 844]]) {
+      await b.resize(w, h); await b.sleep(700);
+      for (const big of [false, true]) {
+        await b.ev(`document.getElementById("term-panel").classList.toggle("grown", ${big})`); await b.sleep(900);
+        await b.ev(`document.getElementById("cu-wrap").classList.remove("expanded")`);
+        assert.deepStrictEqual(await b.ev(topAt), ["pane", "pane", "pane"], `${w}x${h} grown=${big}: the pane is on top when no screen is open`);
+        await b.ev(`document.getElementById("cu-wrap").classList.add("expanded")`);
+        assert.deepStrictEqual(await b.ev(topAt), ["unit", "unit", "unit"], `${w}x${h} grown=${big}: an open screen covers the pane`);
+        await b.ev(`document.getElementById("cu-wrap").classList.remove("expanded")`);
+      }
+      await b.ev(`document.getElementById("term-panel").classList.remove("grown")`);
+    }
     assert.deepStrictEqual(b.errors, [], "no page errors");
   } finally { await b.close(); }
 }
