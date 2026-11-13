@@ -1,19 +1,13 @@
-"""The lane labels shared by the factory floor and the lane modules
-(scripts/dashboard_labels.py, doomtickle/passdesk-ops#194): the desk placard, the developer a
-reviewer is checking, the branch a developer is on, and the "DEV 2" tag the browser draws
-(dashboard-ui/lanelabel.js, run here under node).
+"""The lane labels the Thoughtfield's job list shows
+(scripts/dashboard_labels.py, doomtickle/passdesk-ops#194): the desk placard and the branch
+a developer is on.
 
   python3 -m unittest discover -s scripts -p 'test_dashboard_labels.py' -v
 """
 
-import shutil
-import subprocess
 import unittest
-from pathlib import Path
 
 import dashboard_labels as L
-
-UI = Path(__file__).resolve().parent / "dashboard-ui"
 
 
 class DeskLabelTests(unittest.TestCase):
@@ -59,15 +53,6 @@ class DeskLabelTests(unittest.TestCase):
         self.assertLessEqual(len(L.desk_label("word " * 50)), L.DESK_MAX)
         self.assertEqual(L.desk_label(None), "")
 
-    def test_reviewed_lane(self):
-        for text, want in (
-            ("Review factory-developer/factory/x", "developer"),
-            ("Review factory-developer-lane3/factory/x and factory-developer/factory/y", "developer-lane3"),
-            ("Review factory/x", ""), ("factory-reviewer/factory/x", ""),
-            ("factory-developer-lane/factory/x", ""), ("xfactory-developer/factory/x", ""), ("", ""),
-        ):
-            self.assertEqual(L.reviewed_lane(text), want, text)
-
 
 class BranchTests(unittest.TestCase):
     def test_branch_topic(self):
@@ -99,23 +84,6 @@ class BranchTests(unittest.TestCase):
         name = L.lane_branch("push factory/" + "a" * 300)
         self.assertEqual(len(name), L.BRANCH_MAX)
         self.assertTrue(name.isprintable())
-
-
-@unittest.skipUnless(shutil.which("node"), "needs node")
-class DevTagTests(unittest.TestCase):
-    def run_js(self, expr):
-        code = (f"const L = require({str(UI / 'lanelabel.js')!r}); process.stdout.write(JSON.stringify({expr}));")
-        return subprocess.run(["node", "-e", code], capture_output=True, text=True, check=True).stdout
-
-    def test_dev_tag(self):
-        for name, want in (("developer", "DEV 1"), ("developer-lane2", "DEV 2"), ("developer-lane12", "DEV 12"),
-                           ("reviewer", "REVIEWER"), ("a-very-long-lane-name", "A-VERY-…")):
-            self.assertEqual(self.run_js(f"L.devTag({name!r})"), f'"{want}"', name)
-
-    def test_review_tag(self):
-        self.assertEqual(self.run_js("L.reviewTag('developer-lane3')"), '"▸ DEV 3"')
-        self.assertEqual(self.run_js("L.reviewTag('')"), '""')
-        self.assertEqual(self.run_js("L.reviewTag(null)"), '""')
 
 
 if __name__ == "__main__":

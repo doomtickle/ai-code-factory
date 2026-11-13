@@ -93,7 +93,7 @@ class Env:
         (self.scripts / "dashboard-ui" / "vendor").mkdir(parents=True)
         for name in ("dashboard.py", "dashboard_term.py", "dashboard_controls.py", "approvals.py", "watch.py"):
             (self.scripts / name).write_text(f"# {name}\n")
-        (self.scripts / "dashboard-ui" / "app.js").write_text("// app\n")
+        (self.scripts / "dashboard-ui" / "field-hud.js").write_text("// hud\n")
         (self.scripts / "dashboard-ui" / "vendor" / "x.js").write_text("// vendored\n")
         self.clock = Clock(self.fx.now)
         self.term = term
@@ -279,7 +279,7 @@ class RefusalTests(unittest.TestCase):
         self.assertIn(b" 405 ", out.split(b"\r\n", 1)[0])
         self.assertNotIn(b"Access-Control", out)
         # POST anywhere else on the second origin: refused.
-        for path in ("/cu", "/term", "/cu/api", "/cu.js"):
+        for path in ("/cu/field", "/term/field", "/cu/api", "/cu.js"):
             conn = http.client.HTTPConnection("127.0.0.1", e.tport, timeout=10)
             conn.request("POST", path, body=b"{}", headers=e.headers())
             self.assertEqual(conn.getresponse().status, 405, path)
@@ -946,7 +946,7 @@ class ActionTests(unittest.TestCase):
 
     def test_reload_digest(self):
         e = self.env
-        ui, vendor = e.scripts / "dashboard-ui" / "app.js", e.scripts / "dashboard-ui" / "vendor" / "x.js"
+        ui, vendor = e.scripts / "dashboard-ui" / "field-hud.js", e.scripts / "dashboard-ui" / "vendor" / "x.js"
 
         def update(touch, code=0, action="update"):
             (e.dir / "touch").write_text("".join(f"{p}\n" for p in touch))
@@ -1183,7 +1183,7 @@ class ReviewFixTests(unittest.TestCase):
 
     def test_page_reload_reported_once(self):
         e = self.env
-        (e.dir / "touch").write_text(f"{e.scripts / 'dashboard-ui' / 'app.js'}\n")
+        (e.dir / "touch").write_text(f"{e.scripts / 'dashboard-ui' / 'field-hud.js'}\n")
         self.go("update")
         self.assertTrue(e.controls.wait())
         self.assertEqual(e.controls.reload, "page")
@@ -1521,8 +1521,6 @@ class SetupTests(unittest.TestCase):
         self.assertEqual({n: (f["pending"], f.get("gone"), f["chars"], f["running_chars"]) for n, f in files.items()},
                          {"proj.developer.md": (True, True, 0, 4), "proj.md": (True, None, 0, 7)})
         self.assertEqual(self.cfg()["pending"], 2)
-        briefing_names = [f["name"] for f in dashboard_setup.briefing(self.cfg(), self.paths, [], 0)["notes"]["files"]]
-        self.assertEqual(briefing_names, ["proj.md"])  # the main page lists only files that exist (the emptied one does; the deleted one doesn't)
 
     def test_a_symlinked_notes_file_is_not_compared_so_never_pending_or_gone(self):
         elsewhere = self.write(self.root / "elsewhere.md", "linked notes\n")
@@ -1545,16 +1543,12 @@ class SetupTests(unittest.TestCase):
         self.assertEqual(dashboard_service.restart_lines(self.paths, "proj"), ["role instructions developer changed"])  # the lamp agrees with the bar
 
     def test_the_look_values_are_cleaned(self):
-        out = dashboard_setup.look_values({"plant": "LOIS\x1b[2J", "shifts": ["a", "b", "c"], "crt": 11, "sound": False, "ui": "bad",
-                                           "colors": {"designer": "#D08CFF", "bad role": "#ffffff", "x": "red", "ok": "#12345",
-                                                      "reviewer": "#00ff00"}})
-        self.assertEqual(out, {"plant": "LOIS?[2J", "shifts": ["a", "b", "c"], "crt": None, "sound": False, "ui": "field",
-                               "colors": {"designer": "#d08cff", "reviewer": "#00ff00"}})
-        self.assertEqual(dashboard_setup.look_values(None), {"plant": None, "shifts": None, "crt": None, "sound": None,
-                                                              "ui": "field", "colors": {}})
-        self.env.board.look = {"plant": "ACME", "shifts": None, "crt": 3, "sound": None, "ui": "classic", "colors": {}}
-        self.assertEqual(self.cfg()["look"]["values"]["plant"], "ACME")
-        self.assertEqual(self.cfg()["look"]["values"]["ui"], "classic")
+        out = dashboard_setup.look_values({"plant": "LOIS\x1b[2J", "shifts": ["a", "b", "c"], "crt": 11, "ui": "classic",
+                                           "colors": {"designer": "#D08CFF"}})
+        self.assertEqual(out, {"plant": "LOIS?[2J"})  # the retired keys are not carried
+        self.assertEqual(dashboard_setup.look_values(None), {"plant": None})
+        self.env.board.look = {"plant": "ACME"}
+        self.assertEqual(self.cfg()["look"]["values"], {"plant": "ACME"})
 
     def test_policy_values_name_the_file_they_came_from(self):
         self.write(self.root / "broker" / "policy.toml", '[git]\nrepos = ["base/repo"]\n[gitlab]\nurl = ""\n')
@@ -1663,15 +1657,14 @@ class SetupTests(unittest.TestCase):
         block = js[js.index("// ---------- the setup screen"):js.index("function renderConfirm(d)")]
         self.assertNotRegex(block, r"\.title\s*=")
         self.assertNotRegex(block, r"\.(href|src|dataset|innerHTML)\b")
-        self.assertNotRegex(block, r"\.style\b(?!\.setProperty\()")  # a colour reaches the page only through setProperty
-        self.assertEqual(len(re.findall(r"\.style\b", block)), 1)
+        self.assertNotRegex(block, r"\.style\b")
         self.assertNotIn("setAttribute", block)
         self.assertNotIn("api(", block)  # it reads the polled state and makes no request
         tune = js[js.index("// ---------- SETUP tuning"):js.index("// ---------- the log screen")]
         self.assertNotRegex(tune, r"\.(href|src|style|dataset|innerHTML|outerHTML)\b|insertAdjacentHTML|\beval\b")
         self.assertEqual(sorted(set(re.findall(r'api\("([^"]+)"', tune))), ["config-prepare", "config-run"])  # the only requests
-        html = (UI / "cu.html").read_text()
-        self.assertEqual(re.findall(r'<button class="blank" type="button" id="(svc-setup)"', html), ["svc-setup"])
+        html = (UI / "cu-field.html").read_text()
+        self.assertEqual(re.findall(r'<button class="svckey" type="button" id="(svc-setup)"', html), ["svc-setup"])
         self.assertIn('$("svc-setup").addEventListener("click", openSetup);', js)
 
 
@@ -1679,7 +1672,7 @@ class PageTests(unittest.TestCase):
     def setUp(self):
         self.ui = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.ui)
-        (self.ui / "cu.html").write_text(
+        (self.ui / "cu-field.html").write_text(
             '<meta name="cu-key" content="__CU_KEY__"><meta name="cu-main-port" content="__CU_MAIN_PORT__">')
         patcher = mock.patch.object(dt, "UI", self.ui)
         patcher.start()
@@ -1700,11 +1693,11 @@ class PageTests(unittest.TestCase):
             "same-origin iframe": ({"Sec-Fetch-Site": "same-origin"}, 200),
         }
         for name, (over, code) in cases.items():
-            resp, body = e.get("/cu", **over)
+            resp, body = e.get("/cu/field", **over)
             self.assertEqual(resp.status, code, name)
             if code != 200:
                 self.assertNotIn(e.key, body.decode(), name)
-        resp, body = e.get("/cu")
+        resp, body = e.get("/cu/field")
         html = body.decode()
         self.assertIn(f'content="{e.key}"', html)
         self.assertIn(f'name="cu-main-port" content="{e.port}"', html)
@@ -1734,8 +1727,8 @@ class PageTests(unittest.TestCase):
 
     def test_without_a_coordinator(self):
         e = self.env  # started without a Term
-        self.assertEqual(e.get("/term")[0].status, 404)
-        self.assertEqual(e.get("/cu")[0].status, 200)
+        self.assertEqual(e.get("/term/field")[0].status, 404)
+        self.assertEqual(e.get("/cu/field")[0].status, 200)
         self.assertEqual(e.post("state")[0], 200)
         self.assertIsNone(json.loads(e.get("/api/state", port=e.port)[1])["term"])
 
@@ -1744,7 +1737,7 @@ class PageTests(unittest.TestCase):
         self.addCleanup(d.stop, main)
         tport = main.term_server.server_address[1]
         conn = http.client.HTTPConnection("127.0.0.1", tport, timeout=10)
-        conn.request("GET", "/cu", headers={"Host": f"127.0.0.1:{tport}",
+        conn.request("GET", "/cu/field", headers={"Host": f"127.0.0.1:{tport}",
                                             "Cookie": f"{d.cookie_name(main.server_address[1])}={TOKEN}",
                                             "Sec-Fetch-Dest": "iframe", "Sec-Fetch-Site": "same-site"})
         self.assertEqual(conn.getresponse().status, 404)
@@ -1756,7 +1749,7 @@ class KeySeparationTests(unittest.TestCase):
         term = fake_term()
         self.addCleanup(term.shutdown)
         e = Env(self.addCleanup, term=term)
-        term_key = re.search(r'name="term-key" content="([0-9a-f]+)"', e.get("/term")[1].decode()).group(1)
+        term_key = re.search(r'name="term-key" content="([0-9a-f]+)"', e.get("/term/field")[1].decode()).group(1)
         self.assertNotEqual(term_key, e.key)
         self.assertEqual(e.post("state", **{"X-Factory-Control": term_key})[0], 403)
         self.assertEqual(e.post("state")[0], 200)
@@ -1786,48 +1779,43 @@ class CuScriptTests(unittest.TestCase):
 
 
 class RealPageTests(unittest.TestCase):
-    """The control unit's real files (scripts/dashboard-ui/cu.*), once they exist."""
+    """The control unit's real files (scripts/dashboard-ui/cu-field.html, cu.js), once they exist."""
 
     def setUp(self):
-        if not (UI / "cu.html").exists():
-            self.skipTest("no cu.html yet")
+        if not (UI / "cu-field.html").exists():
+            self.skipTest("no cu-field.html yet")
 
     def test_page_obeys_its_csp(self):
-        html = (UI / "cu.html").read_text()
+        html = (UI / "cu-field.html").read_text()
         self.assertEqual(html.count(dt.CU_KEY_SLOT), 1)
         self.assertEqual(html.count(dt.CU_PORT_SLOT), 1)
         self.assertIsNone(re.search(r"<script(?![^>]*\bsrc=)", html), "inline script")
         self.assertIsNone(re.search(r"\sstyle=", html), "inline style attribute")
         self.assertIsNone(re.search(r"\son[a-z]+=", html), "inline event handler")
         self.assertNotIn("<style", html)
-        js = (UI / "cu.js").read_text() if (UI / "cu.js").exists() else ""
+        js = (UI / "cu.js").read_text()
         for sink in ("innerHTML", "outerHTML", "insertAdjacentHTML", "document.write", "eval(", "new Function"):
             self.assertNotIn(sink, js, f"cu.js uses {sink}")
-        css = (UI / "cu.css").read_text() if (UI / "cu.css").exists() else ""
+        css = (UI / "cu-field.css").read_text()
         self.assertIsNone(re.search(r"https?://", html + css), "network URL")
 
     def test_service_keys(self):
-        html = (UI / "cu.html").read_text()
-        row = html[html.index('<div class="service"'):html.index('<!-- SETTINGS')]
-        self.assertEqual(re.findall(r'id="svc-([a-z]+)"', row), ["doctor", "restart", "update", "log"])
+        html = (UI / "cu-field.html").read_text()
+        row = html[html.index('<div class="service"'):html.index('id="svc-back"')]
+        self.assertEqual(re.findall(r'id="svc-([a-z]+)"', row), ["doctor", "restart", "update", "log", "setup"])
         js = (UI / "cu.js").read_text()
         self.assertIn('doctor: "factory doctor"', js)
         self.assertIn('$("svc-doctor").addEventListener("click", () => openService("doctor"));', js)
 
     def test_inspect_key_has_its_own_row(self):
-        # INSPECT never shares the reason tape's row (it squeezed it), and the hold
-        # strip covers only the decide keys.
-        html = (UI / "cu.html").read_text()
-        row = html[html.index('<div class="gate-row">'):html.index('<div class="keys"')]
-        tape = row[:row.index('<div class="insp-row"')]
-        self.assertNotIn("btn-inspect", tape)
-        self.assertIn('id="btn-inspect"', row[row.index('<div class="insp-row"'):])
-        keys = html[html.index('<div class="keys"'):html.index('<div class="service"')]
+        # INSPECT never shares the decide keys' row, and the hold strip covers only the decide keys.
+        html = (UI / "cu-field.html").read_text()
+        row = html[html.index('<div class="insp-row"'):html.index('<div class="keys"')]
+        self.assertIn('id="btn-inspect"', row)
+        keys = html[html.index('<div class="keys"'):html.index('id="svc-more"')]
         self.assertIn('id="keys-hold"', keys)
         self.assertNotIn("btn-inspect", keys)
-        css = (UI / "cu.css").read_text()
-        self.assertIn('"lcd inspect"', css)
-        self.assertIn(".insp-row { grid-area: inspect;", css)
+        self.assertIn("#scr-deck .insp-row", (UI / "cu-field.css").read_text())
 
     def test_inspector_puts_nothing_in_attributes(self):
         # The inspector's code (from its heading to the next one) draws patch text

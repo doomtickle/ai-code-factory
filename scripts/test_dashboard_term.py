@@ -503,7 +503,7 @@ class Server:
         self.tport = self.main.term_server.server_address[1]
         self.cookie = f"{d.cookie_name(self.port)}={TOKEN}"
         # The terminal key, as only the terminal page knows it.
-        self.key = re.search(r'name="term-key" content="([0-9a-f]+)"', self.get("/term")[1].decode()).group(1)
+        self.key = re.search(r'name="term-key" content="([0-9a-f]+)"', self.get("/term/field")[1].decode()).group(1)
 
     def close(self):
         d.stop(self.main, self.term)
@@ -671,33 +671,31 @@ class WebSocketTests(unittest.TestCase):
 
     def test_http_on_the_terminal_origin(self):
         srv = self.srv
-        resp, body = srv.get("/term")
+        resp, body = srv.get("/term/field")
         self.assertEqual(resp.status, 200)
         self.assertEqual(resp.version, 11)
-        self.assertEqual(resp.getheader("Content-Security-Policy"), dt.term_csp(srv.tport, srv.port))
+        self.assertEqual(resp.getheader("Content-Security-Policy"), dt.term_field_csp(srv.tport, srv.port))
         self.assertIsNone(resp.getheader("X-Frame-Options"))
         self.assertNotIn(dt.KEY_SLOT, body.decode())
         for path in dt.STATIC:
             self.assertEqual(srv.get(path)[0].status, 200, path)
-        self.assertEqual(srv.get("/term", headers={"Cookie": None})[0].status, 403)
         self.assertEqual(srv.get("/term.js", headers={"Cookie": None})[0].status, 403)
-        self.assertEqual(srv.get("/term", headers={"Host": f"127.0.0.1:{srv.port}"})[0].status, 403)
         self.assertEqual(srv.get("/", )[0].status, 404)       # the main page is not served here
         self.assertEqual(srv.get("/api/state")[0].status, 404)
-        self.assertEqual(srv.get("/term.html")[0].status, 404)
         self.assertEqual(srv.get("/../dashboard.py")[0].status, 404)
-        self.assertEqual(srv.get("/term", method="POST")[0].status, 405)
-        # The Thoughtfield's look of the same terminal: the same key slot, CSP and refusals.
+        # The retired plain terminal page and its files are gone.
+        for path in ("/term", "/term.html", "/term.css", "/cu.css", "/theme.css", "/fonts/vt323.woff2"):
+            self.assertEqual(srv.get(path)[0].status, 404, path)
+        # The Thoughtfield's terminal: the key slot, CSP and refusals.
         resp, body = srv.get("/term/field")
         self.assertEqual(resp.status, 200)
         # ...plus fetch() to the local voice's loopback port, where talking sends what the microphone heard.
         self.assertEqual(resp.getheader("Content-Security-Policy"), dt.term_field_csp(srv.tport, srv.port))
         self.assertNotIn(dt.KEY_SLOT, body.decode())
         self.assertIn(srv.key, body.decode())
-        # It also learns the main page's port, the one origin it may tell (three fixed words, below); the classic page has no such slot.
+        # It also learns the main page's port, the one origin it may tell (three fixed words, below).
         self.assertIn(f'<meta name="main-port" content="{srv.port}">', body.decode())
         self.assertNotIn(dt.CU_PORT_SLOT, body.decode())
-        self.assertNotIn("main-port", srv.get("/term")[1].decode())
         self.assertEqual(srv.get("/term/field", headers={"Cookie": None})[0].status, 403)
         self.assertEqual(srv.get("/term/field", headers={"Host": f"127.0.0.1:{srv.port}"})[0].status, 403)
         self.assertEqual(srv.get("/term/field", method="POST")[0].status, 405)
@@ -716,24 +714,24 @@ class WebSocketTests(unittest.TestCase):
             "same-site iframe": ({}, 200),
             "same-origin iframe": ({"Sec-Fetch-Site": "same-origin"}, 200),
         }
-        for path in ("/term", "/term/field"):
-            for name, (over, code) in cases.items():
-                resp, body = srv.get(path, headers=over)
-                self.assertEqual(resp.status, code, f"{path} {name}")
-                if code != 200:
-                    self.assertNotIn(srv.key, body.decode(), f"{path} {name}")
+        path = "/term/field"
+        for name, (over, code) in cases.items():
+            resp, body = srv.get(path, headers=over)
+            self.assertEqual(resp.status, code, f"{path} {name}")
+            if code != 200:
+                self.assertNotIn(srv.key, body.decode(), f"{path} {name}")
         # Its static files don't carry the key and stay as they are.
         self.assertEqual(srv.get("/term.js", headers={"Sec-Fetch-Dest": "script", "Sec-Fetch-Site": "same-origin"})[0].status, 200)
 
     def test_head_term_sends_no_body(self):
         srv = self.srv
-        resp, body = srv.get("/term", method="HEAD")
+        resp, body = srv.get("/term/field", method="HEAD")
         self.assertEqual(resp.status, 200)
         self.assertEqual(body, b"")
         # On the wire, too: headers only, and no key in them.
         s = socket.create_connection(("127.0.0.1", srv.tport), timeout=5)
         try:
-            s.sendall((f"HEAD /term HTTP/1.1\r\nHost: 127.0.0.1:{srv.tport}\r\nCookie: {srv.cookie}\r\n"
+            s.sendall((f"HEAD /term/field HTTP/1.1\r\nHost: 127.0.0.1:{srv.tport}\r\nCookie: {srv.cookie}\r\n"
                        "Sec-Fetch-Dest: iframe\r\nSec-Fetch-Site: same-site\r\nConnection: close\r\n\r\n").encode())
             raw = b""
             while True:
@@ -753,7 +751,7 @@ class WebSocketTests(unittest.TestCase):
         srv = self.srv
         conn = http.client.HTTPConnection("127.0.0.1", srv.tport, timeout=5)
         try:
-            for path in ("/term.js", "/term.css"):
+            for path in ("/term.js", "/term-field.css"):
                 conn.request("GET", path, headers={"Host": f"127.0.0.1:{srv.tport}", "Cookie": srv.cookie})
                 resp = conn.getresponse()
                 self.assertEqual(resp.status, 200, path)
@@ -879,8 +877,8 @@ class VendorTests(unittest.TestCase):
         js = (UI / "term.js").read_text()
         self.assertIn("window.top === window", js)  # refuses to run outside the dashboard
         self.assertIn('"replay"', js)               # mutes input while the replay is written
-        css = (UI / "term.css").read_text()
-        self.assertIn("font-variant-ligatures: none", css)  # VT323's ff/fi/fl ligatures break xterm's grid
+        css = (UI / "term-field.css").read_text()
+        self.assertIn("font-variant-ligatures: none", css)  # ligatures would redraw code and break xterm's grid
         # FitAddon subtracts only .xterm's own padding: padding on #term lets the grid overflow the frame
         self.assertIsNone(re.search(r"^#term\s*\{[^}]*padding", css, re.M), "padding on #term, not .xterm")
         self.assertRegex(css, r"#term \.xterm \{[^}]*padding:")
@@ -895,29 +893,26 @@ class VendorTests(unittest.TestCase):
         self.assertIn("registerOscHandler(52,", js)
         self.assertEqual(js.count(".writeText("), 2)  # the COPY key and the copy-key fallback
         self.assertIn("macOptionClickForcesSelection: true", js)
-        # The only thing it ever posts is "t0:" plus one of three fixed words, to the exact main origin (TermTellTests); the classic skin has no flag.
+        # The only thing it ever posts is "t0:" plus one of three fixed words, to the exact main origin (TermTellTests).
         self.assertEqual(js.count("postMessage("), 1)
         self.assertIn('window.parent.postMessage("t0:" + word, `${location.protocol}//${location.hostname}:${mainPort}`)', js)
         self.assertEqual(sorted(re.findall(r'tellMain\("(\w+)"\)', js)), ["enter", "out", "still"])
         self.assertIn("tell: true", (UI / "term-field.js").read_text())
-        self.assertNotIn("tell", (UI / "term.html").read_text())
-        html = (UI / "term.html").read_text()
+        html = (UI / "term-field.html").read_text()
         self.assertIsNone(re.search(r"<script(?![^>]*\bsrc=)", html), "inline script")
         self.assertIsNone(re.search(r"\son[a-z]+=", html), "inline event handler")
         self.assertEqual(html.count(dt.KEY_SLOT), 1)
-        self.assertIsNone(re.search(r"https?://", html + js + (UI / "term.css").read_text()), "network URL")
+        self.assertIsNone(re.search(r"https?://", html + js + css), "network URL")
 
     def test_main_page_frames_with_sandbox(self):
-        js = (UI / "app.js").read_text()
-        self.assertIn('setAttribute("sandbox", "allow-scripts allow-same-origin")', js)
-        self.assertNotIn("term-key", js)
+        js = (UI / "field-hud.js").read_text()
+        self.assertIn('f.setAttribute("sandbox", "allow-scripts allow-same-origin")', js)
+        self.assertNotIn('name="term-key"', js)   # the key lives in the terminal page's meta tag only
+        self.assertNotIn(dt.KEY_SLOT, js)
         # Clipboard write for Terminal 0's frame only (its COPY key); never read, never the control unit.
-        self.assertEqual(js.count('setAttribute("allow", '), 1)
-        self.assertIn('termFrame.setAttribute("allow", "clipboard-write");', js)
         self.assertNotIn("clipboard-read", js)
-        cu = js[js.index("function renderCu()"):]
-        cu = cu[:cu.index("\n  }\n")]
-        self.assertNotIn("allow\"", cu)
+        self.assertEqual(re.findall(r'frame\("([a-z-]+)", [^;]*?, "([a-z; -]+)"\)', js)[0][0], "term-frame")
+        self.assertEqual(len(re.findall(r'frame\("cu-frame", "Control unit", [^;]*?`\)', js)), 1, "the control unit's frame is given no allow")
 
 
 @unittest.skipUnless(shutil.which("node"), "needs node")
@@ -1021,7 +1016,7 @@ class TermScriptTests(unittest.TestCase):
         proc = subprocess.run(["node", str(here / "test_term_tell.js"), str(UI / "term.js")], capture_output=True, text=True, timeout=60)
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(json.loads(proc.stdout.strip().splitlines()[-1]),
-                         ["enter", "out and still", "replay says nothing", "hidden and closed", "classic sends nothing"])
+                         ["enter", "out and still", "replay says nothing", "hidden and closed", "no skin sends nothing"])
 
 
 if __name__ == "__main__":

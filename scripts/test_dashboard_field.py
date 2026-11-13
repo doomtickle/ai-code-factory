@@ -253,10 +253,6 @@ class RulesTests(unittest.TestCase):
         js = (UI / "field-hud.js").read_text()
         self.assertNotRegex(js, r"method:\s*[\"']POST")
 
-    def test_the_control_unit_here_has_every_node_the_classic_one_has(self):
-        ids = lambda name: set(re.findall(r'\bid="([^"]+)"', (UI / name).read_text()))
-        self.assertEqual(ids("cu.html") - ids("cu-field.html"), set())
-
     def test_the_old_look_never_reaches_the_thoughtfields_menus(self):
         html = (UI / "cu-field.html").read_text()
         self.assertNotIn("/cu.css", html)
@@ -266,10 +262,6 @@ class RulesTests(unittest.TestCase):
         self.assertEqual(sorted(set(re.findall(r'url\("([^"]+)"\)', css))), ["/fonts/nunito-variable.woff2"])
         for old in ("VT323", "scanline", "--lcd-", "--amber-glow"):
             self.assertNotIn(old, css)
-
-    def test_the_terminal_here_has_every_node_the_classic_one_has(self):
-        ids = lambda name: set(re.findall(r'\bid="([^"]+)"', (UI / name).read_text()))
-        self.assertEqual(ids("term.html") - ids("term-field.html"), set())
 
     def test_the_old_look_never_reaches_the_thoughtfields_terminal(self):
         html = (UI / "term-field.html").read_text()
@@ -283,24 +275,21 @@ class RulesTests(unittest.TestCase):
             self.assertNotIn(old, css)
         self.assertIn('"calt" 0', css)   # JetBrains Mono's ligatures would redraw code
         self.assertIn("`${termOrigin}/term/field`", (UI / "field-hud.js").read_text())
-        self.assertNotIn("term-field", (UI / "term.html").read_text())   # the classic page keeps its tube
 
     def test_only_the_thoughtfields_terminal_may_use_the_microphone_and_it_talks_only_to_the_voice(self):
         js = (UI / "field-hud.js").read_text()
         self.assertEqual(re.findall(r'frame\("([a-z-]+)", [^;]*?, "([a-z; -]+)"\)', js), [("term-frame", "clipboard-write; microphone")])
-        for name in ("field.html", "field-hud.js", "app.js", "voice.js", "field-sky.js", "field-shown.js", "cu.js", "cu-field.js", "term.html", "term-field.js"):
+        for name in ("field.html", "field-hud.js", "voice.js", "field-sky.js", "field-shown.js", "cu.js", "cu-field.js"):
             text = (UI / name).read_text()
             for word in ("getUserMedia", "/listen", "audioWorklet", "term-mic"):
                 self.assertNotIn(word, text, f"{name}: {word}")
-        self.assertNotIn("microphone", (UI / "app.js").read_text(), "the classic page has no microphone")
         self.assertEqual(dt.term_field_csp(5000, 4000), (
             "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
             f"connect-src ws://127.0.0.1:5000 ws://localhost:5000 http://127.0.0.1:{d.VOICE_PORT} http://localhost:{d.VOICE_PORT}; "
             "font-src 'self'; frame-ancestors http://127.0.0.1:4000 http://localhost:4000; base-uri 'none'; form-action 'none'"))
         self.assertEqual(dt.VOICE_PORT, d.VOICE_PORT)
         self.assertIn("http://127.0.0.1:9 http://localhost:9;", dt.term_field_csp(5000, 4000, 9))
-        for csp in (dt.term_csp(5000, 4000), dt.cu_csp(5000, 4000)):
-            self.assertNotIn(str(d.VOICE_PORT), csp, "the classic terminal and the unit don't talk to the voice")
+        self.assertNotIn(str(d.VOICE_PORT), dt.cu_csp(5000, 4000), "the unit doesn't talk to the voice")
 
     def test_spoken_words_go_only_where_typed_words_go(self):
         mic = (UI / "term-mic.js").read_text()
@@ -360,9 +349,7 @@ class RulesTests(unittest.TestCase):
         self.assertIn(f'<meta name="voice-port" content="{d.VOICE_PORT}">', html)
         self.assertIn(f'<meta name="main-port" content="{srv.port}">', html)
         self.assertNotIn("__", html)
-        resp, body = srv.get("/term")
-        self.assertEqual(resp.getheader("Content-Security-Policy"), dt.term_csp(srv.tport, srv.port), "the classic terminal is unchanged")
-        self.assertNotIn(b"voice-port", body)
+        self.assertEqual(srv.get("/term")[0].status, 404, "the old plain page is gone")
         for path in ("/term-voice.js", "/term-mic.js", "/term-mic-worklet.js"):
             resp, body = srv.get(path)
             self.assertEqual(resp.status, 200, path)
@@ -499,11 +486,6 @@ class RulesTests(unittest.TestCase):
         for name in ("field-hud.js", "field.html", "term-field.html"):
             code = "\n".join(l for l in (UI / name).read_text().splitlines() if not l.lstrip().startswith("//"))
             self.assertNotIn("Coordinator", code, name)
-
-    def test_the_classic_page_keeps_its_words(self):
-        js = (UI / "term.js").read_text()
-        self.assertIn('skin.who || "Coordinator"', js)
-        self.assertIn("Coordinator", (UI / "term.html").read_text())
 
     def test_the_world_lets_only_a_little_through_and_is_solid_where_the_small_text_sits(self):
         js = (UI / "field-hud.js").read_text()

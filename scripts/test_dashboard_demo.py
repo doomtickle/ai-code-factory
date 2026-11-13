@@ -156,9 +156,9 @@ class SnapshotTests(unittest.TestCase):
 
     def test_desk_placards(self):
         lanes = {lane["name"]: lane for lane in self.snap["lanes"]}
-        self.assertEqual({n: (lane["desk"], lane["reviews"]) for n, lane in lanes.items()}, {
-            "developer": ("greet empty name", ""), "developer-lane2": ("", ""), "developer-lane3": ("Tidy the packaging metadata, changelog", ""),
-            "reviewer": ("greet empty name", "developer"), "reviewer-lane2": ("greet readme", "developer-lane2")})
+        self.assertEqual({n: lane["desk"] for n, lane in lanes.items()}, {
+            "developer": "greet empty name", "developer-lane2": "", "developer-lane3": "Tidy the packaging metadata, changelog",
+            "reviewer": "greet empty name", "reviewer-lane2": "greet readme"})
 
     def test_lane_branches(self):
         # #194: developers carry their branch (the task's, else the log's), reviewers the lane they check.
@@ -209,7 +209,7 @@ class TickerTests(unittest.TestCase):
                 stop.set()
             new = [json.loads(line) for line in log.read_text().splitlines()[before:]]
             self.assertGreaterEqual(len(new), 4)
-            self.assertEqual(new[0]["decision"], "deny")  # the first crate the floor sees goes in the bin
+            self.assertEqual(new[0]["decision"], "deny")  # the first crate goes in the bin
             self.assertTrue(all(d.broker_event(r) is not None for r in new))
             time.sleep(0.1)
             settled = log.read_text()
@@ -329,15 +329,7 @@ class SetupTests(unittest.TestCase):
         lanes = next(k for r in cfg["roles"] if r["name"] == "developer" for k in r["keys"] if k["key"] == "LANES")
         self.assertEqual((lanes["value"], lanes["running"], lanes["pending"]), ("2", "3", True))
         self.assertEqual([f["pending"] for f in cfg["notes"]["files"]], [False, False])
-        self.assertEqual(cfg["look"]["values"]["ui"], "field")
-
-    def test_the_demo_shows_a_shift_briefing_from_the_fixture(self):
-        b = self.env.board.snapshot(self.env.now)["briefing"]
-        self.assertEqual((b["project"], b["repos"], b["repos_known"]), ("DEMO", list(demo.DEMO_REPOS), True))
-        self.assertEqual([f["name"] for f in b["notes"]["files"]], ["DEMO.md", "DEMO.developer.md"])
-        self.assertEqual(b["holds"]["tools"], ["git_push", "github_create_pr"])
-        self.assertEqual([(r["name"], r["on"]) for r in b["roles"]],
-                         [("developer", True), ("researcher", False), ("reviewer", True)])
+        self.assertEqual(cfg["look"]["values"], {"plant": None})
 
     def test_it_reads_the_temp_copy_never_the_checkout_or_real_config(self):
         paths, project = self.env.controls.setup_source()

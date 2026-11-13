@@ -1,5 +1,5 @@
-/* Terminal 0 in the Thoughtfield (doomtickle/passdesk-ops#213). The same terminal and the same term.js as /term; this is its whole look,
-   and term.css is not loaded. Readability comes first: an opaque pool, not the sky, sits behind the text. The numbers are in term-field.js. */
+/* Terminal 0 in the Thoughtfield (doomtickle/passdesk-ops#213). The terminal and term.js; this is its whole look.
+   Readability comes first: an opaque pool, not the sky, sits behind the text. The numbers are in term-field.js. */
 @font-face { font-family: "JetBrains Mono"; font-weight: 400; font-display: block; src: url("/fonts/jetbrains-mono-400.woff2") format("woff2"); }
 @font-face { font-family: "JetBrains Mono"; font-weight: 700; font-display: block; src: url("/fonts/jetbrains-mono-700.woff2") format("woff2"); }
 @font-face { font-family: "Nunito"; font-weight: 400 700; font-display: swap; src: url("/fonts/nunito-variable.woff2") format("woff2"); }

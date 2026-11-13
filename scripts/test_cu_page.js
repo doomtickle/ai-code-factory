@@ -729,17 +729,16 @@ const card = (over) => Object.assign({ id: "c1", tool: "git_push", role: "develo
     // Gateway and fixed settings use the other tag; the Look tab shows values and says what applies them.
     tabBtn("Gateway").click(); await flush();
     assert.ok(text().includes("needs Update") && !text().includes("applies on Restart"), "gateway values need Update");
+    // Only the nameplate is shown: values an old server might still send for the retired keys draw nothing, and the tab offers no choice of view.
     snap.look = { file: true, problem: "", values: { plant: AGENTISH.slice(0, 24), shifts: ["day", "swing", "night"], crt: 3, sound: false, ui: "classic",
-      colors: { designer: "#D08CFF", "bad role": "#ffffff", reviewer: "red", "a-b": "#00ff00", reaper: "url(javascript:x)" } } };
+      colors: { designer: "#D08CFF", "a-b": "#00ff00" } } };
     snap.look.values.plant = '<b>x</b> & "q"';
     await advance(2000);
     tabBtn("Dashboard look").click(); await flush();
     assert.ok(text().includes("Nameplate") && text().includes('<b>x</b> & "q"'), "the nameplate is drawn as text");
-    assert.ok(text().includes("day, swing, night") && text().includes("classic") && text().includes("off"));
     assert.ok(text().includes("needs dashboard restart"));
-    const sw = walk($("con-body")).filter(n => n.className === "swatch");
-    assert.deepStrictEqual(sw.map(n => n.style.props["background-color"]), ["#00ff00"], "only a valid lower-case #rrggbb becomes a swatch");
-    assert.ok(text().includes("Colour a-b") && !text().includes("bad role") && !text().includes("javascript"), "other colours are dropped");
+    assert.ok(!/day, swing|classic|Colour|Shifts|Sound|CRT|View|Thoughtfield/i.test(text()), "nothing of the retired settings, and no view choice");
+    assert.ok(!walk($("con-body")).some(n => n.className === "swatch" || n.tagName === "select" || n.tagName === "input" || (n.tagName === "button" && n.attrs.role !== "tab")), "no control in the look tab");
     assert.ok(!walk($("con-body")).some(n => n.tagName === "b" || Object.keys(n.attrs).some(k => /^(style|on)/.test(k))), "nothing from the data becomes markup or an attribute");
     snap.look = { file: false, problem: "", values: {} }; await advance(2000);
     assert.ok(text().includes("Nameplate") && text().includes("default"), "no values reads as the defaults");

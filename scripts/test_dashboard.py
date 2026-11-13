@@ -140,11 +140,11 @@ class SnapshotTests(unittest.TestCase):
 
     def test_desk_placard_fields(self):
         lanes = {lane["name"]: lane for lane in self.board.snapshot(self.fx.now)["lanes"]}
-        self.assertEqual((lanes["developer"]["desk"], lanes["developer"]["reviews"]), ("x", ""))
-        self.assertEqual((lanes["reviewer"]["desk"], lanes["reviewer"]["reviews"]), ("x", ""))  # names a branch, not a developer ref
+        self.assertEqual(lanes["developer"]["desk"], "x")
+        self.assertEqual(lanes["reviewer"]["desk"], "x")  # names a branch, not a developer ref
         empty = Path(self.tmp.name) / "empty"
         for lane in d.Dashboard(empty, self.fx.roles, "proj").snapshot()["lanes"]:
-            self.assertEqual((lane["desk"], lane["reviews"]), ("", ""))  # no job, no placard
+            self.assertEqual(lane["desk"], "")  # no job, no placard
 
     def test_branch_field(self):
         log = self.fx.state / "dispatch" / "logs" / "developer.log"
@@ -152,7 +152,7 @@ class SnapshotTests(unittest.TestCase):
         def branch():
             return next(x for x in self.board.snapshot(self.fx.now)["lanes"] if x["name"] == "developer")["branch"]
         lanes = {lane["name"]: lane for lane in self.board.snapshot(self.fx.now)["lanes"]}
-        self.assertEqual((lanes["developer"]["branch"], lanes["reviewer"]["branch"]), ("factory/x", ""))  # the task names it; reviewers get "reviews"
+        self.assertEqual((lanes["developer"]["branch"], lanes["reviewer"]["branch"]), ("factory/x", ""))  # the task names it
         write_lane(self.fx.state / "dispatch" / "logs", "developer", "20261019-000001-aaaaaa", self.fx.now,
                    f"{t}  ⎇ branch factory-developer/factory/from-log at 1a2b3c4\n")
         self.assertEqual(branch(), "factory/from-log")  # no branch in the task: the log's
@@ -174,7 +174,7 @@ class SnapshotTests(unittest.TestCase):
             f"{t}     > Branch: factory-developer-lane2/factory/rate-limit\n")
         lane = next(x for x in self.board.snapshot(self.fx.now)["lanes"] if x["name"] == "reviewer")
         self.assertEqual((lane["state"], lane["task"]), ("running", "Please review."))
-        self.assertEqual((lane["desk"], lane["reviews"]), ("rate limit", "developer-lane2"))
+        self.assertEqual(lane["desk"], "rate limit")
 
     def test_cards_draft_and_fingerprint(self):
         import approvals
@@ -196,7 +196,6 @@ class SnapshotTests(unittest.TestCase):
     def test_totals_spend_and_gate(self):
         snap = self.board.snapshot(self.fx.now)
         self.assertEqual(snap["totals"], {"cost": 0.5, "jobs": 1, "running": 1})  # the old job is not today's
-        self.assertEqual(len(snap["spend"]["hours"]), 24)
         self.assertEqual(snap["spend"]["roles"], [{"role": "reviewer", "cost": 0.5}])
         self.assertEqual(len(snap["gate"]), 1)
         card = snap["gate"][0]
@@ -794,7 +793,7 @@ class ServerTests(unittest.TestCase):
             self.assertIn(flag, cookie)
 
     def test_refused_without_token(self):
-        for path in ("/", "/api/state", "/app.js", "/?token=wrong", "/api/lane?name=developer"):
+        for path in ("/", "/api/state", "/classic", "/?token=wrong", "/api/lane?name=developer"):
             self.assertEqual(self.get(path, cookie=False)[0].status, 403, path)
         other = d.cookie_name(self.port + 1)
         for cookie in (f"{self.cookie}=wrong",
@@ -831,7 +830,7 @@ class ServerTests(unittest.TestCase):
         self.assertIn("script-src 'self'", csp)
         self.assertNotIn("unsafe", csp)
         self.assertEqual(resp.getheader("X-Frame-Options"), "DENY")
-        self.assertIn(b"FC-1984", body)
+        self.assertIn(b'id="plate-name"', body)
         resp, body = self.get("/api/state")
         self.assertEqual(resp.status, 200)
         self.assertEqual(resp.getheader("Content-Type"), "application/json; charset=utf-8")
@@ -873,18 +872,27 @@ class ServerTests(unittest.TestCase):
 
     def test_docs_css_shares_the_theme(self):
         # The manual can't drift from the console it documents (doomtickle/passdesk-ops#131):
-        # its CSS carries the same tokens as app.css, inlined from theme.css at build time.
+        # its CSS carries the same tokens as the console, inlined from theme.css at build time.
         theme = (UI / "theme.css").read_text(encoding="utf-8")
         _resp, css = self.get("/docs/docs.css")
         self.assertIn(theme, css.decode())
 
-    def test_theme_css_served(self):
-        resp, body = self.get("/theme.css")
+    def test_root_is_the_thoughtfield(self):
+        resp, body = self.get("/")
         self.assertEqual(resp.status, 200)
-        self.assertEqual(resp.getheader("Content-Type"), "text/css; charset=utf-8")
-        self.assertIn(b":root", body)
-        self.assertIn(b"--stripe-1", body)
-        self.assertEqual(self.get("/theme.css", cookie=False)[0].status, 403)
+        self.assertEqual(body, (UI / "field.html").read_bytes())
+        self.assertEqual(self.get("/field")[1], body)
+
+    def test_classic_redirects_to_the_thoughtfield(self):
+        resp, _ = self.get("/classic")
+        self.assertEqual((resp.status, resp.getheader("Location")), (303, "/"))
+        self.assertEqual(self.get("/classic", cookie=False)[0].status, 403)
+        self.assertEqual(self.get("/classic", host="evil.example")[0].status, 403)
+
+    def test_removed_classic_files_are_gone(self):
+        for path in ("/app.js", "/app.css", "/floor.js", "/floor.css", "/sound.js", "/radio.js",
+                     "/lanelabel.js", "/look.js", "/theme.css", "/index.html", "/term.css", "/cu.css"):
+            self.assertEqual(self.get(path)[0].status, 404, path)
 
     def test_favicon_is_empty(self):
         self.assertEqual(self.get("/favicon.ico")[0].status, 204)
@@ -1101,14 +1109,6 @@ class ServiceTests(unittest.TestCase):
             board = d.Dashboard(Path(tmp), d.DOCS_ROOT / "roles", demo.PROJECT, demo=True)
             self.assertEqual(board.snapshot()["service"], {"due": None, "lines": []})
 
-    def test_the_page_has_the_lamp_and_the_unit_keys_follow_it(self):
-        html = (UI / "index.html").read_text()
-        self.assertIn('id="lamp-service"', html)
-        self.assertIn("state.service", (UI / "app.js").read_text())
-        cu = (UI / "cu.js").read_text()
-        self.assertIn('due === "restart"', cu)
-        self.assertIn('due === "update"', cu)
-
 
 class DocsAbsentTests(unittest.TestCase):
     """Without the docs the dashboard still runs; /docs/ says why."""
@@ -1288,16 +1288,6 @@ class LaneJobsTests(unittest.TestCase):
             for job in with_packets:
                 self.assertIn(f"job {job}", board.lane_detail("developer", job=job)["packet"].split("\n")[0])
 
-    def test_the_monitor_steps_with_buttons_and_brackets_and_draws_text_only(self):
-        js, html = (UI / "app.js").read_text(), (UI / "index.html").read_text()
-        for ident in ("mon-older", "mon-newer", "mon-pos", "mon-nav"):
-            self.assertIn(f'id="{ident}"', html)
-        self.assertIn('e.key === "["', js)
-        self.assertIn('e.key === "]"', js)
-        body = js[js.index("function pendingView"):js.index("const transcriptLine")]
-        self.assertNotIn("innerHTML", body)
-        self.assertIn('el("span", "pending-v", v)', body)
-
     def test_the_lane_packet_endpoint_takes_only_a_job_of_that_lane(self):
         detail = self.board.lane_detail("reviewer", self.now, job="20261019-000002-bbbbbb")
         self.assertIn("reviewer job 20261019-000002-bbbbbb", detail["packet"])
@@ -1425,135 +1415,17 @@ class LaneJobsTests(unittest.TestCase):
             self.assertEqual(board.job_diff("20261023-080000-f0a1b2")["state"], "none")
 
 
-class BriefingTests(unittest.TestCase):
-    """The STANDBY plate's shift briefing in /api/state: host-derived facts from config and the project folder."""
 
-    def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.tmp.cleanup)
-        self.base = Path(self.tmp.name)
-        self.fx = Fixture(self.base)
-        (self.fx.roles / "developer" / "role.conf").write_text('LANES="3"\nWORKSPACE="rw"\n')
-        (self.fx.roles / "researcher").mkdir()
-        (self.fx.roles / "researcher" / "role.conf").write_text('LANES="1"\nOPTIONAL="1"\n')
-        self.paths = Paths(str(self.base), str(self.base / "config"), str(self.fx.state))
-        self.project = self.base / "work" / "proj"
-        for repo in ("app", "docs"):
-            (self.project / repo / ".git").mkdir(parents=True)
-        (self.project / ".hidden" / ".git").mkdir(parents=True)
-        (self.project / "notes").mkdir()
-        (self.fx.state / "broker").mkdir(exist_ok=True)
-        (self.fx.state / "broker" / "project").write_text(f"{self.project}\n")
-        self.config("policy.toml", '[approvals]\ntools = ["git_push", "github_create_pr"]\n')
-        self.board = d.Dashboard(self.fx.state, self.fx.roles, "proj", paths=self.paths)
+class PromptTests(unittest.TestCase):
+    """The Thoughtfield's greeting suggests one example prompt (/api/state `prompt`)."""
 
-    def config(self, rel, text):
-        path = Path(self.paths.config) / rel
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(text)
-
-    def brief(self, board=None, now=None):
-        return (board or self.board).snapshot(now or self.fx.now)["briefing"]
-
-    def test_it_names_the_project_its_repos_roles_and_holds(self):
-        b = self.brief()
-        self.assertEqual((b["project"], b["usable"]), ("proj", True))
-        self.assertEqual((b["repos"], b["repos_total"], b["repos_known"]), (["app", "docs"], 2, True))
-        self.assertEqual([(r["name"], r["lanes"], r["optional"], r["on"]) for r in b["roles"]],
-                         [("developer", 3, False, True), ("researcher", 1, True, False), ("reviewer", 1, False, True)])
-        self.assertEqual(b["holds"], {"on": True, "tools": ["git_push", "github_create_pr"]})
-        self.assertIn(b["prompt"], dashboard_setup.PROMPTS)
-
-    def test_an_optional_role_that_is_switched_on_reads_on(self):
-        self.config("enabled-roles", "researcher\n")
-        self.assertEqual([r["on"] for r in self.brief()["roles"] if r["name"] == "researcher"], [True])
-
-    def test_holds_are_off_without_tools(self):
-        self.config("policy.toml", "[approvals]\ntools = []\n")
-        self.assertEqual(self.brief()["holds"], {"on": False, "tools": []})
-
-    def test_notes_are_named_by_role_with_sizes_and_never_their_contents(self):
-        self.config("projects/proj.md", "SHARED-NOTE-TEXT\n")
-        self.config("projects/proj.developer.md", "x" * 20_001)
-        notes = self.brief()["notes"]
-        self.assertEqual([(f["name"], f["role"], f["chars"], f["over"]) for f in notes["files"]],
-                         [("proj.md", None, 17, False), ("proj.developer.md", "developer", 20_001, True)])
-        self.assertTrue(notes["path"].endswith(os.path.join("config", "projects", "proj.md")))
-        self.assertNotIn("SHARED-NOTE-TEXT", json.dumps(self.board.snapshot(self.fx.now)))
-
-    def test_no_notes_gives_the_path_to_create_one(self):
-        notes = self.brief()["notes"]
-        self.assertEqual(notes["files"], [])
-        self.assertEqual(notes["path"], os.path.join(self.paths.config, "projects", "proj.md"))
-
-    def test_a_project_name_that_cant_name_a_notes_file_has_none(self):
-        self.config("projects/.hidden.md", "n")
-        for name in ("(no project)", ".hidden", "a/b", ""):
-            board = d.Dashboard(self.fx.state, self.fx.roles, name, paths=self.paths)
-            b = self.brief(board)
-            self.assertEqual((b["usable"], b["notes"]["usable"], b["notes"]["path"], b["notes"]["files"]),
-                             (False, False, "", []), name)
-
-    def test_repos_come_from_the_single_lister_and_are_capped(self):
-        self.assertNotIn(".hidden", self.brief()["repos"])
-        for i in range(20):
-            (self.project / f"r{i:02}" / ".git").mkdir(parents=True)
-        b = self.brief(d.Dashboard(self.fx.state, self.fx.roles, "proj", paths=self.paths))
-        self.assertEqual((len(b["repos"]), b["repos_total"]), (dashboard_setup.MAX_BRIEF_REPOS, 22))
-        self.assertEqual(b["repos"], d.project_repos(self.project)[:dashboard_setup.MAX_BRIEF_REPOS])
-
-    def test_a_project_that_is_itself_a_repo_lists_dot(self):
-        (self.project / ".git").mkdir()
-        self.assertEqual(self.brief()["repos"], ["."])
-
-    def test_a_folder_that_isnt_the_bound_project_is_unknown_not_guessed(self):
-        (self.fx.state / "broker" / "project").write_text(f"{self.base / 'work' / 'other'}\n")
-        b = self.brief()
-        self.assertEqual((b["repos"], b["repos_known"]), ([], False))
-        (self.fx.state / "broker" / "project").unlink()
-        self.assertFalse(self.brief(d.Dashboard(self.fx.state, self.fx.roles, "proj", paths=self.paths))["repos_known"])
-
-    def test_it_carries_no_credential_gitlab_url_or_git_repos_list(self):
-        self.config("policy.toml", '[approvals]\ntools = ["git_push"]\n[git]\nrepos = ["acme/secret-repo"]\n'
-                                   '[gitlab]\nurl = "https://user:hunter2@gitlab.acme.test/"\n')
-        blob = json.dumps(self.brief())
-        for word in ("secret-repo", "gitlab", "hunter2", "acme", "token", "credential", "expire"):
-            self.assertNotIn(word, blob.lower(), word)
-        self.assertEqual(set(self.brief()), {"project", "usable", "repos", "repos_total", "repos_known", "notes",
-                                             "roles", "holds", "prompt"})
-
-    def test_strings_are_one_printable_line(self):
-        (self.project / "evil\x1b[31m" / ".git").mkdir(parents=True)
-        self.assertNotRegex(json.dumps(self.brief(d.Dashboard(self.fx.state, self.fx.roles, "proj", paths=self.paths))["repos"]),
-                            r"\\u001b|[\x00-\x1f]")
-
-    def test_it_is_none_without_a_config_folder_or_when_reading_it_fails(self):
-        self.assertIsNone(self.brief(d.Dashboard(self.fx.state, self.fx.roles, "proj")))
-        with mock.patch.object(dashboard_setup, "build", side_effect=RuntimeError("boom")):
-            self.assertIsNone(self.brief(d.Dashboard(self.fx.state, self.fx.roles, "proj", paths=self.paths)))
-
-    def test_it_is_cached_and_built_outside_the_boards_lock(self):
-        seen = []
-        real = dashboard_setup.build
-
-        def build(paths, project):
-            seen.append(self.board.lock.locked())
-            return real(paths, project)
-
-        with mock.patch.object(dashboard_setup, "build", build):
-            first = self.brief(now=self.fx.now)
-            self.brief(now=self.fx.now + 1)
-            self.assertEqual(seen, [False])
-            (self.project / "late" / ".git").mkdir(parents=True)
-            self.assertEqual(self.brief(now=self.fx.now + 2), first)
-            later = self.brief(now=self.fx.now + d.BRIEFING_TTL + 1)
-            self.assertEqual(len(seen), 2)
-        self.assertIn("late", later["repos"])
-
-    def test_it_runs_no_command(self):
-        with mock.patch("subprocess.Popen", side_effect=AssertionError("a command was started")), \
-                mock.patch("subprocess.run", side_effect=AssertionError("a command was started")):
-            self.assertIsNotNone(self.brief())
+    def test_the_state_carries_the_example_prompt_and_no_briefing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fx = Fixture(Path(tmp))
+            snap = d.Dashboard(fx.state, fx.roles, "proj").snapshot(fx.now)
+        self.assertEqual(snap["prompt"], dashboard_setup.example_prompt(fx.now))
+        self.assertNotIn("briefing", snap)
+        self.assertNotIn("hours", snap["spend"])
 
     def test_the_example_prompt_is_from_the_fixed_list_and_steady_within_a_day(self):
         self.assertIn("slugify", dashboard_setup.PROMPTS[0])
@@ -1575,377 +1447,37 @@ class PageTests(unittest.TestCase):
         self.assertEqual(licenses, {"OFL-VT323.txt", "OFL-BarlowCondensed.txt", "OFL-DotGothic16.txt", "OFL-Nunito.txt", "OFL-JetBrainsMono.txt"})
 
     def test_no_html_sinks(self):
-        for name in ("app.js", "floor.js", "sound.js", "radio.js", "lanelabel.js", "look.js", "field-hud.js", "field-order.js", "field-sky.js", "field-face.js",
+        for name in ("field-hud.js", "field-order.js", "field-sky.js", "field-face.js",
                      "field-monitor.js", "field-shown.js", "voice.js", "voice-lab.js", "cu-field.js"):
             js = (UI / name).read_text()
             for sink in ("innerHTML", "outerHTML", "insertAdjacentHTML", "document.write", "eval(", "new Function"):
                 self.assertNotIn(sink, js, f"{name} uses {sink}")
-
-    def test_the_standby_plate_draws_the_briefing_as_text(self):
-        js = (UI / "app.js").read_text()
-        html = (UI / "index.html").read_text()
-        self.assertIn('id="briefing"', html)
-        body = js[js.index("function renderBriefing"):js.index("// ---------- monitor")]
-        self.assertNotRegex(body, r"\.(href|src|innerHTML)\s*=|setAttribute")
-        self.assertNotIn("className =", body.replace("el(", ""))
-        self.assertIn("renderBriefing();", js)
-        for key in ("1–9", "F floor", "S sound", "N notify", "MANUAL"):
-            self.assertIn(key, html)
-
-    def test_the_monitor_fetches_a_job_packet_by_its_validated_id(self):
-        js = (UI / "app.js").read_text()
-        self.assertIn("&job=${encodeURIComponent(monJob)}", js)
-
-    def test_the_diff_tab_fetches_by_job_id_and_draws_text_only(self):
-        js, html, css = (UI / "app.js").read_text(), (UI / "index.html").read_text(), (UI / "app.css").read_text()
-        self.assertIn('data-tab="diff"', html)
-        self.assertIn('e.key === "d"', js)
-        self.assertIn("/api/diff?job=${encodeURIComponent(job)}", js)
-        body = js[js.index("const diffs = new Map"):js.index("const transcriptLine")]
-        for sink in ("innerHTML", "outerHTML", "insertAdjacentHTML", "setAttribute(\"style\"", ".style.", "className = ", ".href", ".src"):
-            self.assertNotIn(sink, body, sink)
-        # Patch text only ever goes into a node as text, and a class is only ever picked from a fixed table.
-        self.assertIn("textContent", js[js.index("const el = "):js.index("const el = ") + 400])
-        for table in ("DF_KIND", "DF_STATUS", "DF_FLAG"):
-            self.assertIn(f"const {table} = ", body)
-        for rule in (".df-add", ".df-del", ".df-name", ".df-chip", "@media (max-width: 640px)"):
-            self.assertIn(rule, css, rule)
 
     def test_the_dashboard_serves_the_diff_endpoint_on_the_main_port_by_get(self):
         src = Path(d.__file__).read_text()
         self.assertIn('"/api/diff"', src)
         self.assertIn("JOB_ID.fullmatch(job)", src[src.index('"/api/diff"'):src.index('"/api/diff"') + 600])
 
-    def test_floor_only_displays(self):
-        # The factory floor draws from the state app.js hands it: it makes no request
-        # of its own, so it can reach nothing the main page can't (scripts/CLAUDE.md).
-        js = (UI / "floor.js").read_text()
-        for call in ("fetch(", "XMLHttpRequest", "WebSocket", "EventSource", "sendBeacon", "postMessage", ".src =", "href"):
-            self.assertNotIn(call, js, f"floor.js uses {call}")
-        html = (UI / "index.html").read_text()
-        self.assertIn('<script src="/floor.js" defer></script>', html)
-        self.assertIn('<link rel="stylesheet" href="/floor.css">', html)
-
-    def test_floor_overlays_never_take_clicks(self):
-        # The glass drawn over the stations (and the crates in flight) once swallowed every
-        # click on a station; test_floor_browser.py clicks them in a real browser.
-        css = (UI / "floor.css").read_text()
-        self.assertIn(".fl .over, .fl .fx { pointer-events: none; }", css)
-        js = (UI / "floor.js").read_text()
-        self.assertNotIn("style=", js)
-        self.assertIn("motionOff.matches", js.split("function placard")[1].split("document.fonts")[0])
-
-    def test_floor_crates_are_inspectable_as_text(self):
-        # Parked and binned crates name their write by an SVG <title> and aria-label set
-        # as text (doomtickle/passdesk-ops#162); the bin pile is bounded and page-local.
-        js = (UI / "floor.js").read_text()
-        self.assertIn("title.textContent = label", js)
-        self.assertIn('setAttribute("aria-label", label)', js)
-        self.assertIn('setAttribute("tabindex", "0")', js)
-        self.assertIn("MAX_BINNED = 5", js)
-        self.assertRegex(js, r"if \(binned\.length > MAX_BINNED\) binned\.shift\(\);")
-        self.assertIn('new Set(["DENY", "NO", "FAILED"])', js)
-        self.assertIn("else if (primed && BAD.has(ev.kind)) binCrate(line(ev));", js)
-        self.assertIn("[c.tool, c.role, c.repo, c.branch]", js)
-        # A capped DENY (no free crate for the trip to the arch) is binned directly.
-        self.assertIn('return travel("crate", [[x, y], [x, oy], [ARCH_X - 4, oy]], then);', js)
-        self.assertIn('if (toArch(role, () => confiscate(ARCH_X - 4, line(ev)))) return true;\n        binCrate(line(ev));', js)
-
-    def test_floor_is_a_line_from_coordinator_to_out(self):
-        # The floor (doomtickle/passdesk-ops#163): a panel with an amber tube, one loop track
-        # inside it from the Coordinator's dispatch console past the developers and reviewers
-        # to the gate and the OUT portal; no foreman's booth, gatehouse, dock, bays or rails.
-        js = (UI / "floor.js").read_text()
-        css = (UI / "floor.css").read_text()
-        for gone in ("hue-f", "hue-g", "DOCK_X", "DOCK_Y", "POLICY · AUDIT", "TO DOCK", "OUTBOUND ▸ BROKER", "docked(", "boothNote", '"FOREMAN"',
-                     '"HAND-OFF"', '"OUTBOUND ▸ OUT"', "function belt(", "RAIL_A", "RAIL_B", "RAIL_C"):
-            self.assertNotIn(gone, js, gone)
-        for gone in (".booth", ".gatehouse", ".dock", ".foreman", "hue-f", "hue-g", "roll-dock", ".belt", ".roll", ".concrete", ".wall {", ".hat"):
-            self.assertNotIn(gone, css, gone)
-        for label in ('"COORDINATOR"', '"DEVELOPERS ▲"', '"REVIEWERS ▼"', '"DISPATCH"', '"GATE"', '"OUT"', '"DEREZ"', '"LOIS WORKS"'):
-            self.assertIn(label, js, label)
-        # One track, drawn once, carries every trip; the glass clips crates leaving by the portal.
-        self.assertEqual(js.count("trackPath()"), 1)
-        self.assertIn('parts.fx = S("g", { "clip-path": "url(#fl-glass)" }, "fx");', js)
-        for path in ("const dispatchPath = st => [CHUTE, [LX + RAD, CHUTE[1]], [LX + RAD, TY], [st.x, TY], st.inTray];", "const handoffPath = (dev, rev) => [dev.outTray, [dev.x, TY], [RX - RAD, TY]",
-                     "const dropPath = rev => [rev.inTray, rev.outTray, [rev.x, BY], [OUT_X, BY], [OUT_X, GLASS_B + 12]];"):
-            self.assertIn(path, js, path)
-        # The people stay: a program per station (and the User at dispatch while Terminal 0 is attached), its disc carrying the state.
-        self.assertIn('con.append(...program(CON_X, CON_Y, "hue-user", "user"));', js)
-        self.assertIn("g.append(...program(cx, feet, hueCls));", js)
-        self.assertIn(".fl .console .user { display: none; }", css)
-        self.assertIn(".fl .console.in .user { display: inline; }", css)
-        for rule in (".fl .s-running .disc", ".fl .s-held .disc", ".fl .s-done .disc", ".fl .s-fail .disc", ".fl .s-idle .disc"):
-            self.assertIn(rule, css, rule)
-        # Every colour is a theme token (plus the plate's screws and a few fixed darks), and the tube follows Terminal 0's CRT dial.
-        self.assertIn("var(--crt, .3)", css)
-        self.assertIn('document.documentElement.style.setProperty("--crt", f(t));', (UI / "app.js").read_text())
-        # The console plate keeps the old booth's three states.
-        self.assertIn('!state.bridge ? "BRIDGE DOWN" : attached ? "ON DUTY" : "BACK SOON"', js)
-        self.assertIn("const attached = !!(state.term && state.term.running);", js)
-        self.assertIn(".fl .console.in .plate-t { fill: var(--led-green); }", css)
-        self.assertIn(".fl .console.lit:not(.in) .plate-t { fill: var(--led-amber); }", css)
-        self.assertIn(".fl .console:not(.lit) .plate-t { fill: var(--led-red); }", css)
-        # Keycaps and lane order stay the index in state.lanes, whatever bay a lane is in.
-        self.assertIn("lanes.forEach((lane, i) => groups[bayOf(lane)].push([lane, i]));", js)
-        self.assertIn("if (i < 9) g.append(R(2, 2, 9, 9, \"kc\")", js)
-        # Each trip is decided from the previous poll's lane, and nothing is played from history.
-        flow = js[js.index("function flow(animate)"):js.index("// New events and branches")]
-        self.assertIn("if (!primed || !was) continue;", flow)
-        self.assertIn('travel("ticket", dispatchPath(st))', flow)
-        self.assertIn('if (animate) travel("crate branch", handoffPath(dev, st));', flow)
-        self.assertIn('travel("crate ok", dropPath(st)', flow)
-        self.assertIn('travel("crate fix", handoffPath(dev, st).reverse(), repark(home))', flow)
-        # Only the trips need animation: clearing and re-parking a crate happens whatever `animate` says.
-        self.assertEqual(flow.count("animate &&"), 2)
-        self.assertIn("if (st && dev && pair && pair !== was.pair) {", flow)
-        self.assertIn("if (st && dev && lane.state === \"revise\" && was.state !== \"revise\") {", flow)
-        self.assertIn("if (!animate || !travel(", flow)
-        self.assertIn("later.forEach(f => f());", flow)
-        # A lane a reviewer already names at page load is not parked: that hand-off is history.
-        self.assertIn('if (!primed && lane.state === "done" && !beingReviewed(lane.name)) park(lane.name);', js)
-        self.assertIn('l.role === "reviewer" && l.reviews === name', js)
-        self.assertNotIn("announce(", flow)
-        self.assertIn("const animate = primed && on && svg && !motionOff.matches;", js)
-        # Parked branch crates draw whether or not motion is allowed; docked says whether one was drawn.
-        self.assertIn("const drawn = park(lane.name);", js)
-        self.assertIn("animated: drawn }", js)
-        self.assertIn("if (running && (was.state !== \"running\" || was.task !== task)) unpark(lane.name);", flow)
-        self.assertIn("if (crates >= MAX_CRATES) return false;", js)
-
-    def test_floor_fills_the_row_on_big_screens_only(self):
-        # The panel's width follows the bay's shape. Up to floor.css's 1280px breakpoint the aspect
-        # stays capped at 2.2 (small and medium screens unchanged); above it the cap is 4, so a wide
-        # bay gets a wider scene instead of side margins (letterboxing).
-        js = (UI / "floor.js").read_text()
-        css = (UI / "floor.css").read_text()
-        self.assertIn("MAX_ASPECT = 2.2, MAX_ASPECT_WIDE = 4", js)
-        self.assertIn('const bigScreen = matchMedia("(min-width: 1281px)");', js)
-        self.assertIn("Math.min(aspect, bigScreen.matches ? MAX_ASPECT_WIDE : MAX_ASPECT)", js)
-        self.assertIn("@media (max-width: 1280px)", css)
-        self.assertNotIn("style=", js.replace("style.setProperty", ""))
-
-    def test_floor_events_are_display_only_hooks(self):
-        # Floor events (doomtickle/passdesk-ops#162): three CustomEvents on document for
-        # a future sound layer or shift ticket. Fired from play(), not from the animation,
-        # once per event, never for first-poll history; nothing can veto the floor.
-        js = (UI / "floor.js").read_text()
-        for name in ("passed", "confiscated", "docked"):
-            self.assertEqual(js.count(f'announce("factory-floor:{name}"'), 1, name)
-        self.assertIn(
-            "document.dispatchEvent(new CustomEvent(name, { bubbles: false, cancelable: false, detail: Object.freeze(detail) }));", js)
-        self.assertEqual(js.count("dispatchEvent(new CustomEvent(name"), 1)
-        # Fired from play() (after the not-animated bin path), never inside an animation callback.
-        play = js[js.index("function play()"):js.index("// A new bay shape")]
-        self.assertEqual(play.count("announce("), 3)
-        self.assertEqual(js.count("announce("), 4)   # its definition and the three calls in play()
-        self.assertIn("if (!primed) continue;", play)
-        self.assertIn("if (fresh || !primed) continue;", play)
-        # The detail holds strings and booleans only.
-        self.assertRegex(play, r'\{ kind: String\(ev\.kind\), role: [^\n]*, line: clip\(line\(ev\), 300\), animated: moved \}')
-        self.assertRegex(play, r'\{ lane: String\(lane\.name\), role: String\(lane\.role \|\| ""\), branch: clip\(String\(e\.text \|\| ""\), 200\), animated: ')
-        # Every bin path reaches the confiscated event through play(): the animated crate,
-        # the capped fallback (no free crate) and the not-animated path.
-        self.assertIn('GOOD = new Set(["ALLOW", "OK", "WRITTEN"])', js)
-        self.assertIn('else if (BAD.has(ev.kind)) announce("factory-floor:confiscated", detail);', play)
-        self.assertIn("if (animate) moved = broker(ev);", play)                       # animated, and the capped fallback inside broker()
-        self.assertIn("else if (primed && BAD.has(ev.kind)) binCrate(line(ev));", play)  # not animated
-        self.assertIn("if (!moved) binCrate(label);", js)                              # confiscate()'s capped fallback
-        self.assertIn("binCrate(line(ev));   // too many crates moving", js)          # DENY's capped fallback
-        # The event fires whatever the floor's state: play() has no `on` gate of its own.
-        self.assertNotRegex(play, r"if \(on\b")
-
-    def test_sound_layer_only_listens(self):
-        # The sound layer (doomtickle/passdesk-ops#162) synthesises tones from the three
-        # floor events: no request, no audio file, nothing read from an event, off by default.
-        js = (UI / "sound.js").read_text()
-        for call in ("fetch(", "XMLHttpRequest", "WebSocket", "EventSource", "sendBeacon", "postMessage", ".src", "href",
-                     "new Audio", "<audio", "decodeAudioData", "createMediaElementSource", "textContent", "dispatchEvent"):
-            self.assertNotIn(call, js, f"sound.js uses {call}")
-        # #196: the one thing read from an event's detail is `look.sound` of the page's own state (through look.js),
-        # in the one factory:state listener; the cue events are still read for their type alone.
-        listener = js[js.index('document.addEventListener("factory:state"'):js.index("for (const name of FLOOR)")]
-        self.assertEqual(js.count("e.detail"), listener.count("e.detail"))
-        self.assertIn("FactoryLook.read(e.detail.look).sound === true", listener)
-        self.assertNotRegex(listener, r"cue\(|play\(|wake\(")
-        for name in ("passed", "confiscated", "docked", "held", "done"):
-            self.assertIn(name, js)
-        self.assertIn("document.addEventListener(`factory-floor:${name}`, () => cue(name));", js)
-        self.assertIn("document.addEventListener(`factory-attention:${name}`, () => cue(name));", js)   # #192: held write, finished job
-        self.assertIn('const ATTENTION = ["held", "done"];', js)
-        self.assertIn("let on = false,", js)                                  # off until the key is pressed
-        self.assertIn('if (localStorage.getItem(STORE) === "1") setOn(true, false);', js)
-        self.assertRegex(js, r"try \{ if \(localStorage\.getItem\(STORE\)")      # storage may be blocked
-        self.assertIn("if (!AC) { key.disabled = true; return; }", js)       # no Web Audio: harmless
-        # The context is only created in wake(), which runs from a click or a key/pointer press.
-        self.assertEqual(js.count("new AC()"), 1)
-        self.assertEqual(js.count("wake()"), 3)   # its definition, the key's click, the first-gesture hook
-        self.assertIn("GAP = 0.25", js)
-
     def test_settings_entry_is_wired_and_speaks_only_its_fixed_messages(self):
-        # The header's SETTINGS key (and the comma shortcut) ask the control unit's frame to open its
-        # configuration screen: one fixed object to the frame's exact origin, no request, no key.
-        js = (UI / "app.js").read_text()
-        html = (UI / "index.html").read_text()
-        self.assertRegex(html, r'<button class="settings-key" type="button" id="settings-key" disabled aria-keyshortcuts=","')
-        self.assertIn('<span class="sk-label">Settings</span>', html)
-        self.assertEqual(js.count("postMessage("), 2)
+        # The header's SETTINGS key asks the control unit's frame to open its configuration screen: one fixed
+        # object to the frame's exact origin, no request, no key.
+        js = (UI / "field-hud.js").read_text()
+        self.assertRegex((UI / "field.html").read_text(), r'<button class="ic" id="settings-key" type="button" disabled aria-keyshortcuts=","')
         self.assertIn('postMessage({ type: "cu:open", screen: "settings" }, cuOrigin);', js)
         self.assertIn('postMessage({ type: "cu:select", id }, cuOrigin);', js)
-        body = js[js.index("const SETTINGS_SEEN"):js.index("function setCuExpanded")]
-        for call in ("fetch(", "XMLHttpRequest", "WebSocket", "sendBeacon", "innerHTML", "location", "setAttribute"):
-            self.assertNotIn(call, body, f"the settings entry uses {call}")
-        # The first-run cue is one localStorage flag, always in try/catch (no storage means the cue shows).
-        self.assertEqual(js.count("fc1984-settings-seen"), 1)
-        self.assertEqual(body.count("localStorage."), 2)
-        self.assertEqual(body.count("try {"), 2)
-        # The frame may say exactly four strings, from its own window and origin.
-        handler = js[js.index('window.addEventListener("message"'):]
-        handler = handler[:handler.index("});")]
-        self.assertIn("e.source !== cuFrame.contentWindow || e.origin !== cuOrigin", handler)
-        self.assertEqual(sorted(re.findall(r'e\.data === "(cu:[a-z]+)"', handler)),
-                         ["cu:collapse", "cu:expand", "cu:reload", "cu:settings"])
-        self.assertIn('if (e.key === ",") { settingsKey.click(); return; }', js)
+        self.assertIn("e.source === cuFrame.contentWindow && e.origin === cuOrigin", js)
         # The unit side accepts only the two fixed shapes, from the main origin and window.
         cu = (UI / "cu.js").read_text()
         self.assertIn('d.type === "cu:open" && names.includes("screen") && d.screen === "settings"', cu)
         self.assertIn("e.source !== window.parent || e.origin !== mainOrigin", cu)
 
-    def test_attention_signals_are_wired(self):
-        # #192: the badge, cues and notifications come from the state the page polls; only counts,
-        # a fixed tool list and the lane-name pattern reach the title, favicon or a notification.
-        js = (UI / "app.js").read_text()
-        html = (UI / "index.html").read_text()
-        body = js[js.index("// ---------- attention"):js.index("// ---------- polling")]
-        for call in ("fetch(", "XMLHttpRequest", "WebSocket", "sendBeacon", "postMessage", "innerHTML", "location"):
-            self.assertNotIn(call, body, f"the attention block uses {call}")
-        self.assertIn("renderTerm(); attention();", js)
-        self.assertIn('const TOOLS = new Set(["git_push", "github_create_pr", "github_update_pr", "gitlab_create_mr", "github_create_issue"]);', body)
-        self.assertIn("const LANE_NAME = /^[a-z][a-z0-9-]{1,40}$/;", body)
-        # The one thing agent-controlled that reaches a notification is a name that passed those two checks.
-        self.assertEqual(re.findall(r"new Notification\(([^;]*)\);", body), ['"LOIS", { body, tag: "factory-attention", silent: true }'])
-        self.assertIn("TOOLS.has(x.tool) ? x.tool : \"write\"", body)
-        self.assertIn('LANE_NAME.test(name) ? name : "lane"', body)
-        # Permission is asked in one place, the key's click handler, never on load.
-        self.assertEqual(js.count("requestPermission("), 1)
-        self.assertLess(body.index('notifyKey.addEventListener("click"'), body.index("requestPermission("))
-        self.assertIn('if (localStorage.getItem(NOTIFY_STORE) === "1" && Notification.permission === "granted") setNotify(true, false);', body)
-        self.assertIn('if (typeof Notification === "undefined") notifyKey.disabled = true;', body)
-        self.assertIn('if (e.key === "n" || e.key === "N") { notifyKey.click(); return; }', js)
-        self.assertLess(js.index('e.key === "p") setTab'), js.index("notifyKey.click(); return;"))
-        self.assertRegex(html, r'<button class="tabkey notify-key" type="button" id="notify-key" aria-pressed="false">Notify</button>')
-        # The favicon is a data: image drawn on a canvas, so the page's CSP allows img-src data: and nothing wider.
-        self.assertIn("img-src 'self' data:;", d.CSP)
-        self.assertNotIn("img-src *", d.CSP)
-
-    def test_sound_key_is_wired(self):
-        html = (UI / "index.html").read_text()
-        self.assertIn('<script src="/sound.js" defer></script>', html)
-        self.assertRegex(html, r'<button class="tabkey sound-key" type="button" id="sound-key" aria-pressed="false">Sound</button>')
-        self.assertEqual(d.STATIC["/sound.js"], ("sound.js", "text/javascript; charset=utf-8"))
-        self.assertTrue((UI / "sound.js").is_file())
-        app = (UI / "app.js").read_text()
-        self.assertIn('if (e.key === "s" || e.key === "S") { $("sound-key").click(); return; }', app)
-        # S sits after the monitor's own keys, so it never fires inside the modal.
-        self.assertLess(app.index('e.key === "p") setTab'), app.index('$("sound-key").click()'))
-
-    def test_radio_layer_only_listens(self):
-        # The factory radio (a Konami-code easter egg beside the sound layer) is synthesised
-        # from key names alone: no request, no audio file, nothing read from the page or state.
-        js = (UI / "radio.js").read_text()
-        for call in ("fetch(", "XMLHttpRequest", "WebSocket", "EventSource", "sendBeacon", "postMessage", ".src", "href",
-                     "new Audio", "<audio", "decodeAudioData", "createMediaElementSource", "textContent", "e.detail", "dispatchEvent",
-                     "preventDefault", "stopPropagation", "stopImmediatePropagation", "createElement", "location", "cookie"):
-            self.assertNotIn(call, js, f"radio.js uses {call}")
-        self.assertEqual(re.findall(r"getElementById\(([^)]*)\)", js), ['"radio-key"'])   # the badge is the only page element it touches
-        self.assertEqual(sorted(set(re.findall(r'addEventListener\("([a-z]+)"', js))), ["click", "keydown"])
-        self.assertIn('const CODE = ["arrowup", "arrowup", "arrowdown", "arrowdown", "arrowleft", "arrowright", "arrowleft", "arrowright", "b", "a"];', js)
-        self.assertIn("if (e.repeat", js)                                           # holding a key doesn't advance the code
-        self.assertIn("t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)", js)   # typing in a field doesn't count
-        self.assertIn("let on = false,", js)                                        # off until the code is typed
-        self.assertIn('const STORE = "fc1984-radio";', js)
-        self.assertIn('if (localStorage.getItem(STORE) === "1") setOn(true, false);', js)
-        self.assertRegex(js, r"try \{ if \(localStorage\.getItem\(STORE\)")        # storage may be blocked
-        self.assertIn("const BPM = 72;", js)
-        self.assertIn("LEVEL = 0.10;", js)
-        self.assertIn("createConvolver", js)
-        self.assertIn("setTimeout(tick, TICK)", js)                                 # look-ahead scheduler
-        # Its own context, created only in wake(), which runs from a key press or the first gesture.
-        self.assertEqual(js.count("new AC()"), 1)
-        self.assertEqual(js.count("wake()"), 3)   # its definition, the code, the first-gesture hook
-        self.assertEqual(js.count("clearTimeout(timer)"), 1)
-
-    def test_radio_key_is_wired(self):
-        html = (UI / "index.html").read_text()
-        self.assertLess(html.index('<script src="/sound.js" defer></script>'), html.index('<script src="/radio.js" defer></script>'))
-        self.assertRegex(html, r'<button class="tabkey radio-key" type="button" id="radio-key" aria-pressed="false" hidden>Radio</button>')
-        self.assertEqual(d.STATIC["/radio.js"], ("radio.js", "text/javascript; charset=utf-8"))
-        self.assertTrue((UI / "radio.js").is_file())
-        css = (UI / "floor.css").read_text()
-        self.assertIn(".lanes-h .radio-key", css)
-        # The main page's key handler is untouched: the code rides on its own listener.
-        app = (UI / "app.js").read_text()
-        self.assertNotIn("radio", app)
-
-    def test_lane_labels_are_one_shared_script(self):
-        # #194: the "DEV 2" tag comes from one file both the floor and the modules read, loaded
-        # (as a plain file, no inline script) before them, and drawn with textContent only.
-        html = (UI / "index.html").read_text()
-        self.assertEqual(d.STATIC["/lanelabel.js"], ("lanelabel.js", "text/javascript; charset=utf-8"))
-        self.assertTrue((UI / "lanelabel.js").is_file())
-        tag = '<script src="/lanelabel.js" defer></script>'
-        self.assertEqual(html.count(tag), 1)
-        self.assertLess(html.index(tag), html.index('<script src="/app.js" defer></script>'))
-        self.assertLess(html.index(tag), html.index('<script src="/floor.js" defer></script>'))
-        floor, app = (UI / "floor.js").read_text(), (UI / "app.js").read_text()
-        self.assertNotIn("devTag", floor)
-        self.assertIn("FactoryLabels.reviewTag(", floor + app)
-        self.assertIn("reviewTag(reviews)", floor)
-        self.assertIn("FactoryLabels.reviewTag(lane.reviews)", app)
-        body = app[app.index("function laneRef"):app.index("function makeChip")]
-        for call in ("fetch(", "innerHTML"):
-            self.assertNotIn(call, body)
-
-    def test_the_look_is_one_shared_script_that_sets_colours_only_through_the_style_api(self):
-        # #196: dashboard.toml's values reach the page as `look` in /api/state; look.js re-checks them
-        # and every colour is set with style.setProperty (the CSP has no inline style), never a class or HTML.
-        html = (UI / "index.html").read_text()
-        self.assertEqual(d.STATIC["/look.js"], ("look.js", "text/javascript; charset=utf-8"))
-        tag = '<script src="/look.js" defer></script>'
-        self.assertEqual(html.count(tag), 1)
-        self.assertLess(html.index(tag), html.index('<script src="/app.js" defer></script>'))
-        self.assertLess(html.index(tag), html.index('<script src="/floor.js" defer></script>'))
-        self.assertNotIn("style=", html)
-        for name in ("app.js", "floor.js", "sound.js", "look.js"):
-            js = (UI / name).read_text()
-            self.assertNotRegex(js, r"\.style\.(color|cssText)\s*=|setAttribute\(\s*[\"']style", name)
-            self.assertNotRegex(js, r"className\s*[+]?=\s*[^\"'\s]*look", name)
-        self.assertIn("setProperty", (UI / "app.js").read_text())
-        self.assertIn("setProperty", (UI / "floor.js").read_text())
-
     def test_page_obeys_its_csp(self):
-        html = (UI / "index.html").read_text()
+        html = (UI / "field.html").read_text()
         self.assertIsNone(re.search(r"<script(?![^>]*\bsrc=)", html), "inline script")
         self.assertIsNone(re.search(r"\sstyle=", html), "inline style attribute")
         self.assertIsNone(re.search(r"\son[a-z]+=", html), "inline event handler")
         self.assertNotIn("<style", html)
-        self.assertIsNone(re.search(r"https?://", html + (UI / "app.css").read_text() + (UI / "floor.css").read_text()), "network URL")
-
-    def test_help_links_resolve(self):
-        # Every MANUAL and ? link opens the docs tab, and every ? names a heading of
-        # the dashboard guide: renaming a heading there must not break one silently.
-        html = (UI / "index.html").read_text()
-        links = re.findall(r'<a class="[^"]*\b(?:help|manual)\b[^"]*" href="([^"]*)" target="([^"]*)"', html)
-        self.assertEqual(len(links), len(re.findall(r'class="[^"]*\b(?:help|manual)\b', html)))
-        self.assertGreaterEqual(len(links), 6)
-        self.assertEqual({t for _h, t in links}, {"factory-docs"})
-        page = d.load_docs(REPO)["index.html"].decode()
-        for href, _t in links:
-            self.assertTrue(href.startswith("/docs/"), href)
-            anchor = href.partition("#")[2]
-            if anchor:
-                self.assertTrue(anchor.startswith("guide-dashboard:"), href)
-                self.assertIn(f'id="{anchor}"', page, href)
+        self.assertIsNone(re.search(r"https?://", html + (UI / "field.css").read_text()), "network URL")
 
 
 if __name__ == "__main__":

@@ -130,7 +130,7 @@ const done = [];
   done.push("auto power-on resumes, POWER ON is fresh");
   sock.onmessage({ data: JSON.stringify({ type: "state", running: true }) });
   const box = $("copy");
-  // The copy element starts hidden in term.html; the fake starts visible, so hide it.
+  // The copy element starts hidden in term-field.html; the fake starts visible, so hide it.
   box.hidden = true;
 
   // A copy raises the prompt and writes nothing.

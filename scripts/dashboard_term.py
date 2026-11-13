@@ -35,14 +35,14 @@ the main page, which shows agent-written text, can't read a cross-origin
 page). The WebSocket is RFC 6455, server side, standard library only.
 
 The same origin serves the control unit (dashboard_controls.py), the one
-page that can act: /cu, with its own per-run key, under the same iframe-only
+page that can act: /cu/field, with its own per-run key, under the same iframe-only
 rule, and its API, POST /cu/api/<name>. A POST is read only when the Host and
 Origin name this origin exactly, Sec-Fetch-Site (if sent) is same-origin, the
 dashboard cookie matches, the X-Factory-Control header holds the control
 unit's key (not the terminal's), and the body is declared JSON of at most
 MAX_BODY bytes (MAX_CONFIG_BODY for config-prepare: control_refusal); every other method, OPTIONS included, is
 refused, and no response carries CORS headers. Without --coordinator the
-origin still runs, for the control unit; /term is then a 404.
+origin still runs, for the control unit; /term/field is then a 404.
 
 Standard library only; runs on the macOS system Python (3.9).
 """
@@ -82,14 +82,14 @@ MAX_CLIENTS = 8
 CLIENT_BACKLOG = 4 * 1024 * 1024  # bytes queued for one page before it is dropped
 WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 PROTOCOL = "factory-term."  # the subprotocol: PROTOCOL + this run's terminal key
-KEY_SLOT = "__TERM_KEY__"   # placeholder in term.html the server fills in
+KEY_SLOT = "__TERM_KEY__"   # placeholder in term-field.html the server fills in
 VOICE_PORT_SLOT = "__VOICE_PORT__"  # placeholder in term-field.html: the local voice port talking posts to
 HTTP_TIMEOUT = 30          # seconds a request on the terminal port may take, before any upgrade
 PING_INTERVAL = 30         # seconds between the server's pings to each page
 PING_TIMEOUT = 60          # seconds without any frame from a page before it is dropped
-FRAME_DESTS = {"iframe"}                       # Sec-Fetch-Dest allowed for /term and /cu
-FRAME_SITES = {"same-site", "same-origin"}     # Sec-Fetch-Site allowed for /term and /cu
-CU_KEY_SLOT = "__CU_KEY__"              # placeholders in cu.html the server fills in
+FRAME_DESTS = {"iframe"}                       # Sec-Fetch-Dest allowed for /term/field and /cu/field
+FRAME_SITES = {"same-site", "same-origin"}     # Sec-Fetch-Site allowed for /term/field and /cu/field
+CU_KEY_SLOT = "__CU_KEY__"              # placeholders in cu-field.html the server fills in
 CU_PORT_SLOT = "__CU_MAIN_PORT__"
 CU_HEADER = "X-Factory-Control"         # the request header carrying the control unit's key
 CU_API = "/cu/api/"
@@ -100,14 +100,11 @@ CONFIG_PREPARE = CU_API + "config-prepare"
 # The terminal origin's only files: path -> (file under UI, content type).
 STATIC = {
     "/term.js": ("term.js", "text/javascript; charset=utf-8"),
-    "/term.css": ("term.css", "text/css; charset=utf-8"),
     "/vendor/xterm/xterm.js": ("vendor/xterm/xterm.js", "text/javascript; charset=utf-8"),
     "/vendor/xterm/xterm.css": ("vendor/xterm/xterm.css", "text/css; charset=utf-8"),
     "/vendor/xterm/addon-fit.js": ("vendor/xterm/addon-fit.js", "text/javascript; charset=utf-8"),
-    "/fonts/vt323.woff2": ("fonts/vt323.woff2", "font/woff2"),
-    # The control unit's (cu.html is served at /cu, like term.html at /term).
-    "/cu.js": ("cu.js", "text/javascript; charset=utf-8"),
-    "/cu.css": ("cu.css", "text/css; charset=utf-8"),
+    # The control unit's script (cu-field.html, served at /cu/field, loads it).
+    "/cu.js": ("cu.js", "text/javascript; charset=utf-8"),   # shared by the control unit page, /cu/field
     "/cu-notes.js": ("cu-notes.js", "text/javascript; charset=utf-8"),   # the NOTES editor on SETUP; cu.js loads after it
     # The Thoughtfield's frames: the control unit in its decision-row skin (/cu/field), and Terminal 0 in its skin (/term/field).
     "/term-field.js": ("term-field.js", "text/javascript; charset=utf-8"),
@@ -120,11 +117,6 @@ STATIC = {
     "/term-voice.js": ("term-voice.js", "text/javascript; charset=utf-8"),
     "/term-mic.js": ("term-mic.js", "text/javascript; charset=utf-8"),
     "/term-mic-worklet.js": ("term-mic-worklet.js", "text/javascript; charset=utf-8"),
-    # cu.css imports this (same origin, allowed by style-src 'self').
-    "/theme.css": ("theme.css", "text/css; charset=utf-8"),
-    "/fonts/barlow-condensed-600.woff2": ("fonts/barlow-condensed-600.woff2", "font/woff2"),
-    "/fonts/barlow-condensed-700.woff2": ("fonts/barlow-condensed-700.woff2", "font/woff2"),
-    "/fonts/dotgothic16.woff2": ("fonts/dotgothic16.woff2", "font/woff2"),
     "/fonts/nunito-variable.woff2": ("fonts/nunito-variable.woff2", "font/woff2"),
 }
 
@@ -853,34 +845,29 @@ def make_handler(term: Term | None, token: str, cookie: str, key: str, port: int
                 return
             if path.startswith(CU_API):
                 self.refuse(405, "POST only")
-            elif path in ("/term", "/term/field") and term is not None:
+            elif path == "/term/field" and term is not None:
                 # The page carrying the key: only for the main page's iframe,
                 # never a top-level navigation another local page could open.
-                # /term/field is the same terminal in the Thoughtfield's look.
                 if not self.framed():
                     self.refuse(403, "the terminal opens inside the dashboard: open the link 'factory dashboard' printed")
                     return
-                page = "term-field.html" if path == "/term/field" else "term.html"
+                page = "term-field.html"
                 try:
                     html = (UI / page).read_text(encoding="utf-8")
                 except OSError:
                     self.refuse(500, f"missing {page}")
                     return
-                # Only the Thoughtfield's page has the main-port slot: it tells the main page three fixed words, to that exact origin.
+                # The page has the main-port slot: it tells the main page three fixed words, to that exact origin.
                 html = html.replace(KEY_SLOT, key).replace(CU_PORT_SLOT, str(int(main_port)))
-                if path == "/term/field":
-                    voice = int(VOICE_PORT)
-                    self.send(200, html.replace(VOICE_PORT_SLOT, str(voice)).encode("utf-8"), "text/html; charset=utf-8",
-                              page_csp=term_field_csp(port, main_port, voice))
-                    return
-                self.send(200, html.encode("utf-8"), "text/html; charset=utf-8")
-            elif path in ("/cu", "/cu/field") and controls is not None:
-                # The control unit carries its own key: the same rule as /term. /cu/field is the same unit and
-                # the same cu.js, in the Thoughtfield's decision-row skin.
+                voice = int(VOICE_PORT)
+                self.send(200, html.replace(VOICE_PORT_SLOT, str(voice)).encode("utf-8"), "text/html; charset=utf-8",
+                          page_csp=term_field_csp(port, main_port, voice))
+            elif path == "/cu/field" and controls is not None:
+                # The control unit carries its own key: the same rule as /term/field.
                 if not self.framed():
                     self.refuse(403, "the controls open inside the dashboard: open the link 'factory dashboard' printed")
                     return
-                page = "cu-field.html" if path == "/cu/field" else "cu.html"
+                page = "cu-field.html"
                 try:
                     html = (UI / page).read_text(encoding="utf-8")
                 except OSError:
@@ -1006,8 +993,8 @@ def make_handler(term: Term | None, token: str, cookie: str, key: str, port: int
 def serve(term: Term | None, token: str, cookie: str, main_port: int, port: int = 0, key: str | None = None,
           controls=None, cu_key: str | None = None) -> tuple:
     """Start the second origin on 127.0.0.1 in a background thread: (server, key).
-    It serves the terminal when term is given (else /term is a 404) and the
-    control unit when controls is given (else /cu is a 404), each with its
+    It serves the terminal when term is given (else /term/field is a 404) and the
+    control unit when controls is given (else /cu/field is a 404), each with its
     own key; server.cu_key is the control unit's."""
     key = key or secrets.token_hex(24)
     cu_key = cu_key or secrets.token_hex(24)
