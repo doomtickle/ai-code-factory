@@ -200,7 +200,7 @@ async function picking(url) {
     // the question views still pour the stars out, and the packets step aside
     const r = await b.ev(`(() => { const r = LF.sky.show("spend"); return r.say; })()`);
     assert.ok(/cost the most/.test(r), r);
-    const until = async (expr, what) => { for (let i = 0; i < 40; i++) { if (await b.ev(expr)) return; await b.sleep(250); } assert.fail(what); };
+    const until = async (expr, what) => { for (let i = 0; i < 40; i++) { if (await b.ev(expr)) return; await b.sleep(250); } assert.fail(what + " " + await b.ev(`JSON.stringify({ view: LF.sky.view, packets: LF.sky.packets().length })`)); };
     await until(`LF.sky.packets().length === 0`, "packets fade out while a question's shape is up");
     await b.ev(`LF.sky.show("home")`);
     await until(`LF.sky.packets().length >= 6`, "and come back");
