@@ -151,7 +151,7 @@ class TermMicBrowserTests(unittest.TestCase):
         out = bytes(srv.term.buffer).decode("utf-8", "replace")
         self.assertIn("ECHO:start the review of the auth branch", out, out[-600:])   # held, sent at once
         self.assertIn("ECHO:run the tests.", out, out[-600:])                        # "Lois, run the tests." after the window
-        for never in ("nice weather", "drop this one", "click me away", "while she speaks", "Lois", "Lowis"):
+        for never in ("nice weather", "drop this one", "click me away", "while she speaks", "Lois", "Louis"):
             self.assertNotIn(never, out, never)
 
 

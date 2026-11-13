@@ -6,12 +6,12 @@
 (function (root) {
   const RATE = 16000;
 
-  // ---------- the wake word. A line counts only if its first word is LOIS, as the listener (whisper base.en) writes it.
-  // Whisper spells the name it hears, so the list is what it gives for "Lois" said plainly: Lois (with any case, and the
-  // comma or full stop it puts after a name), Loïs, Lowis and Loise. "Louis" is the commonest mishearing of a short "Lois"
-  // and a rare first word for anything said to a room. A spelled-out "L.O.I.S." or "Lo-is" collapses to "lois" because only
-  // letters count. An optional "hey", "hi", "ok" or "okay" may come first. Everything else is not for LOIS.
-  const WAKE = new Set(["lois", "lowis", "loise", "louis"]);
+  // ---------- the wake word. A line counts only if its first word is Lois, Louis or Computer (owner decision 13 Nov 2026), as
+  // the listener (whisper base.en) writes it. Case, accents and punctuation don't matter (Lois, LOIS, "lois.", Loïs). "Louis"
+  // is the commonest mishearing of a short "Lois" and a rare first word for anything said to a room. A spelled-out "L.O.I.S."
+  // or "Lo-is" collapses to "lois" because only letters count. "Computer" is a plain word whisper spells one way; it counts only
+  // as the first word (after an optional "hey", "hi", "ok" or "okay"), never inside a sentence. Everything else is not for LOIS.
+  const WAKE = new Set(["lois", "louis", "computer"]);
   const LEAD = new Set(["hey", "hi", "ok", "okay"]);
   const fold = w => w.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z]/g, "");
   // The words after the wake word (trimmed, leading punctuation gone), "" if nothing followed it, or null if it isn't there.

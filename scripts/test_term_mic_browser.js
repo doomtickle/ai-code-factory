@@ -205,7 +205,7 @@ async function granted(url, wav) {
     assert.strictEqual((await strip(b)).status, "Always on: listening for “LOIS…”");
 
     // Escape on the main page cancels a waiting line.
-    await say("Lowis, drop this one");
+    await say("Louis, drop this one");
     assert.strictEqual(await waiting(b, 8000), "drop this one", "the mishearing counts");
     await b.escape();
     await until(async () => (await strip(b)).pending === null, 1000, "Escape cancels");

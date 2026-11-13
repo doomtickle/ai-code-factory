@@ -36,7 +36,7 @@ VOICE_JS = str(UI / "term-voice.js")
 
 
 class WakeWordTests(unittest.TestCase):
-    """Always-on talking (term-voice.js wake): only a line that starts with LOIS counts, and only what follows it is sent."""
+    """Always-on talking (term-voice.js wake): only a line that starts with Lois, Louis or Computer counts, and only what follows it is sent."""
 
     def wake(self, *texts):
         return node(f"const V = require({VOICE_JS!r}); process.stdout.write(JSON.stringify({json.dumps(texts)}.map(V.wake)))")
@@ -45,24 +45,28 @@ class WakeWordTests(unittest.TestCase):
         cases = {"Lois, start the review of the auth branch.": "start the review of the auth branch.",
                  "LOIS run the tests": "run the tests", "lois. What's stuck?": "What's stuck?", "Lois: stop": "stop",
                  "Hey Lois, what's waiting for me?": "what's waiting for me?", "OK, Lois, run it": "run it", "Okay Lois run it": "run it",
-                 "Lowis, run the tests.": "run the tests.", "Loïs, run it": "run it", "Loise run it": "run it", "Louis, run it": "run it",
+                 "Loïs, run it": "run it", "Louis, run it": "run it", "LOUIS run it": "run it",
+                 "Computer, run the tests.": "run the tests.", "computer run it": "run it", "COMPUTER: stop": "stop", "Hey computer, stop": "stop",
+                 "Okay Computer. What's stuck?": "What's stuck?", "Cómputer, run it": "run it",
                  "L.O.I.S. run it": "run it", "Lo-is, run it": "run it", "Lo is, run it": "run it", "L O I S run it": "run it",
                  "  Lois,   run\n the  tests ": "run the tests", "Lois... run it": "run it", "Lois — run it": "run it"}
         self.assertEqual(self.wake(*cases), list(cases.values()))
 
     def test_the_name_alone_is_heard_but_carries_nothing(self):
-        self.assertEqual(self.wake("Lois.", "Lois", "Hey, Lois!"), ["", "", ""])
+        self.assertEqual(self.wake("Lois.", "Lois", "Hey, Lois!", "Computer.", "Hi, computer"), ["", "", "", "", ""])
 
     def test_anything_else_is_not_for_her(self):
         texts = ("Start the review, Lois.", "Thank you.", "", "   ", "Loiseau is late", "Lowes has it", "Lewis, run it", "Louise, run it",
-                 "Lo, is it raining?", "Hey there Lois", "Lo", "Hey", "Allow is fine", "Elois run it", "the lois thing")
+                 "Lo, is it raining?", "Hey there Lois", "Lo", "Hey", "Allow is fine", "Elois run it", "the lois thing",
+                 "Lowis, run it", "Loise run it", "Is the computer on?", "Turn off the computer", "Start the review, computer.",
+                 "Hey there computer", "Computers are fast", "My computer, run it", "Compute")
         self.assertEqual(self.wake(*texts), [None] * len(texts))
         self.assertEqual(node(f"const V = require({VOICE_JS!r}); process.stdout.write(JSON.stringify([V.wake(null), V.wake(7), V.wake(undefined)]))"),
                          [None, None, None])
 
     def test_the_list_stays_small(self):
         self.assertEqual(node(f"const V = require({VOICE_JS!r}); process.stdout.write(JSON.stringify([...V.WAKE].sort()))"),
-                         ["lois", "loise", "louis", "lowis"])
+                         ["computer", "lois", "louis"])
 
 
 class CancelWindowTests(unittest.TestCase):

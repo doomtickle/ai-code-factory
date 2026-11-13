@@ -271,8 +271,9 @@ approving is still the held light.
   microphone stays open while the tab is visible, and its lamp is red while it
   listens. Start with her name: "LOIS, run the tests." Each pause of about a
   second ends what you said, and anything over 30 s is cut there. Only a line
-  that starts with "LOIS" counts (also "Hey LOIS", or the spellings the listener
-  writes for it: Lowis, Loise, Louis). The rest is ignored: it went to the local
+  that starts with "Lois", "Louis" or "Computer" counts (also "Hey Lois"; case
+  and punctuation don't matter, and the word itself is not sent). "Computer"
+  counts only as the first word, never inside a sentence. The rest is ignored: it went to the local
   voice to be heard and nowhere else, and nothing shows.
 - **The 2 s window.** The words after her name wait in the strip for 2 seconds
   with a countdown, then are typed. Press `Esc` (on the page or in the

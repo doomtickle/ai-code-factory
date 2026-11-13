@@ -24,7 +24,7 @@ Dated entries, for the user to review. Newest first.
     `tm:hush`, `tm:open` and `tm:cancel`. Hold-Space-to-talk is gone: in a terminal, Space is the Coordinator's.
   - **An Enter typed by voice reaches whatever the terminal shows**, as a typed Enter does. If the Coordinator ever showed a yes/no prompt, a
     spoken line could answer it; the factory's approvals stay on the held light, which voice can't reach.
-  - **Wake word list:** lois, lowis, loise, louis (letters only, so "L.O.I.S." and "Lo-is" count; an optional hey/hi/ok/okay first). Louis is
+  - **Wake word list:** lois, louis, computer (13 Nov 2026, owner: lowis and loise dropped, computer added; letters only, so "L.O.I.S." and "Lo-is" count; an optional hey/hi/ok/okay first). Louis is
     the commonest mishearing of a short "Lois" and rarely starts a sentence said to a room; the 2 s window covers the rest.
   - **Voice activity is energy-based**, per 20 ms: start at -40 dBFS RMS and 3x the learnt room level for 80 ms, keep at -46 dBFS, end after
     0.8 s of quiet, drop under 0.3 s of speech, keep 300 ms before the start, cut at 30 s. The browser's echo cancelling, noise suppression and
