@@ -440,8 +440,11 @@ class RulesTests(unittest.TestCase):
         self.assertNotIn("inert", js)
         self.assertNotIn("#ask", js)
         self.assertEqual(len(re.findall(r"\.focus\(\)", js)), 1, "termFrame.focus() is called in one place only")
-        self.assertIn("if (on && focus) termFrame.focus();", js)
-        self.assertIn("setGrown(!grown, !grown)", js, "the pane bar's own button is a user gesture")
+        self.assertIn('if (sz !== "docked" && focus) termFrame.focus();', js)
+        self.assertIn('setPane("bigger", pane.size === "docked")', js, "the pane bar's own button is a user gesture")
+        self.assertIn('setPane("full", false)', js, "Full screen is CSS on the pane and never moves focus into the frame")
+        self.assertNotIn("requestFullscreen", js.split("setPane(")[1].split("addEventListener(\"fullscreenchange")[0], "the pane's Full screen is not the browser's")
+        self.assertRegex(html, r'<button type="button" id="term-full" aria-controls="term-panel" aria-pressed="false">Full screen</button>')
         self.assertIn("focusOnState: false", (UI / "term-field.js").read_text())
         self.assertIn("running && skin.focusOnState !== false", (UI / "term.js").read_text())
 

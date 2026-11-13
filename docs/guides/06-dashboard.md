@@ -327,6 +327,18 @@ Pressing **Terminal** or `t` gives it the keyboard, so `t` and Esc then go to
 the Coordinator. Press **Smaller** to shrink it, or click the world first and
 press `t` or Esc.
 
+The pane has three sizes: docked along the bottom, **Bigger**, and **Full
+screen**, where it fills the whole browser window above everything else on the
+page. Press **Full screen** in the pane's bar to enter it; the same button then
+reads **Exit full screen** and takes the pane back to the size it had before.
+Full screen is the page covering its own window, not the browser's full-screen
+mode, so the browser's own full-screen key (the top bar's) is separate. It does
+not move the keyboard into the terminal: click the terminal, or press Tab from
+the button, to type. On the page itself (not inside the terminal), `t` or Esc
+also leaves Full screen for the size before; inside the terminal, Esc still goes
+to the Coordinator, so use the button. The terminal refits to the window
+whenever it changes size.
+
 Opening the dashboard brings the Coordinator up once per page load, continuing
 its last session (a Resume), if it is off and not open in `factory chat`.
 Later, when the pane says "LOIS is off", **Resume** continues the last session
@@ -757,11 +769,11 @@ keys go there instead: click the sky first.
 
 | Where | Key | Does |
 |---|---|---|
-| The page | `t` | Terminal 0 bigger and focused, or smaller |
+| The page | `t` | Terminal 0 bigger and focused, or smaller; from Full screen, back to the size before |
 | The page | `1` to `4` | Show what cost the most, what's stuck, what they have been doing, the busiest time |
 | The page | `v` | Sound and voice on or off |
 | The page | `,` | Open Settings |
-| The page | Esc | Shrink Terminal 0, else back to the galaxy, else close the `?` key |
+| The page | Esc | Leave Terminal 0's Full screen, else shrink it, else back to the galaxy, else close the `?` key |
 | The monitor | `[` / `]` | Older / newer job |
 | The monitor | Esc | Close |
 | The gold light | Space, Enter (hold) | Hold to approve |

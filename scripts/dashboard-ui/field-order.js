@@ -103,6 +103,17 @@
     return { at, hidden };
   }
 
-  const api = { hhmm, clockMin, TONES, jobTone, cardTone, number, orderWord, stepWord, orderName, rank, history, placeLabels, cut, MAX_STEPS };
+  // Terminal 0's pane has three sizes. paneSize(st, act) is the one place that decides the next one; "before" is the size Full screen returns to.
+  // acts: key (the Terminal key or T), bigger (the Bigger/Smaller button), full (the Full screen/Exit button), esc, into (the frame took focus), away (the world or the control unit did).
+  const PANE_SIZES = ["docked", "grown", "full"];
+  function paneSize(st, act) {
+    const size = PANE_SIZES.includes(st && st.size) ? st.size : "docked", before = size === "full" && st.before === "grown" ? "grown" : "docked";
+    if (size === "full") return act === "key" || act === "full" || act === "esc" ? { size: before, before } : { size, before };
+    if (act === "full") return { size: "full", before: size };
+    const next = act === "key" || act === "bigger" ? (size === "docked" ? "grown" : "docked") : act === "into" ? "grown" : act === "esc" || act === "away" ? "docked" : size;
+    return { size: next, before: next };
+  }
+
+  const api = { hhmm, paneSize, clockMin, TONES, jobTone, cardTone, number, orderWord, stepWord, orderName, rank, history, placeLabels, cut, MAX_STEPS };
   if (typeof module !== "undefined" && module.exports) module.exports = api; else root.FieldOrder = api;
 })(typeof window !== "undefined" ? window : globalThis);
