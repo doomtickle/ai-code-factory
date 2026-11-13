@@ -1,8 +1,8 @@
 """Turn a unittest log into a short Markdown list of failures: each test's name and the first line of its error.
 
-  python3 scripts/ci_failure_summary.py < unittest.log >> "$GITHUB_STEP_SUMMARY"
+  python3 scripts/ci_failure_summary.py [--shard NAME] < unittest.log >> "$GITHUB_STEP_SUMMARY"
 
-The `browser tests` job of .github/workflows/ci.yml uses this, so the list can be pasted back to the Coordinator.
+The browser-test shards of .github/workflows/ci.yml use this (--shard names the shard in the list), so the list can be pasted back to the Coordinator.
 Prints nothing when no test failed or errored. Standard library only.
 """
 
@@ -35,14 +35,19 @@ def failures(log):
     return [tuple(f) for f in found]
 
 
-def render(found):
+def render(found, shard=""):
     if not found:
         return ""
-    out = [f"### {len(found)} browser test failure{'s' if len(found) != 1 else ''}", ""]
+    where = f" in shard `{shard}`" if shard else ""
+    out = [f"### {len(found)} browser test failure{'s' if len(found) != 1 else ''}{where}", ""]
     for kind, test, first in found:
-        out.append(f"- `{test}` ({kind.lower()}): {first or 'no error line in the log'}")
+        out.append(f"- `{test}` ({kind.lower()}{', ' + shard if shard else ''}): {first or 'no error line in the log'}")
     return "\n".join(out) + "\n"
 
 
 if __name__ == "__main__":
-    sys.stdout.write(render(failures(sys.stdin.read())))
+    args = sys.argv[1:]
+    shard = args[1] if len(args) == 2 and args[0] == "--shard" else ""
+    if args and not shard:
+        sys.exit("usage: ci_failure_summary.py [--shard NAME] < unittest.log")
+    sys.stdout.write(render(failures(sys.stdin.read()), shard))

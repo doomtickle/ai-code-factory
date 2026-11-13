@@ -5,7 +5,7 @@ set -euo pipefail
 # 1. The flags for the kinds of change CI sees (docs only, dashboard only, broker, workflow, mixed).
 # 2. Anything it can't tell runs everything: no range, an empty list, a bad range, an unknown file.
 # 3. A real git range (BASE...HEAD) gives the same answer as the file list.
-# 4. The `browser tests` job reads Chrome's pin and apt libraries from the developer Dockerfile
+# 4. The `browser shard` jobs read Chrome's pin and apt libraries from the developer Dockerfile
 #    (scripts/ci-chrome.sh); the reviewer Dockerfile must carry the same ones.
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"

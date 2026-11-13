@@ -1,7 +1,7 @@
 """Shared guard for the headless-Chrome tests (scripts/test_*_browser.py).
 
 Without FACTORY_REQUIRE_BROWSER a test whose node or chrome-headless-shell is missing is skipped, as in the
-factory sandboxes' own checkouts and on a laptop. With FACTORY_REQUIRE_BROWSER=1 (CI's `browser tests` job) it
+factory sandboxes' own checkouts and on a laptop. With FACTORY_REQUIRE_BROWSER=1 (CI's `browser shard` jobs) it
 fails instead, naming what is missing, so a runner without Chrome can never pass by skipping.
 """
 

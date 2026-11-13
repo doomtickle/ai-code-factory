@@ -600,8 +600,27 @@ async function arc(url, reduced) {
   } finally { await b.close(); }
 }
 
+// Every top-level section, in the order a full run takes them. FIELD_SECTIONS="picking,crystals" runs just those (the CI shards in
+// .github/workflows/ci.yml); unset runs all. `node test_field_browser.js --list` prints the names, one per line.
+const SECTIONS = {
+  "layouts": u => layouts(u, 0), "layouts-65": u => layouts(u, 65), "picking": picking, "crystals": crystals,
+  "witness": u => witness(u, 0), "witness-reduced": u => witness(u, 1), "pane": pane, "nogate": nogate,
+  "comet": u => comet(u, 0), "comet-reduced": u => comet(u, 1), "arc": u => arc(u, 0), "arc-reduced": u => arc(u, 1),
+};
+
+function selected(env) {
+  if (env === undefined) return Object.keys(SECTIONS);
+  const names = env.split(",").map(n => n.trim());
+  const bad = names.filter(n => !Object.prototype.hasOwnProperty.call(SECTIONS, n));
+  if (bad.length) throw new Error(`FIELD_SECTIONS names no such section: ${bad.map(n => JSON.stringify(n)).join(", ")} (sections: ${Object.keys(SECTIONS).join(", ")})`);
+  const dup = names.filter((n, i) => names.indexOf(n) !== i);
+  if (dup.length) throw new Error(`FIELD_SECTIONS lists ${dup.join(", ")} more than once`);
+  return names;
+}
+
 const url = process.argv[2];
-const only = process.env.FIELD_ONLY;
-(only === "pane" ? pane(url) : only === "nogate" ? nogate(url) : only === "comet" ? comet(url, 0).then(() => comet(url, 1)) : only === "crystals" ? crystals(url) : only === "picking" ? picking(url) : only === "witness" ? witness(url, 0).then(() => witness(url, 1)) : only === "arc" ? arc(url, 0).then(() => arc(url, 1))
-  : layouts(url, 0).then(() => layouts(url, 65)).then(() => picking(url)).then(() => crystals(url)).then(() => witness(url, 0)).then(() => witness(url, 1)).then(() => pane(url)).then(() => nogate(url)).then(() => comet(url, 0)).then(() => comet(url, 1)).then(() => arc(url, 0)).then(() => arc(url, 1)))
-  .then(() => console.log("field browser checks passed"), e => { console.error(e.stack || e); process.exit(1); });
+if (url === "--list") { console.log(Object.keys(SECTIONS).join("\n")); process.exit(0); }
+let names;
+try { names = selected(process.env.FIELD_SECTIONS); } catch (e) { console.error(e.message); process.exit(2); }
+names.reduce((done, n) => done.then(() => SECTIONS[n](url)), Promise.resolve())
+  .then(() => console.log("field browser checks passed: " + names.join(", ")), e => { console.error(e.stack || e); process.exit(1); });

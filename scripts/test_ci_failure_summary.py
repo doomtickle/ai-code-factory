@@ -53,6 +53,11 @@ class FailureSummaryTests(unittest.TestCase):
         self.assertIn("2 browser test failures", text)
         self.assertNotIn("second line", text)
 
+    def test_names_the_shard_in_the_heading_and_on_each_line(self):
+        text = render(failures(LOG), "field-witness")
+        self.assertIn("2 browser test failures in shard `field-witness`", text)
+        self.assertIn("- `test_x.A.test_c` (fail, field-witness): AssertionError: timed out after 2400 s", text)
+
     def test_nothing_to_say_when_all_passed(self):
         self.assertEqual(render(failures("test_a (test_x.A.test_a) ... ok\n\nRan 1 test in 1s\n\nOK\n")), "")
 

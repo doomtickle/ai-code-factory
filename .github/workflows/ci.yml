@@ -228,18 +228,43 @@ jobs:
         run: echo "::notice::No code changed; nothing to test."
       # factory-lane runs only inside the Linux sandboxes, so it's tested on Linux.
 
-  browser:
-    # The headless-Chrome tests (scripts/test_*_browser.py). The factory's sandboxes no longer have to run
-    # them, so CI does, with the role images' own Chrome for Testing: the version and SHA-256 are read from
-    # templates/developer/Dockerfile (scripts/ci-chrome.sh; scripts/test_ci_changes.sh checks the reviewer's
-    # Dockerfile says the same), so there is one pin. FACTORY_REQUIRE_BROWSER=1 makes a test fail, not skip,
-    # when node or Chrome is missing (scripts/browser_test_support.py).
-    name: browser tests
+  browser-shards:
+    # The headless-Chrome tests (scripts/test_*_browser.py), run as parallel shards so the browser part of CI is
+    # over inside 20 minutes: the field test (scripts/test_field_browser.js) is one long session of sections, and
+    # FIELD_SECTIONS picks which a shard runs. scripts/test_ci_shards.py checks the shards together cover every
+    # section exactly once and every browser test file. Chrome is the role images' own Chrome for Testing: the
+    # version and SHA-256 are read from templates/developer/Dockerfile (scripts/ci-chrome.sh;
+    # scripts/test_ci_changes.sh checks the reviewer's Dockerfile says the same), so there is one pin.
+    # FACTORY_REQUIRE_BROWSER=1 makes a test fail, not skip, when node or Chrome is missing
+    # (scripts/browser_test_support.py).
+    name: browser shard (${{ matrix.shard }})
     needs: changes
     if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
-    # Each test scripts a whole page session (10-14 minutes in a role sandbox; faster here).
-    timeout-minutes: 75
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Shard times on a 4-CPU box (the full run, in seconds): layouts 117 + layouts-65 141; picking 29 + crystals 97;
+          # witness 187 + witness-reduced (about the same); pane, nogate, comet and arc about 400 together. The runner is
+          # about 1.3 times slower. Rebalance from the `[field] <section> +<seconds>` lines in a shard's log.
+          - shard: field-layouts
+            test: test_field_browser.py
+            sections: "layouts,layouts-65"
+          - shard: field-picking-crystals
+            test: test_field_browser.py
+            sections: "picking,crystals"
+          - shard: field-witness
+            test: test_field_browser.py
+            sections: "witness,witness-reduced"
+          - shard: field-pane-nogate-comet-arc
+            test: test_field_browser.py
+            sections: "pane,nogate,comet,comet-reduced,arc,arc-reduced"
+          - shard: shown
+            test: test_field_shown_browser.py
+          - shard: mic
+            test: test_term_mic_browser.py
     env:
       RUN: ${{ needs.changes.outputs.code != 'false' }}
       # What `node --version` prints in the role images (their pinned base image).
@@ -284,17 +309,22 @@ jobs:
           python3 --version
           # The sky is rasterised in software, so a page's frame time (and every check that waits on the page) scales with this.
           echo "CPUs: $(nproc)"
-      - name: The three browser tests (a skip is a failure)
+      - name: Browser test, shard ${{ matrix.shard }} (a skip is a failure)
         if: env.RUN == 'true'
         env:
           FACTORY_REQUIRE_BROWSER: "1"
+          SHARD: ${{ matrix.shard }}
+          TEST_FILE: ${{ matrix.test }}
+          # Only the field test reads this; the other shards leave it empty, which is "all" for them (they run no field sections).
+          SECTIONS: ${{ matrix.sections }}
         run: |
           set -uo pipefail
+          if [ -n "$SECTIONS" ]; then export FIELD_SECTIONS="$SECTIONS"; fi
           log="$RUNNER_TEMP/browser-tests.log"
           status=0
-          python3 -m unittest discover -s scripts -p 'test_*_browser.py' -v 2>&1 | tee "$log" || status=$?
-          # Failing tests: names and each one's first error line, for pasting back to the Coordinator.
-          python3 scripts/ci_failure_summary.py < "$log" >> "$GITHUB_STEP_SUMMARY"
+          python3 -m unittest discover -s scripts -p "$TEST_FILE" -v 2>&1 | tee "$log" || status=$?
+          # Failing tests: the shard, names and each one's first error line, for pasting back to the Coordinator.
+          python3 scripts/ci_failure_summary.py --shard "$SHARD" < "$log" >> "$GITHUB_STEP_SUMMARY"
           if grep -Eq ' \.\.\. skipped |skipped=' "$log"; then
             echo "::error::a browser test was skipped; with FACTORY_REQUIRE_BROWSER=1 that must not happen"
             status=1
@@ -304,6 +334,26 @@ jobs:
       - name: Nothing to test (only prose changed)
         if: env.RUN != 'true'
         run: echo "::notice::Only prose changed; no browser tests to run."
+
+  browser:
+    # The one name branch protection asks for: green when every shard of browser-shards is. A shard that did not
+    # run (skipped, or cancelled) while code changed is a failure here, not a pass.
+    name: browser tests
+    needs: [changes, browser-shards]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      CODE: ${{ needs.changes.outputs.code }}
+      SHARDS: ${{ needs.browser-shards.result }}
+    steps:
+      - run: |
+          echo "code changed: '$CODE'; browser shards: $SHARDS"
+          case "$SHARDS" in
+            success) ;;
+            skipped) [ "$CODE" = false ] || { echo "::error::the browser shards did not run, but code changed"; exit 1; } ;;
+            *) echo "::error::the browser shards: $SHARDS"; exit 1 ;;
+          esac
 
   images:
     name: images and broker tests

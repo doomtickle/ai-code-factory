@@ -4,7 +4,7 @@ set -euo pipefail
 # Usage: scripts/ci-chrome.sh pin NAME [DOCKERFILE]   the value of `ARG NAME=...` (CHROME_VERSION, CHROME_SHA256_AMD64, ...)
 #        scripts/ci-chrome.sh apt [DOCKERFILE]        the apt packages the Dockerfile installs for Chrome, one per line
 #
-# DOCKERFILE defaults to templates/developer/Dockerfile. The `browser tests` job of .github/workflows/ci.yml
+# DOCKERFILE defaults to templates/developer/Dockerfile. The `browser shard` jobs of .github/workflows/ci.yml
 # installs the role images' Chrome for Testing from these, so there is one pin; scripts/test_ci_changes.sh checks
 # the reviewer's Dockerfile says the same.
 
