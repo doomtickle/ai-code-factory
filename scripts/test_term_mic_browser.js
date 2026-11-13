@@ -56,7 +56,14 @@ async function launch(url, init, wav) {
     return r.result.value;
   };
   return {
-    send, s, sleep: ms => new Promise(r => setTimeout(r, ms)),
+    send, s,
+    // Wait ms, then for the page to draw two frames. A runner's few CPUs draw the software-rendered sky at well over half a
+    // second a frame, and the page's timers, input and reads wait on it, so a check made after a bare sleep can read the page
+    // before it has caught up with what the sleep was for.
+    async sleep(ms) {
+      await new Promise(r => setTimeout(r, ms));
+      await s("Runtime.evaluate", { expression: "new Promise(r => requestAnimationFrame(() => requestAnimationFrame(() => r(0))))", awaitPromise: true });
+    },
     ev: expr => evIn(null, expr),
     // Terminal 0's frame: the terminal origin's context whose page is /term/field (the control unit shares that origin).
     async term(expr) {

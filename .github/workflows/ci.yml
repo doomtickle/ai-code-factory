@@ -282,6 +282,8 @@ jobs:
             || { echo "::error::node is '$(node --version)', expected the pinned v$NODE_VERSION"; exit 1; }
           chrome-headless-shell --version
           python3 --version
+          # The sky is rasterised in software, so a page's frame time (and every check that waits on the page) scales with this.
+          echo "CPUs: $(nproc)"
       - name: The three browser tests (a skip is a failure)
         if: env.RUN == 'true'
         env:

@@ -55,7 +55,13 @@ async function launch(url, media, init) {
   return {
     s,   // a raw DevTools call on the page
     errors,   // uncaught exceptions on the page so far
-    sleep: ms => new Promise(r => setTimeout(r, ms)),
+    // Wait ms, then for the page to draw two frames. A runner's few CPUs draw the software-rendered sky at well over half a
+    // second a frame, and the page's timers, input and reads wait on it, so a check made after a bare sleep can read the page
+    // before it has caught up with what the sleep was for.
+    async sleep(ms) {
+      await new Promise(r => setTimeout(r, ms));
+      await s("Runtime.evaluate", { expression: "new Promise(r => requestAnimationFrame(() => requestAnimationFrame(() => r(0))))", awaitPromise: true });
+    },
     async ev(expr) {
       const r = await s("Runtime.evaluate", { expression: expr, returnByValue: true, awaitPromise: true });
       if (r.exceptionDetails) throw new Error(JSON.stringify(r.exceptionDetails));
@@ -72,7 +78,7 @@ async function launch(url, media, init) {
     },
     async resize(width, height = 900) {
       await s("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile: false });
-      await new Promise(r => setTimeout(r, 300));
+      await this.sleep(300);
     },
     async click(x, y) {
       for (const type of ["mouseMoved", "mousePressed", "mouseReleased"])
@@ -167,7 +173,7 @@ async function layouts(url, pad) {
 async function picking(url) {
   const b = await launch(url);
   try {
-    await b.resize(1440, 900); await ready(b, 6); await b.sleep(1500);
+    await b.resize(1440, 900); await ready(b, 6); await b.sleep(1500); await settle(b);   // glides advance per frame: on a slow host they take longer than 1.5 s
     const jobs = await b.ev(`LF.sky.packets().filter(p => p.kind !== "gold")`);
     const p = jobs.find(x => x.kind === "done") || jobs[0];
     // hover at the edge of the ring round it, not just the middle
