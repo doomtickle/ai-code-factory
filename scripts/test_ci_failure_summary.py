@@ -9,16 +9,19 @@ from ci_failure_summary import failures, render
 
 LOG = """test_a (test_x.A.test_a) ... ok
 test_b (test_x.A.test_b) ... FAIL
-test_c (test_x.A.test_c) ... ERROR
+test_c (test_x.A.test_c) ... FAIL
 test_d (test_x.A.test_d) ... skipped 'no'
 
 ======================================================================
-ERROR: test_c (test_x.A.test_c)
+FAIL: test_c (test_x.A.test_c)
 ----------------------------------------------------------------------
 Traceback (most recent call last):
   File "/r/scripts/test_x.py", line 9, in test_c
     run()
-subprocess.TimeoutExpired: Command '['node']' timed out after 1200 seconds
+AssertionError: timed out after 2400 s
+--- stdout ---
+--- stderr ---
+[field] picking +312s
 
 ======================================================================
 FAIL: test_b (test_x.A.test_b)
@@ -33,7 +36,7 @@ Error: this later line must not replace the first
 ----------------------------------------------------------------------
 Ran 4 tests in 3.0s
 
-FAILED (failures=1, errors=1, skipped=1)
+FAILED (failures=2, skipped=1)
 """
 
 
@@ -42,7 +45,7 @@ class FailureSummaryTests(unittest.TestCase):
         self.assertEqual(
             failures(LOG),
             [
-                ("ERROR", "test_x.A.test_c", "subprocess.TimeoutExpired: Command '['node']' timed out after 1200 seconds"),
+                ("FAIL", "test_x.A.test_c", "AssertionError: timed out after 2400 s"),
                 ("FAIL", "test_x.A.test_b", "AssertionError: 1 != 0 : not ok - packet clear of the witness"),
             ],
         )

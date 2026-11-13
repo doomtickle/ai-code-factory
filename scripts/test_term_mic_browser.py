@@ -13,7 +13,6 @@ for any of it; a refused microphone sends nothing. Skipped when node or chrome-h
 import json
 import math
 import struct
-import subprocess
 import tempfile
 import threading
 import unittest
@@ -22,7 +21,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest import mock
 
-from browser_test_support import needs_browser
+from browser_test_support import needs_browser, run_bounded
 import dashboard_term as dt
 from test_dashboard import TOKEN
 from test_dashboard_term import Server
@@ -128,8 +127,7 @@ class TermMicBrowserTests(unittest.TestCase):
         wav = Path(tmp.name) / "phrases.wav"
         phrases(wav)
         url = f"http://127.0.0.1:{srv.port}/?token={TOKEN}"
-        run = subprocess.run(["node", str(SCRIPTS / "test_term_mic_browser.js"), url, str(voice.port), str(wav)],
-                             capture_output=True, text=True, timeout=420, check=False)
+        run = run_bounded(self, ["node", str(SCRIPTS / "test_term_mic_browser.js"), url, str(voice.port), str(wav)], 420)
         self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
         held = json.loads(run.stdout.strip().splitlines()[-1])["held"]
         listens = [p for p in voice.posts if p["path"] == "/listen"]

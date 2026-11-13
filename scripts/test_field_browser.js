@@ -14,6 +14,8 @@
 const assert = require("node:assert");
 const { spawn } = require("node:child_process");
 const fs = require("node:fs"), os = require("node:os"), path = require("node:path");
+const T0 = Date.now();
+const note = what => console.error(`[field] ${what} +${Math.round((Date.now() - T0) / 1000)}s`);
 
 async function launch(url, media, init) {
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), "field-test."));
@@ -146,6 +148,7 @@ async function audit(b, label, expect) {
 }
 
 async function layouts(url, pad) {
+  note(pad ? `layouts ${pad} jobs` : "layouts");
   const b = await launch(url, undefined, (pad ? PAD(pad) : ""));
   try {
     const field = async () => (await b.ev(`fetch("/api/field").then(r => r.json()).then(j => j.jobs.map(x => x.id))`));
@@ -174,6 +177,7 @@ async function layouts(url, pad) {
 }
 
 async function picking(url) {
+  note("picking");
   const b = await launch(url);
   try {
     await b.resize(1440, 900); await ready(b, 6); await b.sleep(1500); await settle(b);   // glides advance per frame: on a slow host they take longer than 1.5 s
@@ -255,6 +259,7 @@ const LABELS = `(() => { const Sky = LF.sky, list = Sky.packets(), pk = list.map
     pips: [...document.querySelectorAll("#pips .pip")].map(e => ({ cls: e.className, n: e.querySelector(".pn") ? e.querySelector(".pn").textContent : "", mark: !!e.querySelector(".pm") })),
     packets: list.map(p => ({ key: p.key, order: p.order, n: p.n, tone: p.tone, r: p.r })) }; })()`;
 async function crystals(url) {
+  note("crystals");
   const b = await launch(url, undefined, RICH);
   try {
     await b.resize(1440, 900); await ready(b, 15); await settle(b); await b.sleep(1200);
@@ -326,6 +331,7 @@ const STEER = `(() => { const real = window.fetch.bind(window); window.__st = { 
     const j = await r.json(); j.totals = Object.assign({}, j.totals, { running: window.__st.running }); j.gate = window.__st.gate; j.said = []; j.lanes = [];
     return new Response(JSON.stringify(j), { status: 200, headers: { "Content-Type": "application/json" } }); }; })()`;
 async function witness(url, reduced) {
+  note(reduced ? "witness reduced-motion" : "witness");
   const b = await launch(url, reduced ? [{ name: "prefers-reduced-motion", value: "reduce" }] : null, STEER);
   const until = async (expr, what, ms = 40000) => { for (let t = 0; t < ms; t += 100) { if (await b.ev(expr)) return; await b.sleep(100); } throw new Error("never: " + what + " (" + await b.ev(`JSON.stringify({ idle: LF.W.idle, working: LF.W.working, run: LF.W.running, wait: LF.W.waiting, speaking: LF.W.speaking, blink: LF.W.m.blink, work: LF.W.s.work })`) + ")"); };
   try {
@@ -400,6 +406,7 @@ const CLEAR = `(() => { const s = document.getElementById("said").getBoundingCli
     if (r.left < s.right && r.right > s.left && r.top < s.bottom && r.bottom > s.top) out.push((e.textContent || e.tagName).trim().slice(0, 40) + " at " + [r.left, r.top, r.right, r.bottom].map(Math.round)); });
   return { out, said: document.getElementById("txt").textContent.length, pane: !document.getElementById("term-panel").hidden && document.getElementById("term-panel").getBoundingClientRect().height }; })()`;
 async function pane(url) {
+  note("pane");
   const b = await launch(url, undefined, TERM);
   try {
     await ready(b, 1);
@@ -443,6 +450,7 @@ async function pane(url) {
 // caption, and sound stays shut (LF.unlocked() false) until the first click or key in the page or a click into the terminal frame. Sizes: desktop and phone.
 const SOUND_PROBE = `window.__voiceSays = 0; (() => { const t = setInterval(() => { if (window.LiveVoice && !LiveVoice.__w) { LiveVoice.__w = 1; const say = LiveVoice.say; LiveVoice.say = (...a) => { window.__voiceSays++; return say.apply(LiveVoice, a); }; } }, 20); })()`;
 async function nogate(url) {
+  note("nogate");
   for (const [w, h] of [[1440, 900], [390, 844]]) {
     const b = await launch(url, undefined, TERM + ";" + SOUND_PROBE);
     try {
@@ -501,6 +509,7 @@ const STEER_LANE = `(() => { const real = window.fetch.bind(window); window.__la
     const j = await r.json(); j.said = []; j.gate = []; j.lanes = [Object.assign({}, window.__lane)];
     return new Response(JSON.stringify(j), { status: 200, headers: { "Content-Type": "application/json" } }); }; })()`;
 async function comet(url, reduced) {
+  note(reduced ? "comet reduced-motion" : "comet");
   const b = await launch(url, reduced ? [{ name: "prefers-reduced-motion", value: "reduce" }] : null, STEER_LANE);
   const until = async (expr, what, ms = 30000) => { for (let t = 0; t < ms; t += 100) { if (await b.ev(expr)) return; await b.sleep(100); } throw new Error("never: " + what + " " + await b.ev(`JSON.stringify(LF.sky.cometInfo())`)); };
   const info = () => b.ev(`LF.sky.cometInfo()`);
@@ -543,6 +552,7 @@ const STEER_T0 = `(() => { const real = window.fetch.bind(window); window.__st =
     const j = await r.json(); j.term = { port: Number(location.port), running: true }; j.said = window.__st.said; j.totals = Object.assign({}, j.totals, { running: 0 }); j.gate = []; j.lanes = [];
     return new Response(JSON.stringify(j), { status: 200, headers: { "Content-Type": "application/json" } }); }; })()`;
 async function arc(url, reduced) {
+  note(reduced ? "arc reduced-motion" : "arc");
   const b = await launch(url, reduced ? [{ name: "prefers-reduced-motion", value: "reduce" }] : null, STEER_T0);
   const until = async (expr, what, ms = 30000) => { for (let t = 0; t < ms; t += 100) { if (await b.ev(expr)) return; await b.sleep(100); } throw new Error("never: " + what + " " + await b.ev(`JSON.stringify({ thinking: LF.W.thinking, listenT: LF.W.listenT, listen: LF.W.listen, cls: document.getElementById("term-panel").className })`)); };
   // post(word, how): a message event the page would get from the terminal frame (default), or from a wrong window, a wrong origin or with other data

@@ -12,7 +12,7 @@ import sys
 import unittest
 from pathlib import Path
 
-from browser_test_support import needs_browser
+from browser_test_support import needs_browser, run_bounded
 
 SCRIPTS = Path(__file__).resolve().parent
 
@@ -27,7 +27,7 @@ class FieldBrowserTests(unittest.TestCase):
         self.addCleanup(server.terminate)
         url = re.search(r"http://127\.0\.0\.1:\d+/\?token=\S+", server.stdout.readline())
         self.assertTrue(url, "the demo dashboard printed no URL")
-        run = subprocess.run(["node", str(SCRIPTS / "test_field_browser.js"), url.group(0)], capture_output=True, text=True, timeout=1200, check=False)
+        run = run_bounded(self, ["node", str(SCRIPTS / "test_field_browser.js"), url.group(0)], 2400)
         self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
 
 

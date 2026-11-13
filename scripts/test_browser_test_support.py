@@ -4,11 +4,12 @@
 """
 
 import os
+import sys
 import tempfile
 import unittest
 from unittest import mock
 
-from browser_test_support import needs_browser
+from browser_test_support import needs_browser, run_bounded
 
 
 def run_guarded(env, path):
@@ -63,6 +64,21 @@ class NeedsBrowserTests(unittest.TestCase):
                 os.chmod(path, 0o755)
             result, ran = run_guarded({"FACTORY_REQUIRE_BROWSER": "1"}, bin_dir)
         self.assertEqual((result.wasSuccessful(), len(result.skipped), ran), (True, 0, True))
+
+
+class RunBoundedTests(unittest.TestCase):
+    def test_a_timeout_fails_the_test_with_the_output_so_far(self):
+        code = "import sys, time; print('reached section two', flush=True); print('[field] picking +3s', file=sys.stderr, flush=True); time.sleep(30)"
+        with self.assertRaises(self.failureException) as caught:
+            run_bounded(self, [sys.executable, "-c", code], 2)
+        message = str(caught.exception)
+        self.assertTrue(message.startswith("timed out after 2 s"), message)
+        self.assertIn("reached section two", message)
+        self.assertIn("[field] picking +3s", message)
+
+    def test_returns_the_finished_process(self):
+        run = run_bounded(self, [sys.executable, "-c", "print('ok')"], 30)
+        self.assertEqual((run.returncode, run.stdout.strip()), (0, "ok"))
 
 
 if __name__ == "__main__":

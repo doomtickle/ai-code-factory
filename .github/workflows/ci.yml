@@ -239,7 +239,7 @@ jobs:
     if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
     # Each test scripts a whole page session (10-14 minutes in a role sandbox; faster here).
-    timeout-minutes: 45
+    timeout-minutes: 75
     env:
       RUN: ${{ needs.changes.outputs.code != 'false' }}
       # What `node --version` prints in the role images (their pinned base image).
