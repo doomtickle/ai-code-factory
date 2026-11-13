@@ -850,3 +850,5 @@ The classic FC-1984 view and its factory floor were retired in November 2026,
 when the Thoughtfield became the only view. Screenshots of the classic view are
 kept in [docs/history/classic-view](../history/classic-view/README.md), and the
 reasons are in [the dashboard decisions](../decisions/dashboard.md).
+The screenshots are in the repository (`docs/history/classic-view/`), not served
+by the dashboard's docs.

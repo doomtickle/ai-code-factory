@@ -222,7 +222,7 @@ SHOWN_MAX_BYTES = 16 * 1024  # dispatch/shown.json: one block of at most 1,200 c
 SHOWN_MAX_TEXT = 1200        # dispatch/server.py MAX_SHOW_CHARS
 SHOWN_MAX_LINES = 16         # dispatch/server.py MAX_SHOW_LINES
 FULL = 1500        # transcript lines per lane in /api/lane
-EVENTS = 80        # event printer lines
+EVENTS = 80        # events kept
 FIELD_TTL = 2      # seconds between rebuilds of the Thoughtfield's day
 SERVICE_TTL = 5    # seconds between checks of the SERVICE DUE lamp
 PACKET_MAX = 2_000_000  # bytes of a job's packet /api/lane?job= serves
@@ -259,7 +259,7 @@ def num(value) -> float | None:
 
 
 # --------------------------------------------------------------------------
-# Broker audit log -> event printer lines
+# Broker audit log -> events
 
 class BrokerAudit(w.Tail):
     """Tool calls from broker/audit.jsonl, newest last."""
