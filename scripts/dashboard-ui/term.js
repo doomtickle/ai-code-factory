@@ -408,8 +408,8 @@
 
   // Talking (term-mic.js, loaded only by the Thoughtfield's /term/field): spoken words are typed as the owner types, the text
   // and then Enter, with no control character, only while the Coordinator runs. "" if sent, else why not ("off", "noconn").
-  const voiceMeta = document.querySelector('meta[name="voice-port"]'), mainMeta = document.querySelector('meta[name="main-port"]');
-  const voicePort = voiceMeta ? Number(voiceMeta.content) : 0, mainPort = mainMeta ? Number(mainMeta.content) : 0;
+  const voiceMeta = document.querySelector('meta[name="voice-port"]');
+  const voicePort = voiceMeta ? Number(voiceMeta.content) : 0;
   const port = n => Number.isInteger(n) && n > 0 && n < 65536;
   if (window.TermMic && window.TermVoice && window.top !== window && port(voicePort) && port(mainPort) && $("voice")) {
     const typed = text => {
