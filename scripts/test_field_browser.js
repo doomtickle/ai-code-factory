@@ -333,7 +333,7 @@ const STEER = `(() => { const real = window.fetch.bind(window); window.__st = { 
 async function witness(url, reduced) {
   note(reduced ? "witness reduced-motion" : "witness");
   const b = await launch(url, reduced ? [{ name: "prefers-reduced-motion", value: "reduce" }] : null, STEER);
-  const until = async (expr, what, ms = 40000) => { for (let t = 0; t < ms; t += 100) { if (await b.ev(expr)) return; await b.sleep(100); } throw new Error("never: " + what + " (" + await b.ev(`JSON.stringify({ idle: LF.W.idle, working: LF.W.working, run: LF.W.running, wait: LF.W.waiting, speaking: LF.W.speaking, blink: LF.W.m.blink, work: LF.W.s.work })`) + ")"); };
+  const until = async (expr, what, ms = 40000) => { for (let t = 0; t < ms; t += 100) { if (await b.ev(expr)) { note("  " + what); return; } await b.sleep(100); } throw new Error("never: " + what + " (" + await b.ev(`JSON.stringify({ idle: LF.W.idle, working: LF.W.working, run: LF.W.running, wait: LF.W.waiting, speaking: LF.W.speaking, blink: LF.W.m.blink, work: LF.W.s.work, keys: window.__keys })`) + ")"); };
   try {
     await until(`!!(window.LF && LF.W.ready && !document.getElementById("hud").hidden)`, "the page is up");
     // the bust eases by wall-clock time: a 60 fps frame moves each easing exactly its k, a 30 fps frame moves it as far as two 60 fps ones, and a long gap (a hidden tab) lands on the target with no overshoot, NaN or negative step
@@ -391,8 +391,15 @@ async function witness(url, reduced) {
     assert.strictEqual(await b.ev(`LF.W.idle`), false, "she stays awake while a write waits for the owner");
     await b.ev(`window.__st.gate = []`);
     await until(`LF.W.idle && LF.W.m.blink === 1`, "asleep once the write is gone");
+    // The test's 800 ms idle is shorter than two software-rendered frames, so a key's wake could pass between two polls: for this step only, keep her
+    // asleep by age (busyAt long ago) and give the idle time a long run, so that nothing but the key can wake her and she stays awake until the lid has opened.
+    await b.ev(`window.__keys = 0; addEventListener("keydown", () => { window.__keys++; }, true); LF.W.busyAt = -1e9; LF.cfg.idleMs = 600000`);
+    await b.sleep(600);
+    assert.strictEqual(await b.ev(`LF.W.idle && LF.W.m.blink === 1`), true, "still asleep before the key");
     await b.key("a", "KeyA");
     await until(`!LF.W.idle && LF.W.m.blink < .02`, "a key wakes her");
+    assert.strictEqual(await b.ev(`window.__keys`), 1, "the page heard the key");
+    await b.ev(`LF.cfg.idleMs = 800`);
     await until(`LF.W.idle && LF.W.m.blink === 1`, "asleep after the key");
     await b.ev(`LF.W.thinking = true`);
     await until(`LF.W.working && !LF.W.idle && LF.W.s.work > .95`, "thinking wakes her and shows the ring");
