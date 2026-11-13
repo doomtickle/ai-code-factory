@@ -116,6 +116,9 @@ What the fields tell you:
 | `import_errors` | Anything that could not be brought back |
 | `change` | The `factory/<topic>` branch the job worked on (a reviewer's comes from the branch named in its task), so a change's jobs group together |
 | `verdict` | `APPROVED` or `REVISE`, from the first line of a reviewer's report; absent otherwise |
+| `grade_oracle`, `grade_checks` | `pass` or `fail`, from the `GRADE:` line a benchmark grader's report ends with; absent without one (spec 07) |
+| `grade_done_when`, `grade_scope` | The grader's 1 to 5 scores, from the same line |
+| `grade_size_ratio` | The branch's size relative to the reference diff (0 to 100), from the same line |
 | `turns` | How many turns claude took, when it reports it |
 | `diff_lines`, `diff_files` | Lines changed (added plus removed) and files in the developer job's branch |
 | `packet` | Path of the job's review packet (see below) |
