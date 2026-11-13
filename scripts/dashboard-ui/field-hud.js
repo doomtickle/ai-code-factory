@@ -10,7 +10,7 @@
   const nowMin = () => { const d = new Date(); return d.getHours() * 60 + d.getMinutes() + d.getSeconds() / 60; };
   const hhmm = m => String(Math.floor(m / 60) % 24).padStart(2, "0") + ":" + String(Math.floor(m % 60)).padStart(2, "0");
   const svg = (tag, attrs) => { const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); return e; };
-  let state = null, field = null, entered = false, Sky = null;
+  let state = null, field = null, Sky = null, unlocked = false, greeted = false;
 
   // ---------- the world: one big circle whose lit edge is the day
   const G = { t0: 9 * 60, t1: 16 * 60 }, world = $("world"), atmos = $("atmos");
@@ -55,9 +55,9 @@
   // ---------- what LOIS says: these fixed sentences, whose names go in the detail line as text, and the Coordinator's own lines (sayOwn).
   const txt = $("txt"), meta = $("meta"), queue = []; let cur = null, capWords = [], capSent = [], capLen = 0, capT0 = 0, capAll = false, tight = null, on = true;
   function setCaption(text) { txt.textContent = ""; txt.classList.toggle("long", text.length > 110); capWords = []; capAll = false; capT0 = performance.now(); let off = 0; capSent = text.split(/(?<=[.!?])\s+/).map(c => { const r = { start: off, len: c.length }; off += c.length + 1; return r; }); capLen = off; let pos = 0; text.split(/\s+/).forEach(w => { const el = document.createElement("span"); el.className = "w" + (/\d\d:\d\d/.test(w) ? " t" : ""); el.textContent = w; txt.append(el, " "); capWords.push({ el, at: pos, on: false }); pos += w.length + 1; }); tight = null; txt.classList.remove("in"); void txt.offsetWidth; txt.classList.add("in"); }
-  function say(text, m, opt = {}) { if (!entered) return; const fixed = queue.filter(q => !q.own); fixed.slice(0, Math.max(0, fixed.length - 2)).forEach(q => queue.splice(queue.indexOf(q), 1)); queue.push(Object.assign({ text, m }, opt)); if (!cur) next(); }
+  function say(text, m, opt = {}) { const fixed = queue.filter(q => !q.own); fixed.slice(0, Math.max(0, fixed.length - 2)).forEach(q => queue.splice(queue.indexOf(q), 1)); queue.push(Object.assign({ text, m }, opt)); if (!cur) next(); }
   // Its own words go ahead of any fixed sentence still waiting, in the order it said them. A fixed sentence already being spoken finishes first.
-  function sayOwn(text) { if (!entered) return; ownAt = performance.now(); lensArmed = false; W.s.flash = Math.max(W.s.flash, .8); stopThinking(); clearTimeout(outTimer); shimmer(false); const own = queue.filter(q => q.own).length; queue.splice(own, 0, { text, m: "", own: true, ans: true, mood: "calm", fx: () => { W.focus = null; } }); if (own >= OWN_WAITING) queue.shift(); if (!cur) next(); }
+  function sayOwn(text) { ownAt = performance.now(); lensArmed = false; W.s.flash = Math.max(W.s.flash, .8); stopThinking(); clearTimeout(outTimer); shimmer(false); const own = queue.filter(q => q.own).length; queue.splice(own, 0, { text, m: "", own: true, ans: true, mood: "calm", fx: () => { W.focus = null; } }); if (own >= OWN_WAITING) queue.shift(); if (!cur) next(); }
   // Between your line and its first words the face is thinking, and only that: there is no spoken "one moment", which would be a messenger.
   let lensArmed = false, hadFocus = false;
   const LISTEN_MS = 12000, OUT_MS = 5000, STILL_MS = 45000, GIVE_UP_MS = 180000, OWN_WAITING = 4, OWN_QUIETS_START_MS = 30000; let ownAt = -Infinity, thinkTimers = [];
@@ -70,20 +70,25 @@
   const reducedMotion = () => !!(window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches);
   const shimmer = on => $("term-panel").classList.toggle("out", on && !reducedMotion());
   function holdListen() { W.listenT = 1; clearTimeout(listenTimer); listenTimer = setTimeout(() => { W.listenT = 0; }, LISTEN_MS); }
-  function t0(word) { if (!entered) return;
+  function t0(word) {
     if (word === "enter") { startThinking(); return; }
     if (word === "still") { W.listenT = 0; clearTimeout(listenTimer); clearTimeout(outTimer); shimmer(false); return; }
     shimmer(true); clearTimeout(outTimer); outTimer = setTimeout(() => shimmer(false), OUT_MS);
     if (W.thinking) { holdListen(); clearTimeout(thinkTimers[1]); thinkTimers[1] = setTimeout(giveUp, GIVE_UP_MS); } }
   function giveUp() { stopThinking(); if (!cur) meta.textContent = ""; }
   function stopThinking() { W.thinking = false; W.listenT = 0; clearTimeout(listenTimer); thinkNote = ""; thinkTimers.forEach(clearTimeout); thinkTimers = []; }
+  // Browsers keep sound shut until a click or key; until then LOIS shows captions only, and speaks from the first gesture on.
+  const talks = () => on && unlocked && window.LiveVoice && LiveVoice.available();
+  function unlock() { if (unlocked || (navigator.userActivation && !navigator.userActivation.hasBeenActive)) return; unlocked = true; try { LF.audio(); if (window.LiveVoice) LiveVoice.unlock(); } catch (e) {} ["pointerdown", "pointerup", "keydown"].forEach(t => removeEventListener(t, unlock)); }
+  ["pointerdown", "pointerup", "keydown"].forEach(t => addEventListener(t, unlock));
+  LF.unlocked = () => unlocked;
   function startThinking() { stopThinking(); queue.splice(0, queue.length, ...queue.filter(q => !q.own)); if (cur && window.LiveVoice) LiveVoice.stop(); if (cur) { cur = null; W.speaking = false; W.mood = "calm"; } W.focus = null; W.thinking = true; holdListen(); thinkLine("Thinking…"); thinkTimers = [setTimeout(() => thinkLine("Still thinking. My working is below."), STILL_MS), setTimeout(giveUp, GIVE_UP_MS)]; if (queue.length) next(); }
   function next() { const it = queue.shift(); if (!it) { cur = null; if (thinkNote) thinkLine(thinkNote); return; } cur = it;  setCaption(it.text); meta.textContent = it.m || ""; marks = it.marks || []; if (it.fx) it.fx(); W.speaking = true; W.mood = it.mood || (/failed|Declined|changes|blocked/i.test(it.text) ? "stern" : /^Hi|Approved|approved/i.test(it.text) ? "lit" : "calm");
     const done = () => { if (cur !== it) return; capWords.forEach(w => { w.on = true; w.el.classList.add("on"); }); capAll = true; W.speaking = false; W.mood = "calm"; setTimeout(() => { if (!cur || cur === it) W.focus = null; }, 1500); setTimeout(() => { if (cur === it) next(); }, 900); };
     it.finish = done; const quiet = () => setTimeout(done, 1500 + it.text.length * 60);
-    if (on && window.LiveVoice && LiveVoice.available()) LiveVoice.say(it.text, { onend: done, onerror: quiet }); else quiet(); }
+    if (talks()) LiveVoice.say(it.text, { onend: done, onerror: quiet }); else quiet(); }
   function answer(text, m) { queue.unshift({ text, m, ans: true, fx: () => { W.focus = null; } }); if (cur) { if (window.LiveVoice) LiveVoice.stop(); cur = null; W.speaking = false; } next(); }
-  function litCaption(now) { if (!capWords.length || capAll) return; let idx; const sp = on && window.LiveVoice && LiveVoice.available() ? LiveVoice.spoken() : null; if (sp) { if (sp.n === capSent.length) { const c = capSent[Math.min(sp.i, sp.n - 1)]; idx = c.start + sp.f * c.len; } else idx = (sp.i + sp.f) / sp.n * capLen; } else idx = now - capT0 > 1500 || !on ? (now - capT0) / (1500 + capLen * 60) * capLen : -1; capWords.forEach(w => { if (!w.on && w.at <= idx + 1) { w.on = true; w.el.classList.add("on"); } }); }
+  function litCaption(now) { if (!capWords.length || capAll) return; let idx; const sp = talks() ? LiveVoice.spoken() : null; if (sp) { if (sp.n === capSent.length) { const c = capSent[Math.min(sp.i, sp.n - 1)]; idx = c.start + sp.f * c.len; } else idx = (sp.i + sp.f) / sp.n * capLen; } else idx = now - capT0 > 1500 || !on ? (now - capT0) / (1500 + capLen * 60) * capLen : -1; capWords.forEach(w => { if (!w.on && w.at <= idx + 1) { w.on = true; w.el.classList.add("on"); } }); }
   const laneWords = n => LANE.test(n) ? n.replace(/-lane(\d+)$/, " lane $1").replace(/-/g, " ") : "a lane";
   const modelWord = m => { const k = /^(opus|sonnet|haiku|fable)/.exec(String(m || "")); return k ? k[1][0].toUpperCase() + k[1].slice(1) : ""; };
   const CARD_NOUN = new Map([["git_push", "A push"], ["github_create_pr", "A pull request"], ["gitlab_create_mr", "A merge request"]]), cardNoun = c => CARD_NOUN.get(c.tool) || "A write";
@@ -122,7 +127,7 @@
   let grown = false;
   function setGrown(on, focus) { if (!termFrame) return; grown = on; $("term-panel").classList.toggle("grown", on); $("term-key").setAttribute("aria-expanded", String(on)); $("term-size").textContent = on ? "Smaller" : "Bigger"; if (on && focus) termFrame.focus(); else if (!on && document.activeElement === termFrame) termFrame.blur(); }
   // Clicking into the frame moves focus there without a message to this page; the window's blur is how this page hears it.
-  addEventListener("blur", () => setTimeout(() => { if (!termFrame) return; if (document.activeElement === termFrame) setGrown(true); else if (cuFrame && document.activeElement === cuFrame) setGrown(false); }, 0));
+  addEventListener("blur", () => setTimeout(() => { if (!termFrame) return; if (document.activeElement === termFrame) { unlock(); setGrown(true); } else if (cuFrame && document.activeElement === cuFrame) setGrown(false); }, 0));
   document.addEventListener("pointerdown", e => { if (grown && !(e.target.closest && e.target.closest(".term-panel,#term-key,#monitor-root,.cu-wrap.expanded"))) setGrown(false); });
   addEventListener("message", e => { if (cuFrame && e.source === cuFrame.contentWindow && e.origin === cuOrigin) { if (e.data === "cu:expand") setCu(true); else if (e.data === "cu:collapse") setCu(false); else if (e.data === "cu:reload") location.reload(); return; }
     if (termFrame && e.source === termFrame.contentWindow && e.origin === termOrigin && typeof e.data === "string") { const m = /^t0:(enter|out|still)$/.exec(e.data); if (m) t0(m[1]); } });
@@ -143,7 +148,7 @@
   addEventListener("pointermove", e => { if (W.scrubbing) doScrub(e.clientX); viewIdle = performance.now(); W.overUI = !!(e.target.closest && e.target.closest(".top,.legend,.term-panel,#shown,#monitor-root,.work,.today")); });
   addEventListener("pointerup", e => { if (!W.scrubbing) return; W.scrubbing = false; Sky.scrub(null); $("scrubdot").setAttribute("visibility", "hidden"); $("scrubl").setAttribute("visibility", "hidden"); if (downAt && Math.abs(e.clientX - downAt.x) < 4 && downAt.t._ev) { const ev = downAt.t._ev; if (ev.job_id && ev.lane && LANE.test(ev.lane) && JOB.test(ev.job_id) && window.FieldMonitor) FieldMonitor.open(ev.lane, ev.job_id); else if (ev.card_id) selectCard(ev.card_id); } downAt = null; });
 
-  // ---------- keys, gate, chrome
+  // ---------- keys, chrome
   const setVoice = v => { on = v; LF.setOn(v); $("voice-key").setAttribute("aria-pressed", String(v)); if (!v && window.LiveVoice) { LiveVoice.stop(); if (cur && cur.finish) cur.finish(); } try { localStorage.setItem("lois-voice-on", v ? "1" : "0"); } catch (e) {} };
   try { if (localStorage.getItem("lois-voice-on") === "0") { on = false; LF.setOn(false); $("voice-key").setAttribute("aria-pressed", "false"); } } catch (e) {}
   $("voice-key").addEventListener("click", () => setVoice(!on));
@@ -152,9 +157,7 @@
   $("legend-k").addEventListener("click", () => { const closed = $("legend").classList.toggle("closed"); $("legend-k").setAttribute("aria-expanded", String(!closed)); });
   const LENS_KEYS = { __proto__: null, 1: "spend", 2: "stuck", 3: "kinds", 4: "time" };
   document.addEventListener("keydown", e => { if (e.target.matches && e.target.matches("input,textarea")) return; if (window.FieldMonitor && FieldMonitor.isOpen()) return; const k = e.key.toLowerCase(); if (k === "v") setVoice(!on); else if (k === "t" && termFrame) { e.preventDefault(); setGrown(!grown, true); } else if (k === "," ) $("settings-key").click(); else if (LENS_KEYS[k] && !e.ctrlKey && !e.metaKey && !e.altKey) askView(LENS_KEYS[k]); else if (k === "escape") { tell("tm:cancel"); if (grown) setGrown(false); else if (Sky && Sky.view !== "home") goHome(); else $("legend").classList.add("closed"); } });
-  function enter(replay) { entered = true; $("gate").hidden = true; $("hud").hidden = false; try { sessionStorage.setItem("lois-entered", "1"); } catch (e) {} const unlock = () => { try { LF.audio(); if (window.LiveVoice) LiveVoice.unlock(); } catch (e) {} }; if (replay) { unlock(); if (Sky) Sky.replay(); } else addEventListener("pointerdown", unlock, { once: true }); layout(); greet(); }
-  $("enter").addEventListener("click", () => enter(true));
-  LF.fail = text => { $("gate").hidden = true; $("hud").hidden = false; entered = true; setCaption(text + " The classic view still works."); $("meta").textContent = "Open Classic, top right."; };
+  LF.fail = text => { setCaption(text + " The classic view still works."); $("meta").textContent = "Open Classic, top right."; };
 
   // ---------- the work list and today's numbers, from /api/state
   const list = $("jobs-list"), rows = new Map(); let lastSpend = null, spT = 0;
@@ -177,7 +180,7 @@
     const hint = (s.hints || [])[0]; $("hint-line").hidden = !hint; $("hint-line").textContent = hint ? String(hint.text || "").slice(0, 200) : "";
     $("sum").textContent = running + " running · " + (cards.length ? cards.length + " waiting · " : "") + "$" + cost.toFixed(2); document.title = cards.length ? `(${cards.length}) ${plant()}` : plant();
     if (s.term) { const on = !!s.term.running; $("term-lamp").classList.toggle("on", on); $("pane-lamp").classList.toggle("on", on); $("term-panel").classList.toggle("run", on); } if (s.demo) { $("foot").hidden = false; $("foot").textContent = "Demo: made-up data. Nothing here acts."; }
-    $("plate-project").textContent = String(s.project || ""); $("plate-name").textContent = plant(); $("gate-name").textContent = plant(); if (Sky) $("legend-rate").textContent = "About " + Sky.rate.toLocaleString() + " to the dollar"; G.dirty = true; drawBeads(); tickDay(); }
+    $("plate-project").textContent = String(s.project || ""); $("plate-name").textContent = plant(); if (Sky) $("legend-rate").textContent = "About " + Sky.rate.toLocaleString() + " to the dollar"; G.dirty = true; drawBeads(); tickDay(); }
   const plant = () => { const p = state && state.look && state.look.plant; return typeof p === "string" && p ? p : "LOIS"; };
 
   // ---------- labels in the sky and threads of light, every frame
@@ -216,10 +219,8 @@
   // ---------- polling. Only GETs to its own origin.
   async function getJSON(url) { const r = await fetch(url, { cache: "no-store" }); if (!r.ok) throw new Error(url + " " + r.status); return r.json(); }
   let lost = 0;
-  async function pollState() { try { state = await getJSON("/api/state"); lost = 0; W.running = (state.totals || {}).running || 0; W.waiting = (state.gate || []).length; ensureFrames(); if (window.FieldShown) FieldShown.update(state); renderWork(); if (Sky && field) Sky.ingest(field, state); if (entered) narrate(); else prev.primed || narratePrime(); if (!entered && !gateShown) showGate(); } catch (e) { lost++; if (lost >= 3) { $("hint-line").hidden = false; $("hint-line").textContent = "Lost touch with the dashboard. What's here may be out of date."; } } setTimeout(pollState, 2000); }
-  const narratePrime = () => { if (state) { prev.primed = false; narrate(); } };
+  async function pollState() { try { state = await getJSON("/api/state"); lost = 0; W.running = (state.totals || {}).running || 0; W.waiting = (state.gate || []).length; ensureFrames(); if (window.FieldShown) FieldShown.update(state); renderWork(); if (Sky && field) Sky.ingest(field, state); narrate(); if (!greeted) { greeted = true; layout(); greet(); } } catch (e) { lost++; if (lost >= 3) { $("hint-line").hidden = false; $("hint-line").textContent = "Lost touch with the dashboard. What's here may be out of date."; } } setTimeout(pollState, 2000); }
   async function pollField() { try { field = await getJSON("/api/field"); if (Sky && state) Sky.ingest(field, state); } catch (e) {} setTimeout(pollField, 3000); }
-  let gateShown = false; function showGate() { gateShown = true; let seen = false; try { seen = sessionStorage.getItem("lois-entered") === "1"; } catch (e) {} if (seen) enter(false); else $("gate").hidden = false; }
   LF.onReady = () => { Sky = LF.sky; if (field && state) Sky.ingest(field, state); layout(); };
   if (LF.sky) LF.onReady();
   if (LF.failMsg) LF.fail(LF.failMsg);

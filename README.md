@@ -173,8 +173,8 @@ The folder must be a git repository, or a folder whose subfolders are git
 repositories: the developer works in clones of them, from what is committed
 (see "Getting the developer's work").
 
-**The first time**, press Enter on the dashboard's welcome, then Terminal in
-its top bar. Press POWER ON if the screen is off, type `/login` and sign in with
+**The first time**, press Terminal in the
+dashboard's top bar. Press POWER ON if the screen is off, type `/login` and sign in with
 your Claude subscription, then run `factory start` again (or press Restart on
 the dashboard). `sbx` stores the login, but it gives a sandbox the
 login only when it creates it, so the first start creates just the Coordinator

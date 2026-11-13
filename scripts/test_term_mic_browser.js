@@ -130,10 +130,9 @@ const waiting = (b, ms) => b.term(`new Promise(r => { const p = document.getElem
   const go = () => !p.hidden ? r(document.getElementById("voice-pending-text").textContent) : Date.now() > end ? r(null) : setTimeout(go, 10); go(); })`);
 
 async function enter(b) {
-  await until(() => b.ev(`!!document.getElementById("enter")`), 15000, "the page");
-  await b.ev(`document.getElementById("enter").click()`);
+  await until(() => b.ev(`!!document.getElementById("hud") && !document.getElementById("hud").hidden`), 15000, "the page");
   await until(() => b.term(`document.getElementById("mic").getAttribute("aria-disabled") === "false"`), 15000, "the mic key lights once /health says listen");
-  await b.sleep(1200);   // the gate fades out over the pane
+  await b.sleep(1200);   // the pane settles
 }
 
 let held = 0;   // seconds the mic key was held, for the Python side's check of the body's length

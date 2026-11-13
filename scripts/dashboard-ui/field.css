@@ -154,12 +154,6 @@ body.holding #t-gold { stroke-width: 2; }
 .d.pk { width: 9px; height: 11px; border-radius: 0; background: linear-gradient(#9fd8ff, #5a7dff); clip-path: polygon(50% 0, 100% 30%, 100% 70%, 50% 100%, 0 70%, 0 30%); } .d.star { width: 5px; height: 5px; background: #fff; box-shadow: 0 0 5px #9fc8ff; margin: 0 2px; } .d.fail { background: transparent; border: 2px solid #ff5d6c; } .d.trail { height: 2px; border-radius: 1px; background: #8f9dff; } .d.ship { width: 7px; height: 7px; background: radial-gradient(circle, #ff8a90 30%, rgba(255,77,90,.15)); }
 
 /* arrival: the same scene, waiting for you */
-.gate { position: fixed; left: 50%; transform: translateX(-50%); top: calc(var(--rim) + 40px); bottom: 12px; width: min(92vw, 620px); z-index: 30; display: grid; align-content: center; justify-items: center; text-align: center; gap: 14px; }
-.gate h1 { font: 500 clamp(30px, 5vh, 46px)/1 var(--f-voice); letter-spacing: .42em; margin: 0 0 0 .42em; color: #fff; }
-.gate p { font: 500 clamp(18px, 2.3vh, 21px)/1.4 var(--f-voice); color: var(--ink-2); margin: 0; text-wrap: balance; }
-.gate button { margin-top: 8px; padding: 11px 34px; border-radius: 30px; box-shadow: inset 0 0 0 1px var(--blue), 0 0 26px rgba(127,224,255,.3); color: #fff; font: 600 15.5px var(--f-data); transition: box-shadow .25s; }
-.gate button:hover { box-shadow: inset 0 0 0 1px var(--blue), 0 0 40px rgba(127,224,255,.65); }
-.gate small { font: 400 14px var(--f-data); color: var(--ink-3); } .gate a { color: var(--blue); }
 
 @media (max-height: 800px) { :root { --dh: 90px; } .mid { top: calc(var(--rim) + 46px); bottom: 16px; } .said .txt { font-size: clamp(19px, 2.8vh, 22px); } .said .txt.long { font-size: 16.5px; line-height: 1.35; } .said .meta { margin-top: 5px; } .mid:has(.txt.long) .chips { display: none; }
   .work, .today { bottom: 14px; } .work h2 { margin-bottom: 6px; } #jobs-list { gap: 2px; } .job { padding: 2px 8px 2px 2px; } .job .n { line-height: 1.2; } .job .s { line-height: 1.25; }   /* the list stays under the curve, or hug() pushes it into the caption */
