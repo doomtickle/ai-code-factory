@@ -1033,11 +1033,11 @@
   // file itself. Two steps, as RESTART: config-prepare returns the diff and a token, and only
   // CONFIRM (dark for HOLD_MS, so a diff that just arrived is never confirmed unread) sends the
   // token to config-run. The diff, the path and every error are drawn with textContent.
-  const TUNE_KEYS = ["LANES", "MODEL", "EFFORT", "MAX_SESSION_TOKENS", "MAX_TURNS", "MAX_JOB_SECONDS"];
-  const TUNE_LABELS = { LANES: "Lanes", MODEL: "Model", EFFORT: "Effort", MAX_SESSION_TOKENS: "Session tokens", MAX_TURNS: "Turns", MAX_JOB_SECONDS: "Job seconds" };
+  const TUNE_KEYS = ["LANES", "MODEL", "EFFORT", "MAX_SESSION_TOKENS", "MAX_TURNS", "MAX_JOB_SECONDS", "SIZE_BUDGET_LINES"];
+  const TUNE_LABELS = { LANES: "Lanes", MODEL: "Model", EFFORT: "Effort", MAX_SESSION_TOKENS: "Session tokens", MAX_TURNS: "Turns", MAX_JOB_SECONDS: "Job seconds", SIZE_BUDGET_LINES: "Size budget" };
   const KEY_LABELS = { MODELS: "Models" };  // the Details keys that are not tuning knobs
-  const TUNE_NUMBERS = ["MAX_SESSION_TOKENS", "MAX_TURNS", "MAX_JOB_SECONDS"];
-  const TUNE_HINTS = { MAX_SESSION_TOKENS: "0 = no cap", MAX_TURNS: "0 = no cap", MAX_JOB_SECONDS: "0 = no limit" };
+  const TUNE_NUMBERS = ["MAX_SESSION_TOKENS", "MAX_TURNS", "MAX_JOB_SECONDS", "SIZE_BUDGET_LINES"];
+  const TUNE_HINTS = { MAX_SESSION_TOKENS: "0 = no cap", MAX_TURNS: "0 = no cap", MAX_JOB_SECONDS: "0 = no limit", SIZE_BUDGET_LINES: "non-test lines" };
   const EFFORTS = ["low", "medium", "high", "xhigh"];
   const DEMO_LINE = "Demo: changes are off";
   const diffCls = op => (op === "+" ? "k-ok" : op === "-" ? "k-err" : "k-dim");
