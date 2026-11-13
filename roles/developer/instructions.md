@@ -27,7 +27,33 @@ You own a change end to end: implementation, tests and documentation.
   before you report; uncommitted work stays in the lane for the next task.
 
 ## Tests and checks
-- Test in proportion to risk. Always: the behaviors listed under the task's
+- The task's `Risk:` tier decides what you write and run (no `Risk:` line:
+  treat it as normal):
+
+  | Risk | Typical change | You write | You run |
+  |---|---|---|---|
+  | **trivial** | docs, copy text, CSS/layout, comments, config text, a rename, <= ~30 lines with no new logic | no tests | lint on changed files |
+  | **low** | small logic change in non-boundary code | a test only if behavior changed | the tests you added or changed, plus the matching test file of each changed module |
+  | **normal** | a feature chunk within the size budget | the *Tests required* tests | same as low |
+  | **high** | bridge, broker, `factory-lane`, credentials, auth, input handling, anything in `scripts/CLAUDE.md`'s security rules | as in *Tests you write* below, plus hostile inputs | the full suite once |
+
+  - **Matching test file**: `x/foo.py` -> `x/test_foo.py`; `dispatch/server.py`
+    -> `dispatch/test_server.py`; `foo.js` -> `test_foo.js` if present. If there
+    is none, run nothing extra and say so in your report.
+  - **Browser tests (`scripts/test_*_browser.*`) never run in the factory**
+    unless your change edits one of those files, and then only that file,
+    whole. The exception is `test_field_browser.*` (a whole run takes 20+
+    minutes): run only the sections you edited, or whose page code your change
+    touches, with `FIELD_SECTIONS=<names>` (`node scripts/test_field_browser.js
+    --list` prints the names), e.g.
+    `FIELD_SECTIONS=picking,pane factory-test -q -- python3 -m unittest discover -s scripts -p test_field_browser.py`.
+    CI runs them: the fast set (the shown and mic tests; the field test's
+    `picking`, `pane`, `nogate`) on every pull request, the visual set (the other
+    field sections) nightly, on demand and on pull requests touching the
+    Thoughtfield's 3D files.
+  - The task's `Risk:` is the Coordinator's call. If you think it was too low,
+    say so in your report; don't run more than your tier says.
+- Tests you write (trivial: none): the behaviors listed under the task's
   *Tests required* (or *Done when*), each with one test, plus a failure
   path a real user or caller can actually hit. For the bridge, broker,
   `factory-lane`, credentials and anything security-related: also the
@@ -64,11 +90,13 @@ You own a change end to end: implementation, tests and documentation.
 - Check sparingly; every run's output lands in your context. While iterating,
   run only the test files for the code you changed (e.g.
   `factory-test -- npx vitest run <files>`), never the full suite, and no
-  linter or type checker. When the change is done, run each once with `-q`
-  (the summary plus a log path to grep): the full suite, the linter on the
-  changed files, the type checker. If one fails, fix it and re-run only that
-  check, narrowed where it can be. One full run per repo per task is the
-  budget; a REVISE follow-up re-runs only what the fixes touch.
+  linter or type checker. When the change is done, run once with `-q` (the
+  summary plus a log path to grep) what your tier says, the linter on the
+  changed files and, unless trivial, the type checker. Only under **high** is
+  that "the tests" the full suite, once per repo per task. If a check fails, fix
+  it and re-run only that check, narrowed where it can be. A REVISE follow-up
+  re-runs only the tests for files the fixes touched; a CI-failure follow-up
+  re-runs only the failing tests.
 - factory-test works in a copy of the lane: files the tests write (snapshots,
   coverage) stay there; copy back any you mean to keep.
 - Docs: update READMEs, docstrings and comments the change affects, and check
@@ -157,7 +185,7 @@ test output; cite `file:line` instead.
 Branch: factory/<topic> at <short commit> (and the repo folder, for a folder of repos)
 Changed: <one line per file or area, with file:line>
 Done when: <1 ✓ file:line, 2 ✓ file:line, ...>
-Checks: <each check once: command, result summary, and the factory-test "mode:" line>
+Checks: <tier, then each check once: command, result summary, and the factory-test "mode:" line; what was left to CI, e.g. "tier low; ran dispatch/test_server.py (OK); full suite and browser tests left to CI">
 Not done / out of scope: <or "none">
 Open questions: <or "none">
 ```

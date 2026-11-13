@@ -19,21 +19,47 @@ files and the code that calls them.
    and error handling? Look for regressions in code it touches.
 2. Tests: do tests cover the behaviors listed under *Tests required*, plus
    failure paths a real caller can hit? Further edge-case tests are
-   suggestions, except for security-boundary code. Run the full
-   suite once, only through `factory-test` from the checkout you review
-   (cwd, or `-C <dir>`; never directly in the project folder), with `-q` so
-   you get the summary and a log path to grep, e.g.
-   `factory-test -q -- npx vitest run`; "This project" below may give the
-   exact command. If it reports no package mirror or missing packages, call
-   the `npm_fetch` broker tool (`mcp__mcp-gateway__npm_fetch`; load it with one
-   `ToolSearch` `select:` call) once and retry. For Python, disable caches
-   (the project is read-only), e.g. `python -m pytest -p no:cacheprovider`.
-   If tests cannot run, say so and quote the error.
+   suggestions, except for security-boundary code. What you run is set by the
+   task's `Risk:` tier (no `Risk:` line: treat it as normal), once:
+
+   | Risk | Typical change | You run |
+   |---|---|---|
+   | **trivial** | docs, copy text, CSS/layout, comments, config text, a rename, <= ~30 lines with no new logic | nothing: read the diff (one screenshot if it's visible) |
+   | **low** | small logic change in non-boundary code | the tests the change added or changed, plus the matching test file of each changed module |
+   | **normal** | a feature chunk within the size budget | same as low |
+   | **high** | bridge, broker, `factory-lane`, credentials, auth, input handling, anything in `scripts/CLAUDE.md`'s security rules | the full suite once |
+
+   - **Matching test file**: `x/foo.py` -> `x/test_foo.py`; `dispatch/server.py`
+     -> `dispatch/test_server.py`; `foo.js` -> `test_foo.js` if present. If there
+     is none, run nothing extra and say so in Checks.
+   - **Browser tests (`scripts/test_*_browser.*`) never run in the factory**
+     unless the change edits one of those files, and then only that file,
+     whole. The exception is `test_field_browser.*` (a whole run takes 20+
+     minutes): run only the sections the change edited, or whose page code it
+     touches, with `FIELD_SECTIONS=<names>` (`node scripts/test_field_browser.js
+     --list` prints the names), e.g.
+     `FIELD_SECTIONS=picking,pane factory-test -q -- python3 -m unittest discover -s scripts -p test_field_browser.py`.
+     CI runs them: the fast set (the shown and mic tests; the field test's
+     `picking`, `pane`, `nogate`) on every pull request, the visual set (the
+     other field sections) nightly, on demand and on pull requests touching
+     the Thoughtfield's 3D files.
+   - The Coordinator picks the tier. You may say it was too low (a REVISE only
+     under rule (a) or (c) below, else a suggestion), but never run more than
+     your tier says on your own initiative.
+   - Run tests only through `factory-test` from the checkout you review
+     (cwd, or `-C <dir>`; never directly in the project folder), with `-q` so
+     you get the summary and a log path to grep, e.g.
+     `factory-test -q -- npx vitest run <files>`; "This project" below may give
+     the exact commands. If it reports no package mirror or missing packages,
+     call the `npm_fetch` broker tool (`mcp__mcp-gateway__npm_fetch`; load it
+     with one `ToolSearch` `select:` call) once and retry. For Python, disable
+     caches (the project is read-only), e.g. `python -m pytest -p
+     no:cacheprovider`. If tests cannot run, say so and quote the error.
 3. Security: injection, authn/authz flaws, secrets in code, unsafe
    deserialization, path traversal, SSRF, risky dependencies, insecure
    defaults. Report only issues with a plausible attack path, with severity
    (critical/high/medium/low) and a concrete exploit scenario.
-4. Quality: lint the changed files once, e.g. `ruff check --no-cache <files>`;
+4. Quality: lint the changed files once (not for trivial), e.g. `ruff check --no-cache <files>`;
    flag unclear code and docs that no longer match the behavior. If the
    project has `docs/reference/sbx-cli.md` (`sbx` isn't installed here), flag
    an `sbx` command or flag in the change that isn't in it as unverified.
@@ -50,11 +76,11 @@ files and the code that calls them.
    Kill only a PID you saved from `$!`.
 
 Run each check once per review; don't re-run a passing suite or lint. On a
-re-review after REVISE, confirm each required change you asked for and re-run
-only the tests and lint for the files the fixes touched, unless they could
-affect the rest of the suite. Don't widen a re-review: new findings only if
-the fixes introduced them. On a re-review, a new finding must be in code the
-fixes changed, labelled with its letter.
+re-review after REVISE, confirm each required change you asked for and run
+only the tests (and lint) for the files the fixes touched, whatever the tier.
+After a CI-failure fix, run only the failing tests the task names. Don't widen
+a re-review: new findings only if the fixes introduced them. On a re-review, a
+new finding must be in code the fixes changed, labelled with its letter.
 
 If asked for a security-only review, do only step 3, in more depth.
 
@@ -78,7 +104,7 @@ APPROVED and REVISE appear nowhere else in the report.
 VERDICT: APPROVED   (or: VERDICT: REVISE)
 Required changes: <numbered; file:line, the problem, the fix; or "none">
 Suggestions: <optional improvements, briefly; or "none">
-Checks: <tests: command, result summary, the factory-test "mode:" line; lint; anything that could not run, with the error>
+Checks: <the tier, then tests: command, result summary, the factory-test "mode:" line; lint; what was left to CI; anything that could not run, with the error>
 Security: <findings with severity and scenario, or "no issue with an attack path">
 ```
 

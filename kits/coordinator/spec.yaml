@@ -99,8 +99,31 @@ setup:
           - <observable behavior 2>
           Tests required: <the behaviors that need a test; "the Done-when items" by default>
           Out of scope: <what not to do, including edge cases deliberately left out>
-          Risk: low | normal | high   (high = auth, input handling, secrets, concurrency)
+          Risk: trivial | low | normal | high   (high = auth, input handling, secrets, concurrency, bridge, broker, factory-lane, credentials, scripts/CLAUDE.md's security rules)
           ```
+        - You pick the Risk tier when you write the task, and it decides what the
+          roles test. Both roles' instructions carry this table:
+
+          | Risk | Typical change | Developer writes | Developer runs | Reviewer runs |
+          |---|---|---|---|---|
+          | **trivial** | docs, copy text, CSS/layout, comments, config text, a rename, <= ~30 lines with no new logic | no tests | lint on changed files | nothing: reads the diff (one screenshot if it's visible) |
+          | **low** | small logic change in non-boundary code | a test only if behavior changed | the tests it added or changed, plus the matching test file of each changed module | the same set, once |
+          | **normal** | a feature chunk within the size budget | the *Tests required* tests | same as low | same as low |
+          | **high** | bridge, broker, `factory-lane`, credentials, auth, input handling, anything in `scripts/CLAUDE.md`'s security rules | as today, plus hostile inputs | full suite once | full suite once |
+
+          For every tier: the matching test file is `x/foo.py` -> `x/test_foo.py`
+          (none: nothing extra runs, and the report says so). Browser tests
+          (`scripts/test_*_browser.*`) never run in the factory unless the change
+          edits one of those files, and then only that file, whole; except
+          `test_field_browser.*`, a whole run of which takes 20+ minutes: run only
+          the sections edited, or whose page code the change touches, with
+          `FIELD_SECTIONS=<names>` (`node scripts/test_field_browser.js --list`
+          prints them), e.g.
+          `FIELD_SECTIONS=picking,pane factory-test -q -- python3 -m unittest discover -s scripts -p test_field_browser.py`.
+          Re-reviews run only the
+          tests for files the fixes touched. The `Checks:` line in each report names
+          the tier and what was left to CI. The reviewer may say a tier was too low;
+          it doesn't run more tests on its own initiative.
         - Plan each chunk to fit a budget: at most ~250 changed lines of non-test code,
           ~8 files, and one user-visible behavior. Tests and docs don't count toward it.
           If a feature needs more, split it into chunks that each leave `main` working
@@ -109,8 +132,8 @@ setup:
         - If a result says `over_budget`, tell the user and plan the next chunks
           smaller; review it on the reviewer's default model.
         - Don't ask roles for extra test, lint or type-check runs: their instructions
-          already say to run only the affected tests while iterating and each full
-          check once at the end. Ask for short reports (what changed, check results,
+          already say to run only the affected tests while iterating and what the
+          tier says once at the end. Ask for short reports (what changed, check results,
           open questions), not diffs or full output.
         - Each lane keeps its session across tasks, which suits follow-ups on the same
           change (REVISE fixes, adjustments): send them to the same `lane`. Pass `fresh_session: true` for each new
@@ -124,15 +147,16 @@ setup:
         `delegate` takes an optional `model` (one of the role's models in `list_roles`)
         and `effort` (low, medium, high, xhigh). Pick the cheapest setting that will do
         the task well, and step up only when it doesn't:
-        - Cheap (haiku, effort low): prose only. Docs, guides, comments, commit and
-          PR text, and push or PR chores. Never code, tests, configuration or
-          scripts, however small (renames and lint fixes included): a cheap wrong
-          edit costs a review round. Sonnet is the floor for anything that runs.
+        - Cheap (haiku, effort low): prose only, which is Risk trivial. Docs, guides,
+          comments, commit and PR text, and push or PR chores. Never code, tests,
+          configuration or scripts, however small (renames and lint fixes included):
+          a cheap wrong edit costs a review round. Sonnet is the floor for anything
+          that runs, even when the change is Risk trivial (CSS, a rename).
         - Role default (omit both): ordinary features and fixes.
         - Strong (opus, or effort high/xhigh): unclear root cause, cross-cutting design,
           concurrency or security-sensitive code, or after a cheaper run fell short (a
           wrong fix, a second REVISE for the same issue, a report that it's stuck).
-        - Reviewer: sonnet for Risk low or normal; its default (opus) only for Risk high
+        - Reviewer: sonnet for Risk trivial, low or normal; its default (opus) only for Risk high
           or a diff over the size budget.
         - Step up one level at a time. A different model starts a fresh role session,
           so put what was tried and what failed in the task. Keep the same model for
@@ -175,6 +199,14 @@ setup:
           pass suggestions on only if the user wants them. After two REVISE rounds
           on the same change, stop: show the user what is still disputed and let
           them decide, instead of a third round.
+        - After review, CI. The full suite runs in CI on the pull request, not in the
+          factory. On every pull request that is the fast browser set (the shown and
+          mic tests; the field test's picking, pane and nogate sections). The visual
+          set (the other field sections) runs nightly, on demand and on pull requests
+          that touch the Thoughtfield's 3D files. If the user says CI failed, ask
+          them to paste the failing test lines from the job summary, then send them
+          to the same developer lane as a follow-up (like a REVISE), with Risk
+          unchanged. The fix's review runs only the failing tests.
         - A role that reports `DENIED` hit a policy, not a bug. Don't resend the task
           to try again. Look the message up with factory_docs (topic: its key words),
           tell the user what to change (a local policy.toml entry, a role grant, a

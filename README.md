@@ -705,7 +705,7 @@ do rather than by job title:
 | Role | Does | Project access | Lanes | Broker tools |
 |---|---|---|---|---|
 | developer | implements the change, writes and runs its tests, updates the docs | read-only; works in its own clones, hands back `factory/*` branches | 3 | `npm_fetch`, `pip_download`, `git_fetch`, `git_push`, `github_create_pr`, `github_update_pr`, `gitlab_create_mr` |
-| reviewer | independent check of correctness, tests, security and docs; runs the tests; APPROVED / REVISE; files issues when asked | read-only | 2 | `npm_fetch`, `github_create_issue` |
+| reviewer | independent check of correctness, tests, security and docs; runs the tests its Risk tier names; APPROVED / REVISE; files issues when asked | read-only | 2 | `npm_fetch`, `github_create_issue` |
 | researcher (optional, off by default) | looks things up on the web and reports with sources | read-only | 1 | `web_fetch` (`gemini_flash_query` as an opt-in) |
 
 **Lanes.** A role with `LANES="3"` runs up to three tasks at once, in lanes
@@ -914,7 +914,7 @@ project. Instead:
    (vitest/jest `FAIL`, pytest `FAILED`, `tsc` and eslint errors, ...), so the
    role rarely has to search the log.
    For one mid-size frontend suite that is 3.7 KB instead of 122 KB in the role's context.
-   Roles use it for full-suite runs.
+   Roles use it for the runs their Risk tier names (see [Risk tiers and CI](docs/guides/02-build-a-feature.md#risk-tiers-and-ci)).
    `factory-test` (baked into the developer and reviewer images) works in a
    copy of the project on the sandbox's own disk, so nothing is written to the
    project and the read-only reviewer can run tests too. The developer runs it
