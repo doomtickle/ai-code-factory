@@ -151,7 +151,7 @@ Dated entries, for the user to review. Newest first.
   - **A separate workflow on a real arm64 runner,** only when the voice changes, since it downloads PyTorch and the model. It proves the build and speech on Linux arm64, not
     on Docker Desktop for Mac or at a Mac's speed.
 
-- **Terminal 0 has a Thoughtfield look, chosen for readability first** (owner asked for it to match the theme and to "try hard to maximize
+- **Terminal 0 has a Thoughtfield look, chosen for readability first** (the `/term` classic page it is compared with was removed 13 Nov 2026) (owner asked for it to match the theme and to "try hard to maximize
   readability", doomtickle/passdesk-ops#213). `/term/field` is the same terminal, key, serving rule, CSP and WebSocket as `/term`; the classic page
   keeps its tube. Choices to review:
   - **A vendored JetBrains Mono, not a system font.** What was measured is then what the owner sees, on any machine, and its natural 1.32 line is roomy
@@ -182,7 +182,7 @@ Dated entries, for the user to review. Newest first.
 
 - **The Thoughtfield is the dashboard's default view** (owner asked for it, doomtickle/passdesk-ops#207, and left the calls to the
   session while asleep). Choices to review:
-  - **Both views, Thoughtfield first.** The owner offered replacing or adding. `/` opens the Thoughtfield, `/classic` keeps FC-1984 untouched,
+  - **Both views, Thoughtfield first** (superseded 13 Nov 2026: the classic view is removed, see `docs/decisions/dashboard.md`). The owner offered replacing or adding. `/` opens the Thoughtfield, `/classic` keeps FC-1984 untouched,
     `ui = "classic"` in `dashboard.toml` flips the default. Reason: the classic page has features not ported (floor, budget, notifications,
     radio, full printer, deferred-writes list), and a software-rendered machine can't run a WebGL page well.
   - **The hold-to-approve lives in the control unit, not the page.** The mockup's approve sat on the main page, which the rules forbid.

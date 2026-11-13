@@ -3,7 +3,7 @@
 GET /api/field on the main port, display only, one more read of what /api/state already reads: the dispatch
 audit and the lanes' parsed transcripts, plus the broker audit's denials. No git, no command, no write. An action
 leaves here as a time and a kind from a fixed list, never its text, so a command or a path an agent wrote does not
-reach the page through this route. A job's words are the same cut one-line labels the lane modules show, drawn
+reach the page through this route. A job's words are cut one-line labels, drawn
 with textContent. Standard library only; runs on the macOS system Python (3.9).
 """
 
