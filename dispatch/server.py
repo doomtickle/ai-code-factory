@@ -409,6 +409,74 @@ def verdict_of(report: str) -> str | None:
     return m.group(1) if m else None
 
 
+GRADE_SCAN_CHARS = 20_000  # the end of a report: the grader's fixed block comes last
+GRADE_MAX_LINE_CHARS = 300
+GRADE_MAX_TOKENS = 12
+GRADE_SIZE_RATIO_MAX = 100.0
+GRADE_KEYS = ("grade_oracle", "grade_checks", "grade_done_when", "grade_scope", "grade_size_ratio")
+_GRADE_LINE = re.compile(r"[ \t]*(?:\*\*)?GRADE:(?:\*\*)?(?:[ \t]+(.*))?")
+_GRADE_TOKEN = re.compile(r"([a-z_]+)=(\S+)")
+_GRADE_PASSFAIL = re.compile(r"(pass|fail)", re.I)
+_GRADE_SCORE = re.compile(r"[1-5]")
+_GRADE_RATIO = re.compile(r"[0-9]{1,6}(?:\.[0-9]{1,6})?")
+
+
+def grade_of(report: str) -> dict:
+    """The validated grade_* fields of a grader's report, else {}. Reads the LAST line (of the
+    final GRADE_SCAN_CHARS characters) that starts with GRADE: (leading blanks and ** allowed),
+    even if its values are junk; a quoted earlier line never wins over the closing block. Each key
+    is checked on its own: a bad value drops that field, the first of a repeated key counts and
+    unknown keys are ignored. Only the typed values built here leave this function, never report text."""
+    text = report if isinstance(report, str) else ""
+    tail = text[-GRADE_SCAN_CHARS:]
+    lines = tail.split("\n")
+    if len(text) > len(tail):
+        lines = lines[1:]  # the first line is cut off
+    rest = None
+    for line in reversed(lines):
+        if len(line) > GRADE_MAX_LINE_CHARS:
+            continue
+        m = _GRADE_LINE.fullmatch(line.rstrip().rstrip("*"))
+        if m:
+            rest = m.group(1) or ""
+            break
+    if rest is None:
+        return {}
+    raw: dict = {}
+    for token in rest.split()[:GRADE_MAX_TOKENS]:
+        m = _GRADE_TOKEN.fullmatch(token)
+        if m:
+            raw.setdefault(m.group(1), m.group(2))
+    out: dict = {}
+    for key in ("oracle", "checks"):
+        if key in raw and _GRADE_PASSFAIL.fullmatch(raw[key]):
+            out[f"grade_{key}"] = raw[key].lower()
+    for key in ("done_when", "scope"):
+        if key in raw and _GRADE_SCORE.fullmatch(raw[key]):
+            out[f"grade_{key}"] = int(raw[key])
+    if "size_ratio" in raw and _GRADE_RATIO.fullmatch(raw["size_ratio"]):
+        out["grade_size_ratio"] = round(min(float(raw["size_ratio"]), GRADE_SIZE_RATIO_MAX), 3)
+    return out
+
+
+def clean_grade(rec) -> dict:
+    """The grade_* fields of a job-index record that pass the same checks as grade_of, else dropped."""
+    out: dict = {}
+    if not isinstance(rec, dict):
+        return out
+    for key in ("grade_oracle", "grade_checks"):
+        if rec.get(key) in ("pass", "fail"):
+            out[key] = rec[key]
+    for key in ("grade_done_when", "grade_scope"):
+        v = rec.get(key)
+        if isinstance(v, int) and not isinstance(v, bool) and 1 <= v <= 5:
+            out[key] = v
+    ratio = _number(rec.get("grade_size_ratio"))
+    if ratio is not None and 0 <= ratio <= GRADE_SIZE_RATIO_MAX:
+        out["grade_size_ratio"] = ratio
+    return out
+
+
 class Job:
     def __init__(self, role: str, task: str, resume: str | None, model: str = "",
                  start_cost_usd: float | None = 0.0, instructions: str = "", effort: str = "",
@@ -456,6 +524,7 @@ class Job:
         self.proc: subprocess.Popen | None = None
         self.done = threading.Event()
         self.restored = False  # reloaded from the job index: no process, a short report only
+        self.restored_grade: dict = {}  # grade_* fields read back from the job index
 
     def over_budget(self) -> bool:
         return (self.size is not None
@@ -473,11 +542,19 @@ class Job:
                "branches": list(self.branches) if self.branches is not None else None,
                "import_errors": list(self.import_errors) if self.import_errors is not None else None,
                "packet": self.packet}
+        rec.update(self.grade())
         if self.size is not None:
             rec["size"] = dict(self.size)
         if self.status != "running":
             rec["report"] = one_line(self.result, REPORT_SUMMARY_CHARS)
         return rec
+
+    def grade(self) -> dict:
+        """The validated grade_* fields: parsed from the report once the job has ended; a job
+        reloaded from the index keeps what was stored (its report is only a short summary)."""
+        if self.status == "running":
+            return {}
+        return dict(self.restored_grade) if self.restored else grade_of(self.result)
 
     def change(self) -> str | None:
         for b in self.branches or []:
@@ -505,6 +582,7 @@ class Job:
         verdict = verdict_of(self.result) if self.status != "running" else None
         if verdict:
             out["verdict"] = verdict
+        out.update(self.grade())
         if self.result_turns is not None:
             out["turns"] = self.result_turns
         if self.branches is not None:
@@ -642,6 +720,7 @@ def job_from_record(rec) -> "Job | None":
             and all(isinstance(v, int) and not isinstance(v, bool) and v >= 0 for v in size.values())):
         job.size = dict(size)
     job.result = _text(rec.get("report"), REPORT_SUMMARY_CHARS) or ""
+    job.restored_grade = clean_grade(rec)
     # The packet path is recomputed, never taken from the file.
     if status != "running" and packet_path(job_id).is_file():
         job.packet = str(packet_path(job_id))

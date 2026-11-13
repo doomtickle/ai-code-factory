@@ -1342,7 +1342,11 @@ from the first `factory-<lane>/factory/<topic>` in a reviewer's task, the only
 task text kept besides the 200-character `task`), `verdict` (`APPROVED` or
 `REVISE`, read from the first line of a report only), `turns` (claude's
 `num_turns`) and, for developer jobs, `diff_lines` (added plus removed) and
-`diff_files`. For each change it prints the jobs, review rounds (REVISE
+`diff_files`. A report's closing `GRADE: oracle=pass|fail checks=pass|fail done_when=<1-5>
+scope=<1-5> size_ratio=<x.x>` line (the last such line in the final 20,000
+characters; each key validated alone, a bad one dropped) adds `grade_oracle`,
+`grade_checks`, `grade_done_when`, `grade_scope` and `grade_size_ratio`. For
+each change it prints the jobs, review rounds (REVISE
 verdicts), first-pass approval, wall time from the first job's start to the
 last job's end, total cost, diff size (the latest developer job's diffstat: the
 whole branch, not a sum of rounds) and the share of added lines in test files.

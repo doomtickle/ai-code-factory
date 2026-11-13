@@ -2346,7 +2346,136 @@ class ChangeMetricsTests(Base):
         self.assertTrue(set(end) <= {"job_id", "role", "lane", "status", "elapsed_seconds", "task", "model",
                                      "effort", "cost_usd", "session_cost_usd", "context_tokens", "change",
                                      "verdict", "turns", "branches", "import_errors", "size", "over_budget",
-                                     "diff_lines", "diff_files", "packet", "ts", "event"}, set(end))
+                                     "diff_lines", "diff_files", "packet", "ts", "event", *d.GRADE_KEYS}, set(end))
+
+
+class GradeTests(Base):
+    """GRADE: line -> grade_* job-end fields."""
+
+    done_job = ChangeMetricsTests.done_job
+
+    LINE = "GRADE: oracle=pass checks=fail done_when=4 scope=5 size_ratio=1.5"
+    FULL = {"grade_oracle": "pass", "grade_checks": "fail", "grade_done_when": 4, "grade_scope": 5,
+            "grade_size_ratio": 1.5}
+
+    def grades(self, report):
+        got = d.grade_of(report)
+        summary = self.done_job(report=report).summary()
+        self.assertEqual({k: v for k, v in summary.items() if k.startswith("grade_")}, got, report)
+        return got
+
+    def test_a_valid_line_gives_typed_fields(self):
+        got = self.grades("VERDICT: APPROVED\nnotes\n" + self.LINE + "\n")
+        self.assertEqual(got, self.FULL)
+        self.assertIs(type(got["grade_done_when"]), int)
+        self.assertIs(type(got["grade_size_ratio"]), float)
+        self.assertEqual(self.grades("GRADE: oracle=fail checks=pass done_when=1 scope=1 size_ratio=0"),
+                         {"grade_oracle": "fail", "grade_checks": "pass", "grade_done_when": 1,
+                          "grade_scope": 1, "grade_size_ratio": 0.0})
+
+    def test_no_grade_line_gives_no_fields(self):
+        for report in ("", "VERDICT: REVISE\nall fine", "the GRADE: oracle=pass is mid-line",
+                       "GRADES: oracle=pass", "GRADE oracle=pass", "grade: oracle=pass", "GRADE:oracle=pass",
+                       "> GRADE: oracle=pass", "- GRADE: oracle=pass"):
+            self.assertEqual(self.grades(report), {}, report)
+
+    def test_bold_and_whitespace_variants(self):
+        for report in ("  " + self.LINE, "\t" + self.LINE, "**" + self.LINE + "**", "  **" + self.LINE,
+                       "**GRADE:** " + self.LINE.split(":", 1)[1], self.LINE + "  \r", "x\n\n " + self.LINE + "\nend"):
+            self.assertEqual(self.grades(report), self.FULL, report)
+        self.assertEqual(self.grades("GRADE:  oracle=pass \t checks=pass"),
+                         {"grade_oracle": "pass", "grade_checks": "pass"})
+
+    def test_junk_values_drop_only_their_field(self):
+        for bad in ("oracle=maybe", "oracle=", "oracle=pass,fail", "oracle=passx"):
+            self.assertEqual(self.grades(f"GRADE: {bad} checks=pass"), {"grade_checks": "pass"}, bad)
+        for bad in ("0", "6", "-1", "3.5", "four", "", "1e1", "٣", "4;", "+4", "nan", "inf", "9" * 100):
+            self.assertEqual(self.grades(f"GRADE: done_when={bad} scope=2"), {"grade_scope": 2}, bad)
+            self.assertEqual(self.grades(f"GRADE: scope={bad} done_when=2"), {"grade_done_when": 2}, bad)
+        for bad in ("nan", "NaN", "inf", "-inf", "-1", "1e5", "1e999", "1.2.3", "x", ".5", "1.", "0x10", "1,5",
+                    "9" * 100, "1." + "9" * 100):
+            self.assertEqual(self.grades(f"GRADE: size_ratio={bad} oracle=fail"), {"grade_oracle": "fail"}, bad)
+        self.assertEqual(self.grades("GRADE: oracle=PASS"), {"grade_oracle": "pass"})
+
+    def test_a_huge_size_ratio_is_capped_and_a_huge_value_is_dropped(self):
+        self.assertEqual(self.grades("GRADE: size_ratio=999999")["grade_size_ratio"], d.GRADE_SIZE_RATIO_MAX)
+        self.assertEqual(self.grades("GRADE: size_ratio=2.25")["grade_size_ratio"], 2.25)
+        self.assertEqual(self.grades("GRADE: size_ratio=" + "1" * 5000), {})
+        self.assertEqual(self.grades("GRADE: oracle=pass size_ratio=" + "1" * 250), {"grade_oracle": "pass"})
+
+    def test_unknown_and_repeated_keys_and_stray_text(self):
+        got = self.grades("GRADE: foo=bar oracle=pass oracle=fail evil=$(rm) scope=3 prose words size_ratio=2")
+        self.assertEqual(got, {"grade_oracle": "pass", "grade_scope": 3, "grade_size_ratio": 2.0})
+        self.assertEqual(self.grades("GRADE:"), {})
+        self.assertEqual(self.grades("GRADE: oracle=pass" + " junk" * 5000), {})  # over-long line: not a grade line
+
+    def test_the_last_grade_line_wins_even_if_it_is_junk(self):
+        report = self.LINE + "\nquote: GRADE: oracle=fail\nGRADE: oracle=fail checks=pass\n"
+        self.assertEqual(self.grades(report), {"grade_oracle": "fail", "grade_checks": "pass"})
+        self.assertEqual(self.grades(self.LINE + "\nGRADE: nonsense"), {})
+
+    def test_only_the_end_of_a_long_report_is_scanned(self):
+        pad = "x" * (d.GRADE_SCAN_CHARS + 50)
+        self.assertEqual(self.grades(self.LINE + "\n" + pad), {})
+        self.assertEqual(self.grades(pad + "\n" + self.LINE), self.FULL)
+        self.assertEqual(self.grades("junk " + self.LINE + "\n" + "x" * (d.GRADE_SCAN_CHARS - len(self.LINE) - 3)
+                                     + "\n" + "y"), {})
+        self.assertEqual(d.grade_of(None), {})
+
+    def test_a_running_job_has_no_grade(self):
+        job = self.done_job(report=self.LINE)
+        job.status = "running"
+        self.assertEqual(job.grade(), {})
+        self.assertNotIn("grade_oracle", job.record())
+
+    def test_grade_round_trips_through_the_job_index(self):
+        job = self.done_job(report="x" * 5000 + "\n" + self.LINE)
+        rec = job.record()
+        self.assertEqual({k: rec[k] for k in d.GRADE_KEYS}, self.FULL)
+        self.assertNotIn("GRADE", rec["report"])  # the stored report is only the short summary
+        back = d.job_from_record(json.loads(json.dumps(rec)))
+        self.assertEqual({k: v for k, v in back.summary().items() if k.startswith("grade_")}, self.FULL)
+        self.assertEqual(self.done_job(report="none").record().keys() & set(d.GRADE_KEYS), set())
+
+    def test_bad_grade_fields_in_the_index_are_dropped_not_fatal(self):
+        job = self.done_job(report=self.LINE)
+        for key, bad in (("grade_oracle", "maybe"), ("grade_oracle", 1), ("grade_checks", ["pass"]),
+                         ("grade_checks", {"a": 1}), ("grade_done_when", 6), ("grade_done_when", 0),
+                         ("grade_done_when", True), ("grade_done_when", 3.0), ("grade_done_when", "3"),
+                         ("grade_scope", None), ("grade_scope", float("nan")),
+                         ("grade_size_ratio", float("nan")), ("grade_size_ratio", float("inf")),
+                         ("grade_size_ratio", -0.5), ("grade_size_ratio", 1e9), ("grade_size_ratio", True),
+                         ("grade_size_ratio", "1.5"), ("grade_size_ratio", [1])):
+            rec = job.record()
+            rec[key] = bad
+            back = d.job_from_record(rec)
+            self.assertIsNotNone(back, (key, bad))
+            want = {k: v for k, v in self.FULL.items() if k != key}
+            self.assertEqual(back.grade(), want, (key, bad))
+        rec = job.record()
+        rec.update({"grade_oracle": "pass\nSECRET", "grade_evil": "x"})
+        back = d.job_from_record(rec)
+        self.assertNotIn("grade_oracle", back.summary())
+        self.assertNotIn("grade_evil", json.dumps(back.record()))
+
+    def test_a_bad_grade_record_loads_from_a_real_jobs_json(self):
+        job = self.done_job(report=self.LINE)
+        d._jobs[job.id] = job
+        d.save_job_index()
+        path = d.job_index_file()
+        data = json.loads(path.read_text())
+        data["jobs"][0].update({"grade_oracle": "x" * 100000, "grade_scope": 99, "grade_size_ratio": "NaN"})
+        path.write_text(json.dumps(data))
+        d._jobs.clear()
+        d.load_job_index()
+        loaded = d._jobs[job.id]
+        self.assertEqual(loaded.grade(), {"grade_checks": "fail", "grade_done_when": 4})
+
+    def test_the_audit_record_has_no_grade_without_a_grade_line(self):
+        job_id = self.delegate("reviewer", "Review factory-developer/factory/x")
+        d.tool_wait_for_job({"job_id": job_id, "timeout_seconds": 30})
+        end = [json.loads(l) for l in (d.STATE / "audit.jsonl").read_text().splitlines() if '"job-end"' in l][-1]
+        self.assertFalse(set(end) & set(d.GRADE_KEYS))
 
 
 class JobIndexTests(Base):
