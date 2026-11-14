@@ -2,6 +2,7 @@
 name: factory-test-logs
 base: 06fb296d8ff78d804c324fc1f1e08d12db665b7f
 reference: 211dc16b7bcff60517b6110388fa782fe6ff1da1
+oracle_ref: 6fdd50cadf343a7607f37df84170fcda8b59dadf
 tier: smoke
 area: cli
 ---

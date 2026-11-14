@@ -1,5 +1,5 @@
 """The replay-benchmark task files (bench/tasks/*.md, docs/specs/factory-health/07-benchmark.md): every one has well-formed front matter
-(name = file stem, base and reference 40 lowercase hex, tier and area from the fixed lists) and a body that works from `base` and ends in
+(name = file stem, base, reference and the optional oracle_ref 40 lowercase hex, tier and area from the fixed lists) and a body that works from `base` and ends in
 the Coordinator's contract. The test cannot check the shas against git history (CI clones are shallow); `git cat-file -t <sha>` does.
 
   python3 -m unittest discover -s scripts -p 'test_bench_tasks.py' -v
@@ -48,8 +48,8 @@ def problems(path):
         return ["front matter lacks: " + ", ".join(missing)]
     if meta["name"] != path.stem:
         found.append("name %r is not the file name %r" % (meta["name"], path.stem))
-    for key in ("base", "reference"):
-        if not SHA.fullmatch(meta[key]):
+    for key in ("base", "reference", "oracle_ref"):
+        if key in meta and not SHA.fullmatch(meta[key]):
             found.append("%s is not 40 lowercase hex: %r" % (key, meta[key]))
     if meta["base"] == meta["reference"]:
         found.append("base and reference are the same commit")
@@ -121,6 +121,14 @@ class ValidatorRejectsTest(unittest.TestCase):
                 self.assertTrue(any("reference is not 40 lowercase hex" in p for p in self.check(text)))
         text = self.good().replace("base: " + self.base, "base: abc123", 1)
         self.assertTrue(any("base is not 40 lowercase hex" in p for p in self.check(text)))
+
+    def test_an_oracle_ref_is_optional_but_must_be_a_sha(self):
+        pinned = self.good().replace("tier: smoke", "oracle_ref: " + "c" * 40 + "\ntier: smoke")
+        self.assertEqual(self.check(pinned), [])
+        for bad in ("abc123", "C" * 40, "c" * 39, ""):
+            with self.subTest(oracle_ref=bad):
+                text = self.good().replace("tier: smoke", "oracle_ref: " + bad + "\ntier: smoke")
+                self.assertTrue(any("oracle_ref is not 40 lowercase hex" in p for p in self.check(text)))
 
     def test_a_name_that_is_not_the_file_name_is_rejected(self):
         self.assertTrue(any("not the file name" in p for p in self.check(self.good(), stem="other")))

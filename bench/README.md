@@ -37,6 +37,7 @@ and is not another task's name plus a hyphen (see *Reading results*).
 name: <name>
 base: <40-hex sha of the merge's first parent>
 reference: <40-hex sha of the merge commit>
+oracle_ref: <40-hex sha>   # optional, see below
 tier: smoke | full | holdout
 area: bridge | broker | dashboard | docs | cli
 ---
@@ -51,6 +52,15 @@ excluded work. `scripts/test_bench_tasks.py` validates every task file (front
 matter, 40-hex shas, tier, area, and the contract block); run it with
 `factory-test -q -- python3 -m unittest discover -s scripts -p 'test_bench_tasks.py'`.
 
+`oracle_ref` is optional. Without it the oracle's test files are copied from
+`reference`. With it they are copied from that commit instead. Use it when the
+reference's own test is flaky or broken for reasons outside the task: pin it to
+the commit that fixed the test. The list of files still comes from
+`git diff --name-only <base> <reference>`, so only the content changes. Pin a
+sha, never a branch, so later test changes can't alter an old task's oracle.
+Check that `reference`'s implementation passes the pinned tests before you rely
+on it.
+
 ## Running
 
 Say this to the Coordinator:
@@ -64,8 +74,8 @@ run benchmark <tier> [label]
 branches `factory/bench-<name>-<label>-<n>` (n = 1..3) from the task's `base`,
 reviews them as for real work, then runs a grading job per branch in a fresh
 reviewer session. The grade comes from a fixed rubric: the test files the
-reference commit added or changed are copied onto the branch and run (the
-oracle), the normal checks run, and the reviewer scores done-when and scope 1-5
+reference commit added or changed (from `reference`, or from the task's
+`oracle_ref` when it has one) are copied onto the branch and run (the oracle), the normal checks run, and the reviewer scores done-when and scope 1-5
 and the size ratio (non-test changed lines against the reference's). The report
 ends with one line the bridge parses into the job-end record:
 

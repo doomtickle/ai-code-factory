@@ -65,7 +65,9 @@ finished:
 
 1. Copy the **test files the reference commit added or changed** into the
    review checkout of the bench branch, and run them with `factory-test`. They
-   are the hidden oracle: pass or fail.
+   are the hidden oracle: pass or fail. A task may set `oracle_ref` (a 40-hex
+   sha) to copy those files from that commit instead of `reference`, for when
+   the reference's own test is flaky; the file list still comes from base..reference.
 2. Run the project's normal checks.
 3. Score 1–5 against the task's *Done when* items, plus: scope (didn't touch
    files the task didn't need), size relative to the reference diff, and test

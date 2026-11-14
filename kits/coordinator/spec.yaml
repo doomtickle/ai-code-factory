@@ -267,7 +267,9 @@ setup:
         - Then a grading job: the reviewer, `fresh_session: true`, after the review
           loop, with this fixed rubric. (1) Copy the test files the reference commit
           added or changed (`git diff --name-only <base> <reference>`, tests only)
-          into the bench branch's checkout and run them with factory-test: that is
+          into the bench branch's checkout and run them with factory-test (copy the
+          files from the task's `oracle_ref` commit when its front matter has one,
+          else from `reference`; the file list always comes from base..reference): that is
           the oracle, pass or fail. Oracle tests that fail only because they cover
           something the task's own *Out of scope* excludes are left out of the oracle
           and named in the report (voice-listen's two lockfile/model-pinning tests in
