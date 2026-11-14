@@ -10,7 +10,9 @@ in_list, the broker/tools.txt guard) is still run on the same fixtures. Where Py
 deliberately stricter, a test says so.
 """
 
+import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -343,6 +345,23 @@ class RoleConfTest(Fixture):
         real = Paths(REPO, self.config, self.state)
         for name in roles.list_all_roles(real):
             roles.validate_role(real, name)
+
+    def test_the_analyst_is_an_optional_read_only_role_with_no_broker_tools_and_no_web(self):
+        real = Paths(REPO, self.config, self.state)
+        roles.validate_role(real, "analyst")
+        self.assertTrue(roles.role_optional(real, "analyst"))
+        self.assertEqual([roles.role_get(real, "analyst", k) for k in ("WORKSPACE", "BROKER_TOOLS", "LANES")],
+                         ["ro", "", "1"])
+        self.assertEqual(roles.role_get(real, "analyst", "MODELS"), "sonnet")
+        with open(os.path.join(REPO, "roles", "analyst", "kit", "spec.yaml")) as f:
+            spec = f.read()
+        match = re.search(r"printf '%s\\n' '(\{.*\})'", spec)
+        self.assertIsNotNone(match)
+        settings = json.loads(match.group(1))
+        self.assertEqual(settings["permissions"]["deny"], ["WebFetch", "WebSearch"])
+        self.assertIs(settings["disableClaudeAiConnectors"], True)
+        self.assertEqual(re.findall(r"^\s+- (\S+)$", spec.split("allow:")[1].split("setup:")[0], re.M),
+                         ["api.anthropic.com"])
 
     def test_a_value_of_several_words_or_none_is_refused_alike(self):
         # in_list takes one exact word: TEMPLATE="developer reviewer" and EFFORT="low medium" are not

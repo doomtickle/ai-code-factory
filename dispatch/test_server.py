@@ -7,6 +7,7 @@ Run on the host with the system Python:
 import json
 import os
 import re
+import shutil
 import stat
 import sys
 import tempfile
@@ -19,6 +20,8 @@ from pathlib import Path
 from unittest import mock
 
 import server as d
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
 
 FAKE_SBX = textwrap.dedent(r'''
     #!/usr/bin/env python3
@@ -313,6 +316,46 @@ class OptionalRoleTests(Base):
             path.write_text(line + "\n")
             with self.assertRaisesRegex(d.Denied, "can't be set in a local override"):
                 d.load_roles()
+
+
+class AnalystRoleTests(Base):
+    """The committed analyst role (roles/analyst) is optional like the researcher: off unless
+    enabled-roles names it, and when on it holds no broker tools."""
+
+    def setUp(self):
+        super().setUp()
+        shutil.copytree(REPO_ROOT / "roles" / "analyst", d.ROOT / "roles" / "analyst")
+        shutil.copy(d.ROOT / "roles" / "analyst" / "instructions.md", d.STATE / "instructions" / "analyst.md")
+
+    def test_absent_from_enabled_roles_it_is_not_listed_and_nothing_reaches_a_sandbox(self):
+        self.assertNotIn("analyst", d.load_roles())
+        self.assertFalse(d.load_roles(include_disabled=True)["analyst"]["enabled"])
+        with self.assertRaisesRegex(d.Denied, "analyst role is disabled"):
+            d.tool_delegate({"role": "analyst", "task": "run the analyst"})
+        self.assertFalse(self.sbx_log.exists())
+        self.assertNotIn("analyst", d.tool_list_roles({}))
+        self.assertNotIn("analyst", d.server_instructions())
+        (d.STATE / "enabled-roles").write_text("researcher\ndeveloper\n")  # naming others doesn't switch it on
+        self.assertNotIn("analyst", d.load_roles())
+
+    def test_a_local_override_cannot_give_it_broker_tools_or_switch_it_on(self):
+        path = d.STATE / "role-overrides" / "analyst.conf"
+        path.parent.mkdir()
+        path.write_text('OPTIONAL="0"\n')
+        self.assertNotIn("analyst", d.load_roles())
+        (d.STATE / "enabled-roles").write_text("analyst\n")
+        path.write_text('BROKER_TOOLS="web_fetch"\n')
+        with self.assertRaisesRegex(d.Denied, "can't be set in a local override"):
+            d.load_roles()
+
+    def test_enabled_it_is_loaded_with_no_broker_tools(self):
+        (d.STATE / "enabled-roles").write_text("analyst\n")
+        info = d.load_roles()["analyst"]
+        self.assertTrue(info["enabled"])
+        self.assertEqual(info["broker_tools"], [])
+        self.assertEqual((info["workspace"], info["model"], info["effort"]), ("ro", "claude-opus-5-5", "high"))
+        self.assertIn("- analyst", d.tool_list_roles({}))
+        self.assertNotIn("analyst", d.server_instructions().split("flow:")[1].split("\n")[0])
 
 
 class SayTests(Base):
