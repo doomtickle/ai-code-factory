@@ -223,16 +223,28 @@ if command -v flock >/dev/null; then
     "$(count_files last-run.log) $(count_files install.log) $(count_files yarnrc)" "0 0 0"
   assert_eq "install log: per copy, beside the copy" "$(test -s "$copy.install.log" && echo yes)" yes
 
-  # Same directory: the second run waits for the first, and runs after it.
-  ( "$FTEST" -C "$tmp/lane/ca" -- sh -c 'echo first-start; sleep 2; echo first-end' > "$tmp/s1.out" 2> "$tmp/s1.err" ) &
-  for _ in $(seq 100); do grep -q first-start "$tmp/s1.out" 2>/dev/null && break; sleep 0.1; done
-  grep -q first-start "$tmp/s1.out" 2>/dev/null && ok "same copy: the first run holds the lock" || bad "same copy: the first run didn't start within 10s"
+  # Same directory: the second run waits for the first, and runs after it. Runs are ordered by
+  # marker and release files and bounded polls, never by elapsed time.
+  # poll_until SECONDS CMD...: true as soon as CMD succeeds, false after SECONDS (checked every 0.1 s).
+  poll_until() { local n=$(( $1 * 10 )); shift; while ! "$@"; do n=$((n - 1)); [ "$n" -gt 0 ] || return 1; sleep 0.1; done; }
+  has_text() { grep -q "$1" "$2" 2>/dev/null; }
+  rel="$tmp/release-first"
+  ( "$FTEST" -C "$tmp/lane/ca" -- sh -c 'echo first-start; n=600; while [ ! -e "$1" ] && [ "$n" -gt 0 ]; do n=$((n - 1)); sleep 0.1; done; echo first-end' sh "$rel" > "$tmp/s1.out" 2> "$tmp/s1.err" ) &
+  poll_until 30 has_text first-start "$tmp/s1.out" && ok "same copy: the first run holds the lock" || bad "same copy: the first run didn't start within 30s"
   ( "$FTEST" -C "$tmp/lane/ca" -- sh -c 'echo second' > "$tmp/s2.out" 2> "$tmp/s2.err" ) &
-  # A third run, on another directory, doesn't wait.
-  start=$SECONDS
-  run "$FTEST" -C "$tmp/lane/cb" -- true
-  assert_eq "a run on another copy doesn't wait" "$(( SECONDS - start < 2 ))" 1
-  assert_lacks "a run on another copy doesn't announce waiting" "$ERR" "waiting for another run"
+  poll_until 30 has_text "factory-test: waiting for another run on this copy" "$tmp/s2.err" \
+    && ok "same copy: the second run waits while the first holds the lock" || bad "same copy: the second run never said it waits within 30s"
+  # A third run, on another directory, finishes while the first still holds the lock.
+  ( "$FTEST" -C "$tmp/lane/cb" -- true > "$tmp/s3.out" 2> "$tmp/s3.err"; echo finished > "$tmp/s3.done" ) &
+  s3pid=$!
+  if poll_until 60 test -e "$tmp/s3.done"; then
+    ok "a run on another copy doesn't wait for the first"
+  else
+    bad "a run on another copy didn't finish within 60s while the first held the lock"
+    kill "$s3pid" 2>/dev/null || true
+  fi
+  assert_lacks "a run on another copy doesn't announce waiting" "$(cat "$tmp/s3.err")" "waiting for another run"
+  : > "$rel"
   wait
   assert_contains "same copy: the second run says it waits" "$(cat "$tmp/s2.err")" "factory-test: waiting for another run on this copy"
   assert_lacks "same copy: the first run doesn't wait" "$(cat "$tmp/s1.err")" "waiting for another run"
