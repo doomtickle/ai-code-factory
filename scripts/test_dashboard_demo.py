@@ -113,6 +113,16 @@ class BuildTests(unittest.TestCase):
         import hashlib
         self.assertEqual(hashlib.sha256(patch.read_bytes()).hexdigest(), card["patch_sha256"])
 
+    def test_every_job_on_the_sky_is_one_its_monitor_will_open(self):
+        # The monitor (field-monitor.js) opens only a real job id; a made-up one made a click on its packet do nothing.
+        import dashboard_jobs
+        now = local_noon()
+        demo.build(self.state, now)
+        ids = [j["id"] for j in d.Dashboard(self.state, REPO / "roles", "x", demo=True).field(now)["jobs"]]
+        self.assertGreaterEqual(len(ids), 4)
+        for jid in ids:
+            self.assertRegex(jid, "^" + dashboard_jobs.JOB_ID.pattern + "$")
+
     def test_no_real_names(self):
         demo.build(self.state, local_noon())
         blob = "".join(p.read_text(encoding="utf-8") for p in self.state.rglob("*") if p.is_file())

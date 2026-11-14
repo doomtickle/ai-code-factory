@@ -15,6 +15,8 @@ const assert = require("node:assert");
 const { spawn } = require("node:child_process");
 const fs = require("node:fs"), os = require("node:os"), path = require("node:path");
 const T0 = Date.now();
+// FIELD_CPU_THROTTLE=4 slows each page's CPU fourfold (DevTools CPU throttling), to try a slow CI runner's timing locally. Off by default.
+const THROTTLE = Number(process.env.FIELD_CPU_THROTTLE || 1);
 const note = what => console.error(`[field] ${what} +${Math.round((Date.now() - T0) / 1000)}s`);
 
 async function launch(url, media, init) {
@@ -53,6 +55,7 @@ async function launch(url, media, init) {
   await s("Page.enable"); await s("Runtime.enable");
   await s("Emulation.setDeviceMetricsOverride", { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
   if (media) await s("Emulation.setEmulatedMedia", { features: media });
+  if (THROTTLE > 1) await s("Emulation.setCPUThrottlingRate", { rate: THROTTLE });
   if (init) await s("Page.addScriptToEvaluateOnNewDocument", { source: init });
   const loaded = new Promise(r => { const f = m => { if (m.method === "Page.loadEventFired") { listeners.splice(listeners.indexOf(f), 1); r(); } }; listeners.push(f); });
   await s("Page.navigate", { url });
@@ -138,6 +141,18 @@ async function settle(b) {
   throw new Error("the packets never settled");
 }
 
+// Poll the page until ok(value of expr) holds, and return that value; after ms, fail with the value it last showed, so a failure says what the
+// page held rather than that a fixed sleep was too short. Each poll waits for two frames (b.sleep), so a slow host polls less often, not too early.
+async function until(b, expr, ok, what, ms = 20000) {
+  const end = Date.now() + ms;
+  for (;;) {
+    const v = await b.ev(expr);
+    if (ok(v)) return v;
+    if (Date.now() > end) assert.fail(`${what}: not after ${ms / 1000} s; the page showed ${JSON.stringify(v)}`);
+    await b.sleep(100);
+  }
+}
+
 async function audit(b, label, expect) {
   await settle(b);
   const a = await b.ev(AUDIT);
@@ -182,41 +197,46 @@ async function picking(url) {
   try {
     await b.resize(1440, 900); await ready(b, 6); await b.sleep(1500); await settle(b);   // glides advance per frame: on a slow host they take longer than 1.5 s
     const jobs = await b.ev(`LF.sky.packets().filter(p => p.kind !== "gold")`);
-    const p = jobs.find(x => x.kind === "done") || jobs[0];
+    const p = jobs.find(x => x.kind === "done") || jobs[0], at = `LF.sky.packets().find(q => q.id === ${JSON.stringify(p.id)})`;
     // hover at the edge of the ring round it, not just the middle
-    await b.s("Input.dispatchMouseEvent", { type: "mouseMoved", x: p.x + Math.max(20, p.r * 1.2), y: p.y }); await b.sleep(600);
-    const hover = await b.ev(`({ card: !document.querySelector(".skycard").hidden && document.querySelector(".skycard").textContent, cursor: document.body.style.cursor, mark: LF.sky.packets().find(q => q.id === ${JSON.stringify(p.id)}).mark })`);
+    await b.s("Input.dispatchMouseEvent", { type: "mouseMoved", x: p.x + Math.max(20, p.r * 1.2), y: p.y });
     const job = await b.ev(`(j => ({ lane: j.lane, task: j.task, label: j.label }))(LF.sky.job(${JSON.stringify(p.id)}))`);
+    const hover = await until(b, `({ card: !document.querySelector(".skycard").hidden && document.querySelector(".skycard").textContent, cursor: document.body.style.cursor, mark: ${at}.mark })`,
+      h => h.card && h.cursor === "pointer" && h.mark === "hover", "hovering its ring marks the packet and shows its card");
     assert.ok(hover.card && hover.card.includes(job.task || job.label), `hovering its ring shows the job's card: ${hover.card}`);
     assert.strictEqual(hover.cursor, "pointer");
     assert.strictEqual(hover.mark, "hover", "the hovered packet wears the ring");
-    await b.click(p.x, p.y); await b.sleep(800);
-    const open = await b.ev(`({ cur: FieldMonitor.current(), mark: LF.sky.packets().find(q => q.id === ${JSON.stringify(p.id)}).mark, others: LF.sky.packets().filter(q => q.id !== ${JSON.stringify(p.id)} && q.mark === "open").length })`);
+    // the head turns toward the pointer and the packets glide with it: click where the packet is now, not where it was before the hover
+    await settle(b);
+    const q = await b.ev(at);
+    await b.click(q.x, q.y);
+    const open = await until(b, `({ cur: FieldMonitor.current(), mark: ${at}.mark, others: LF.sky.packets().filter(q => q.id !== ${JSON.stringify(p.id)} && q.mark === "open").length, at: ${at} })`,
+      o => o.cur && o.mark === "open", `a click on ${p.id} opens its monitor and marks the packet`);   // the mark follows on the next frame
     assert.ok(open.cur && open.cur.lane === job.lane, `a click opens ${job.lane}'s monitor: ${JSON.stringify(open.cur)}`);
     assert.strictEqual(open.cur.job, p.id, "on that job");
     assert.strictEqual(open.mark, "open", "the packet stays marked while its monitor is open");
     assert.strictEqual(open.others, 0, "and no other packet is");
-    await b.ev(`FieldMonitor.close()`); await b.s("Input.dispatchMouseEvent", { type: "mouseMoved", x: 5, y: 300 }); await b.sleep(700);
-    assert.strictEqual(await b.ev(`LF.sky.packets().find(q => q.id === ${JSON.stringify(p.id)}).mark`), "last", "closed, it keeps a faint mark");
-    // a click on empty sky opens nothing
+    await b.ev(`FieldMonitor.close()`); await b.s("Input.dispatchMouseEvent", { type: "mouseMoved", x: 5, y: 300 });
+    await until(b, `${at}.mark`, m => m === "last", "closed, it keeps a faint mark");
+    // a click on empty sky opens nothing (the page handles a click as it is dispatched; the wait gives a wrong open a moment to show)
     await b.click(40, 300); await b.sleep(300);
     assert.strictEqual(await b.ev(`FieldMonitor.current()`), null, "empty sky takes no click");
     // the question views still pour the stars out, and the packets step aside
     const r = await b.ev(`(() => { const r = LF.sky.show("spend"); return r.say; })()`);
     assert.ok(/cost the most/.test(r), r);
-    const until = async (expr, what) => { for (let i = 0; i < 40; i++) { if (await b.ev(expr)) return; await b.sleep(250); } assert.fail(what + " " + await b.ev(`JSON.stringify({ view: LF.sky.view, packets: LF.sky.packets().length })`)); };
-    await until(`LF.sky.packets().length === 0`, "packets fade out while a question's shape is up");
+    const sky = `({ view: LF.sky.view, packets: LF.sky.packets().length })`;
+    await until(b, sky, v => v.packets === 0, "packets fade out while a question's shape is up");
     await b.ev(`LF.sky.show("home")`);
-    await until(`LF.sky.packets().length >= 6`, "and come back");
+    await until(b, sky, v => v.packets >= 6, "and come back");
     // with no typed line, the keys 1 to 4 are the lenses (the main page has focus), and Escape comes home
     await b.key("4", "Digit4");
-    await until(`LF.sky.view === "time"`, "key 4 shows the busiest time");
+    await until(b, sky, v => v.view === "time", "key 4 shows the busiest time");
     await b.key("Escape", "Escape");
-    await until(`LF.sky.view === "home"`, "Escape comes home");
+    await until(b, sky, v => v.view === "home", "Escape comes home");
     await b.key("2", "Digit2");
-    await until(`LF.sky.view === "stuck"`, "key 2 shows what is stuck");
+    await until(b, sky, v => v.view === "stuck", "key 2 shows what is stuck");
     await b.ev(`LF.sky.show("home")`);
-    await until(`LF.sky.packets().length >= 6`, "and the packets come back again");
+    await until(b, sky, v => v.packets >= 6, "and the packets come back again");
     // no witness outline at all (some odd viewport size): the packets ring a stand-in instead, and nothing throws per frame
     const n = await b.ev(`LF.sky.packets().length`);
     assert.strictEqual(await b.ev(`LF.sky.noOutline(true)`), true, "the stand-in outline is in use");
@@ -425,19 +445,21 @@ async function pane(url) {
   try {
     await ready(b, 1);
     for (const [w, h] of SIZES.concat([[1280, 800], [1366, 768]])) {
-      await b.resize(w, h); await b.sleep(900);
-      const a = await b.ev(CLEAR);
+      await b.resize(w, h);
+      const a = await until(b, CLEAR, a => a.pane > 0 && a.pane < h * .45 && a.said > 0 && !a.out.length, `${w}x${h}: the pane docks small and the lists clear the caption`);
       assert.ok(a.pane > 0 && a.pane < h * .45, `${w}x${h}: the pane is docked and small (${a.pane})`);
       assert.ok(a.said > 0, `${w}x${h}: a caption is showing`);
       assert.deepStrictEqual(a.out, [], `${w}x${h}: the lists clear the caption`);
     }
-    await b.resize(1440, 900); await b.sleep(900);
-    const key = await b.ev(`(() => { const r = document.getElementById("term-key").getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; })()`);
-    const grown = () => b.ev(`document.getElementById("term-panel").classList.contains("grown")`);
-    await b.click(...key); await b.sleep(400);
-    assert.strictEqual(await grown(), true, "the Terminal key grows the pane");
-    await b.click(...key); await b.sleep(400);
-    assert.strictEqual(await grown(), false, "a mouse click on the Terminal key shrinks it again");
+    await b.resize(1440, 900);
+    // the key's centre, read just before each click: the pane growing or shrinking may move it
+    const key = () => until(b, `(() => { const r = document.getElementById("term-key").getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2, r.width]; })()`, k => k[2] > 0, "the Terminal key shows");
+    const grown = `document.getElementById("term-panel").classList.contains("grown")`;
+    await b.click(...(await key()).slice(0, 2));
+    assert.strictEqual(await until(b, grown, g => g, "the Terminal key grows the pane"), true);
+    // pointerdown must not shrink it first and the click grow it back: every poll would see it grown
+    await b.click(...(await key()).slice(0, 2));
+    assert.strictEqual(await until(b, grown, g => !g, "a mouse click on the Terminal key shrinks it again"), false);
     // An open control-unit screen (Settings, a log, ...) sits above the pane at both pane sizes and as the narrow bottom sheet: the top element at the
     // pane's centre and near its bottom-right corner is the unit while expanded, and the pane when collapsed. (The unit's own frame isn't loaded here:
     // the test toggles the class that setCu toggles.)
@@ -445,13 +467,14 @@ async function pane(url) {
       for (const [x, y] of [[r.left + r.width / 2, r.top + r.height / 2], [r.right - 12, r.bottom - 12], [r.left + 12, r.top + 40]]) { const e = document.elementFromPoint(x, y); out.push(e && e.closest(".cu-wrap.expanded") ? "unit" : e && e.closest("#term-panel") ? "pane" : e ? e.tagName + "." + e.className : "none"); }
       return out; })()`;
     for (const [w, h] of [[1440, 900], [1280, 800], [390, 844]]) {
-      await b.resize(w, h); await b.sleep(700);
+      await b.resize(w, h);
       for (const big of [false, true]) {
-        await b.ev(`document.getElementById("term-panel").classList.toggle("grown", ${big})`); await b.sleep(900);
+        await b.ev(`document.getElementById("term-panel").classList.toggle("grown", ${big})`);
         await b.ev(`document.getElementById("cu-wrap").classList.remove("expanded")`);
-        assert.deepStrictEqual(await b.ev(topAt), ["pane", "pane", "pane"], `${w}x${h} grown=${big}: the pane is on top when no screen is open`);
+        const all = word => t => t.every(x => x === word);
+        assert.deepStrictEqual(await until(b, topAt, all("pane"), `${w}x${h} grown=${big}: the pane is on top when no screen is open`), ["pane", "pane", "pane"]);
         await b.ev(`document.getElementById("cu-wrap").classList.add("expanded")`);
-        assert.deepStrictEqual(await b.ev(topAt), ["unit", "unit", "unit"], `${w}x${h} grown=${big}: an open screen covers the pane`);
+        assert.deepStrictEqual(await until(b, topAt, all("unit"), `${w}x${h} grown=${big}: an open screen covers the pane`), ["unit", "unit", "unit"]);
         await b.ev(`document.getElementById("cu-wrap").classList.remove("expanded")`);
       }
       await b.ev(`document.getElementById("term-panel").classList.remove("grown")`);
@@ -470,37 +493,38 @@ async function nogate(url) {
     try {
       await b.resize(w, h);
       await ready(b, 1);
-      await b.sleep(900);
-      const a = await b.ev(`({ gate: !!document.getElementById("gate") || !!document.getElementById("enter"), hud: !document.getElementById("hud").hidden, pane: !document.getElementById("term-panel").hidden && document.getElementById("term-panel").getBoundingClientRect().height,
-        key: !document.getElementById("term-key").hidden, has: document.body.classList.contains("has-term"), frame: !!document.querySelector(".term-frame"), cap: document.getElementById("txt").textContent, unlocked: LF.unlocked(), spoke: window.__voiceSays })`);
+      const a = await until(b, `({ gate: !!document.getElementById("gate") || !!document.getElementById("enter"), hud: !document.getElementById("hud").hidden, pane: !document.getElementById("term-panel").hidden && document.getElementById("term-panel").getBoundingClientRect().height,
+        key: !document.getElementById("term-key").hidden, has: document.body.classList.contains("has-term"), frame: !!document.querySelector(".term-frame"), cap: document.getElementById("txt").textContent, unlocked: LF.unlocked(), spoke: window.__voiceSays })`,
+        a => a.hud && a.key && a.has && a.frame && a.pane > 0 && /^Hi\./.test(a.cap), `${w}x${h}: the HUD, the docked pane and the greeting are up on load`);
       assert.strictEqual(a.gate, false, `${w}x${h}: there is no entry screen`);
       assert.ok(a.hud && a.key && a.has && a.frame, `${w}x${h}: the HUD and the Terminal key are up on load ${JSON.stringify(a)}`);
       assert.ok(a.pane > 0 && a.pane < h * .45, `${w}x${h}: the pane docks on load (${a.pane})`);
       assert.match(a.cap, /^Hi\./, `${w}x${h}: the greeting shows as a caption`);
       assert.deepStrictEqual([a.unlocked, a.spoke], [false, 0], `${w}x${h}: no sound, and no speech, before a gesture`);
-      await b.click(w / 2, h * .3); await b.sleep(300);
-      assert.strictEqual(await b.ev(`LF.unlocked()`), true, `${w}x${h}: the first click unlocks sound`);
+      await b.click(w / 2, h * .3);
+      await until(b, `LF.unlocked()`, u => u === true, `${w}x${h}: the first click unlocks sound`);
       assert.deepStrictEqual(b.errors, [], "no page errors");
     } finally { await b.close(); }
   }
   // A key does it too, and so does a click into the terminal frame (the window's blur, with the frame holding focus).
   let b = await launch(url, undefined, TERM);
   try {
-    await ready(b, 1); await b.sleep(600);
+    await ready(b, 1); await b.sleep(600);   // nothing should unlock it in this time: a negative check has nothing to poll for
     assert.strictEqual(await b.ev(`LF.unlocked()`), false);
-    await b.key("a", "KeyA", "a"); await b.sleep(300);
-    assert.strictEqual(await b.ev(`LF.unlocked()`), true, "a key unlocks sound");
+    await b.key("a", "KeyA", "a");
+    await until(b, `LF.unlocked()`, u => u === true, "a key unlocks sound");
   } finally { await b.close(); }
   b = await launch(url, undefined, STEER_T0);
   try {
     await b.resize(1440, 900);
-    for (let i = 0; i < 120 && !(await b.ev(`!!document.querySelector(".term-frame") && LF.W.ready`)); i++) await b.sleep(250);
-    await b.sleep(900);
+    await until(b, `!!document.querySelector(".term-frame") && LF.W.ready`, r => r, "the terminal frame and the witness are up", 30000);
+    await b.sleep(900);   // as above: time for a wrong unlock to show
     assert.strictEqual(await b.ev(`LF.unlocked()`), false);
     const at = await b.ev(`(() => { const r = document.querySelector(".term-frame").getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; })()`);
-    await b.click(...at); await b.sleep(600);
-    assert.strictEqual(await b.ev(`document.activeElement === document.querySelector(".term-frame")`), true, "the click landed in the terminal frame");
-    assert.strictEqual(await b.ev(`LF.unlocked()`), true, "a click into the terminal frame unlocks sound");
+    await b.click(...at);
+    const f = await until(b, `({ focus: document.activeElement === document.querySelector(".term-frame"), unlocked: LF.unlocked() })`, f => f.focus && f.unlocked, "a click into the terminal frame focuses it and unlocks sound");
+    assert.strictEqual(f.focus, true, "the click landed in the terminal frame");
+    assert.strictEqual(f.unlocked, true, "a click into the terminal frame unlocks sound");
     assert.deepStrictEqual(b.errors, [], "no page errors");
   } finally { await b.close(); }
   // With nothing running and nothing waiting, the greeting suggests the example prompt /api/state carries as `prompt`.
@@ -509,8 +533,7 @@ async function nogate(url) {
     return new Response(JSON.stringify(j), { headers: { "Content-Type": "application/json" } }); }; })()`);
   try {
     await ready(b, 1);
-    let meta = "";
-    for (let i = 0; i < 40 && !/Try:/.test(meta); i++) { await b.sleep(250); meta = await b.ev(`document.getElementById("meta").textContent`); }
+    const meta = await until(b, `document.getElementById("meta").textContent`, m => /Try:/.test(m), "the idle greeting suggests a prompt");
     assert.match(meta, /Try: Show me what changed today/, "the idle greeting shows the example prompt");
     assert.deepStrictEqual(b.errors, [], "no page errors");
   } finally { await b.close(); }
