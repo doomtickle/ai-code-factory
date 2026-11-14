@@ -1,0 +1,35 @@
+schemaVersion: "2"
+kind: mixin
+name: factory-analyst-kit
+displayName: Factory Analyst
+description: "Reviews how recent changes went and proposes one improvement (read-only)"
+version: "5.2.0"
+requires:
+  agent: claude
+
+# Instructions live in ../instructions.md: the dispatch bridge passes them to
+# every task (a mixin's agentInstructions aren't reliably loaded).
+permissions:
+  network:
+    # Model provider only. Any other network access goes through the broker's
+    # MCP tools, limited to BROKER_TOOLS in ../role.conf.
+    allow:
+      - api.anthropic.com
+
+setup:
+  install:
+    # Claude Code's built-in WebFetch can never work here (no egress) and only
+    # wastes turns; WebSearch is served by the model API, outside the broker's
+    # allowlist and audit log, and only the researcher may use it (its kit).
+    # Also turn off the claude.ai connectors from the user's account
+    # ("disableClaudeAiConnectors"): they reach the outside world without the
+    # broker's policy and audit. The broker gateway is an sbx MCP server, so it
+    # still loads.
+    # Root-owned managed settings: bypassPermissions can't override them.
+    - command: >-
+        mkdir -p /etc/claude-code &&
+        printf '%s\n' '{"disableClaudeAiConnectors":true,"permissions":{"deny":["WebFetch","WebSearch"]}}'
+        > /etc/claude-code/managed-settings.json &&
+        chmod 0444 /etc/claude-code/managed-settings.json
+      user: "0"
+      description: "Deny the built-in web tools: this role's network is the broker only; disable claude.ai connectors"

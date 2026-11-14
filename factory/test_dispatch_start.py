@@ -346,6 +346,17 @@ class SnapshotTest(StartDispatchTest):
         self.put_config("enabled-roles", "no-such-role\n")
         self.assertIn("no-such-role", self.error(self.project))
 
+    def test_the_analyst_is_off_until_enabled_roles_names_it(self):
+        self.start()
+        self.assertFalse(os.path.exists(os.path.join(self.dstate, "instructions", "analyst.md")))
+        self.assertEqual(self.read("enabled-roles"), "")
+        self.assertFalse([c for c in self.sbx_calls() if "analyst" in c])
+        self.put_config("enabled-roles", "analyst\n")
+        self.start()
+        self.assertEqual(self.read("enabled-roles"), "analyst\n")
+        self.assertIn("# Analyst", self.read("instructions", "analyst.md"))
+        self.assertFalse(os.path.exists(os.path.join(self.dstate, "instructions", "researcher.md")))
+
     def test_an_old_enabled_list_does_not_outlive_its_file(self):
         self.put_config("enabled-roles", "researcher\n")
         self.start()
