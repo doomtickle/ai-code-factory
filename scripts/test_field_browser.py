@@ -7,6 +7,7 @@ test_field_browser.js. Skipped when node or chrome-headless-shell is missing, un
   FIELD_SECTIONS=picking,crystals python3 -m unittest discover -s scripts -p 'test_field_browser.py' -v   # just those sections
 
 FIELD_SECTIONS (names: `node scripts/test_field_browser.js --list`) is how CI runs the sections as parallel shards; unset runs all.
+FIELD_CPU_THROTTLE=4 slows the page's CPU fourfold, to try a slow runner's timing locally (off by default; CI doesn't set it).
 """
 
 import os
