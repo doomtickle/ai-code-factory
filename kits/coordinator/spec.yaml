@@ -259,8 +259,12 @@ setup:
         for each task of that tier, run it 3 times (n = 1..3). The label names what
         is being tested (default `baseline`) and is only `[a-z0-9-]`. Holdout tasks
         run only when the user names the holdout tier.
-        - Delegate each run to the developer with `fresh_session: true`, in parallel
-          lanes, collected with `wait_for_any`. Tell it to branch
+        - Delegate each run to the developer with `fresh_session: true`. A benchmark
+          job that runs a browser test (`scripts/test_*_browser.*`; developer,
+          review or grading job alike, e.g. any job for a task whose Tests required
+          names one) runs alone: start it only when no other benchmark job is
+          running, and start nothing else until it ends. All other benchmark jobs
+          run in parallel lanes, collected with `wait_for_any`. Tell it to branch
           `factory/bench-<name>-<label>-<n>` from the task's `base` commit
           (`git switch -c ... <base>`), work only from that base, and do the task text.
           Then review and handle REVISE exactly as for real work.
@@ -273,7 +277,13 @@ setup:
           the oracle, pass or fail. Oracle tests that fail only because they cover
           something the task's own *Out of scope* excludes are left out of the oracle
           and named in the report (voice-listen's two lockfile/model-pinning tests in
-          factory/test_voice.py are the known case). (2) Run the normal checks.
+          factory/test_voice.py are the known case). (2) Run the normal checks:
+          checks=fail when a check fails in code or tests the change touched. A
+          failure only in code and tests the change didn't touch: run that test file
+          once more, and once at `base`. If it passes on the rerun or fails the same
+          way at `base`, it is flaky, not the change's: score checks=pass and name
+          the test and assertion in a `Flaky:` line of the report. Otherwise
+          checks=fail.
           (3) Score done_when and scope 1-5 (scope: no files the task didn't need);
           size_ratio = the bench diff's non-test changed lines / the reference's.
           The report has no `VERDICT:` line (it would count as a review round) and

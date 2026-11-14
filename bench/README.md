@@ -76,12 +76,20 @@ reviews them as for real work, then runs a grading job per branch in a fresh
 reviewer session. The grade comes from a fixed rubric: the test files the
 reference commit added or changed (from `reference`, or from the task's
 `oracle_ref` when it has one) are copied onto the branch and run (the oracle), the normal checks run, and the reviewer scores done-when and scope 1-5
-and the size ratio (non-test changed lines against the reference's). The report
-ends with one line the bridge parses into the job-end record:
+and the size ratio (non-test changed lines against the reference's). A check
+that fails only in code and tests the change didn't touch is rerun once, and
+once at `base`; if it passes on the rerun or fails the same way at `base` it is
+flaky, not the change's: `checks=pass`, and the report names the test and
+assertion in a `Flaky:` line. Otherwise `checks=fail`. The report ends with one line the bridge parses into the job-end record:
 
 ```
 GRADE: oracle=pass|fail checks=pass|fail done_when=<1-5> scope=<1-5> size_ratio=<x.x>
 ```
+
+A benchmark job that runs a browser test (`scripts/test_*_browser.*`; developer,
+review or grading job alike) runs alone: the Coordinator starts it only when no
+other benchmark job is running, and starts nothing else until it ends. All other
+benchmark jobs run in parallel lanes, collected with `wait_for_any`.
 
 Bench branches are never merged, never get a PR, and the Coordinator never lists
 them among merge suggestions.

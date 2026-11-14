@@ -51,7 +51,10 @@ Coordinator briefing gets a short *Benchmark* section:
 > `fresh_session`, telling it to branch `factory/bench-<name>-<label>-<n>`
 > from the task's `base` commit (`git switch -c ... <base>` in its lane), then
 > review and handle REVISE exactly as for real work. Then delegate a grading
-> job (below). Run tasks in parallel lanes and collect them with
+> job (below). A job that runs a browser test (`scripts/test_*_browser.*`;
+> developer, review or grading job alike) runs alone: start it only when no
+> other benchmark job is running, and start nothing else until it ends. Run all
+> other jobs in parallel lanes and collect them with
 > `wait_for_any`. Never merge a bench branch, and never ask the user to.
 > Report a one-line table at the end.
 
@@ -68,7 +71,12 @@ finished:
    are the hidden oracle: pass or fail. A task may set `oracle_ref` (a 40-hex
    sha) to copy those files from that commit instead of `reference`, for when
    the reference's own test is flaky; the file list still comes from base..reference.
-2. Run the project's normal checks.
+2. Run the project's normal checks. `checks=fail` when a check fails in code or
+   tests the change touched. A failure only in code and tests the change didn't
+   touch: run that test file once more, and once at `base`. If it passes on the
+   rerun or fails the same way at `base`, it is flaky, not the change's: score
+   `checks=pass` and name the test and assertion in a `Flaky:` line of the
+   report. Otherwise `checks=fail`.
 3. Score 1–5 against the task's *Done when* items, plus: scope (didn't touch
    files the task didn't need), size relative to the reference diff, and test
    proportionality (spec 05).
